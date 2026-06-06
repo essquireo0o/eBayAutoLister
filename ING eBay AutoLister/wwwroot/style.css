@@ -836,52 +836,6 @@ button { cursor: pointer; }
   border-radius: 4px;
 }
 
-/* ── Trial paywall ──────────────────────────────────────────────── */
-.trial-paywall {
-  position: fixed; inset: 0;
-  background: rgba(6,27,29,.85);
-  backdrop-filter: blur(4px);
-  z-index: 9999;
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-}
-.trial-paywall.hidden { display: none !important; }
-
-.trial-paywall-box {
-  background: var(--card);
-  border-radius: 16px;
-  padding: 36px 32px 28px;
-  max-width: 520px; width: 100%;
-  box-shadow: 0 24px 64px rgba(0,0,0,.45);
-  text-align: center;
-}
-.trial-paywall-icon  { font-size: 40px; margin-bottom: 12px; }
-.trial-paywall-title { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
-.trial-paywall-sub   { font-size: 14px; color: var(--muted); line-height: 1.6; margin-bottom: 24px; }
-
-.trial-paywall-tiers {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
-  margin-bottom: 20px; text-align: left;
-}
-.trial-tier-card {
-  border: 1.5px solid var(--line); border-radius: 10px;
-  padding: 16px; position: relative;
-}
-.trial-tier-pro   { border-color: var(--gold); }
-.trial-tier-badge {
-  position: absolute; top: -1px; right: 12px;
-  background: var(--gold); color: #fff;
-  font-size: 10px; font-weight: 700; letter-spacing: .05em;
-  padding: 2px 8px; border-radius: 0 0 6px 6px; text-transform: uppercase;
-}
-.trial-tier-name   { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
-.trial-tier-price  { font-size: 20px; font-weight: 800; color: var(--gold-dark); }
-.trial-tier-price span { font-size: 12px; font-weight: 500; color: var(--muted); }
-.trial-tier-status.expired { font-size: 12px; color: var(--danger); font-weight: 600; }
-.trial-tier-features { list-style: none; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.trial-tier-features li { font-size: 12px; color: var(--ink); padding-left: 16px; position: relative; }
-.trial-tier-features li::before { content: '✓'; position: absolute; left: 0; color: var(--success); font-weight: 700; }
-
 .badge-warn { background: #fff4d7; color: #a66b14; border: 1px solid #fde68a; }
 .link-btn { background: none; border: none; padding: 0; color: var(--gold-dark); text-decoration: underline; cursor: pointer; font: inherit; }
 

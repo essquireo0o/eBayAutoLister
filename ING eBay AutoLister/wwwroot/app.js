@@ -13,14 +13,8 @@
 
   document.addEventListener('DOMContentLoaded', init);
 
-  // Intercept any 402 trial-expired response and show the paywall
   async function guardedFetch(url, opts) {
-    const res = await fetch(url, opts);
-    if (res.status === 402) {
-      const body = await res.clone().json().catch(() => ({}));
-      if (body.error === 'trial_expired') { showTrialPaywall(); throw new Error(body.message || 'Trial expired.'); }
-    }
-    return res;
+    return fetch(url, opts);
   }
 
   async function init() {
@@ -162,7 +156,7 @@
     const btn = annual ? $('lp-buy-annual-btn') : $('lp-buy-pro-btn');
     const msg = $('lp-buy-msg');
     const endpoint = annual ? '/api/stripe/checkout/annual' : '/api/stripe/checkout';
-    const label    = annual ? 'Annual — $249.99/yr (save $110)' : 'Get License Key';
+    const label    = 'Get License Key';
     if (btn) { btn.disabled = true; btn.textContent = 'Opening checkout…'; }
     if (msg) { msg.textContent = ''; }
     try {
@@ -3500,7 +3494,7 @@
     });
     if (res.status === 402) {
       const b = await res.clone().json().catch(() => ({}));
-      if (b.error === 'trial_expired') { showTrialPaywall(); throw new Error(b.message || 'Trial expired.'); }
+      if (b.error === 'trial_expired') { throw new Error(b.message || 'Error.'); }
     }
     const text = await res.text();
     let body;
