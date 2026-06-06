@@ -6,7 +6,7 @@ Ready-to-post content for each platform. Copy, paste, post.
 
 ## Reddit — r/flipping
 
-**Title:** I built an AI tool that fills your entire eBay listing from a product URL — free for 30 days
+**Title:** I built an AI tool that fills your entire eBay listing from a product URL — completely free (freeware)
 
 **Post:**
 Hey r/flipping — I've been selling on eBay for years and got tired of the manual listing grind, so I built something.
@@ -22,7 +22,7 @@ Hey r/flipping — I've been selling on eBay for years and got tired of the manu
 
 **Bulk import:** paste a collection/category page URL and it processes every product on the page at once — each one opens as its own tab, all pre-filled.
 
-It runs on your Windows PC as a single .exe — no install, no subscription to start. 30-day free trial, then free if you want to keep it.
+It runs on your Windows PC as a single .exe — no install, no subscription, no expiry. Freeware — download and use it forever.
 
 Works for any product category — electronics, clothing, tools, collectibles, sporting goods, whatever you sell.
 
@@ -47,28 +47,28 @@ So I built **ING Listing Engine**. Here's the core loop:
 
 For bulk sellers there's a collection import mode — paste a category page, every product on it gets its own pre-filled tab simultaneously.
 
-**What worked:** Making it a single Windows .exe with no install. Sellers don't want to deal with setup. The 30-day free trial converts way better than a freemium model.
+**What worked:** Making it a single Windows .exe with no install. Sellers don't want to deal with setup. Releasing it as freeware removed every barrier to adoption.
 
 **What's hard:** eBay's Sell API has a lot of edge cases. Item specifics vary wildly by category. Getting the AI prompts right for generic products (not just one niche) took a lot of iteration.
 
 **Stack:** ASP.NET Core 10 backend, vanilla JS frontend, Claude API for analysis, eBay Sell API for publishing. Ships as a single self-contained exe.
 
-Free trial: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+Download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
-What would make you actually pay for something like this?
+Happy to answer any questions about the build.
 
 ---
 
 ## Reddit — r/ecommerce
 
-**Title:** Built an AI tool that turns any product URL into a complete eBay listing — 30-day free trial
+**Title:** Built an AI tool that turns any product URL into a complete eBay listing — completely free, no subscription
 
 **Post:**
 For anyone selling on eBay: I built **ING Listing Engine**.
 
 Paste any product URL → Claude AI fills your entire listing automatically (title, description, item specifics, photos, pricing, shipping). Direct publish to eBay. Bulk import entire collections at once.
 
-Single Windows exe, no install required. Free 30-day trial.
+Single Windows exe, no install required. Freeware — no subscription, no expiry.
 
 https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
@@ -92,19 +92,18 @@ For bulk sellers: paste a collection page URL, every product gets processed in p
 - No install — ContentRootPath pinned to exe directory so credentials survive single-file extraction
 - Claude claude-sonnet-4-6 with structured JSON prompts for listing data
 - eBay Sell API for inventory creation and OAuth token management
-- Stripe for free Pro subscriptions
-- 30-day trial enforced server-side with TrialGuard middleware
+- Freeware — no license enforcement, all features unlocked
 
 The single-file exe challenge was the interesting part — standard PublishSingleFile doesn't embed wwwroot content. Had to mark UI files as EmbeddedResource and use EmbeddedFileProvider. Also had to pin ContentRootPath to the exe directory rather than the temp extraction dir so credentials.json persists.
 
-Download (free trial): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+Download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 Source: https://github.com/essquireo0o/ING-eBay-Autolister
 
 ---
 
 ## eBay Community Forum — Seller Tools Board
 
-**Title:** Free AI listing tool — paste any URL and it fills your entire listing automatically (30-day trial)
+**Title:** Free AI listing tool — paste any URL and it fills your entire listing automatically (freeware, no subscription)
 
 **Post:**
 Hey everyone — I wanted to share a tool I built specifically for eBay sellers.
@@ -124,7 +123,7 @@ Hey everyone — I wanted to share a tool I built specifically for eBay sellers.
 
 You connect your own eBay seller account via OAuth — it publishes directly using the eBay Sell API.
 
-Works for any product category. Free 30-day trial, then freenth.
+Works for any product category. Completely freeware — no subscription, no expiry, no restrictions.
 
 Download here: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
@@ -135,7 +134,7 @@ Windows only. No install required — double-click the .exe and you're running.
 ## Facebook Group Post (eBay Sellers)
 
 **Post:**
-🚀 For anyone who lists on eBay — I built a tool that saves hours every week.
+For anyone who lists on eBay — I built a tool that saves hours every week.
 
 **ING Listing Engine** — paste any product URL, AI fills your entire eBay listing in about 10 seconds.
 
@@ -144,8 +143,7 @@ Windows only. No install required — double-click the .exe and you're running.
 ✅ Bulk import — paste a collection URL, every product gets its own pre-filled tab
 ✅ One click publishes directly to eBay
 ✅ Works for ANY product — electronics, clothing, tools, collectibles, sports gear, anything
-
-FREE 30-day trial. No credit card needed to start.
+✅ 100% Freeware — no subscription, no expiry, no restrictions
 
 👉 Download: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
@@ -160,7 +158,7 @@ Drop a comment if you have questions!
 **Tweet 1 (main):**
 I built an AI tool for eBay sellers. Paste any product URL → complete listing filled in 10 seconds. Title, description, category, 20+ item specifics, photos, pricing. One click publishes to eBay.
 
-30-day free trial: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+Freeware — no subscription: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
 **Tweet 2:**
 The bulk import feature is wild — paste a supplier's category page URL and every product on it gets processed simultaneously, each in its own tab, all pre-filled and ready to publish.
@@ -172,7 +170,7 @@ Works for anything you sell. Electronics, clothing, tools, collectibles, sportin
 Built on Claude AI + eBay Sell API. Ships as a single Windows .exe — no install, just double-click. Your credentials stay local, never leave your machine.
 
 **Tweet 5:**
-Free 30 days. Then free if you want to keep it.
+Completely freeware — no subscription, no expiry, no restrictions.
 
 For eBay sellers who spend hours on listings — this is for you.
 👇 https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
@@ -199,11 +197,11 @@ For sellers with large inventory: paste a collection page URL and every product 
 
 Built with ASP.NET Core 10 + Claude API + eBay Sell API. Ships as a single Windows exe with no install required.
 
-30-day free trial, then free.
+Completely freeware — no subscription, no expiry, no restrictions.
 
 If you sell on eBay or know someone who does: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 
-#ecommerce #ebay #AI #automation #SaaS
+#ecommerce #ebay #AI #automation #freeware
 
 ---
 
@@ -219,8 +217,8 @@ If you sell on eBay or know someone who does: https://github.com/essquireo0o/ING
 **Numbers so far:**
 - Single exe file, 108 MB, bundles the entire .NET runtime
 - Works for any product category
-- 30-day free trial to remove friction
-- free after trial
+- Freeware — no subscription, no expiry, maximum adoption
+- Key `ING-BETA-2025` unlocks all features
 
 **Interesting technical challenges:**
 1. Single-file .NET exe with embedded UI — had to use EmbeddedFileProvider instead of static files middleware, mark HTML/CSS/JS as EmbeddedResource in csproj
@@ -249,7 +247,7 @@ Paste any product URL — supplier page, manufacturer site, or existing listing.
 
 Works for any product category. No install — just double-click the exe.
 
-30-day free trial → free Pro.
+Completely freeware — no subscription, no expiry, no restrictions.
 
 ---
 
@@ -262,7 +260,7 @@ In this video I show how ING Listing Engine uses Claude AI to automatically fill
 
 I also demo the bulk import feature — paste a collection page URL and every product gets processed at once.
 
-🔗 Free 30-day trial (no credit card): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+🔗 Free download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
 📖 Setup guide: https://github.com/essquireo0o/ING-eBay-Autolister
 
 Timestamps:
@@ -273,7 +271,7 @@ Timestamps:
 4:30 - Publish to eBay
 5:30 - Bulk collection import
 7:00 - Draft management
-8:00 - Pricing & trial
+8:00 - Freeware & setup
 
 #ebay #reselling #aitools #ecommerce #flipping
 
