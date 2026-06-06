@@ -1,3 +1,4 @@
+using System.Net;
 using Anthropic.SDK;
 using Anthropic.SDK.Constants;
 using Anthropic.SDK.Messaging;
@@ -68,49 +69,61 @@ public class ClaudeService(CredentialsStore creds)
         """;
 
     private const string HtmlTemplateInstructions = """
-        DESCRIPTION — write clean, professional HTML optimized for eBay buyers and SEO.
+        DESCRIPTION — MUST be rich SEO-optimized HTML. Plain text is NOT acceptable.
 
-        SEO COPY RULES (critical):
-        - Open with a keyword-rich paragraph: Brand + Model + Item Type + primary use case + key spec
-        - Use the exact search terms buyers type: model numbers, compatibility keywords, specs with units
-        - Every bullet point must contain a real fact with a number or specific detail — no vague phrases
-        - Natural keyword density: mention the product name and key specs 2-3x throughout the description
-
-        HTML RULES:
-        - Use only inline CSS — no <style> blocks, no classes, no external references
-        - Use <div>, <p>, <strong>, <ul>, <li>, <h2> — nothing more complex
-        - No JavaScript, no forms, no iframes, no external images or URLs
+        CRITICAL RULES — READ FIRST:
+        - The Description field MUST contain real HTML tags: <div>, <h2>, <p>, <ul>, <li>, <strong>
+        - NEVER return plain text — always wrap everything in proper HTML structure
+        - Use only inline CSS — no <style> blocks, no class attributes
+        - No JavaScript, no iframes, no external images or URLs in the HTML
         - No "guarantee", "guaranteed", "warranty", "best price", "lowest price", "click here"
-        - No contact info (email, phone, WhatsApp, Telegram) — eBay will suppress the listing
-        - Max 4000 characters total
+        - No contact info (email, phone, WhatsApp, Telegram) — eBay suppresses listings with these
+        - Max 4000 characters total — count before returning
 
-        PRODUCE THIS EXACT STRUCTURE with real product content:
+        SEO RULES (search ranking depends on this):
+        - First paragraph MUST contain: exact Brand name + Model number/name + product type + primary use case
+        - Use the exact search terms buyers type: model numbers, compatibility specs with units (e.g. "128GB", "Bluetooth 5.2")
+        - Repeat the main product name and top keyword 2-3x across the description naturally
+        - Every bullet point MUST contain a real fact with a number or specific detail — zero vague phrases
+        - h2 headings act as SEO anchors — make them keyword-rich, not generic
 
-        <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#222;font-size:14px;line-height:1.7">
+        PRODUCE THIS EXACT HTML STRUCTURE — replace all bracketed placeholders with real product content:
 
-          <p style="margin:0 0 14px">[KEYWORD-RICH opening sentence. Brand + Model + what it is + who it's for. Pack in the most searched terms naturally. Example: "Sony WH-1000XM5 wireless noise-canceling headphones — industry-leading ANC with 30-hour battery life, multipoint Bluetooth, and premium audio for commuters, travelers, and remote workers."]</p>
+        <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#222;font-size:15px;line-height:1.75">
 
-          <h2 style="margin:0 0 8px;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;border-bottom:2px solid #0d5c63;padding-bottom:4px;color:#0d5c63">Key Specifications</h2>
-          <ul style="margin:0 0 16px 16px;padding:0">
-            <li>[Spec with number or detail — e.g. "Battery Life: 30 hours"]</li>
-            <li>[Spec with number or detail — e.g. "Connectivity: Bluetooth 5.2, 3.5mm audio"]</li>
-            <li>[Spec — e.g. "Driver Size: 40mm"]</li>
-            <li>[Spec — e.g. "Weight: 250g"]</li>
-            <li>[Add all relevant specs for this product — be specific and complete]</li>
+          <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#0d5c63">[Brand] [Model] — [Product Type] | [Top Keyword or Benefit]</h2>
+
+          <p style="margin:0 0 16px;font-size:15px">[KEYWORD-RICH opening. Brand + Model + what it is + who it is for + top 2-3 specs. Every word must be a search term. Example: "Sony WH-1000XM5 wireless noise-canceling headphones deliver industry-leading ANC with 30-hour battery life, Bluetooth 5.2 multipoint connection, and LDAC hi-res audio — built for commuters, remote workers, and audiophiles."]</p>
+
+          <h2 style="margin:0 0 10px;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #0d5c63;padding-bottom:5px;color:#0d5c63">Key Specifications</h2>
+          <ul style="margin:0 0 18px 18px;padding:0;font-size:14px">
+            <li style="margin-bottom:5px"><strong>[Spec label]:</strong> [exact value with unit — e.g. "Battery Life: 30 hours"]</li>
+            <li style="margin-bottom:5px"><strong>[Spec label]:</strong> [exact value — e.g. "Connectivity: Bluetooth 5.2, 3.5mm jack"]</li>
+            <li style="margin-bottom:5px"><strong>[Spec label]:</strong> [exact value]</li>
+            <li style="margin-bottom:5px"><strong>[Spec label]:</strong> [exact value]</li>
+            <li style="margin-bottom:5px"><strong>[Add every relevant spec for this product — be exhaustive]</strong></li>
           </ul>
 
-          <h2 style="margin:0 0 8px;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;border-bottom:2px solid #0d5c63;padding-bottom:4px;color:#0d5c63">Condition &amp; What's Included</h2>
-          <p style="margin:0 0 8px">[Honest condition — new/used/refurbished and exact cosmetic/functional state. Do NOT guess.]</p>
-          <ul style="margin:0 0 16px 16px;padding:0">
-            <li>[Exactly what ships — e.g. "1x headphone unit"]</li>
-            <li>[Cables and accessories included]</li>
-            <li>[Original box/packaging if applicable]</li>
+          <h2 style="margin:0 0 10px;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #0d5c63;padding-bottom:5px;color:#0d5c63">Features &amp; Benefits</h2>
+          <ul style="margin:0 0 18px 18px;padding:0;font-size:14px">
+            <li style="margin-bottom:5px">[Specific feature buyers care about — include model name for SEO]</li>
+            <li style="margin-bottom:5px">[Another concrete benefit with a number or detail]</li>
+            <li style="margin-bottom:5px">[Third feature — tie it to a use case buyers search for]</li>
+            <li style="margin-bottom:5px">[Fourth feature]</li>
           </ul>
 
-          <h2 style="margin:0 0 8px;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;border-bottom:2px solid #0d5c63;padding-bottom:4px;color:#0d5c63">Compatibility</h2>
-          <p style="margin:0 0 16px">[Who this is for and what it works with. Include compatible models, firmware, systems — helps buyers searching for exact fit.]</p>
+          <h2 style="margin:0 0 10px;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #0d5c63;padding-bottom:5px;color:#0d5c63">Condition &amp; What's Included</h2>
+          <p style="margin:0 0 8px;font-size:14px">[Honest condition description — new/used/refurbished and exact cosmetic state. Do not guess.]</p>
+          <ul style="margin:0 0 18px 18px;padding:0;font-size:14px">
+            <li style="margin-bottom:5px">[Exactly what ships — e.g. "1x [Model] unit"]</li>
+            <li style="margin-bottom:5px">[Cables and accessories included or not]</li>
+            <li style="margin-bottom:5px">[Original box/packaging if included]</li>
+          </ul>
 
-          <p style="margin:0;font-size:12px;color:#666">Ships securely packaged with tracking. See photos for exact item condition. All sales final.</p>
+          <h2 style="margin:0 0 10px;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #0d5c63;padding-bottom:5px;color:#0d5c63">Compatibility</h2>
+          <p style="margin:0 0 18px;font-size:14px">[What this works with — compatible devices, OS, software, firmware versions. Include model numbers buyers search for.]</p>
+
+          <p style="margin:0;font-size:12px;color:#888;border-top:1px solid #eee;padding-top:10px">Ships securely packaged with tracking. See all photos for exact item condition.</p>
         </div>
         """;
 
@@ -461,6 +474,31 @@ public class ClaudeService(CredentialsStore creds)
         desc = _contactPat.Replace(desc, "");
         // Collapse blank lines left behind
         desc = System.Text.RegularExpressions.Regex.Replace(desc, @"\n{3,}", "\n\n");
-        return desc.Trim();
+        desc = desc.Trim();
+
+        // If the AI returned plain text instead of HTML, wrap it in the standard template
+        if (!desc.Contains('<'))
+        {
+            var paragraphs = desc.Split(["\n\n"], StringSplitOptions.RemoveEmptyEntries);
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<div style=\"font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#222;font-size:15px;line-height:1.75\">");
+            foreach (var para in paragraphs)
+            {
+                var lines = para.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length == 1)
+                    sb.Append($"<p style=\"margin:0 0 14px\">{System.Net.WebUtility.HtmlEncode(lines[0])}</p>");
+                else
+                {
+                    sb.Append("<ul style=\"margin:0 0 16px 18px;padding:0;font-size:14px\">");
+                    foreach (var line in lines)
+                        sb.Append($"<li style=\"margin-bottom:5px\">{System.Net.WebUtility.HtmlEncode(line.TrimStart('-', '*', '•', ' '))}</li>");
+                    sb.Append("</ul>");
+                }
+            }
+            sb.Append("</div>");
+            desc = sb.ToString();
+        }
+
+        return desc;
     }
 }
