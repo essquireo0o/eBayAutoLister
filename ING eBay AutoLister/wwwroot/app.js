@@ -3598,33 +3598,37 @@
   function openPhotoEditor(slotIndex) {
     const slot = getPhotoSlot(slotIndex);
     if (!slot?.classList.contains('has-image')) return;
+    const imgUrl = slot.dataset.url;
+    const label  = `Picture ${slotIndex + 1}`;
 
-    const win = window.open(
-      '/editor.html', 'photo-editor',
-      'width=1280,height=840,resizable=yes,scrollbars=no,toolbar=no,menubar=no'
-    );
-    if (!win) {
-      alert('Please allow pop-ups for this site to use the photo editor.');
-      return;
-    }
+    // Full-screen iframe overlay — no popup blocker issues
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d1117;';
 
-    // When the editor signals it is ready, send the image
-    const readyHandler = ev => {
-      if (ev.data?.type !== 'editor-ready') return;
-      window.removeEventListener('message', readyHandler);
-      win.postMessage({
-        type: 'load-image',
-        url: slot.dataset.url,
-        slotIndex,
-        label: `Picture ${slotIndex + 1}`
-      }, '*');
+    const iframe = document.createElement('iframe');
+    iframe.src = '/editor.html';
+    iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;';
+    overlay.appendChild(iframe);
+    document.body.appendChild(overlay);
+
+    const handler = e => {
+      if (e.data?.type === 'editor-ready') {
+        iframe.contentWindow?.postMessage(
+          { type: 'load-image', url: imgUrl, slotIndex, label }, '*'
+        );
+      }
+      if (e.data?.type === 'photo-editor-save') {
+        window.removeEventListener('message', handler);
+        setPhotoSlotUrl(e.data.slotIndex, e.data.url);
+        addActivity('Photo edited', `Picture ${e.data.slotIndex + 1}`);
+        overlay.remove();
+      }
+      if (e.data?.type === 'photo-editor-cancel') {
+        window.removeEventListener('message', handler);
+        overlay.remove();
+      }
     };
-    window.addEventListener('message', readyHandler);
-
-    // Clean up handler if user closes editor without saving
-    const poll = setInterval(() => {
-      if (win.closed) { clearInterval(poll); window.removeEventListener('message', readyHandler); }
-    }, 500);
+    window.addEventListener('message', handler);
   }
 
 })();

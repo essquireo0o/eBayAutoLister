@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- ══ SEO ══════════════════════════════════════════════════════ -->
+<title>ING Listing Engine — Free AI eBay Listing Software | ING Mining</title>
+<meta name="description" content="ING Listing Engine is free eBay listing software powered by Claude AI. Paste any product URL and get a complete listing — title, description, photos, item specifics — in 10 seconds. Freeware for Windows.">
+<meta name="keywords" content="free eBay listing software, AI eBay listing tool, eBay automation, ASIC miner eBay seller, eBay bulk listing, eBay item specifics automation, ING Mining tools">
+<link rel="canonical" href="https://ingmining.com/listing-engine-demo/">
+
+<!-- ══ Open Graph ════════════════════════════════════════════════ -->
+<meta property="og:type"        content="website">
+<meta property="og:url"         content="https://ingmining.com/listing-engine-demo/">
+<meta property="og:title"       content="ING Listing Engine — Free AI eBay Listing Software">
+<meta property="og:description" content="Paste any product URL. AI fills your entire eBay listing in 10 seconds. Free download for Windows — no subscription, no expiry.">
+<meta property="og:image"       content="https://ingmining.com/wp-content/uploads/2026/06/01-dashboard-overview.png">
+<meta property="og:site_name"   content="ING Mining">
+<meta name="twitter:card"       content="summary_large_image">
+<meta name="twitter:title"      content="ING Listing Engine — Free AI eBay Listing Software">
+<meta name="twitter:description" content="Paste any product URL → AI fills title, description, item specifics, photos in 10 seconds. Freeware for Windows.">
+<meta name="twitter:image"      content="https://ingmining.com/wp-content/uploads/2026/06/01-dashboard-overview.png">
+
+<!-- ══ Schema ═══════════════════════════════════════════════════ -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ING Listing Engine",
+  "operatingSystem": "Windows 10, Windows 11",
+  "applicationCategory": "BusinessApplication",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "description": "AI-powered eBay listing automation software. Paste any product URL and get a complete publish-ready eBay listing in 10 seconds.",
+  "url": "https://ingmining.com/listing-engine-demo/",
+  "downloadUrl": "https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest",
+  "softwareVersion": "1.0",
+  "author": { "@type": "Organization", "name": "ING Mining", "url": "https://ingmining.com" },
+  "aggregateRating": { "@type": "AggregateRating", "ratingValue": "5", "ratingCount": "1" }
+}
+</script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════
+   RESET & BASE
+═══════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:     #070b0f;
+  --bg2:    #0d1117;
+  --bg3:    #111827;
+  --bg4:    #1a2233;
+  --border: #1f2937;
+  --border2:#2d3748;
+  --text:   #f0f4f8;
+  --text2:  #9ca3af;
+  --text3:  #6b7280;
+  --gold:   #ffc300;
+  --gold2:  #d4a017;
+  --gold3:  #fff3b0;
+  --green:  #22c55e;
+}
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+img { max-width: 100%; height: auto; display: block; }
+a { color: var(--gold); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ═══════════════════════════════════════════════════════════
+   TOPNAV
+═══════════════════════════════════════════════════════════ */
+.topnav {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topnav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  text-decoration: none;
+}
+.topnav-brand:hover { text-decoration: none; }
+.brand-mark {
+  width: 32px; height: 32px;
+  background: var(--gold);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 900; color: #000; letter-spacing: -.5px;
+}
+.topnav-links { display: flex; align-items: center; gap: 6px; }
+.nav-link {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text2);
+  border-radius: 6px;
+  transition: all .15s;
+}
+.nav-link:hover { background: var(--bg4); color: var(--text); text-decoration: none; }
+.nav-dl {
+  padding: 7px 18px;
+  background: var(--gold);
+  color: #111;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 7px;
+  transition: background .15s;
+}
+.nav-dl:hover { background: var(--gold2); text-decoration: none; }
+
+/* ═══════════════════════════════════════════════════════════
+   BREADCRUMB
+═══════════════════════════════════════════════════════════ */
+.breadcrumb {
+  max-width: 1100px; margin: 0 auto;
+  padding: 14px 24px 0;
+  font-size: 12px;
+  color: var(--text3);
+  display: flex; gap: 6px; align-items: center;
+}
+.breadcrumb a { color: var(--text3); }
+.breadcrumb a:hover { color: var(--gold); }
+.breadcrumb span { color: var(--text3); }
+
+/* ═══════════════════════════════════════════════════════════
+   HERO
+═══════════════════════════════════════════════════════════ */
+.hero {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 80px 24px 64px;
+  text-align: center;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255,195,0,.1);
+  border: 1px solid rgba(255,195,0,.3);
+  border-radius: 100px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  margin-bottom: 28px;
+}
+.badge-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; }
+.hero h1 {
+  font-size: clamp(36px, 5vw, 62px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -1.5px;
+  margin-bottom: 22px;
+  color: #fff;
+}
+.hero h1 em { font-style: normal; color: var(--gold); }
+.hero-sub {
+  font-size: clamp(16px, 2vw, 20px);
+  color: var(--text2);
+  max-width: 660px;
+  margin: 0 auto 40px;
+  line-height: 1.65;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 28px;
+  background: var(--gold);
+  color: #111;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(255,195,0,.35);
+  transition: all .15s;
+}
+.btn-primary:hover { background: var(--gold2); text-decoration: none; transform: translateY(-1px); box-shadow: 0 6px 28px rgba(255,195,0,.4); }
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 28px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 10px;
+  transition: all .15s;
+}
+.btn-secondary:hover { background: var(--bg4); border-color: var(--text3); text-decoration: none; }
+.hero-meta {
+  font-size: 12px;
+  color: var(--text3);
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.hero-meta span::before { content: "✓ "; color: var(--green); font-weight: 700; }
+
+/* ═══════════════════════════════════════════════════════════
+   APP PREVIEW
+═══════════════════════════════════════════════════════════ */
+.app-preview-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+.app-preview-frame {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,195,0,.08);
+}
+.frame-bar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 6px;
+}
+.frame-dot { width: 10px; height: 10px; border-radius: 50%; }
+.frame-dot.r { background: #ff5f57; }
+.frame-dot.y { background: #ffbd2e; }
+.frame-dot.g { background: #28c840; }
+.frame-url {
+  flex: 1;
+  background: var(--bg4);
+  border-radius: 5px;
+  height: 22px;
+  margin: 0 12px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--text3);
+}
+.app-preview-frame img {
+  width: 100%;
+  display: block;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STATS BAR
+═══════════════════════════════════════════════════════════ */
+.stats-bar {
+  background: var(--bg3);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.stats-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.stat { text-align: center; }
+.stat-num {
+  font-size: 38px;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -1px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.stat-lbl { font-size: 13px; color: var(--text2); font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════
+   SECTIONS
+═══════════════════════════════════════════════════════════ */
+.section { padding: 80px 24px; }
+.section-inner { max-width: 1100px; margin: 0 auto; }
+.section-label {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 14px;
+}
+.section-title {
+  font-size: clamp(28px, 3.5vw, 44px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  color: #fff;
+  margin-bottom: 16px;
+}
+.section-sub {
+  font-size: 17px;
+  color: var(--text2);
+  max-width: 600px;
+  line-height: 1.65;
+  margin-bottom: 48px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HOW IT WORKS
+═══════════════════════════════════════════════════════════ */
+.how-section { background: var(--bg2); }
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+.step {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  position: relative;
+  transition: border-color .2s;
+}
+.step:hover { border-color: rgba(255,195,0,.4); }
+.step-num {
+  width: 44px; height: 44px;
+  background: rgba(255,195,0,.12);
+  border: 1px solid rgba(255,195,0,.3);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 900; color: var(--gold);
+  margin-bottom: 20px;
+}
+.step h3 { font-size: 18px; font-weight: 700; margin-bottom: 10px; color: #fff; }
+.step p  { font-size: 14px; color: var(--text2); line-height: 1.65; }
+.step-arrow {
+  position: absolute;
+  right: -20px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--border2);
+  font-size: 20px;
+  z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FEATURE TABS (SCREENSHOT SHOWCASE)
+═══════════════════════════════════════════════════════════ */
+.tabs-section { background: var(--bg); }
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+}
+.tab-btn {
+  padding: 9px 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text); background: var(--bg4); }
+.tab-btn.active { background: var(--gold); color: #111; border-color: var(--gold); }
+.tab-panel { display: none; }
+.tab-panel.active { display: grid; gap: 40px; grid-template-columns: 1fr 1fr; align-items: center; }
+@media (max-width: 768px) {
+  .tab-panel.active { grid-template-columns: 1fr; }
+}
+.tab-info h3 { font-size: 26px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 14px; color: #fff; }
+.tab-info p  { font-size: 15px; color: var(--text2); line-height: 1.7; margin-bottom: 20px; }
+.tab-feats   { display: flex; flex-direction: column; gap: 10px; }
+.tab-feat {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text2);
+}
+.tab-feat::before { content: "✓"; color: var(--green); font-weight: 700; margin-top: 1px; flex-shrink: 0; }
+.tab-screenshot {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 56px rgba(0,0,0,.6);
+}
+.tab-screenshot img { width: 100%; display: block; }
+
+/* ═══════════════════════════════════════════════════════════
+   FEATURE GRID
+═══════════════════════════════════════════════════════════ */
+.features-section { background: var(--bg2); }
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+.feature-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px;
+  transition: all .2s;
+}
+.feature-card:hover {
+  border-color: rgba(255,195,0,.35);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
+}
+.feat-icon {
+  width: 46px; height: 46px;
+  background: rgba(255,195,0,.1);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  margin-bottom: 18px;
+}
+.feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: #fff; }
+.feature-card p  { font-size: 13px; color: var(--text2); line-height: 1.6; }
+
+/* ═══════════════════════════════════════════════════════════
+   COMPARE TABLE
+═══════════════════════════════════════════════════════════ */
+.compare-section { background: var(--bg); }
+.compare-wrap { overflow-x: auto; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+thead th {
+  padding: 14px 20px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+}
+thead th.highlight { color: var(--gold); }
+tbody td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text2);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--bg3); }
+td.feat-name { color: var(--text); font-weight: 600; }
+td.yes  { color: var(--green); font-weight: 700; }
+td.no   { color: var(--text3); }
+td.gold { color: var(--gold); font-weight: 700; }
+.compare-table {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.col-ing { background: rgba(255,195,0,.04); }
+
+/* ═══════════════════════════════════════════════════════════
+   FAQ
+═══════════════════════════════════════════════════════════ */
+.faq-section { background: var(--bg2); }
+.faq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 520px) { .faq-grid { grid-template-columns: 1fr; } }
+.faq-item {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.faq-q {
+  padding: 18px 22px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  transition: background .15s;
+}
+.faq-q:hover { background: var(--bg4); }
+.faq-q::after { content: "+"; color: var(--gold); font-size: 20px; flex-shrink: 0; transition: transform .2s; }
+.faq-item.open .faq-q::after { transform: rotate(45deg); }
+.faq-a {
+  padding: 0 22px;
+  font-size: 14px;
+  color: var(--text2);
+  line-height: 1.7;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .3s ease, padding .3s ease;
+}
+.faq-item.open .faq-a { max-height: 300px; padding: 0 22px 18px; }
+
+/* ═══════════════════════════════════════════════════════════
+   FINAL CTA
+═══════════════════════════════════════════════════════════ */
+.cta-section {
+  background: linear-gradient(135deg, #0d1117 0%, #1a2a0a 50%, #0d1117 100%);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.cta-inner {
+  max-width: 700px;
+  margin: 0 auto;
+  text-align: center;
+  padding: 80px 24px;
+}
+.cta-inner h2 {
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  color: #fff;
+  margin-bottom: 18px;
+}
+.cta-inner p { font-size: 17px; color: var(--text2); margin-bottom: 36px; line-height: 1.65; }
+.cta-badges {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  font-size: 13px;
+  color: var(--text3);
+}
+.cta-badges span::before { content: "✓ "; color: var(--green); font-weight: 700; }
+
+/* ═══════════════════════════════════════════════════════════
+   FOOTER MINI
+═══════════════════════════════════════════════════════════ */
+.footer-mini {
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  padding: 28px 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text3);
+}
+.footer-mini a { color: var(--text3); }
+.footer-mini a:hover { color: var(--gold); }
+
+/* ═══════════════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════════════ */
+.text-center { text-align: center; }
+.text-gold { color: var(--gold); }
+.mb-0 { margin-bottom: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE
+═══════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  .topnav-links .nav-link { display: none; }
+  .step-arrow { display: none; }
+  .stats-inner { gap: 32px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ──────────────────── NAV ──────────────────── -->
+<nav class="topnav">
+  <a href="https://ingmining.com" class="topnav-brand">
+    <div class="brand-mark">ING</div>
+    ING Mining
+  </a>
+  <div class="topnav-links">
+    <a href="https://ingmining.com/used-miners" class="nav-link">Shop Miners</a>
+    <a href="https://ingmining.com" class="nav-link">Home</a>
+    <a href="https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest" class="nav-dl" download>⬇ Free Download</a>
+  </div>
+</nav>
+
+<!-- ──────────────────── BREADCRUMB ──────────────────── -->
+<div class="breadcrumb">
+  <a href="https://ingmining.com">ING Mining</a>
+  <span>›</span>
+  <a href="#">Free Tools</a>
+  <span>›</span>
+  <span>ING Listing Engine</span>
+</div>
+
+<!-- ──────────────────── HERO ──────────────────── -->
+<section>
+  <div class="hero">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      100% Free — No Subscription Required
+    </div>
+    <h1>
+      eBay Listings on <em>Autopilot.</em><br>
+      Powered by AI.
+    </h1>
+    <p class="hero-sub">
+      Paste any product URL and ING Listing Engine generates a complete, publish-ready eBay listing in about 10 seconds — title, description, item specifics, photos, and pricing. Then publishes directly to your eBay account.
+    </p>
+    <div class="hero-actions">
+      <a href="https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest" class="btn-primary" download>
+        ⬇ Download for Windows — Free
+      </a>
+      <a href="#demo" class="btn-secondary">
+        See Screenshots →
+      </a>
+    </div>
+    <div class="hero-meta">
+      <span>Windows 10 &amp; 11</span>
+      <span>No install required</span>
+      <span>Single .exe file</span>
+      <span>No subscription, no expiry</span>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── APP PREVIEW ──────────────────── -->
+<div class="app-preview-wrap">
+  <div class="app-preview-frame">
+    <div class="frame-bar">
+      <div class="frame-dot r"></div>
+      <div class="frame-dot y"></div>
+      <div class="frame-dot g"></div>
+      <div class="frame-url">localhost:9330 — ING Listing Engine</div>
+    </div>
+    <img
+      src="https://ingmining.com/wp-content/uploads/2026/06/01-dashboard-overview.png"
+      alt="ING Listing Engine dashboard overview — main interface showing listing form and photo grid"
+      loading="lazy">
+  </div>
+</div>
+
+<!-- ──────────────────── STATS ──────────────────── -->
+<div class="stats-bar">
+  <div class="stats-inner">
+    <div class="stat">
+      <div class="stat-num">~10s</div>
+      <div class="stat-lbl">Listing Generated</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">20+</div>
+      <div class="stat-lbl">Fields Auto-Filled</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">1</div>
+      <div class="stat-lbl">Click to Publish</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">$0</div>
+      <div class="stat-lbl">Cost — Forever</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────── HOW IT WORKS ──────────────────── -->
+<section class="section how-section">
+  <div class="section-inner">
+    <div class="section-label">How It Works</div>
+    <h2 class="section-title">Three steps. Ten seconds.</h2>
+    <p class="section-sub">No manual typing, no copy-pasting specs, no hunting for category IDs. The AI handles everything.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Paste a Product URL</h3>
+        <p>Drop in any URL — your supplier's page, a manufacturer site, another eBay listing, Amazon, wherever you source product info. The AI reads the full page.</p>
+        <div class="step-arrow">›</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>AI Fills Everything</h3>
+        <p>Claude AI writes a keyword-optimized title, professional HTML description, selects the right eBay category, fills 20+ item specifics, pulls all product photos, and estimates pricing from current eBay sold data.</p>
+        <div class="step-arrow">›</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Review &amp; Publish</h3>
+        <p>Scan the AI-filled listing, make any tweaks you want, then hit Publish. The app connects directly to your eBay seller account via OAuth and creates the live listing instantly.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── SCREENSHOT SHOWCASE ──────────────────── -->
+<section class="section tabs-section" id="demo">
+  <div class="section-inner">
+    <div class="section-label">Feature Walkthrough</div>
+    <h2 class="section-title">Every feature, shown.</h2>
+    <p class="section-sub">Real screenshots from the app — click each tab to see exactly what you get.</p>
+
+    <div class="tab-nav" role="tablist">
+      <button class="tab-btn active" onclick="showTab('url-import')"    role="tab">URL Import</button>
+      <button class="tab-btn"        onclick="showTab('ai-listing')"    role="tab">AI Listing</button>
+      <button class="tab-btn"        onclick="showTab('item-specifics')" role="tab">Item Specifics</button>
+      <button class="tab-btn"        onclick="showTab('bulk-import')"   role="tab">Bulk Import</button>
+      <button class="tab-btn"        onclick="showTab('publish-ready')" role="tab">Publish</button>
+      <button class="tab-btn"        onclick="showTab('inventory')"     role="tab">Inventory</button>
+    </div>
+
+    <!-- URL Import -->
+    <div class="tab-panel active" id="tab-url-import">
+      <div class="tab-info">
+        <h3>Paste Any Product URL</h3>
+        <p>The starting point is as simple as it gets. Copy any product URL — supplier page, manufacturer site, existing marketplace listing — and paste it into the import field. The AI handles everything from there.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">Works with any website — no scraper configuration needed</div>
+          <div class="tab-feat">Reads product title, specs, photos, and description automatically</div>
+          <div class="tab-feat">Processes in ~10 seconds from URL to filled listing</div>
+          <div class="tab-feat">Supports ASIC miners, electronics, general merchandise, and more</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/04-url-product-import.png"
+          alt="ING Listing Engine URL import screen — paste product URL to auto-fill eBay listing"
+          loading="lazy">
+      </div>
+    </div>
+
+    <!-- AI Listing -->
+    <div class="tab-panel" id="tab-ai-listing">
+      <div class="tab-info">
+        <h3>Complete Listing, Auto-Filled</h3>
+        <p>After the AI reads your product URL, your entire eBay listing form populates automatically. Title is keyword-optimized for eBay search ranking. Description is professional HTML with a formatted spec table.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">Keyword-optimized title under 80 characters</div>
+          <div class="tab-feat">Professional HTML description with spec table</div>
+          <div class="tab-feat">eBay category selected automatically</div>
+          <div class="tab-feat">Pricing estimated from current eBay sold comparables</div>
+          <div class="tab-feat">Product photos pulled directly from source page</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/06-ai-autofilled-listing.png"
+          alt="AI autofilled eBay listing — title, description and category populated automatically"
+          loading="lazy">
+      </div>
+    </div>
+
+    <!-- Item Specifics -->
+    <div class="tab-panel" id="tab-item-specifics">
+      <div class="tab-info">
+        <h3>20+ Item Specifics, Done</h3>
+        <p>Item specifics are the most tedious part of eBay listing — brand, model, compatibility, algorithm, hashrate, power, connectivity. The AI fills every field it can find data for, adapting to the product category.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">Brand, Model, MPN auto-detected</div>
+          <div class="tab-feat">Mining-specific fields: Algorithm, Hashrate, Power Draw</div>
+          <div class="tab-feat">Condition, compatible currencies, connectivity</div>
+          <div class="tab-feat">eBay-required fields flagged so nothing gets missed</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/07-item-specifics-autofill.png"
+          alt="eBay item specifics autofill — brand, model, hashrate, algorithm fields populated by AI"
+          loading="lazy">
+      </div>
+    </div>
+
+    <!-- Bulk Import -->
+    <div class="tab-panel" id="tab-bulk-import">
+      <div class="tab-info">
+        <h3>Bulk Import Entire Collections</h3>
+        <p>For sellers with large inventory — paste a supplier's collection or category page URL, and every product on that page gets processed simultaneously. Each product opens as its own tab, fully pre-filled and ready to publish.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">Paste one collection URL, process all products at once</div>
+          <div class="tab-feat">Each product gets its own pre-filled draft tab</div>
+          <div class="tab-feat">Progress bar shows import status in real time</div>
+          <div class="tab-feat">Review and publish at your own pace</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/05-bulk-collection-import-progress.png"
+          alt="Bulk collection import progress — multiple eBay listings being processed simultaneously"
+          loading="lazy">
+      </div>
+    </div>
+
+    <!-- Publish Ready -->
+    <div class="tab-panel" id="tab-publish-ready">
+      <div class="tab-info">
+        <h3>One Click to Go Live on eBay</h3>
+        <p>When you're happy with the listing, hit Publish. The app connects directly to your eBay seller account via OAuth and creates the active listing instantly. No browser switching, no copy-pasting.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">Publishes live to eBay via the official Sell API</div>
+          <div class="tab-feat">Your eBay account connected securely via OAuth</div>
+          <div class="tab-feat">Listing appears active on eBay immediately</div>
+          <div class="tab-feat">Confirmation and listing ID shown in the app</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/09-publish-ready-listing.png"
+          alt="Publish-ready eBay listing with one-click publish button — direct eBay Sell API integration"
+          loading="lazy">
+      </div>
+    </div>
+
+    <!-- Inventory -->
+    <div class="tab-panel" id="tab-inventory">
+      <div class="tab-info">
+        <h3>Track Your Published Inventory</h3>
+        <p>All listings published through the app are tracked in the built-in inventory dashboard. See what's live, what's in draft, and manage your listings without leaving the app.</p>
+        <div class="tab-feats">
+          <div class="tab-feat">View all published and draft listings in one place</div>
+          <div class="tab-feat">Status tracking — active, draft, sold</div>
+          <div class="tab-feat">Quick access to re-edit any listing</div>
+          <div class="tab-feat">Activity log shows all recent actions</div>
+        </div>
+      </div>
+      <div class="tab-screenshot">
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/03-dashboard-inventory.png"
+          alt="ING Listing Engine inventory dashboard — track published and draft eBay listings"
+          loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── FEATURE GRID ──────────────────── -->
+<section class="section features-section">
+  <div class="section-inner">
+    <div class="section-label">Full Feature Set</div>
+    <h2 class="section-title">Everything you need to list faster.</h2>
+    <p class="section-sub">Every feature is included, unlocked, and free — no tiers, no upsells.</p>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feat-icon">🔗</div>
+        <h3>URL-to-Listing Import</h3>
+        <p>Paste any product URL and Claude AI reads the page, extracting all listing data automatically — works on any website without configuration.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">⚡</div>
+        <h3>Bulk Collection Import</h3>
+        <p>Paste a supplier's category page and every product gets processed simultaneously into separate draft tabs — ready to review and publish.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">📝</div>
+        <h3>AI-Written Descriptions</h3>
+        <p>Professional HTML descriptions with formatted spec tables, written to maximize eBay buyer engagement and search visibility.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">🏷️</div>
+        <h3>Keyword-Optimized Titles</h3>
+        <p>Titles are generated under 80 characters with eBay search keywords included — using real eBay ranking signals.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">📋</div>
+        <h3>Automatic Item Specifics</h3>
+        <p>20+ item specifics fields filled per listing including brand, model, MPN, and category-specific fields like hashrate for mining hardware.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">📸</div>
+        <h3>Photo Editor Built In</h3>
+        <p>Crop, rotate, adjust, add text, draw shapes, apply filters, and remove backgrounds — all without leaving the app.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">💰</div>
+        <h3>Pricing from Sold Comps</h3>
+        <p>Suggested pricing is estimated from current eBay sold comparable data — not just random guesses.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feat-icon">🚀</div>
+        <h3>Direct eBay Publishing</h3>
+        <p>One click publishes your listing live to eBay via the official Sell API — no copy-pasting into Seller Hub.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── COMPARE ──────────────────── -->
+<section class="section compare-section">
+  <div class="section-inner">
+    <div class="section-label">Compare</div>
+    <h2 class="section-title">vs. the alternatives.</h2>
+    <p class="section-sub">See how ING Listing Engine stacks up against manual listing and paid tools.</p>
+
+    <div class="compare-wrap">
+      <div class="compare-table">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%">Feature</th>
+              <th class="highlight">ING Listing Engine</th>
+              <th>Manual (eBay Seller Hub)</th>
+              <th>Paid Listing Tools</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="feat-name">Price</td>
+              <td class="col-ing gold">Free forever</td>
+              <td class="yes">Free</td>
+              <td class="no">$20–$100/mo</td>
+            </tr>
+            <tr>
+              <td class="feat-name">Time per listing</td>
+              <td class="col-ing gold">~10 seconds</td>
+              <td class="no">20–30 minutes</td>
+              <td class="text2">5–15 minutes</td>
+            </tr>
+            <tr>
+              <td class="feat-name">AI-written descriptions</td>
+              <td class="col-ing yes">✓ Included</td>
+              <td class="no">✗ Manual</td>
+              <td class="no">✗ Templates only</td>
+            </tr>
+            <tr>
+              <td class="feat-name">Item specifics auto-fill</td>
+              <td class="col-ing yes">✓ 20+ fields</td>
+              <td class="no">✗ All manual</td>
+              <td class="no">Partial</td>
+            </tr>
+            <tr>
+              <td class="feat-name">URL-to-listing import</td>
+              <td class="col-ing yes">✓ Any URL</td>
+              <td class="no">✗ None</td>
+              <td class="no">Supplier-specific only</td>
+            </tr>
+            <tr>
+              <td class="feat-name">Bulk import</td>
+              <td class="col-ing yes">✓ Collection pages</td>
+              <td class="no">✗ None</td>
+              <td class="yes">✓ CSV only</td>
+            </tr>
+            <tr>
+              <td class="feat-name">Built-in photo editor</td>
+              <td class="col-ing yes">✓ Full editor</td>
+              <td class="no">✗ None</td>
+              <td class="no">✗ None</td>
+            </tr>
+            <tr>
+              <td class="feat-name">No install required</td>
+              <td class="col-ing yes">✓ Single .exe</td>
+              <td class="yes">✓ Browser</td>
+              <td class="no">Usually requires install</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── FAQ ──────────────────── -->
+<section class="section faq-section">
+  <div class="section-inner">
+    <div class="section-label">FAQ</div>
+    <h2 class="section-title">Common questions.</h2>
+    <p class="section-sub">Everything you need to know before downloading.</p>
+
+    <div class="faq-grid">
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Is it really free? What's the catch?</div>
+        <div class="faq-a">No catch. ING Listing Engine is freeware — no subscription, no expiry, no feature gating. It was built to solve a real problem and released free. You do need your own Claude AI API key (Anthropic offers free tier credits) and your own eBay seller account.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">What do I need to get started?</div>
+        <div class="faq-a">Windows 10 or 11, a free Anthropic Claude API key (for AI features), and an eBay seller account. The app walks you through connecting both during first-time setup. No install — just double-click the .exe file.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Does it work for products outside of mining hardware?</div>
+        <div class="faq-a">Yes. The AI adapts to any product category — electronics, tools, clothing, collectibles, auto parts, sporting goods. The item specifics it fills will match whatever eBay category the product belongs to.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Is my eBay account information secure?</div>
+        <div class="faq-a">Your credentials are stored locally in a credentials.json file on your own PC — they never leave your machine and are not sent to any third-party server. eBay authentication uses the official OAuth flow.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Can I edit the AI-generated listing before publishing?</div>
+        <div class="faq-a">Absolutely. Everything the AI fills is fully editable before you publish. The AI gives you a strong starting point — you review, tweak, and approve before anything goes live on eBay.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">How does the bulk import work?</div>
+        <div class="faq-a">Paste a collection or category page URL (e.g., a supplier's product grid page). The app detects all product links on the page and processes each one in parallel. Each product opens as its own draft tab with AI-filled fields, ready to review and publish one by one.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">What eBay marketplaces are supported?</div>
+        <div class="faq-a">The app uses the eBay Sell API and currently targets eBay US (ebay.com). eBay sandbox mode is also supported for testing without creating live listings.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q" onclick="toggleFaq(this)">Where can I get help or report bugs?</div>
+        <div class="faq-a">Open an issue on the GitHub repository at github.com/essquireo0o/ING-eBay-Autolister — or email ING Mining directly. Active development continues and bug reports are taken seriously.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── FINAL CTA ──────────────────── -->
+<section class="section cta-section">
+  <div class="cta-inner">
+    <h2>Start listing in 60 seconds.</h2>
+    <p>Download the free .exe, connect your eBay account, and paste your first product URL. Your listing will be filled and ready to publish before you finish your coffee.</p>
+    <a href="https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest" class="btn-primary" style="margin:0 auto;display:inline-flex" download>
+      ⬇ Download ING Listing Engine — Free
+    </a>
+    <div class="cta-badges">
+      <span>Windows 10 &amp; 11</span>
+      <span>No install required</span>
+      <span>No subscription</span>
+      <span>No expiry</span>
+    </div>
+  </div>
+</section>
+
+<!-- ──────────────────── FOOTER ──────────────────── -->
+<footer class="footer-mini">
+  <p>
+    ING Listing Engine is a free tool by <a href="https://ingmining.com">ING Mining™</a> —
+    <a href="https://ingmining.com/used-miners">Shop ASIC Miners</a> ·
+    <a href="https://github.com/essquireo0o/ING-eBay-Autolister">GitHub</a> ·
+    <a href="https://ingmining.com/contact-us">Contact</a>
+  </p>
+  <p style="margin-top:8px">© 2026 ING Mining LLC · <a href="https://tsdr.uspto.gov/#caseNumber=97806036&caseSearchType=US_APPLICATION&caseType=SERIAL_NO&searchType=statusSearch">Registered U.S. Trademark</a></p>
+</footer>
+
+<script>
+// Tab switcher
+function showTab(id) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// FAQ accordion
+function toggleFaq(el) {
+  const item = el.parentElement;
+  const isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item').forEach(f => f.classList.remove('open'));
+  if (!isOpen) item.classList.add('open');
+}
+</script>
+</body>
+</html>

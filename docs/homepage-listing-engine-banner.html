@@ -1,0 +1,140 @@
+<!-- ═══════════════════════════════════════════════════════════════
+     ING LISTING ENGINE — Homepage Banner Block
+     Paste this into a WordPress Custom HTML block on the homepage.
+     Place it after the hero/stats section, before or after RigAlert.
+═══════════════════════════════════════════════════════════════ -->
+<style>
+.ing-le-banner{
+  background:linear-gradient(135deg,#0a0e14 0%,#111e0a 60%,#0a0e14 100%);
+  border:1px solid #1f2937;border-radius:18px;
+  padding:52px 40px;margin:48px auto;max-width:1100px;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  position:relative;overflow:hidden;
+}
+.ing-le-banner::before{
+  content:'';position:absolute;top:-60px;right:-60px;
+  width:320px;height:320px;
+  background:radial-gradient(circle,rgba(255,195,0,.12) 0%,transparent 70%);
+  pointer-events:none;
+}
+.ing-le-inner{display:flex;align-items:center;gap:48px;flex-wrap:wrap;}
+.ing-le-text{flex:1;min-width:260px;}
+.ing-le-eyebrow{
+  display:inline-flex;align-items:center;gap:7px;
+  background:rgba(255,195,0,.1);border:1px solid rgba(255,195,0,.3);
+  border-radius:100px;padding:4px 13px;
+  font-size:11px;font-weight:700;color:#ffc300;
+  letter-spacing:.8px;text-transform:uppercase;margin-bottom:18px;
+}
+.ing-le-dot{width:6px;height:6px;background:#22c55e;border-radius:50%;}
+.ing-le-banner h2{
+  font-size:clamp(24px,3vw,38px);font-weight:800;letter-spacing:-1px;
+  line-height:1.1;color:#ffffff;margin:0 0 14px;
+}
+.ing-le-banner h2 span{color:#ffc300;}
+.ing-le-banner p{
+  font-size:15px;color:#9ca3af;line-height:1.7;margin:0 0 24px;
+  max-width:540px;
+}
+.ing-le-feats{
+  display:flex;flex-direction:column;gap:7px;margin-bottom:28px;
+}
+.ing-le-feat{
+  display:flex;align-items:center;gap:9px;
+  font-size:13px;color:#d1d5db;font-weight:500;
+}
+.ing-le-feat::before{content:"✓";color:#22c55e;font-weight:800;font-size:13px;}
+.ing-le-actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+.ing-le-btn-dl{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:13px 26px;
+  background:#ffc300;color:#111;
+  font-size:14px;font-weight:700;
+  border-radius:9px;text-decoration:none;
+  box-shadow:0 4px 18px rgba(255,195,0,.35);
+  transition:all .15s;
+}
+.ing-le-btn-dl:hover{background:#d4a017;text-decoration:none;transform:translateY(-1px);}
+.ing-le-btn-demo{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:13px 22px;
+  background:transparent;border:1px solid #2d3748;
+  color:#e5e7eb;font-size:14px;font-weight:600;
+  border-radius:9px;text-decoration:none;transition:all .15s;
+}
+.ing-le-btn-demo:hover{background:#1a2233;border-color:#4b5563;text-decoration:none;}
+.ing-le-img{
+  flex:0 0 420px;max-width:420px;
+}
+@media(max-width:860px){.ing-le-img{flex:1 1 100%;max-width:100%;}}
+.ing-le-img-frame{
+  background:#111827;border:1px solid #1f2937;border-radius:11px;
+  overflow:hidden;box-shadow:0 16px 56px rgba(0,0,0,.6),0 0 0 1px rgba(255,195,0,.06);
+}
+.ing-le-img-bar{
+  background:#0d1117;border-bottom:1px solid #1f2937;height:30px;
+  display:flex;align-items:center;padding:0 10px;gap:5px;
+}
+.ing-le-dot-r{width:9px;height:9px;border-radius:50%;background:#ff5f57;}
+.ing-le-dot-y{width:9px;height:9px;border-radius:50%;background:#ffbd2e;}
+.ing-le-dot-g{width:9px;height:9px;border-radius:50%;background:#28c840;}
+.ing-le-img-frame img{width:100%;display:block;}
+.ing-le-free-note{
+  font-size:11px;color:#4b5563;margin-top:10px;
+  display:flex;gap:14px;flex-wrap:wrap;
+}
+.ing-le-free-note span::before{content:"· ";}
+.ing-le-free-note span:first-child::before{content:"";}
+</style>
+
+<div class="ing-le-banner">
+  <div class="ing-le-inner">
+    <div class="ing-le-text">
+      <div class="ing-le-eyebrow">
+        <span class="ing-le-dot"></span>
+        Free eBay Tool from ING Mining
+      </div>
+      <h2>
+        List ASIC Miners on eBay<br>
+        in <span>10 Seconds Flat.</span>
+      </h2>
+      <p>
+        ING Listing Engine uses Claude AI to turn any product URL into a complete, publish-ready eBay listing — title, description, item specifics, photos, and pricing. Free for Windows. No subscription.
+      </p>
+      <div class="ing-le-feats">
+        <div class="ing-le-feat">Paste a URL → AI fills all 20+ listing fields automatically</div>
+        <div class="ing-le-feat">Bulk import entire supplier collections at once</div>
+        <div class="ing-le-feat">Built-in photo editor — crop, adjust, remove background</div>
+        <div class="ing-le-feat">Publishes directly to your eBay account via official API</div>
+      </div>
+      <div class="ing-le-actions">
+        <a href="https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest" class="ing-le-btn-dl" download>
+          ⬇ Free Download — Windows
+        </a>
+        <a href="https://ingmining.com/listing-engine-demo/" class="ing-le-btn-demo">
+          See Demo &amp; Screenshots →
+        </a>
+      </div>
+      <div class="ing-le-free-note">
+        <span>Windows 10 &amp; 11</span>
+        <span>No install required</span>
+        <span>No subscription</span>
+        <span>Freeware</span>
+      </div>
+    </div>
+
+    <div class="ing-le-img">
+      <div class="ing-le-img-frame">
+        <div class="ing-le-img-bar">
+          <span class="ing-le-dot-r"></span>
+          <span class="ing-le-dot-y"></span>
+          <span class="ing-le-dot-g"></span>
+        </div>
+        <img
+          src="https://ingmining.com/wp-content/uploads/2026/06/01-dashboard-overview.png"
+          alt="ING Listing Engine — free AI eBay listing software screenshot"
+          loading="lazy">
+      </div>
+    </div>
+  </div>
+</div>
