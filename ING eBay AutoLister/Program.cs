@@ -1,14 +1,109 @@
 using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
+using Microsoft.Extensions.Hosting.WindowsServices;
 
-// Pin content root to the exe's own directory so credentials/photos survive
-// single-file extraction (AppContext.BaseDirectory points to the temp folder).
+// ── Crash logging ────────────────────────────────────────────────────────────
+// Writes crash.log next to the exe before the process dies so the cause is
+// visible even when there is no console window to read.
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    try
+    {
+        var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+        File.AppendAllText(Path.Combine(dir, "crash.log"),
+            $"{DateTime.Now:u}: {e.ExceptionObject}\n---\n");
+    }
+    catch { }
+};
+
+// ── Service mode detection ────────────────────────────────────────────────────
+// When launched by the Windows SCM, run headless (no tray icon, no browser).
+// Interactive launches (double-click, startup shortcut) get the full tray UI.
+bool isWindowsService = WindowsServiceHelpers.IsWindowsService();
+
+// ── Elevated helper: add inglistingengine.com → 127.0.0.1 to hosts ──────────
+// The installer re-launches with this flag as admin. After adding the entry the
+// process exits immediately — it is not the long-running server instance.
+if (args.Contains("--add-local-dns"))
+{
+    try
+    {
+        const string hostsFile = @"C:\Windows\System32\drivers\etc\hosts";
+        const string entry     = "127.0.0.1  inglistingengine.com";
+        var lines = File.ReadAllLines(hostsFile);
+        if (!lines.Any(l => l.Contains("inglistingengine.com", StringComparison.OrdinalIgnoreCase)))
+            File.AppendAllText(hostsFile, $"\n{entry}\n");
+    }
+    catch { }
+    return;
+}
+
+// ── Single-instance / already-running guard ───────────────────────────────────
+// Service mode: SCM guarantees a single instance — skip the mutex.
+// Interactive mode: if the service (or another instance) is already serving on
+// port 9330, just open the browser and exit rather than fighting over the port.
+System.Threading.Mutex? _mutex = null;
+if (!isWindowsService)
+{
+    bool serverAlive = false;
+    try
+    {
+        using var pingHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+        serverAlive = (await pingHttp.GetAsync("http://localhost:9330/api/setup/status")).IsSuccessStatusCode;
+    }
+    catch { }
+
+    if (serverAlive)
+    {
+        System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
+        return;
+    }
+
+    _mutex = new System.Threading.Mutex(true, "ING-AutoLister-9330", out var isFirstInstance);
+    if (!isFirstInstance)
+    {
+        System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
+        _mutex.Dispose();
+        return;
+    }
+}
+
+// ── Data directory ───────────────────────────────────────────────────────────
+// For portable / perUser installs the exe lives in a writable folder, so data
+// stays next to the exe (original behaviour).  For perMachine / Program Files
+// installs the exe directory is read-only for regular users, so user data goes
+// to %LOCALAPPDATA%\ING AutoLister instead.
 var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? Directory.GetCurrentDirectory();
+var pf     = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+var pf86   = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+var isSystemInstall = !string.IsNullOrEmpty(pf) &&
+    (exeDir.StartsWith(pf,   StringComparison.OrdinalIgnoreCase) ||
+     exeDir.StartsWith(pf86, StringComparison.OrdinalIgnoreCase));
+var dataDir = isWindowsService
+    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ING AutoLister")
+    : isSystemInstall
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ING AutoLister")
+        : exeDir;
+Directory.CreateDirectory(dataDir);
+
+// On the first run after a system install, seed the pre-configured
+// credentials.json from the Program Files template into the user's data folder.
+if (isSystemInstall)
+{
+    var credsDest = Path.Combine(dataDir, "credentials.json");
+    var credsSrc  = Path.Combine(exeDir,  "credentials.json");
+    if (!File.Exists(credsDest) && File.Exists(credsSrc))
+        File.Copy(credsSrc, credsDest);
+}
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
-    ContentRootPath = exeDir
+    ContentRootPath = dataDir
 });
+builder.Host.UseWindowsService();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<CredentialsStore>();
 builder.Services.AddSingleton<ClaudeService>();
@@ -21,6 +116,7 @@ builder.Services.AddSingleton<DraftStore>();
 builder.Services.AddSingleton<LicenseService>();
 builder.Services.AddSingleton<StripeService>();
 builder.Services.AddSingleton<AnalyticsStore>();
+builder.Services.AddSingleton<TerapeakService>();
 
 var app = builder.Build();
 
@@ -100,13 +196,17 @@ _ = Task.Run(async () =>
 });
 
 // ── Trial ─────────────────────────────────────────────────────────
-app.MapGet("/api/trial/status", (CredentialsStore store, LicenseService license) => Results.Ok(new
+app.MapGet("/api/trial/status", (CredentialsStore store, LicenseService license) =>
 {
-    daysRemaining = 9999,
-    expired       = false,
-    licensed      = true,
-    tier          = "freeware"
-}));
+    store.EnsureInstallDate();
+    var lic = license.Current;
+    // Beta license = unlimited free access
+    if (lic.Valid && lic.Tier == "free")
+        return Results.Ok(new { daysRemaining = 9999, expired = false, licensed = true, tier = "beta" });
+    var days    = store.TrialDaysRemaining();
+    var expired = days <= 0;
+    return Results.Ok(new { daysRemaining = days, expired, licensed = !expired, tier = expired ? "expired" : "trial" });
+});
 
 // ── License ───────────────────────────────────────────────────────
 app.MapGet("/api/license/status", (LicenseService license) => Results.Ok(license.Current));
@@ -572,6 +672,61 @@ static string ExtractLocalUrl(string pageText)
     return m.Success ? m.Groups[1].Value : "";
 }
 
+// Scrapes Bing's image search results page for direct ("murl") image URLs.
+// Bing renders these into the static HTML (unlike Google Images, which needs a
+// headless browser), so a plain HttpClient GET is enough — no Playwright needed.
+static async Task<List<string>> SearchProductImagesAsync(string query, int maxResults, IHttpClientFactory httpFactory)
+{
+    var urls = new List<string>();
+    try
+    {
+        var http = httpFactory.CreateClient();
+        http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+        http.Timeout = TimeSpan.FromSeconds(10);
+
+        var searchUrl = $"https://www.bing.com/images/search?q={Uri.EscapeDataString(query)}&form=HDRSC2";
+        var html = await http.GetStringAsync(searchUrl);
+
+        var skipPat = new System.Text.RegularExpressions.Regex("logo|icon|sprite|placeholder|avatar|favicon",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        foreach (System.Text.RegularExpressions.Match m in
+            System.Text.RegularExpressions.Regex.Matches(html, "murl&quot;:&quot;(.*?)&quot;"))
+        {
+            var url = System.Net.WebUtility.HtmlDecode(m.Groups[1].Value);
+            if (skipPat.IsMatch(url)) continue;
+            if (!url.Contains(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                !url.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+                !url.Contains(".png", StringComparison.OrdinalIgnoreCase) &&
+                !url.Contains(".webp", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (urls.Contains(url)) continue;
+
+            urls.Add(url);
+            if (urls.Count >= maxResults) break;
+        }
+    }
+    catch { /* return whatever was found, possibly empty — caller falls back gracefully */ }
+    return urls;
+}
+
+// Identifies an image's real format from its magic bytes rather than trusting the
+// source URL's extension (scraped image URLs frequently have a misleading extension).
+// Returns null if the bytes don't match a format Claude's vision API accepts.
+static string? DetectImageMime(byte[] bytes)
+{
+    if (bytes.Length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+        return "image/png";
+    if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+        return "image/jpeg";
+    if (bytes.Length >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38)
+        return "image/gif";
+    if (bytes.Length >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+        bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50)
+        return "image/webp";
+    return null;
+}
+
 app.MapPost("/api/improve-seo", async (ImproveSeoRequest req, ClaudeService claude, ActionLog log, CredentialsStore store, LicenseService license) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
@@ -589,6 +744,186 @@ app.MapPost("/api/improve-seo", async (ImproveSeoRequest req, ClaudeService clau
         return Results.BadRequest(new { error = ex.Message });
     }
 });
+
+app.MapPost("/api/ai-modify", async (ModifyListingRequest req, ClaudeService claude, ActionLog log, CredentialsStore store, LicenseService license) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+    if (string.IsNullOrWhiteSpace(req.Instruction))
+        return Results.BadRequest(new { error = "Instruction is required." });
+    try
+    {
+        var modified = await claude.ModifyListingAsync(req);
+        log.Add("Info", "AI modification applied", req.Instruction);
+        return Results.Ok(modified);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "AI modification failed", ex.Message);
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/quick-fill", async (QuickFillRequest req, ClaudeService claude, IHttpClientFactory httpFactory, IWebHostEnvironment env, ActionLog log, CredentialsStore store, LicenseService license) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+    if (string.IsNullOrWhiteSpace(req.ItemName))
+        return Results.BadRequest(new { error = "Item name is required." });
+
+    try
+    {
+        log.Add("Info", "Quick-fill from item name", req.ItemName);
+
+        // Search for product photos online and download up to 3 good ones
+        var candidateUrls = await SearchProductImagesAsync(req.ItemName, 8, httpFactory);
+        if (candidateUrls.Count == 0)
+        {
+            // Retry once with punctuation stripped — colons/dashes in the typed item
+            // name occasionally return zero results from the image search.
+            var simplified = System.Text.RegularExpressions.Regex.Replace(req.ItemName, @"[^\w\s]", " ");
+            simplified = System.Text.RegularExpressions.Regex.Replace(simplified, @"\s+", " ").Trim();
+            if (!string.IsNullOrWhiteSpace(simplified) && simplified != req.ItemName)
+                candidateUrls = await SearchProductImagesAsync(simplified, 8, httpFactory);
+        }
+
+        var photosDir = System.IO.Path.Combine(env.ContentRootPath, "generated-photos");
+        System.IO.Directory.CreateDirectory(photosDir);
+
+        var savedUrls = new List<string>();
+        string? firstImageBase64 = null;
+        string? firstImageMime = null;
+
+        foreach (var candidateUrl in candidateUrls)
+        {
+            if (savedUrls.Count >= 3) break;
+            try
+            {
+                var http = httpFactory.CreateClient();
+                http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 Chrome/120.0");
+                http.Timeout = TimeSpan.FromSeconds(8);
+                var imgBytes = await http.GetByteArrayAsync(candidateUrl);
+                if (imgBytes.Length < 2000) continue; // skip tiny icons/tracking pixels
+
+                // Sniff the real format from the file's magic bytes — the URL's extension
+                // often lies (e.g. a ".jpg" URL that actually serves WebP), and Claude's
+                // vision API rejects images whose declared media type doesn't match the bytes.
+                var mime = DetectImageMime(imgBytes);
+                if (mime is null) continue; // not a recognizable image format — skip it
+                var ext  = mime switch { "image/png" => "png", "image/webp" => "webp", "image/gif" => "gif", _ => "jpg" };
+                var file = $"search_{Guid.NewGuid():N}.{ext}";
+                await System.IO.File.WriteAllBytesAsync(System.IO.Path.Combine(photosDir, file), imgBytes);
+                savedUrls.Add($"/generated-photos/{file}");
+
+                if (firstImageBase64 is null)
+                {
+                    firstImageBase64 = Convert.ToBase64String(imgBytes);
+                    firstImageMime   = mime;
+                }
+            }
+            catch { /* try the next candidate */ }
+        }
+
+        if (savedUrls.Count == 0)
+            log.Add("Warning", "No product photos found online", req.ItemName);
+
+        var listing = await claude.AnalyzeProductNameAsync(req.ItemName, firstImageBase64, firstImageMime);
+        listing.ImageUrls = savedUrls;
+
+        return Results.Ok(listing);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Quick-fill failed", ex.Message);
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService terapeak, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(q))
+        return Results.BadRequest(new { error = "Query is required." });
+
+    // Always hand back links to eBay's own research tools as a fallback — Marketplace Insights
+    // (the real sold-comps API) requires a special eBay approval most developer accounts don't
+    // have, and eBay's search page blocks scraping outright. These deep links always work because
+    // they just open in the seller's own already-logged-in browser — no API access needed.
+    var terapeakUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60" +
+                       "&keywords=" + Uri.EscapeDataString(q);
+    var fallbackUrl = "https://www.ebay.com/sch/i.html?_nkw=" + Uri.EscapeDataString(q) + "&LH_Sold=1&LH_Complete=1&_sop=13";
+
+    // 1) Real Terapeak data, if the seller has connected their session (Settings > Terapeak)
+    if (terapeak.IsConnected)
+    {
+        var scrape = await terapeak.ScrapeAsync(q);
+        if (scrape.Status == "ok")
+        {
+            var parsed = ParseTerapeakBodyText(scrape.BodyText, q);
+            if (parsed is not null)
+                return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, parsed.Average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak" });
+        }
+        else if (scrape.Status == "session_expired")
+        {
+            log.Add("Warning", "Terapeak session expired", "Reconnect in Settings.");
+        }
+    }
+
+    // 2) Marketplace Insights API (works automatically if eBay ever approves the scope)
+    try
+    {
+        var result = await ebay.SearchSoldCompsAsync(q);
+        if (result.Count > 0)
+            return Results.Ok(new { result.Query, result.Items, result.Count, result.Average, result.Median, result.Min, result.Max, terapeakUrl, fallbackUrl, source = "marketplace_insights" });
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Sold comps lookup failed", ex.Message);
+    }
+
+    // 3) Links only
+    return Results.Ok(new { query = q, items = Array.Empty<object>(), count = 0, average = 0, median = 0, min = 0, max = 0, terapeakUrl, fallbackUrl, source = "none" });
+});
+
+app.MapPost("/api/terapeak/connect", (TerapeakService terapeak) =>
+{
+    var (started, message) = terapeak.StartLogin();
+    return Results.Ok(new { started, message });
+});
+
+app.MapGet("/api/terapeak/status", (TerapeakService terapeak) =>
+    Results.Ok(new { connected = terapeak.IsConnected, loginInProgress = terapeak.IsLoginInProgress }));
+
+app.MapPost("/api/terapeak/disconnect", (TerapeakService terapeak) =>
+{
+    terapeak.Disconnect();
+    return Results.Ok(new { connected = terapeak.IsConnected });
+});
+
+// Lets me (the assistant) inspect the real rendered page + selectors once a real session
+// is connected, so ParseTerapeakBodyText can be tuned against the actual DOM/text.
+app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terapeak) =>
+{
+    var scrape = await terapeak.ScrapeAsync(q);
+    return Results.Ok(scrape);
+});
+
+static SoldCompsResult? ParseTerapeakBodyText(string text, string query)
+{
+    // Best-effort text parse of the Seller Hub Research page — eBay doesn't publish this page's
+    // structure, so these patterns are an initial guess and may need tuning against a real
+    // logged-in capture (see /api/terapeak/debug-scrape) once selectors are confirmed.
+    var result = new SoldCompsResult { Query = query };
+
+    var avgMatch = System.Text.RegularExpressions.Regex.Match(text,
+        @"Average\s+sold\s+price\D{0,10}\$\s*([\d,]+\.\d{2})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if (avgMatch.Success && decimal.TryParse(avgMatch.Groups[1].Value.Replace(",", ""), out var avg))
+        result.Average = avg;
+
+    var soldMatch = System.Text.RegularExpressions.Regex.Match(text,
+        @"([\d,]+)\s+sold", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    if (soldMatch.Success && int.TryParse(soldMatch.Groups[1].Value.Replace(",", ""), out var count))
+        result.Count = count;
+
+    return result.Count > 0 || result.Average > 0 ? result : null;
+}
 
 app.MapPost("/api/generate-photos", async (GeneratePhotosRequest req, ImageGenerationService imgGen, ActionLog log, CredentialsStore store, LicenseService license) =>
 {
@@ -1072,7 +1407,7 @@ app.MapPost("/api/listing/update", async (UpdateListingRequest req, EbayService 
 });
 
 // ── Owner dashboard ───────────────────────────────────────────────
-app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStore analytics, ActionLog log) =>
+app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStore analytics, ActionLog log, StripeService stripe) =>
 {
     var adminKey = store.EnsureAdminKey();
     if (string.IsNullOrWhiteSpace(k) || k != adminKey)
@@ -1080,16 +1415,20 @@ app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStor
     var snap = analytics.GetSnapshot();
     return Results.Ok(new
     {
-        analytics = snap,
-        recentLogs = log.Recent()
+        analytics       = snap,
+        recentLogs      = log.Recent(),
+        stripeConfigured = stripe.IsConfigured,
+        dashboardUrl    = $"http://localhost:9330/owner?k={adminKey}"
     });
 });
 
-app.MapGet("/owner", (string? k, CredentialsStore store) =>
+app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =>
 {
     var adminKey = store.EnsureAdminKey();
     if (string.IsNullOrWhiteSpace(k) || k != adminKey)
         return Results.Content("<html><body><h2>401 Unauthorized</h2></body></html>", "text/html", statusCode: 401);
+    var stripeConfigured = stripe.IsConfigured;
+    var stripePubKey     = stripe.PublishableKey ?? "";
 
     var html = $$"""
 <!DOCTYPE html>
@@ -1119,9 +1458,23 @@ app.MapGet("/owner", (string? k, CredentialsStore store) =>
 </style>
 </head>
 <body>
-<h1>Owner Dashboard</h1>
+<h1>ING Listing Engine™ — Owner Dashboard</h1>
 <div id="status">Loading…</div>
 <button class="refresh-btn" onclick="load()">Refresh</button>
+
+<div style="background:#1e2330;border:1px solid #2d3748;border-radius:10px;padding:1.25rem;margin-bottom:2rem">
+  <h2 style="margin-bottom:.75rem">Stripe / Monetization</h2>
+  <div style="display:flex;gap:2rem;flex-wrap:wrap;font-size:.9rem">
+    <div><span style="color:#64748b">Status:</span> <strong style="color:{{(stripeConfigured ? "#4ade80" : "#f87171")}}">{{(stripeConfigured ? "✓ Configured" : "✗ Not configured")}}</strong></div>
+    <div><span style="color:#64748b">Monthly:</span> <strong style="color:#60a5fa">$29.99/mo</strong></div>
+    <div><span style="color:#64748b">Annual:</span> <strong style="color:#60a5fa">$249.99/yr</strong></div>
+    <div><span style="color:#64748b">Publishable key:</span> <code style="font-size:.75rem;color:#94a3b8">{{(stripePubKey.Length > 16 ? stripePubKey[..16] + "…" : "(none)")}}</code></div>
+  </div>
+  <div style="margin-top:.75rem;font-size:.8rem;color:#64748b">
+    Checkout endpoints: <code style="color:#93c5fd">POST /api/stripe/checkout</code> (monthly) &nbsp;|&nbsp; <code style="color:#93c5fd">POST /api/stripe/checkout/annual</code>
+  </div>
+</div>
+
 <div id="root"></div>
 <script>
 const KEY = new URLSearchParams(location.search).get('k');
@@ -1170,5 +1523,94 @@ load();
     return Results.Content(html, "text/html");
 });
 
-app.Run("http://localhost:9330");
+// ── Service mode: headless web server, lifecycle managed by Windows SCM ──────
+if (isWindowsService)
+{
+    await app.RunAsync("http://localhost:9330");
+    return;
+}
 
+// ── Interactive mode: background web server + system tray icon ───────────────
+var webTask = app.RunAsync("http://localhost:9330");
+
+// Open the browser automatically once Kestrel has bound the port
+_ = Task.Run(async () =>
+{
+    await Task.Delay(1200);
+    OpenBrowser();
+});
+
+// One-time check: add the local DNS entry for inglistingengine.com if missing
+_ = Task.Run(async () =>
+{
+    await Task.Delay(3000);
+    EnsureLocalDns(exeDir);
+});
+
+System.Windows.Forms.Application.EnableVisualStyles();
+System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
+using var trayIcon = new System.Windows.Forms.NotifyIcon
+{
+    Icon    = System.Drawing.SystemIcons.Application,
+    Text    = "ING AutoLister  •  localhost:9330",
+    Visible = true,
+};
+trayIcon.ShowBalloonTip(
+    3000, "ING AutoLister",
+    "Running in background. Right-click this icon to open or quit.",
+    System.Windows.Forms.ToolTipIcon.Info);
+
+var ctxMenu = new System.Windows.Forms.ContextMenuStrip();
+ctxMenu.Items.Add("Open ING AutoLister", null, (_, _) => OpenBrowser());
+ctxMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+ctxMenu.Items.Add("Quit ING AutoLister", null, (_, _) =>
+{
+    trayIcon.Visible = false;
+    System.Windows.Forms.Application.ExitThread();
+});
+trayIcon.ContextMenuStrip  = ctxMenu;
+trayIcon.DoubleClick      += (_, _) => OpenBrowser();
+
+System.Windows.Forms.Application.Run(); // blocks until ExitThread()
+await app.StopAsync(TimeSpan.FromSeconds(3));
+_mutex?.Dispose();
+
+static void OpenBrowser() =>
+    System.Diagnostics.Process.Start(
+        new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
+
+// Adds inglistingengine.com → 127.0.0.1 to the hosts file by re-launching the
+// exe with --add-local-dns under a UAC elevation prompt (one-time, non-fatal).
+static void EnsureLocalDns(string exeDir)
+{
+    const string hostsFile = @"C:\Windows\System32\drivers\etc\hosts";
+    const string hostname  = "inglistingengine.com";
+    var flagFile = Path.Combine(exeDir, ".dns-configured");
+    if (File.Exists(flagFile)) return;
+    try
+    {
+        var text = File.ReadAllText(hostsFile);
+        if (text.Contains(hostname, StringComparison.OrdinalIgnoreCase))
+        {
+            File.WriteAllText(flagFile, DateTime.Now.ToString("u"));
+            return;
+        }
+    }
+    catch { return; }
+    // Entry missing — elevate to add it
+    try
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName         = Environment.ProcessPath!,
+            Arguments        = "--add-local-dns",
+            Verb             = "runas",
+            UseShellExecute  = true,
+        };
+        using var proc = System.Diagnostics.Process.Start(psi);
+        proc?.WaitForExit(8000);
+        File.WriteAllText(flagFile, DateTime.Now.ToString("u"));
+    }
+    catch { /* user declined UAC — no problem, app still works on localhost */ }
+}
