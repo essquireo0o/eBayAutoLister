@@ -39,12 +39,26 @@ if (args.Contains("--add-local-dns"))
 }
 
 // ── Single-instance / already-running guard ───────────────────────────────────
-// Service mode: SCM guarantees a single instance — skip the mutex.
-// Interactive mode: if the service (or another instance) is already serving on
-// port 9330, just open the browser and exit rather than fighting over the port.
+// Service mode: SCM guarantees a single instance — skip the mutex entirely.
+// Interactive mode:
+//   1. Acquire mutex so only one tray instance runs at a time.
+//   2. If the Windows service is already serving on 9330, show a tray icon
+//      without starting a second web server (opens browser immediately).
+//   3. Otherwise start the server ourselves, then show the tray icon.
 System.Threading.Mutex? _mutex = null;
 if (!isWindowsService)
 {
+    _mutex = new System.Threading.Mutex(true, "ING-AutoLister-9330", out var isFirstInstance);
+    if (!isFirstInstance)
+    {
+        // Another interactive instance (tray) is already running — just open browser
+        System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
+        _mutex.Dispose();
+        return;
+    }
+
+    // Check whether the Windows service is already hosting the web server
     bool serverAlive = false;
     try
     {
@@ -55,16 +69,27 @@ if (!isWindowsService)
 
     if (serverAlive)
     {
-        System.Diagnostics.Process.Start(
-            new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
-        return;
-    }
-
-    _mutex = new System.Threading.Mutex(true, "ING-AutoLister-9330", out var isFirstInstance);
-    if (!isFirstInstance)
-    {
-        System.Diagnostics.Process.Start(
-            new System.Diagnostics.ProcessStartInfo("http://localhost:9330") { UseShellExecute = true });
+        // Service is running — show tray icon as a UI helper (don't start another server)
+        OpenBrowser();
+        System.Windows.Forms.Application.EnableVisualStyles();
+        System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+        using var trayIconSvc = new System.Windows.Forms.NotifyIcon
+        {
+            Icon    = System.Drawing.SystemIcons.Application,
+            Text    = "ING AutoLister  •  localhost:9330",
+            Visible = true,
+        };
+        var ctxMenuSvc = new System.Windows.Forms.ContextMenuStrip();
+        ctxMenuSvc.Items.Add("Open ING AutoLister", null, (_, _) => OpenBrowser());
+        ctxMenuSvc.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        ctxMenuSvc.Items.Add("Close Tray Icon", null, (_, _) =>
+        {
+            trayIconSvc.Visible = false;
+            System.Windows.Forms.Application.ExitThread();
+        });
+        trayIconSvc.ContextMenuStrip = ctxMenuSvc;
+        trayIconSvc.DoubleClick     += (_, _) => OpenBrowser();
+        System.Windows.Forms.Application.Run();
         _mutex.Dispose();
         return;
     }
