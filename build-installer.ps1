@@ -120,6 +120,13 @@ if ($wix) {
         Copy-Item $msiPath $destMsi -Force
         Write-Host "Copied to Desktop: $destMsi" -ForegroundColor Green
 
+        # ── Copy uninstaller to same folder ──────────────────────────────────
+        $uninstallSrc = "$PSScriptRoot\Uninstall-INGAutoLister.bat"
+        if (Test-Path $uninstallSrc) {
+            Copy-Item $uninstallSrc "$desktopMsiDir\Uninstall-INGAutoLister.bat" -Force
+            Write-Host "Uninstaller: $desktopMsiDir\Uninstall-INGAutoLister.bat" -ForegroundColor Green
+        }
+
         exit 0
     } else {
         Write-Warning "WiX build failed (exit $LASTEXITCODE) - falling back to exe/bat installer."

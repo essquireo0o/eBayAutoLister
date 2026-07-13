@@ -7,8 +7,9 @@
   Installs per-machine (requires UAC / admin elevation).
     Exe      -> %ProgramFiles%\ING Mining\ING AutoLister\
     Service  -> INGAutoLister  (auto-start at boot, LocalSystem)
+    Startup  -> HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run (all users)
     Data     -> C:\ProgramData\ING AutoLister\  (app auto-creates on first run)
-  Shortcuts: Desktop, Start Menu, Startup folder (opens browser on login)
+  Shortcuts: Desktop, Start Menu
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
@@ -43,11 +44,7 @@
                             ErrorControl="normal"
                             Account="LocalSystem" />
 
-            <!--
-              Start on install, stop only on uninstall/upgrade (Stop="both"),
-              delete on uninstall.  Wait="no" so the installer doesn't block
-              waiting for Kestrel to finish binding the port.
-            -->
+            <!-- Start on install, stop on upgrade/uninstall, delete on uninstall -->
             <ServiceControl Id="INGAutoListerSvcCtrl"
                             Name="INGAutoLister"
                             Start="install"
@@ -63,26 +60,24 @@
                   KeyPath="yes" />
           </Component>
 
+          <!--
+            HKLM Run key: launches the tray helper exe for every user who logs in.
+            Startup folder shortcuts only fire for the user who ran the installer;
+            HKLM\Run fires for ALL users on every login session.
+            The exe detects the service is running, opens the browser, and stays
+            resident as a tray icon.
+          -->
+          <Component Id="StartupRegComp" Guid="{A2B3C4D5-E6F7-0006-1234-567890ABCDEF}">
+            <RegistryValue Root="HKLM"
+                           Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+                           Name="INGAutoLister"
+                           Type="string"
+                           Value="[INSTALLFOLDER]AutoListerB1.exe"
+                           KeyPath="yes" />
+          </Component>
+
         </Directory>
       </Directory>
-    </StandardDirectory>
-
-    <!-- Startup folder shortcut: on user login, exe pings localhost:9330 and
-         opens the browser (service is already running, no second server starts) -->
-    <StandardDirectory Id="StartupFolder">
-      <Component Id="StartupShortcutComp" Guid="{A2B3C4D5-E6F7-0003-1234-567890ABCDEF}">
-        <Shortcut Id="StartupShortcut"
-                  Name="ING AutoLister"
-                  Description="ING Listing Engine by ING Mining LLC"
-                  Target="[INSTALLFOLDER]AutoListerB1.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
-        <RegistryValue Root="HKCU"
-                       Key="Software\INGMining\AutoLister"
-                       Name="StartupShortcut"
-                       Type="integer"
-                       Value="1"
-                       KeyPath="yes" />
-      </Component>
     </StandardDirectory>
 
     <!-- Desktop shortcut -->
@@ -126,7 +121,7 @@
     <Feature Id="Main" Level="1">
       <ComponentRef Id="MainExeComp" />
       <ComponentRef Id="CredentialsComp" />
-      <ComponentRef Id="StartupShortcutComp" />
+      <ComponentRef Id="StartupRegComp" />
       <ComponentRef Id="DesktopShortcutComp" />
       <ComponentRef Id="StartMenuShortcutComp" />
     </Feature>
