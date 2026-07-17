@@ -45,3 +45,9 @@ ingmining_homepage_reference.html
 *.pdb
 *.nupkg
 publish/
+
+# ── ingmining.com website data — kept in a separate folder, never in this repo ──
+ingmining-server/
+ingmining_homepage_*.html
+docs/_elementor_elements.json
+ING eBay AutoLister/ebay-callback-relay.php
