@@ -1273,6 +1273,25 @@
     </main>
   </div>
 
+  <!-- ── Edit Listing drawer ───────────────────────────────────────────────
+       The existing #form-section is relocated into .edit-drawer-body by
+       initEditDrawer() in app.js, so all field wiring, collectors and save
+       handlers keep working untouched. -->
+  <div id="edit-drawer-overlay" class="edit-drawer-overlay"></div>
+  <aside id="edit-drawer" class="edit-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="edit-drawer-title" aria-hidden="true">
+    <header class="edit-drawer-header">
+      <div class="edit-drawer-heading">
+        <div id="edit-drawer-title" class="edit-drawer-title">Edit Listing</div>
+        <div id="edit-drawer-sub" class="edit-drawer-sub"></div>
+      </div>
+      <span class="edit-drawer-dirty" aria-live="polite">Unsaved</span>
+      <button id="edit-drawer-close" class="edit-drawer-close" type="button"
+              title="Close (Esc)" aria-label="Close edit listing">&times;</button>
+    </header>
+    <div id="edit-drawer-body" class="edit-drawer-body"></div>
+  </aside>
+
   <div id="setup-overlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-header">

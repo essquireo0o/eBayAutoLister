@@ -30,6 +30,7 @@
     bindSupplierAnalyzer();
     bindHomeButtons();
     bindForm();
+    initEditDrawer();
     restoreListingViewMode();
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
@@ -1874,6 +1875,118 @@
     return !!(listing.offerId || (listing.listingId && listing.sku));
   }
 
+  // ── Edit Listing drawer ────────────────────────────────────────────────────
+  // Rather than duplicating the (large, working) listing form, the existing
+  // #form-section node is relocated into the drawer body once at startup. Every
+  // field id, collector and save handler therefore keeps working unchanged —
+  // the drawer only controls visibility, focus and unsaved-change safety.
+
+  let drawerReturnFocusEl = null;   // element that had focus before opening
+  let drawerScrollY       = 0;      // page scroll to restore on close
+  let drawerBaseline      = '';     // serialised form state at open, for dirty check
+
+  function initEditDrawer() {
+    const body = $('edit-drawer-body');
+    const form = $('form-section');
+    if (!body || !form) return;     // markup missing — leave legacy inline behaviour
+
+    body.appendChild(form);         // move, not clone: preserves all live listeners
+
+    on('edit-drawer-close', 'click', () => closeEditDrawer());
+    $('edit-drawer-overlay')?.addEventListener('click', () => closeEditDrawer());
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && isEditDrawerOpen()) {
+        // Let nested overlays (photo editor, modals) consume Escape first.
+        if (document.querySelector('.modal-overlay:not(.hidden), .photo-editor-overlay')) return;
+        closeEditDrawer();
+      }
+    });
+
+    // Keep focus inside the drawer while it is modal.
+    document.addEventListener('focusin', e => {
+      if (!isEditDrawerOpen()) return;
+      const drawer = $('edit-drawer');
+      if (drawer && !drawer.contains(e.target)) drawer.focus();
+    });
+
+    // Any edit inside the drawer marks it dirty.
+    body.addEventListener('input',  () => refreshDrawerDirty());
+    body.addEventListener('change', () => refreshDrawerDirty());
+  }
+
+  function isEditDrawerOpen() {
+    return !!$('edit-drawer')?.classList.contains('open');
+  }
+
+  // A cheap, order-stable snapshot of every control in the drawer. Used only to
+  // detect "has the user touched anything", never to persist listing data.
+  function snapshotDrawerState() {
+    const body = $('edit-drawer-body');
+    if (!body) return '';
+    return [...body.querySelectorAll('input, select, textarea')]
+      .map(el => (el.type === 'checkbox' || el.type === 'radio') ? (el.checked ? '1' : '0') : (el.value ?? ''))
+      .join('');
+  }
+
+  function refreshDrawerDirty() {
+    const drawer = $('edit-drawer');
+    if (!drawer) return;
+    drawer.classList.toggle('dirty', snapshotDrawerState() !== drawerBaseline);
+  }
+
+  function markDrawerClean() {
+    drawerBaseline = snapshotDrawerState();
+    $('edit-drawer')?.classList.remove('dirty');
+  }
+
+  function openEditDrawer(listing) {
+    const drawer  = $('edit-drawer');
+    const overlay = $('edit-drawer-overlay');
+    if (!drawer || !overlay) return;
+
+    drawerReturnFocusEl = document.activeElement;
+    drawerScrollY = window.scrollY;
+
+    const title = listing?.title || listing?.sku || listing?.listingId || 'Listing';
+    setText('edit-drawer-title', title);
+    const bits = [];
+    if (listing?.sku)       bits.push(`SKU ${listing.sku}`);
+    if (listing?.listingId) bits.push(`ID ${listing.listingId}`);
+    if (listing?.status)    bits.push(String(listing.status).toUpperCase());
+    setText('edit-drawer-sub', bits.join('  ·  '));
+
+    overlay.classList.add('open');
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    drawer.setAttribute('tabindex', '-1');
+    document.body.classList.add('drawer-open');
+
+    $('edit-drawer-body').scrollTop = 0;
+    markDrawerClean();               // baseline AFTER the form has been filled
+    setTimeout(() => drawer.focus(), 30);
+  }
+
+  function closeEditDrawer(force) {
+    const drawer = $('edit-drawer');
+    if (!drawer || !isEditDrawerOpen()) return;
+
+    if (!force && drawer.classList.contains('dirty') &&
+        !confirm('You have unsaved changes to this listing.\n\nClose the editor and discard them?')) return;
+
+    drawer.classList.remove('open', 'dirty');
+    drawer.setAttribute('aria-hidden', 'true');
+    $('edit-drawer-overlay')?.classList.remove('open');
+    document.body.classList.remove('drawer-open');
+
+    // Restore the caller's scroll position and keyboard focus.
+    window.scrollTo({ top: drawerScrollY, behavior: 'auto' });
+    if (drawerReturnFocusEl?.isConnected) {
+      try { drawerReturnFocusEl.focus({ preventScroll: true }); } catch { /* non-focusable */ }
+    }
+    drawerReturnFocusEl = null;
+  }
+
   function loadListingIntoForm(listing, sourceEl) {
     document.querySelectorAll('.listing-card.active, .listings-table tr.active').forEach(c => c.classList.remove('active'));
     sourceEl?.classList?.add('active');
@@ -1894,7 +2007,12 @@
     fillForm(d);
     set('f-format', d.listingFormat || 'FIXED_PRICE');
     $('form-section')?.classList.remove('hidden');
-    $('form-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Present the form in the right-side drawer when that markup is present;
+    // fall back to the original inline scroll behaviour if it is not.
+    if ($('edit-drawer')) openEditDrawer(listing);
+    else $('form-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
     addActivity('Edit opened', listing.title || listing.sku || listing.listingId || 'Listing selected');
   }
 
@@ -4264,6 +4382,7 @@
       $('btn-update')?.classList.add('hidden');
       $('btn-new-listing')?.classList.add('hidden');
       $('form-section')?.classList.add('hidden');
+      closeEditDrawer(true);   // leaving edit mode entirely — nothing to warn about
       showAiSection();
       hideResult();
     });
@@ -4490,6 +4609,7 @@
     listing.data = { ...payload };
     renderListings();
     updateStats();
+    markDrawerClean();   // saved — drop the unsaved-changes guard
   }
 
   function renderDraftPreview(payload) {

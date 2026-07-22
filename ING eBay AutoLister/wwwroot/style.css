@@ -3721,3 +3721,153 @@ textarea {
 
 .opportunity-insight-value.good { color: #15803d; }
 .opportunity-insight-value.bad  { color: #b91c1c; }
+
+/* ── Edit Listing drawer ─────────────────────────────────────────────────────
+   Hosts the existing #form-section in a right-side sliding panel so the
+   listings stay visible behind it. The form markup itself is unchanged — app.js
+   relocates the node into .edit-drawer-body at init (see initEditDrawer). */
+
+.edit-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 27, 29, .55);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .22s ease, visibility .22s ease;
+  z-index: 900;
+}
+
+.edit-drawer-overlay.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.edit-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(980px, 92vw);
+  max-width: 100%;
+  background: var(--page);
+  box-shadow: -24px 0 60px rgba(5, 35, 38, .28);
+  transform: translateX(100%);
+  transition: transform .26s cubic-bezier(.22, .61, .36, 1);
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+}
+
+.edit-drawer.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.edit-drawer-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 22px;
+  background: var(--teal-900);
+  color: #fff;
+  border-bottom: 3px solid var(--gold);
+}
+
+.edit-drawer-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.edit-drawer-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-drawer-sub {
+  font-size: 12px;
+  color: #9fc0c2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.edit-drawer-dirty {
+  display: none;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--teal-950);
+  background: var(--gold);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.edit-drawer.dirty .edit-drawer-dirty { display: inline-block; }
+
+.edit-drawer-close {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.edit-drawer-close:hover {
+  background: rgba(255, 255, 255, .12);
+  border-color: var(--gold);
+}
+
+.edit-drawer-close:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.edit-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 22px 40px;
+}
+
+/* The hosted form is already a .panel; inside the drawer it should not
+   double up on card chrome or its own max-width. */
+.edit-drawer-body > .form-section {
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  max-width: none;
+}
+
+body.drawer-open {
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .edit-drawer { width: 100vw; }
+  .edit-drawer-body { padding: 14px 14px 32px; }
+  .edit-drawer-header { padding: 13px 15px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edit-drawer,
+  .edit-drawer-overlay { transition: none; }
+}
