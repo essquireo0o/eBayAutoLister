@@ -82,6 +82,22 @@ public class ProductNormalizerTests
     }
 
     [Fact]
+    public void Normalize_NamedBrandAccessoryListing_IsFlaggedAsAccessoryListing()
+    {
+        var normalizer = CreateNormalizer();
+
+        // Regression test: a real accessory listing that names its host product's brand right in
+        // the title (very common — "iPad Screen Protector") used to slip through as NOT an
+        // accessory, because the extractor correctly recognizes Brand="Apple" from "iPad" and the
+        // old check required Brand to ALSO be missing. That let accessories get priced against
+        // comparables for the full host product (a $57 screen protector "worth" $400+ like a real
+        // iPad) instead of being hard-rejected by OpportunityScoringService as intended.
+        var product = normalizer.Normalize("iPad Pro 11-inch Screen Protector - Anti-Glare, Easy Install Kit, HD Clear");
+
+        Assert.True(product.IsAccessoryListing);
+    }
+
+    [Fact]
     public void Normalize_MergedCamelCaseWords_AreSplitBeforeExtraction()
     {
         var normalizer = CreateNormalizer();

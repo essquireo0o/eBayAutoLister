@@ -80,6 +80,21 @@
       </Directory>
     </StandardDirectory>
 
+    <!--
+      Framework-dependent runtime files: since PublishSingleFile is off (the bundled single
+      exe was getting quarantined by endpoint AV as a false-positive packer/dropper), publish
+      now drops ~390 loose files (DLLs, deps.json, etc.) next to AutoListerB1.exe. Harvest
+      everything in SourceDir except the two files that are already their own Component above
+      (AutoListerB1.exe carries the ServiceInstall; credentials.json gets redacted separately
+      by build-installer.ps1).
+    -->
+    <ComponentGroup Id="RuntimeFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.SourceDir)**">
+        <Exclude Files="$(var.SourceDir)AutoListerB1.exe" />
+        <Exclude Files="$(var.SourceDir)credentials.json" />
+      </Files>
+    </ComponentGroup>
+
     <!-- Desktop shortcut -->
     <StandardDirectory Id="DesktopFolder">
       <Component Id="DesktopShortcutComp" Guid="{A2B3C4D5-E6F7-0004-1234-567890ABCDEF}">
@@ -122,6 +137,7 @@
       <ComponentRef Id="MainExeComp" />
       <ComponentRef Id="CredentialsComp" />
       <ComponentRef Id="StartupRegComp" />
+      <ComponentGroupRef Id="RuntimeFiles" />
       <ComponentRef Id="DesktopShortcutComp" />
       <ComponentRef Id="StartMenuShortcutComp" />
     </Feature>

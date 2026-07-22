@@ -131,13 +131,15 @@ public sealed partial class ProductNormalizer(ProductIdentityExtractor identityE
 
         var accessories = AccessoryVocabulary.Where(a => ContainsWord(lowerText, a)).ToList();
         product.Accessories = accessories;
-        // An accessory word alone doesn't disqualify a listing (a phone case matters when you're
-        // pricing phone cases) — it only means "this IS an accessory" when the extractor also
-        // couldn't recognize a real Brand/Category to anchor a main-product identity to. Model
-        // isn't a useful signal here — BuildModel always returns whatever text is left over, so
-        // it's non-null for nearly any listing, accessory or not.
-        product.IsAccessoryListing = accessories.Count > 0 &&
-            string.IsNullOrWhiteSpace(product.Brand) && string.IsNullOrWhiteSpace(product.Category);
+        // An accessory word only means "this listing IS an accessory" when it's the subject of
+        // the title, not a bundled extra mentioned in passing ("...S19j Pro 104TH with case and
+        // box"). Requiring Brand/Category to also be missing had it backwards: a real accessory
+        // almost always names its host product's brand ("iPad Screen Protector", "Antminer Power
+        // Cable"), so that brand naturally gets recognized — it doesn't mean the listing isn't an
+        // accessory. Position is the better signal: a leading accessory word ("Screen Protector
+        // for iPad...") is the product being sold; one trailing after "with"/"and"/"+"/"includes"
+        // is an included extra on a listing for something else.
+        product.IsAccessoryListing = accessories.Any(a => IsLeadingAccessoryMention(lowerText, a));
 
         product.ImportantKeywords = MarketplaceMatcher.ImportantWords(MarketplaceMatcher.Normalize(expanded));
 
@@ -171,6 +173,31 @@ public sealed partial class ProductNormalizer(ProductIdentityExtractor identityE
             var afterIdx = index + lowerNeedle.Length;
             var afterOk = afterIdx >= lowerHaystack.Length || !char.IsLetterOrDigit(lowerHaystack[afterIdx]);
             if (beforeOk && afterOk) return true;
+            index += lowerNeedle.Length;
+        }
+        return false;
+    }
+
+    private static readonly string[] BundleMarkers = ["with", "and", "&", "+", "plus", "includes", "include", "comes"];
+
+    // True when an accessory word is the subject of the title (leading position, e.g. "Screen
+    // Protector for iPad...") rather than a bundled extra mentioned in passing (e.g. "...104TH
+    // with case and box", where "case"/"box" trail a bundling marker like "with"/"and").
+    private static bool IsLeadingAccessoryMention(string lowerText, string lowerNeedle)
+    {
+        var index = 0;
+        while ((index = lowerText.IndexOf(lowerNeedle, index, StringComparison.Ordinal)) >= 0)
+        {
+            var beforeOk = index == 0 || !char.IsLetterOrDigit(lowerText[index - 1]);
+            var afterIdx = index + lowerNeedle.Length;
+            var afterOk = afterIdx >= lowerText.Length || !char.IsLetterOrDigit(lowerText[afterIdx]);
+            if (beforeOk && afterOk)
+            {
+                var wordsBefore = lowerText[..index].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var precededByBundleMarker = wordsBefore.Length > 0 && BundleMarkers.Contains(wordsBefore[^1].Trim(',', '-', '/'));
+                var isLeading = wordsBefore.Length <= 4;
+                if (!precededByBundleMarker && isLeading) return true;
+            }
             index += lowerNeedle.Length;
         }
         return false;

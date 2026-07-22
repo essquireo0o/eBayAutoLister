@@ -3,13 +3,19 @@
 # PRIMARY:  If the WiX 4 CLI ("wix") is installed, builds a proper .msi
 # FALLBACK: If WiX is not found, falls back to a ps2exe/batch self-extractor
 #
+# Run this with pwsh (PowerShell 7+), not legacy powershell.exe (5.1) — 5.1's native
+# command argument passing mangles a trailing backslash immediately before a closing
+# quote (e.g. `-d "SourceDir=C:\...\dist\"`), which breaks the wix invocation with a
+# confusing "Cannot find the input file 'eBay'" error. pwsh doesn't have this bug.
+#
 # Prerequisites
 #   1. Build the project first:
 #        dotnet publish "ING eBay AutoLister\ING eBay AutoLister.csproj" `
 #          -c Release -r win-x64 --self-contained true `
-#          -p:PublishSingleFile=true `
 #          -o "ING eBay AutoLister\dist"
-#      Then rename the output to AutoListerB1.exe if necessary.
+#      NOTE: do NOT add -p:PublishSingleFile=true — the bundled single-file exe gets
+#      quarantined by endpoint AV (Bitdefender/Sophos) as a false-positive packer/dropper
+#      on this build machine. The folder-of-files output below is what installer.wxs expects.
 #   2. Install WiX 4 (for .msi):
 #        dotnet tool install --global wix
 #
@@ -24,7 +30,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $projectDir  = "$PSScriptRoot\ING eBay AutoLister"
-$exeSource   = "$projectDir\dist\AutoListerB1.exe"
+$publishDir  = "$projectDir\dist"
+$exeSource   = "$publishDir\AutoListerB1.exe"
 $credsSource = "$projectDir\credentials.json"
 $wxsSource   = "$PSScriptRoot\installer.wxs"
 $outDir      = "$PSScriptRoot\installer-out"
@@ -90,10 +97,13 @@ Write-Host "  Claude API: (not embedded - users enter their own)"
 Write-Host "  eBay App:   $(if ($credsRaw.EbayClientId)    { 'configured' } else { 'MISSING - add EbayClientId to credentials.json' })"
 
 # ── Prepare dist folder (used by both WiX and the PS1 installer) ──────────────
+# Copy the whole publish output (390-ish framework/dependency files, not just the exe) since
+# installer.wxs harvests everything in SourceDir now that PublishSingleFile is off.
+if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-Copy-Item $exeSource "$distDir\AutoListerB1.exe" -Force
-$credsJson | Out-File -FilePath "$distDir\credentials.json" -Encoding UTF8
-Write-Host "  dist folder prepared: $distDir"
+Copy-Item "$publishDir\*" $distDir -Recurse -Force
+$credsJson | Out-File -FilePath "$distDir\credentials.json" -Encoding UTF8 -Force
+Write-Host "  dist folder prepared: $distDir ($((Get-ChildItem $distDir -Recurse -File).Count) files)"
 
 # ── PRIMARY: WiX 4 MSI ────────────────────────────────────────────────────────
 $wix = Get-Command wix -ErrorAction SilentlyContinue
@@ -102,12 +112,16 @@ if ($wix) {
     Write-Host "Building MSI with WiX 4..." -ForegroundColor Cyan
     $msiPath = "$outDir\ING-AutoLister-Setup-$Version.msi"
 
-    $wixArgs = @(
-        "build", $wxsSource,
-        "-d", "SourceDir=$distDir\",
-        "-o", $msiPath
-    )
-    & wix @wixArgs
+    # Note: `& wix @wixArgs` (array splatting) mis-tokenizes paths containing spaces on this
+    # toolchain — "ING eBay AutoLister\installer.wxs" gets split at the space, and wix reports
+    # "Cannot find the input file 'eBay'". Calling wix with each argument written as its own
+    # literal quoted token (not built from an array or a re-parsed string) avoids the bug.
+    #
+    # -arch x64 is required even though installer.wxs references ProgramFiles64Folder: without
+    # it, wix emits a 32-bit package, and Windows Installer silently redirects ProgramFiles64Folder
+    # to "Program Files (x86)" and HKLM\...\Run to HKLM\...\WOW6432Node\...\Run instead of failing
+    # loudly, which is how a x64 self-contained build ended up installed as if it were x86.
+    & wix build "$wxsSource" -arch x64 -d "SourceDir=$distDir\" -o "$msiPath"
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "MSI created: $msiPath" -ForegroundColor Green
