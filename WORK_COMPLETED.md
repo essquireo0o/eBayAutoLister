@@ -222,9 +222,69 @@ runtime and were not needed for this work.
 
 ---
 
-## 7. Remaining work
+## 7. Session-end state
 
-- Phase 7 — Stock-photo discovery, `IProductImageProvider` abstraction, SSRF-safe import
+| Item | Value |
+|---|---|
+| Branch | `feature/edit-drawer-market-images-ui` |
+| Final build | **Succeeded — 0 errors** |
+| Final tests | **86 passed**, 0 failed, 0 skipped |
+| Repository usable | Yes |
+| Partially implemented code enabled | None — both phases are complete and verified |
+| Experiments reverted | None needed |
+| `INGAutoLister` service | Running, untouched throughout |
+| Backup | `G:\My Drive\ING_Backups\2026-07-22_165803\` (verified, 1,882 files) |
+
+### Commits on this branch
+
+| SHA | Description |
+|---|---|
+| `e2c707e` | Add right-side Edit Listing drawer and session baseline documentation |
+| `74b4ce0` | Integrate market research into the listing editor |
+
+### Pre-existing uncommitted work — deliberately untouched
+
+```
+ M build-installer.ps1
+ M installer.wxs
+?? .wix/
+?? ING eBay AutoLister/wwwroot/.wix/
+?? license.rtf
+```
+
+Unrelated to this session (MSI installer work). Preserved exactly as found; not staged,
+not committed, not reverted.
+
+---
+
+## 8. Exact next steps
+
+1. **Phase 7 — stock-photo discovery.** Create `IProductImageProvider` in `Services/`.
+   Start with providers that need no new credentials: existing listing images, eBay catalog
+   data via the connected account, and user-supplied product URLs (the app already has
+   `POST /api/photos/fetch-url` and `POST /api/photos/remove-bg` to build on).
+   **Security requirement before shipping any URL fetch:** block localhost, private ranges
+   (10/8, 172.16/12, 192.168/16, 169.254/16), and cloud metadata endpoints; verify
+   `Content-Type` is a real image; cap download size and timeout. Treat discovered images
+   as supplemental and label their source — never auto-publish them to a live listing.
+2. **Phase 8** — AI Listing workflow: visible steps, review-before-publish stage.
+3. **Phase 9** — GUI polish pass across cards, tables, modals, empty states.
+4. **Verify Market Research against real data** once a Terapeak session is connected —
+   only the no-data path has been confirmed so far (see blockers above).
+5. **Address `NU1903`** — `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 high-severity advisory.
+   Pre-existing; bump `Microsoft.Data.Sqlite` when a patched version is available.
+
+### How to resume
+
+```
+cd "C:\Users\nsquires\source\repos\ING eBay AutoLister"
+git checkout feature/edit-drawer-market-images-ui
+dotnet build "ING eBay AutoLister.slnx" -c Debug
+AUTOLISTER_DEV_PORT=9332 ./ING\ eBay\ AutoLister/bin/Debug/net10.0-windows/AutoListerB1.exe
+```
+
+Port 9331 belongs to the installed Windows service — always use a dev port instead.
+`wwwroot` files are embedded resources, so **UI edits require a rebuild** to take effect.
 - Phase 8 — AI Listing workflow improvements
 - Phase 9 — GUI polish pass
 - Phase 10+ — Additional tests, bug fixes, accessibility
