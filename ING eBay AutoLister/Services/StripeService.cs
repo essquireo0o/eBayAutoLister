@@ -50,6 +50,11 @@ public class StripeService(CredentialsStore creds)
             CancelUrl           = cancelUrl,
             SubscriptionData    = new SessionSubscriptionDataOptions
             {
+                // Free for 7 days, then the recurring charge begins automatically. The card is
+                // collected up front but not charged until the trial ends (Stripe handles the
+                // countdown and the first invoice), and the customer can cancel during the trial
+                // to avoid any charge.
+                TrialPeriodDays = 7,
                 Metadata = new Dictionary<string, string>
                 {
                     ["product"] = "ING-eBay-AutoLister-Pro"

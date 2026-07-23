@@ -2404,6 +2404,7 @@ app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =
   <h2 style="margin-bottom:.75rem">Stripe / Monetization</h2>
   <div style="display:flex;gap:2rem;flex-wrap:wrap;font-size:.9rem">
     <div><span style="color:#64748b">Status:</span> <strong style="color:{{(stripeConfigured ? "#4ade80" : "#f87171")}}">{{(stripeConfigured ? "✓ Configured" : "✗ Not configured")}}</strong></div>
+    <div><span style="color:#64748b">Trial:</span> <strong style="color:#4ade80">7 days free</strong></div>
     <div><span style="color:#64748b">Monthly:</span> <strong style="color:#60a5fa">$29.99/mo</strong></div>
     <div><span style="color:#64748b">Annual:</span> <strong style="color:#60a5fa">$249.99/yr</strong></div>
     <div><span style="color:#64748b">Publishable key:</span> <code style="font-size:.75rem;color:#94a3b8">{{(stripePubKey.Length > 16 ? stripePubKey[..16] + "…" : "(none)")}}</code></div>
