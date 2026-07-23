@@ -11,7 +11,7 @@
     Data     -> C:\ProgramData\ING AutoLister\  (app auto-creates on first run)
   Shortcuts: Desktop, Start Menu
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
   <Package Name="ING AutoLister"
            Manufacturer="ING Mining LLC"
@@ -21,6 +21,16 @@
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of ING AutoLister is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!--
+      Visible install wizard: without this, the package has zero UI (no dialogs, not even
+      a progress bar) — double-clicking it shows a UAC prompt and then nothing, which reads
+      as "the installer doesn't work" even when the install succeeds silently in the background.
+    -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.RepoDir)license.rtf" />
+    <Icon Id="AppIcon" SourceFile="$(var.RepoDir)ING eBay AutoLister\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <!-- Install directory: C:\Program Files\ING Mining\ING AutoLister\ -->
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -53,7 +63,14 @@
                             Wait="no" />
           </Component>
 
-          <!-- Pre-configured credentials template (seeded to ProgramData on first run) -->
+          <!--
+            Pre-configured credentials template. CredentialsStore.cs reads/writes this exact
+            path (Program Files\...\credentials.json) at runtime — it's the same file the app
+            saves your real API keys and eBay OAuth tokens into after setup. Empirically verify
+            reinstall behavior before assuming this needs an overwrite guard (WiX v4/v5 dropped
+            the v3 NeverOverwrite attribute; MSI's default versioned-file rules may already do
+            the right thing here since this file gets modified post-install).
+          -->
           <Component Id="CredentialsComp" Guid="{A2B3C4D5-E6F7-0002-1234-567890ABCDEF}">
             <File Id="CredentialsFile"
                   Source="$(var.SourceDir)credentials.json"
@@ -141,6 +158,22 @@
       <ComponentRef Id="DesktopShortcutComp" />
       <ComponentRef Id="StartMenuShortcutComp" />
     </Feature>
+
+    <!-- Finish screen: a checked-by-default "Open ING AutoLister now" checkbox so the
+         user lands in the app immediately and knows how to open it. It launches the
+         installed exe with the open-browser flag, which only opens the web UI (no port
+         bind), so it never fights the background service that already owns port 9331. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open ING AutoLister now" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="LaunchApplication"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]AutoListerB1.exe&quot; --open-browser"
+                  Return="asyncNoWait"
+                  Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
 
   </Package>
 </Wix>
