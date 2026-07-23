@@ -2016,7 +2016,38 @@ textarea {
   font-size: 15px;
 }
 .nl-sold-comps-glyph { font-size: 22px; margin-right: 2px; }
+.nl-sold-comps-title-text { font-weight: 800; color: #fff; font-size: 16px; letter-spacing: .01em; }
 .nl-sold-comps-summary-text { font-weight: 700; color: #fff; letter-spacing: .01em; margin-left: auto; }
+
+/* Connect-to-Terapeak prompt — shown until a session exists, then hidden on data. */
+.nl-sold-comps-connect {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 6px 0 2px;
+  text-align: center;
+}
+.nl-sold-comps-connect.hidden { display: none; }
+.nl-sold-comps-connect-text { color: rgba(255,255,255,.82); font-size: 14px; max-width: 460px; }
+.nl-sold-comps-connect-btn {
+  background: var(--gold);
+  color: var(--teal-950);
+  border: none;
+  border-radius: 9px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+}
+.nl-sold-comps-connect-btn:hover { background: var(--gold-soft); }
+.nl-sold-comps-connect-btn:disabled { opacity: .6; cursor: not-allowed; }
+.nl-sold-comps-connect-msg { color: var(--gold-soft); font-size: 13px; width: 100%; }
 .nl-sold-comps-link {
   color: var(--gold-soft);
   font-weight: 700;

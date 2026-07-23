@@ -294,13 +294,21 @@
             </div>
           </div>
 
-          <div id="nl-sold-comps-strip" class="nl-sold-comps-strip hidden">
+          <div id="nl-sold-comps-strip" class="nl-sold-comps-strip">
             <button id="nl-sold-comps-close" class="nl-sold-comps-close" type="button" title="Dismiss">✕</button>
             <div class="nl-sold-comps-head">
               <span class="nl-sold-comps-glyph">📊</span>
-              <a id="nl-sold-comps-terapeak" class="nl-sold-comps-link" href="#" target="_blank" rel="noopener">Terapeak Research ↗</a>
-              <a id="nl-sold-comps-link" class="nl-sold-comps-link nl-sold-comps-link-secondary" href="#" target="_blank" rel="noopener">Plain Sold Search ↗</a>
+              <span class="nl-sold-comps-title-text">Sold Price Research</span>
+              <a id="nl-sold-comps-terapeak" class="nl-sold-comps-link hidden" href="#" target="_blank" rel="noopener">Terapeak Research ↗</a>
+              <a id="nl-sold-comps-link" class="nl-sold-comps-link nl-sold-comps-link-secondary hidden" href="#" target="_blank" rel="noopener">Plain Sold Search ↗</a>
               <span id="nl-sold-comps-summary" class="nl-sold-comps-summary-text"></span>
+            </div>
+            <!-- Shown until a Terapeak session is connected — clicking Connect opens the eBay
+                 login (see terapeakConnect). Hidden automatically once sold data is available. -->
+            <div id="nl-sold-comps-connect" class="nl-sold-comps-connect">
+              <span class="nl-sold-comps-connect-text">Connect Terapeak to pull live sold prices for every listing — right here in the editor.</span>
+              <button id="nl-sold-comps-connect-btn" class="nl-sold-comps-connect-btn" type="button">Connect to Terapeak</button>
+              <span id="nl-sold-comps-connect-msg" class="nl-sold-comps-connect-msg"></span>
             </div>
             <div id="nl-sold-comps-stats" class="nl-sold-comps-stats hidden">
               <div class="nl-sold-comps-stat"><span class="nl-sold-comps-stat-val" id="nl-sold-comps-stat-avg">$0</span><span class="nl-sold-comps-stat-label">Average</span></div>

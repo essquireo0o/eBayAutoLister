@@ -2628,6 +2628,7 @@
     on('nl-quickfill-go', 'click', nlQuickFillByName);
     on('nl-quickfill-input', 'keydown', e => { if (e.key === 'Enter') nlQuickFillByName(); });
     on('nl-sold-comps-close', 'click', () => $('nl-sold-comps-strip')?.classList.add('hidden'));
+    on('nl-sold-comps-connect-btn', 'click', nlSoldCompsConnect);
     on('nl-bulk-go', 'click', nlBulkImport);
     on('nl-bulk-url-input', 'keydown', e => { if (e.key === 'Enter') nlBulkImport(); });
     on('nl-ai-modify-go', 'click', nlAiModify);
@@ -2662,6 +2663,7 @@
     applyListingDefaults();
     $('new-listing-overlay')?.classList.remove('hidden');
     $('new-listing-overlay')?.focus();
+    nlRefreshSoldCompsConnect();   // show/hide the Connect-to-Terapeak prompt in the bar
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'ai'));
     if (cachedPolicies) {
       fillNlPolicySelects();
@@ -2714,7 +2716,11 @@
     nlClearImage();
     nlClearForm();
     nlSetResult('', '');
-    $('nl-sold-comps-strip')?.classList.add('hidden');
+    // Keep the sold-comps bar visible (it hosts the Connect-to-Terapeak prompt); just
+    // reset its data. nlRefreshSoldCompsConnect() re-evaluates the prompt on open.
+    $('nl-sold-comps-stats')?.classList.add('hidden');
+    if ($('nl-sold-comp-list')) $('nl-sold-comp-list').innerHTML = '';
+    if ($('nl-sold-comps-summary')) $('nl-sold-comps-summary').textContent = '';
     if ($('nl-quickfill-input')) $('nl-quickfill-input').value = '';
   }
 
@@ -3181,6 +3187,48 @@
     }
   }
 
+  // Show the "Connect to Terapeak" prompt in the sold-comps bar unless a session is
+  // already connected. Runs when the AI Listing view opens.
+  async function nlRefreshSoldCompsConnect() {
+    const connect = $('nl-sold-comps-connect');
+    if (!connect) return;
+    try {
+      const s = await fetch('/api/terapeak/status').then(r => r.json());
+      connect.classList.toggle('hidden', !!s.connected);
+    } catch { /* leave the prompt visible if status can't be checked */ }
+  }
+
+  // Kick off the Terapeak browser login from the bar's Connect button, then poll until
+  // the login window closes and hide the prompt once connected.
+  async function nlSoldCompsConnect() {
+    const btn = $('nl-sold-comps-connect-btn');
+    const msg = $('nl-sold-comps-connect-msg');
+    if (!btn) return;
+    btn.disabled = true;
+    if (msg) msg.textContent = 'Opening the eBay login window…';
+    try {
+      const data = await fetch('/api/terapeak/connect', { method: 'POST' }).then(r => r.json());
+      if (msg) msg.textContent = data.message || 'Log in to eBay in the window that opened, then come back here.';
+      const poll = setInterval(async () => {
+        const s = await fetch('/api/terapeak/status').then(r => r.json()).catch(() => null);
+        if (s && !s.loginInProgress) {
+          clearInterval(poll);
+          btn.disabled = false;
+          if (s.connected) {
+            $('nl-sold-comps-connect')?.classList.add('hidden');
+            if (msg) msg.textContent = '';
+            loadTerapeakStatus();
+          } else if (msg) {
+            msg.textContent = s.lastError || 'Login was not completed. Try again.';
+          }
+        }
+      }, 3000);
+    } catch (err) {
+      btn.disabled = false;
+      if (msg) msg.textContent = `Connect failed: ${err.message}`;
+    }
+  }
+
   async function nlLoadSoldComps(itemName) {
     const strip    = $('nl-sold-comps-strip');
     const summary  = $('nl-sold-comps-summary');
@@ -3211,6 +3259,7 @@
         return;
       }
 
+      $('nl-sold-comps-connect')?.classList.add('hidden');   // real data — drop the connect prompt
       summary.textContent = `Recently sold — "${itemName}"`;
       $('nl-sold-comps-stat-avg').textContent    = `$${data.average.toFixed(2)}`;
       $('nl-sold-comps-stat-median').textContent = `$${data.median.toFixed(2)}`;
