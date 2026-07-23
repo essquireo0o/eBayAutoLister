@@ -2402,6 +2402,12 @@ app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =
   <div style="margin-top:.75rem;font-size:.8rem;color:#64748b">
     Checkout endpoints: <code style="color:#93c5fd">POST /api/stripe/checkout</code> (monthly) &nbsp;|&nbsp; <code style="color:#93c5fd">POST /api/stripe/checkout/annual</code>
   </div>
+  <div style="margin-top:1rem">
+    <a href="https://dashboard.stripe.com/" target="_blank" rel="noopener"
+       style="display:inline-block;background:#635bff;color:#fff;text-decoration:none;padding:.6rem 1.1rem;border-radius:8px;font-weight:700;font-size:.85rem">
+      {{(stripeConfigured ? "Manage Payments in Stripe →" : "Activate Payments — Set up Stripe →")}}
+    </a>
+  </div>
 </div>
 
 <div id="root"></div>
@@ -2415,8 +2421,8 @@ async function load() {
   const a = d.analytics;
   document.getElementById('status').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   const stats = [
+    { val: (a.uniqueIps||[]).length, lbl: 'Users' },
     { val: a.totalPageLoads, lbl: 'Page Loads' },
-    { val: (a.uniqueIps||[]).length, lbl: 'Unique IPs' },
     { val: a.aiAnalyses, lbl: 'AI Analyses' },
     { val: a.bulkImports, lbl: 'Bulk Imports' },
     { val: a.listingsPublished, lbl: 'Published' },
