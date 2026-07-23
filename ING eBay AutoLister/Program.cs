@@ -193,7 +193,16 @@ builder.Services.AddSingleton<ProfitCalculator>();
 builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
 
+// CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
+// owner API cross-origin. The owner/stats endpoint is still gated by the admin
+// key, so opening it to any origin only exposes what an admin-key holder can
+// already read. This is a loopback desktop app, not a public server.
+builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+
 var app = builder.Build();
+
+app.UseCors();
 
 // Serve UI files from embedded resources (bundled inside the exe)
 {
