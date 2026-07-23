@@ -121,7 +121,12 @@ if ($wix) {
     # it, wix emits a 32-bit package, and Windows Installer silently redirects ProgramFiles64Folder
     # to "Program Files (x86)" and HKLM\...\Run to HKLM\...\WOW6432Node\...\Run instead of failing
     # loudly, which is how a x64 self-contained build ended up installed as if it were x86.
-    & wix build "$wxsSource" -arch x64 -d "SourceDir=$distDir\" -o "$msiPath"
+    # The trailing backslash before the closing quote (`$distDir\"`) is read by the native
+    # command-line parser as an escaped quote, which swallows the closing quote and lets the
+    # space in "ING eBay AutoLister" split the argument (wix then reports "Cannot find the
+    # input file 'eBay'"). Doubling it (`\\"`) escapes to a single literal backslash and closes
+    # the quote correctly, so WiX still gets a SourceDir/RepoDir ending in one backslash.
+    & wix build "$wxsSource" -arch x64 -ext WixToolset.UI.wixext -d "SourceDir=$distDir\\" -d "RepoDir=$PSScriptRoot\\" -o "$msiPath"
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "MSI created: $msiPath" -ForegroundColor Green
