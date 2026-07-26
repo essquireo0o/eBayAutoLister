@@ -1115,3 +1115,72 @@ and the 403/429 branches — craigslist did not actually block this machine duri
 the end-to-end "blocked — retry" chip was not seen against the live site. The Facebook search path
 past the connect gate is also unverified here: no account is connected on this machine, which is
 exactly the state the new short-circuit answers.
+
+---
+
+## Onboarding checklist: an eBay-only refresh no longer wipes the "AI key saved" tick
+
+### The bug
+
+`updateSetupChecklist(hasAiKey, hasEbay, hasOpenAi)` in `wwwroot/app.js` treated a
+missing argument as **false** for steps 1 and 3:
+
+```js
+const step1Done = hasAiKey !== null && hasAiKey !== undefined ? hasAiKey : false;
+```
+
+`updateAuthUI()` — the eBay-only refresh — calls `updateSetupChecklist(null, connected, null)`,
+because it knows the eBay state and nothing about the keys. So every auth refresh
+re-rendered step 1 as *not done*: the green tick was replaced by the number, the
+button went back to "Enter Key →", and the whole "2 steps to activate" checklist
+un-hid itself — on a machine with the Anthropic key saved and setup complete.
+Step 2 never had this problem; it already fell back to `isConnected`.
+
+At startup this is a race between two calls that both land on the checklist:
+`checkSetupOnLoad()`'s full refresh (line ~2405) and `updateAuthUI(!!tokenStatus.hasToken)`
+from the token-status poll (line 48). On this machine the auth poll won every time,
+so the tick was wiped on every page load.
+
+### The fix
+
+An omitted argument now **preserves that step's current state** rather than
+collapsing it to false, mirroring step 2's existing fallback. The state is read
+back off the row, which is where `markSetupStep` records it — `.setup-step.is-done`
+is set only there, so the class is a faithful record of the last known state.
+
+```js
+const step1Done = hasAiKey !== null && hasAiKey !== undefined ? !!hasAiKey : isSetupStepDone('step1');
+const step2Done = hasEbay  !== null && hasEbay  !== undefined ? !!hasEbay  : isConnected;
+const step3Done = hasOpenAi !== null && hasOpenAi !== undefined ? !!hasOpenAi : isSetupStepDone('step3');
+```
+
+plus a small `isSetupStepDone(prefix)` helper. Explicit `false` still clears a
+step, so the one-way-tick problem the original comment warns about does not come back.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `wwwroot/app.js` | `updateSetupChecklist` preserves omitted steps; new `isSetupStepDone` helper. `?v=36` |
+| `wwwroot/index.html` | `app.js?v=35` → `?v=36` |
+
+### Verification
+
+Live, against the real app on dev port 9398 (`AUTOLISTER_DEV_PORT`), driven by
+Playwright. `/api/setup/status` reported `hasAnthropicKey: true`, `isComplete: true`,
+and eBay was connected — i.e. exactly the state the bug ruined.
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **360 passed**, 0 failed, 0 skipped |
+| `node --check app.js` | Clean |
+| **Before the fix** (fix stashed, app rebuilt and re-run) | `step1Done: false`, button `"Enter Key →"`, `checklistHidden: false` — **bug reproduced**, on load and after an auth refresh |
+| **After the fix** | `step1Done: true`, button `"✓ Key saved"`, `step2Done: true`, `checklistHidden: true` — on load and after a token-status refresh + reload |
+| Console errors | None, either build |
+
+**Not verified:** the not-yet-configured path (no Anthropic key saved) was not exercised
+live — this machine has the key saved, and that state is what the bug was about. Its
+behaviour is unchanged by this fix: `checkSetupOnLoad` passes an explicit `false`, which
+still marks the step pending. Step 3 (OpenAI) has no key saved here, so its preserved-state
+branch was only observed staying correctly *un*-ticked.

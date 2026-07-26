@@ -3936,9 +3936,12 @@
     const checklist = $('setup-checklist');
     if (!checklist) return;
 
-    const step1Done = hasAiKey  !== null && hasAiKey  !== undefined ? hasAiKey  : false;
-    const step2Done = hasEbay   !== null && hasEbay   !== undefined ? hasEbay   : isConnected;
-    const step3Done = hasOpenAi !== null && hasOpenAi !== undefined ? hasOpenAi : false;
+    // A partial refresh (e.g. eBay-only, which passes null for the key steps)
+    // must not wipe a step it knows nothing about, so an omitted argument keeps
+    // that step's current state instead of collapsing to false.
+    const step1Done = hasAiKey  !== null && hasAiKey  !== undefined ? !!hasAiKey  : isSetupStepDone('step1');
+    const step2Done = hasEbay   !== null && hasEbay   !== undefined ? !!hasEbay   : isConnected;
+    const step3Done = hasOpenAi !== null && hasOpenAi !== undefined ? !!hasOpenAi : isSetupStepDone('step3');
 
     // The done look lives in .setup-step.is-done, so a step can go back to
     // pending if the key is later cleared — the old inline styles were
@@ -3953,6 +3956,10 @@
     } else {
       checklist.classList.remove('hidden');
     }
+  }
+
+  function isSetupStepDone(prefix) {
+    return $(`${prefix}-row`)?.classList.contains('is-done') === true;
   }
 
   function markSetupStep(prefix, done, doneLabel) {
