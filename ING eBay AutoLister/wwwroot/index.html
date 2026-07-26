@@ -5,9 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=28" />
+  <link rel="stylesheet" href="style.css?v=29" />
 </head>
 <body>
+  <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
+       weights and sizes; these are one stroke weight, inherit currentColor,
+       and stay crisp at any zoom. Referenced with <use href="#i-…">. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+      <symbol id="i-listings" viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/><circle cx="6.5" cy="7" r="0.6" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3l1.9 4.9L19 9.8l-4.4 3.1L15.5 18 12 15.3 8.5 18l.9-5.1L5 9.8l5.1-.9z"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 13 2.5-7h5"/></symbol>
+      <symbol id="i-logs" viewBox="0 0 24 24"><path d="M5 4h9l5 5v11a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/><path d="M14 4v5h5M8 13h7M8 17h5"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5v.2a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></symbol>
+      <symbol id="i-opportunity" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></symbol>
+      <symbol id="i-inventory" viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 6H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></symbol>
+      <symbol id="i-photos" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6l1.6-2.4A1 1 0 0110.4 3h3.2a1 1 0 01.8.6L16 6"/><circle cx="12" cy="13" r="3.2"/></symbol>
+      <symbol id="i-license" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M17.5 12v3.5M20.5 12v2.5"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 10.5L12 3.5l8.5 7"/><path d="M5.5 9.8V20h13V9.8"/><path d="M10 20v-5.5h4V20"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.6 3h4.8l1.6-3h5"/><path d="M5.4 5.5h13.2a1 1 0 01.95.68L21 13v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5l1.45-6.82a1 1 0 01.95-.68z"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9 15.5H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6"/><path d="M7 9h10v3a5 5 0 01-10 0z"/><path d="M12 17v4"/></symbol>
+    </defs>
+  </svg>
+
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand-lockup">
@@ -18,16 +41,21 @@
         </div>
       </div>
       <nav class="nav-list" aria-label="Primary">
-        <button class="nav-item active" type="button" data-page="dashboard"><span class="nav-icon">📊</span>Dashboard</button>
-        <button class="nav-item" type="button" data-page="listings"><span class="nav-icon">🛒</span>Listings</button>
-        <button class="nav-item" type="button" data-page="ai"><span class="nav-icon">✨</span>AI Listing</button>
-        <button class="nav-item" type="button" data-page="activity"><span class="nav-icon">📋</span>Activity</button>
-        <button class="nav-item" type="button" data-page="logs"><span class="nav-icon">🔍</span>Logs</button>
-        <button class="nav-item" type="button" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
-        <button class="nav-item" type="button" data-page="opportunity"><span class="nav-icon">🔍</span>Opportunity Finder</button>
-        <button class="nav-item" type="button" data-page="inventory"><span class="nav-icon">💸</span>Inventory Health</button>
-        <button class="nav-item" type="button" data-page="photos"><span class="nav-icon">📸</span>Photo Library</button>
-        <button class="nav-item nav-license" id="nav-license-btn" type="button" data-page="license"><span class="nav-icon">🔑</span>License<span id="nav-license-dot" class="nav-license-dot dot-off"></span></button>
+        <p class="nav-group-label">Sell</p>
+        <button class="nav-item active" type="button" data-page="dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</button>
+        <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
+        <button class="nav-item" type="button" data-page="ai"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing</button>
+        <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
+
+        <p class="nav-group-label">Grow</p>
+        <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
+        <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
+
+        <p class="nav-group-label">Account</p>
+        <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
+        <button class="nav-item" type="button" data-page="logs"><svg class="nav-icon" aria-hidden="true"><use href="#i-logs"/></svg>Logs</button>
+        <button class="nav-item" type="button" data-page="settings"><svg class="nav-icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</button>
+        <button class="nav-item nav-license" id="nav-license-btn" type="button" data-page="license"><svg class="nav-icon" aria-hidden="true"><use href="#i-license"/></svg>License<span id="nav-license-dot" class="nav-license-dot dot-off"></span></button>
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-footer-brand">ING Listing Engine™</div>
@@ -38,15 +66,16 @@
     <main class="main">
       <header class="topbar">
         <div class="search-wrap">
-          <span class="search-icon">Search</span>
-          <input id="global-search" type="search" placeholder="Search title, SKU, listing ID, category..." />
+          <svg class="search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="global-search" type="search" placeholder="Search title, SKU, listing ID, category..." aria-label="Search listings" />
+          <span class="search-kbd" aria-hidden="true">Ctrl K</span>
         </div>
         <div class="topbar-actions">
           <button id="btn-paste-token" class="btn btn-ghost hidden" type="button">Paste Token</button>
           <button id="btn-connect" class="btn btn-primary" type="button">Log into eBay</button>
-          <span id="auth-status" class="badge badge-on hidden">✓ Connected to eBay</span>
+          <span id="auth-status" class="badge badge-on hidden">Connected to eBay</span>
           <button id="btn-disconnect" class="btn btn-ghost hidden" type="button">Disconnect</button>
-          <button id="btn-settings" class="btn btn-ghost" type="button" title="Settings">⚙</button>
+          <button id="btn-settings" class="btn btn-ghost btn-icon" type="button" title="Settings" aria-label="Settings"><svg aria-hidden="true"><use href="#i-settings"/></svg></button>
         </div>
       </header>
 
@@ -89,41 +118,41 @@
 
       <section id="dashboard-section" class="dashboard-section">
 
-        <!-- Setup checklist — hidden once both steps complete -->
-        <div id="setup-checklist" class="hidden" style="background:#1e3a5f;border:1px solid #2563eb;border-radius:12px;padding:20px 24px;margin-bottom:24px;color:#e2e8f0;position:relative">
-          <button onclick="document.getElementById('setup-checklist').classList.add('hidden')" title="Dismiss" style="position:absolute;top:12px;right:12px;background:none;border:none;color:#64748b;font-size:18px;cursor:pointer;line-height:1;padding:4px 8px">&times;</button>
-          <p style="font-size:13px;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">Get Started — 2 steps to activate</p>
-          <p style="font-size:12px;color:#64748b;margin-bottom:12px;margin-top:-8px">Step 3 is optional — you can always add it later in Settings.</p>
-          <div style="display:flex;flex-direction:column;gap:10px">
+        <!-- Setup checklist — hidden once both required steps complete -->
+        <div id="setup-checklist" class="setup-checklist hidden">
+          <button onclick="document.getElementById('setup-checklist').classList.add('hidden')" title="Dismiss" aria-label="Dismiss setup checklist" class="setup-dismiss" type="button">&times;</button>
+          <p class="setup-title">Get started — 2 steps to activate</p>
+          <p class="setup-sub">Step 3 is optional — you can always add it later in Settings.</p>
+          <div class="setup-steps">
 
             <!-- Step 1: AI key -->
-            <div id="step1-row" style="display:flex;align-items:center;gap:14px;background:#0f2744;border-radius:8px;padding:14px 16px">
-              <div id="step1-icon" style="width:28px;height:28px;border-radius:50%;background:#374151;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">1</div>
-              <div style="flex:1">
-                <div style="font-weight:600;font-size:14px;margin-bottom:2px">Enter your AI API Key</div>
-                <div style="font-size:12px;color:#94a3b8">Powers listing analysis — AI reads your product photo and fills in title, description, price, and category automatically. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#60a5fa">console.anthropic.com</a> (~$5 gets hundreds of listings).</div>
+            <div id="step1-row" class="setup-step">
+              <div id="step1-icon" class="setup-step-num">1</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Enter your AI API key</div>
+                <div class="setup-step-copy">Powers listing analysis — AI reads your product photo and fills in title, description, price, and category automatically. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a> (~$5 gets hundreds of listings).</div>
               </div>
-              <button id="step1-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-primary" type="button" style="flex-shrink:0;white-space:nowrap">Enter Key →</button>
+              <button id="step1-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-primary" type="button">Enter Key →</button>
             </div>
 
             <!-- Step 2: eBay -->
-            <div id="step2-row" style="display:flex;align-items:center;gap:14px;background:#0f2744;border-radius:8px;padding:14px 16px">
-              <div id="step2-icon" style="width:28px;height:28px;border-radius:50%;background:#374151;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">2</div>
-              <div style="flex:1">
-                <div style="font-weight:600;font-size:14px;margin-bottom:2px">Connect your eBay Account</div>
-                <div style="font-size:12px;color:#94a3b8">Log into eBay so the app can import your listings and publish new ones directly to your store.</div>
+            <div id="step2-row" class="setup-step">
+              <div id="step2-icon" class="setup-step-num">2</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Connect your eBay account</div>
+                <div class="setup-step-copy">Log into eBay so the app can import your listings and publish new ones directly to your store.</div>
               </div>
-              <button id="step2-btn" onclick="$('btn-connect')?.click()" class="btn btn-primary" type="button" style="flex-shrink:0;white-space:nowrap">Log into eBay →</button>
+              <button id="step2-btn" onclick="$('btn-connect')?.click()" class="btn btn-primary" type="button">Log into eBay →</button>
             </div>
 
             <!-- Step 3: OpenAI (optional) -->
-            <div id="step3-row" style="display:flex;align-items:center;gap:14px;background:#0f2744;border-radius:8px;padding:14px 16px;opacity:.8">
-              <div id="step3-icon" style="width:28px;height:28px;border-radius:50%;background:#374151;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;color:#94a3b8">3</div>
-              <div style="flex:1">
-                <div style="font-weight:600;font-size:14px;margin-bottom:2px">OpenAI Key <span style="font-size:11px;font-weight:400;background:#1e3a5f;color:#93c5fd;padding:2px 7px;border-radius:10px;margin-left:6px">Optional</span></div>
-                <div style="font-size:12px;color:#94a3b8">Only needed if you want AI to <strong style="color:#e2e8f0">generate product photos</strong> from scratch using DALL-E 3. Skip this if you'll photograph your own items. Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" style="color:#60a5fa">platform.openai.com</a>.</div>
+            <div id="step3-row" class="setup-step setup-step--optional">
+              <div id="step3-icon" class="setup-step-num">3</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">OpenAI key <span class="setup-tag">Optional</span></div>
+                <div class="setup-step-copy">Only needed if you want AI to <strong>generate product photos</strong> from scratch using DALL·E 3. Skip this if you'll photograph your own items. Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com</a>.</div>
               </div>
-              <button id="step3-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-ghost" type="button" style="flex-shrink:0;white-space:nowrap;border:1px solid #2d3748;color:#94a3b8">Add Key →</button>
+              <button id="step3-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-secondary" type="button">Add Key →</button>
             </div>
 
           </div>
@@ -181,6 +210,10 @@
               </div>
             </div>
             <div id="listings-feedback" class="listings-feedback">Connect eBay, then import listings.</div>
+            <!-- Empty / error states live outside the card grid so they stay
+                 full width and keep showing in table view, where the grid is
+                 hidden. -->
+            <div id="listings-state" class="listings-state"></div>
             <div id="listings-grid" class="listings-grid"></div>
             <div class="table-wrap">
               <table id="listings-table" class="listings-table">
@@ -212,7 +245,15 @@
                 <h2>Recent Activity</h2>
               </div>
             </div>
-            <div id="activity-list" class="activity-list"></div>
+            <div id="activity-list" class="activity-list">
+              <!-- Replaced by the first real entry; addActivity drops any
+                   state block before prepending. -->
+              <div class="state state--compact state--inline">
+                <div class="state-icon"><svg aria-hidden="true"><use href="#i-activity"/></svg></div>
+                <div class="state-title">No activity yet</div>
+                <p class="state-body">Imports, AI drafts, price changes and publishes show up here as you work.</p>
+              </div>
+            </div>
           </aside>
         </section>
       </section>
@@ -231,7 +272,7 @@
               <button id="nl-load-all-drafts-btn" class="nl-load-all-drafts-btn" type="button" title="Load all saved drafts as tabs">Open All Drafts</button>
               <button id="nl-clear-drafts-btn" class="nl-clear-drafts-btn" type="button" title="Delete all saved drafts and clear all tabs">Clear All</button>
             </div>
-            <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <button id="nl-close" class="nl-close-btn" type="button" title="Close">✕</button>
           </div>
 
@@ -690,7 +731,7 @@
       <section id="opportunity-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="opp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <button id="opp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Opportunity Finder</div>
               <h2>🔍 Surface What's Worth Listing Next</h2>
@@ -855,6 +896,13 @@
             </div>
           </div>
 
+          <!-- Wrapped in the same panel the two blocks above use: this search
+               was the only section on the page floating loose on the
+               background, which read as unfinished next to them. -->
+          <div class="opp-supplier-panel">
+            <h3 class="opp-supplier-heading">🔎 Auction Sniper — live auctions priced below sold comps</h3>
+            <p class="opp-hint">AI cross-references live auctions ending soon against recent sold prices for the same keyword — surfacing high-demand items priced well below where they typically sell. Add a Seller username to analyze one seller's own listings instead of the open market.</p>
+
           <div class="opp-search-row">
             <div class="opp-field opp-field-keyword">
               <label for="opp-search-input">Keyword</label>
@@ -899,8 +947,7 @@
             </div>
             <button id="opp-find-btn" class="btn btn-primary opp-search-submit" type="button">🔍 Search</button>
           </div>
-
-          <p class="opp-hint">AI cross-references live auctions ending soon against recent sold prices for the same keyword — surfacing high-demand items priced well below where they typically sell. Add a Seller username to analyze one seller's own listings instead of the open market.</p>
+          </div>
 
           <div id="opp-results" class="opp-results hidden">
             <div id="opp-stats-grid" class="opp-stats-grid"></div>
@@ -993,7 +1040,7 @@
       <section id="photo-library-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="pl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <button id="pl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Photo Library</div>
               <h2>📸 Your Real Stock Photos, by Model</h2>
@@ -1006,12 +1053,14 @@
         </div>
 
         <div class="opportunity-overlay-body">
-          <p class="opp-hint">Shoot each used model once. Every used listing that matches a model reuses these photos — with the representative-photo disclosure — instead of a per-unit shoot.</p>
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">Shoot each used model once. Every used listing that matches a model reuses these photos — with the representative-photo disclosure — instead of a per-unit shoot.</p>
 
-          <div class="pl-create-row">
-            <input id="pl-new-model" type="text" placeholder="New model folder — e.g. Antminer_S21_200TH" autocomplete="off" />
-            <button id="pl-create-btn" class="btn btn-primary" type="button">+ New Model</button>
-            <span id="pl-create-msg" class="sd-test-msg"></span>
+            <div class="pl-create-row">
+              <input id="pl-new-model" type="text" placeholder="New model folder — e.g. Antminer_S21_200TH" autocomplete="off" />
+              <button id="pl-create-btn" class="btn btn-primary" type="button">+ New Model</button>
+              <span id="pl-create-msg" class="sd-test-msg"></span>
+            </div>
           </div>
 
           <div class="pl-layout">
@@ -1055,7 +1104,7 @@
       <section id="inventory-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="inv-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <button id="inv-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Inventory Health</div>
               <h2>💸 Find the Money Stuck in Your Listings</h2>
@@ -1068,6 +1117,7 @@
         </div>
 
         <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
           <p class="opp-hint">
             Pulls your live eBay listings, prices each one against real sold comps, and finds the ones the
             market has drifted out from under. Every suggested price is checked against your break-even —
@@ -1109,6 +1159,7 @@
             </div>
             <span id="inv-status" class="inv-status"></span>
           </div>
+          </div>
 
           <div id="inv-warning" class="inv-warning hidden"></div>
 
@@ -1126,7 +1177,18 @@
           </div>
 
           <div id="inv-results" class="inv-results">
-            <p class="opportunity-empty">Click <strong>Scan My Listings</strong> to see what your live inventory is doing.</p>
+            <!-- The page's resting state. It was one grey sentence on an
+                 otherwise blank screen, which made the most valuable feature
+                 in the app look like it had failed to load. -->
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-inventory"/></svg></div>
+              <div class="state-title">See what your live inventory is doing</div>
+              <p class="state-body">Scanning reads your active eBay listings, prices each against real sold comps, and reports the capital sitting still, the listings the market has drifted past, and the ones quietly priced too low.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('inv-scan-btn')?.click()">Scan my listings</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing is sent to eBay until you confirm each price.</p>
+            </div>
           </div>
 
           <p class="inv-footnote">
@@ -1940,6 +2002,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=33"></script>
+  <script src="app.js?v=34"></script>
 </body>
 </html>

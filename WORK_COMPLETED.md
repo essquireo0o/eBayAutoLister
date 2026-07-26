@@ -864,3 +864,122 @@ verification were deleted afterwards.
 risk are not modelled; fee rates are eBay's published ones rather than account-specific, since no
 marketplace exposes a per-account fee API; and listings whose age eBay does not report are counted
 separately rather than assumed new.
+
+---
+
+## 14. Premium design pass — making it look like something worth paying for (autonomous session, 2026-07-26)
+
+Thirteen sessions of features had each brought their own spacing, their own greys and their own
+idea of what a heading weighs. Individually every screen was fine; together they read as thirteen
+screens. This session added no capability — it made the existing capability look like one product.
+
+Nothing server-side changed. `Program.cs`, every service and every model are untouched; the diff is
+three files under `wwwroot`.
+
+### A token layer, and the six variables that were never declared
+
+`:root` now carries the whole system — a 4px space scale, a radius scale, a type scale, four
+elevation levels, semantic colour pairs (`--success` / `--success-soft` / `--success-line` and the
+same for danger, warning, info), motion easings, and one focus ring. Component rules consume those
+instead of inventing hex values, which is what let one pass fix spacing everywhere rather than
+screen by screen.
+
+While auditing it, six variables turned up that were **used but never defined**: `--bg`, `--surface`,
+`--card-alt`, `--border`, `--text`, `--text-muted`. Later features had been written against generic
+names that this stylesheet never had. An unresolved `var()` invalidates the entire declaration, so
+each of those rules had been silently dropped by the parser the whole time — the Terapeak and
+Facebook status banners, among others, had been rendering with no border colour at all. They are now
+aliases onto the real tokens, which repairs the rules and keeps both vocabularies pointing at one
+palette.
+
+### Empty, loading and error states — the actual product gap
+
+Every data view in the app has three non-happy moments, and all of them were being rendered as a
+grey sentence. "Connect eBay, then import listings." is indistinguishable from a defect, and
+`Import failed: <raw API text>` in a thin bar is the app's worst moment presented as its smallest.
+
+`stateBlockHtml` / `renderState` build one state block — icon, headline, one line of plain
+explanation, and the buttons that resolve it — and it is now generic enough that any future screen
+gets the treatment for free:
+
+| Where | Before | After |
+|---|---|---|
+| Listings, not connected | one grey line | "Connect eBay to see your listings" + **Log into eBay** / **Create an AI listing** |
+| Listings, connected but empty | one grey line | "No active listings on this account" + **Create an AI listing** / **Import again** |
+| Listings, import failed | red-ish text in the bar | full error panel, raw API text kept as evidence in a monospace block, + **Try again** / **Open logs** |
+| Listings, search matched nothing | one grey line | "No listings match X", says what was searched across how many, + **Clear search** |
+| Inventory Health, before a scan | one grey sentence on a blank page | the page's resting state, with what a scan does and that it is read-only |
+| Photo Library, empty model | an orange sentence squeezed into a 160px grid column | a state block spanning the grid |
+| Logs, empty / unreachable | a fake log row reading "Loading" | a real empty state; errors offer **Try again** |
+| Activity, nothing yet | blank panel | "No activity yet" with what will appear there |
+
+Loading is now **skeletons** rather than the word "Loading": eight card-shaped placeholders in the
+listings grid, rows in the table and the log. A skeleton can't be mistaken for content — the log's
+old placeholder was a log row that said `Info | Loading` — and the page doesn't jump when data lands.
+
+### Defects the pass turned up, each visible in a screenshot
+
+Every screen was driven in a real browser against the connected account's 87 live listings rather
+than reasoned about. That found things no amount of reading the CSS would have:
+
+1. **The 135° page gradient was sized by document length.** On a long page the dark wedge dragged
+   down past the content and left a black void beside the short activity rail. Replaced with a fixed
+   dark band that fades out by 250px — the same header at any scroll depth.
+2. **`.opp-hint { margin-top: -10px }` printed the hint on top of the heading above it.** Visible on
+   both Opportunity Finder panels.
+3. **The listings table couldn't fit its twelve columns.** In the dashboard's two-column grid it had
+   ~880px of a needed ~1,000, so titles wrapped to five lines, rows were three times taller than
+   necessary and the last two columns were off-screen. Table view now drops the activity rail below
+   the table, clamps titles to two lines, and right-aligns price / qty / watches.
+4. **The listing card footer held four items and wrapped.** Watch count moved onto the photo as an
+   overlay badge — it is a property, not an action — and the link and Edit button now group right.
+5. **The setup checklist was dark-on-dark**, in a `#1e3a5f` blue belonging to no other part of the
+   product, stacked directly above the equally dark hero. It is now a white card with a gold top
+   rail, on brand and in the correct weight for the first thing a new user is asked to do.
+6. **The log page fit nine entries on a 1000px screen.** Each was a bordered card with a 190px title
+   column that wrapped every title. Now one framed list with rules between rows and monospace
+   detail: sixteen entries in the same space.
+7. **The setup checklist's "done" styling was one-way.** Inline styles were written onto the step
+   icons and never removed, so a step stayed ticked after its key was cleared. It is a class now.
+
+### The rest of the pass
+
+- **Emoji icons replaced by an inline SVG sprite** for the sidebar, search, overlay home buttons and
+  state blocks. Emoji rendered as OS-coloured pictures at inconsistent weights; these are one stroke
+  weight, inherit `currentColor`, and stay crisp at any zoom.
+- **Ten flat nav entries grouped** into Sell / Grow / Account, with a gold rail marking the active row.
+- **One focus ring across the app** via `:focus-visible` — invisible to mouse users, always there for
+  keyboard users. Fields keep their own tighter ring rather than doubling up.
+- **Ctrl+K focuses search** (the box advertised the shortcut; now it exists) and Escape clears it.
+- **Tabular figures** on money and metrics so columns stop jittering between renders.
+- **Sticky table headers** and a sticky activity rail.
+- **`prefers-reduced-motion`** honoured; the shimmer stops rather than merely slowing.
+- Buttons no longer lift on hover (it shifted layout under the cursor) — depth and brightness instead;
+  `.btn.is-busy` gives any button a spinner without markup changes.
+- Responsive breakpoints at 1180 / 900 / 640px: both fixed grids now have a way down, which the
+  installed app needed since its window opens smaller than a design mock.
+- Loose sections wrapped in the panel their neighbours use — the Auction Sniper search, the Inventory
+  Health controls and the Photo Library create-row were each floating on the page background.
+
+### Files
+
+| File | Change |
+|---|---|
+| `wwwroot/style.css` | Token layer, alias repair, and a new `Design system` section: `.state*`, `.skeleton*`, `.setup-*`. Sidebar, topbar, buttons, badges, stat cards, panels, cards, tables, logs, inputs, modals and overlay chrome refitted onto the tokens |
+| `wwwroot/index.html` | SVG sprite (15 symbols), grouped nav, SVG search / gear / home icons, setup checklist rebuilt on classes, `#listings-state`, activity and Inventory Health empty states, panel wrappers. `app.js?v=34`, `style.css?v=29` |
+| `wwwroot/app.js` | `stateBlockHtml` / `renderState` / `skeletonCardsHtml` / `skeletonRowsHtml` / `setListingsFeedback` / `clearListingsState` / `markSetupStep`; states and skeletons wired into listings, logs, activity and the photo library; Ctrl+K and Escape; table view drops the activity rail; watch badge moved onto the card photo |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **342 passed**, 0 failed, 0 skipped — unchanged from baseline, as expected for a frontend-only change |
+| Real browser (Playwright, live account, dev ports 9391–9396) | Dashboard, listings cards, table view, no-match empty state, Opportunity Finder, Inventory Health, Photo Library, Logs, Settings and License all rendered and screenshotted against **87 real listings** |
+| Ctrl+K | Focuses `#global-search` |
+| Browser console errors | **None**, on every screen visited |
+
+**Not verified:** the AI Listing overlay's internals and the reprice confirmation dialog were not
+driven to completion — both need a live analysis run or a live write. Their shared chrome (modals,
+buttons, fields, panels) is covered by the token pass; their own layouts were not individually
+re-checked.

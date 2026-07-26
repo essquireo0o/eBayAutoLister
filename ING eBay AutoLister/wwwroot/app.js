@@ -73,6 +73,22 @@
     on('btn-back-dashboard', 'click', showDashboard);
     on('global-search', 'input', renderListings);
 
+    // The search box advertises Ctrl+K; this is what makes the label true.
+    // Escape clears and re-renders, so a filtered grid is one key from whole.
+    document.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        const box = $('global-search');
+        box?.focus();
+        box?.select();
+        return;
+      }
+      if (e.key === 'Escape' && document.activeElement?.id === 'global-search') {
+        const box = $('global-search');
+        if (box && box.value) { box.value = ''; renderListings(); }
+      }
+    });
+
     on('btn-card-view', 'click', () => setViewMode('cards'));
     on('btn-table-view', 'click', () => setViewMode('table'));
 
@@ -1455,7 +1471,15 @@
             <button class="btn btn-ghost small pl-photo-delete" type="button" data-delete="${esc(url)}">Delete</button>
           </figcaption>
         </figure>`).join('')
-      : '<p class="opportunity-empty">No photos yet — drop your real photos of this model above.</p>';
+      // Borderless: it sits directly under a dashed drop zone, and two dashed
+      // rectangles in a column read as two drop targets.
+      : stateBlockHtml({
+          compact: true,
+          inline: true,
+          icon: 'i-photos',
+          title: 'No photos in this model yet',
+          body: 'Drop your own photos of this model above. Every used listing that matches it reuses them, with the representative-photo disclosure, instead of a per-unit shoot.'
+        });
 
     grid.querySelectorAll('[data-view]').forEach(img => img.addEventListener('click', () => showLightbox(img.dataset.view)));
     grid.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', () => deleteLibraryPhoto(btn.dataset.delete)));
@@ -2173,6 +2197,10 @@
     $('btn-card-view')?.setAttribute('aria-pressed', String(mode === 'cards'));
     $('btn-table-view')?.setAttribute('aria-pressed', String(mode === 'table'));
     $('listings-section')?.classList.toggle('table-mode', mode === 'table');
+    // The table needs ~1,000px to show twelve columns without a horizontal
+    // scrollbar, and the dashboard's two-column grid leaves it ~880. Table
+    // view drops the activity rail below the table instead of beside it.
+    $('listings-section')?.closest('.content-grid')?.classList.toggle('table-mode', mode === 'table');
   }
 
   function restoreListingViewMode() {
@@ -2920,18 +2948,32 @@
   async function loadLogs() {
     const el = $('logs-list');
     if (!el) return;
-    el.innerHTML = '<div class="log-row"><span class="log-level">Info</span><strong class="log-title">Loading</strong><span class="log-detail">Reading recent app actions...</span></div>';
+    // A log row saying "Loading" is indistinguishable from a log entry that
+    // says Loading. Skeletons can't be mistaken for content.
+    el.innerHTML = skeletonRowsHtml(5);
 
     try {
       const entries = await fetch('/api/logs/recent').then(r => r.json());
       if (!Array.isArray(entries) || entries.length === 0) {
-        el.innerHTML = '<div class="log-row"><span class="log-level">Info</span><strong class="log-title">No entries</strong><span class="log-detail">No recent app actions yet.</span></div>';
+        renderState(el, {
+          compact: true,
+          icon: 'i-logs',
+          title: 'No activity logged yet',
+          body: 'Every import, AI analysis, price change and publish is recorded here with its full request detail — useful when something goes wrong.'
+        });
         return;
       }
 
       el.innerHTML = entries.map(logRow).join('');
     } catch (err) {
-      el.innerHTML = `<div class="log-row"><span class="log-level error">Error</span><strong class="log-title">Logs unavailable</strong><span class="log-detail">${esc(err.message)}</span></div>`;
+      renderState(el, {
+        variant: 'error',
+        compact: true,
+        title: "Couldn't read the log",
+        body: 'The app is running but the log endpoint did not answer.',
+        detail: err.message,
+        actions: [{ label: 'Try again', id: 'retry', kind: 'btn-primary' }]
+      }, { retry: () => loadLogs() });
     }
   }
 
@@ -2947,8 +2989,8 @@
   }
 
   async function loadListings(activityTitle = 'Listings imported') {
-    const feedback = $('listings-feedback');
-    if (feedback) feedback.textContent = 'Loading active eBay listings...';
+    setListingsFeedback('Loading active eBay listings…', 'busy');
+    showListingsSkeleton();
 
     try {
       const res = await fetch('/api/ebay/listings');
@@ -2968,9 +3010,28 @@
       if (isConnected) {
         // Connected but import failed — show the real error, never fall back to samples
         cachedListings = [];
-        renderListings();
         updateStats();
-        if (feedback) feedback.textContent = `Import failed: ${errorDetail}`;
+        const grid = $('listings-grid');
+        const tbody = $('listings-table-body');
+        if (grid) grid.innerHTML = '';
+        if (tbody) tbody.innerHTML = '';
+        setListingsFeedback('Import failed.', 'error');
+        // The failure gets the whole panel rather than one line of red text:
+        // it is the only thing on this screen the seller can act on, and the
+        // two things worth trying are right there.
+        renderState('listings-state', {
+          variant: 'error',
+          title: "Couldn't import your eBay listings",
+          body: 'eBay accepted the connection but refused the request. This is usually an expired token — reconnecting fixes it.',
+          detail: errorDetail,
+          actions: [
+            { label: 'Try again', id: 'retry', kind: 'btn-primary' },
+            { label: 'Open logs', id: 'logs' }
+          ]
+        }, {
+          retry: () => loadListings(),
+          logs: () => showLogsSection()
+        });
         addActivity('eBay import failed', errorDetail);
         showResult('error', `eBay import failed: ${esc(errorDetail)} — Check the Logs section for details.`);
         return;
@@ -2980,14 +3041,26 @@
         addActivity('eBay not connected', 'Showing sample listings. Connect eBay to import real listings.');
         return;
       }
-      if (feedback) feedback.textContent = errorDetail;
+      setListingsFeedback(errorDetail, 'error');
       addActivity('Import failed', errorDetail);
     }
   }
 
+  function showListingsSkeleton() {
+    const grid = $('listings-grid');
+    const tbody = $('listings-table-body');
+    clearListingsState();
+    if (grid) grid.innerHTML = skeletonCardsHtml(8);
+    if (tbody) tbody.innerHTML = `<tr><td colspan="12" class="skeleton-cell">${skeletonRowsHtml(6)}</td></tr>`;
+  }
+
+  function clearListingsState() {
+    const el = $('listings-state');
+    if (el) el.innerHTML = '';
+  }
+
   async function loadPlaceholderListings(activityTitle = 'Sample listings loaded') {
-    const feedback = $('listings-feedback');
-    if (feedback) feedback.textContent = 'Loading sample listings...';
+    setListingsFeedback('Loading sample listings…', 'busy');
 
     try {
       const listings = await fetch('/api/local-listings/placeholder').then(r => {
@@ -2997,11 +3070,11 @@
       cachedListings = Array.isArray(listings) ? listings : [];
       renderListings();
       updateStats();
-      if (feedback) feedback.textContent = `${cachedListings.length} sample listing${cachedListings.length === 1 ? '' : 's'} shown until eBay is connected.`;
+      setListingsFeedback(`${cachedListings.length} sample listing${cachedListings.length === 1 ? '' : 's'} shown until eBay is connected.`);
       addActivity(activityTitle, `${cachedListings.length} local sample listing${cachedListings.length === 1 ? '' : 's'} loaded.`);
       return true;
     } catch (err) {
-      if (feedback) feedback.textContent = 'Connect eBay, then import listings.';
+      setListingsFeedback('Connect eBay, then import listings.');
       addActivity('Sample listings unavailable', err.message || 'Unable to load local sample listings.');
       return false;
     }
@@ -3010,7 +3083,6 @@
   function renderListings() {
     const grid = $('listings-grid');
     const tbody = $('listings-table-body');
-    const feedback = $('listings-feedback');
     if (!grid || !tbody) return;
 
     const search = ($('global-search')?.value || '').trim().toLowerCase();
@@ -3018,25 +3090,64 @@
 
     grid.innerHTML = '';
     tbody.innerHTML = '';
+    clearListingsState();
 
+    // Nothing loaded at all. Whether that is a first run or a genuinely empty
+    // store changes what the seller should do next, so the two say so
+    // differently and each offers the step that moves them forward.
     if (!cachedListings.length) {
-      if (feedback) feedback.textContent = isConnected
-        ? 'Connected, but no active listings found. Check the Logs section for details.'
-        : 'Connect eBay, then import listings.';
+      setListingsFeedback(isConnected
+        ? 'No active listings found on this account.'
+        : 'Not connected to eBay yet.');
+      renderState('listings-state', isConnected ? {
+        icon: 'i-inbox',
+        title: 'No active listings on this account',
+        body: 'Nothing is live on eBay right now. Create one with AI from a photo or a product name — the app writes the title, description, item specifics and price from real sold comps.',
+        actions: [
+          { label: 'Create an AI listing', id: 'ai', kind: 'btn-primary' },
+          { label: 'Import again', id: 'import' }
+        ],
+        hint: 'Listings you create elsewhere show up here after an import.'
+      } : {
+        icon: 'i-plug',
+        title: 'Connect eBay to see your listings',
+        body: 'Log in once and the app imports your live listings, then keeps prices, quantities and photos in sync from here.',
+        actions: [
+          { label: 'Log into eBay', id: 'connect', kind: 'btn-primary' },
+          { label: 'Create an AI listing', id: 'ai' }
+        ],
+        hint: 'Nothing is published to eBay without your confirmation.'
+      }, {
+        connect: () => $('btn-connect')?.click(),
+        ai: () => $('btn-new-ai-listing')?.click(),
+        import: () => loadListings()
+      });
       return;
     }
 
+    // Loaded fine, filtered to nothing — a search result, not a problem.
     if (!listings.length) {
-      if (feedback) feedback.textContent = 'No listings match the current search.';
+      setListingsFeedback(`No listings match “${search}”.`);
+      renderState('listings-state', {
+        compact: true,
+        icon: 'i-search',
+        title: `No listings match “${search}”`,
+        body: `Searched title, SKU, listing ID and category across ${cachedListings.length} listing${cachedListings.length === 1 ? '' : 's'}.`,
+        actions: [{ label: 'Clear search', id: 'clear', kind: 'btn-secondary' }]
+      }, {
+        clear: () => {
+          const box = $('global-search');
+          if (box) { box.value = ''; box.focus(); }
+          renderListings();
+        }
+      });
       return;
     }
 
-    if (feedback) {
-      const sampleOnly = listings.every(l => (l.status || '').toUpperCase() === 'SAMPLE');
-      feedback.textContent = sampleOnly
-        ? `${listings.length} sample listing${listings.length === 1 ? '' : 's'} shown until eBay is connected.`
-        : `${listings.length} listing${listings.length === 1 ? '' : 's'} shown.`;
-    }
+    const sampleOnly = listings.every(l => (l.status || '').toUpperCase() === 'SAMPLE');
+    setListingsFeedback(sampleOnly
+      ? `${listings.length} sample listing${listings.length === 1 ? '' : 's'} shown until eBay is connected.`
+      : `${listings.length} listing${listings.length === 1 ? '' : 's'} shown.`);
 
     listings.forEach(listing => {
       grid.appendChild(renderListingCard(listing));
@@ -3053,15 +3164,18 @@
       ? `<img src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy" />`
       : '<div class="listing-media"><strong>ING Mining</strong><span>No photo</span></div>';
 
+    // Watchers ride on the photo rather than in the footer. Four items on one
+    // footer line wrapped at card width, and a watch count is a property of
+    // the listing, not an action — it belongs with the picture.
     const watchBadge = listing.watchCount > 0
-      ? `<span class="watch-badge" title="Watchers">👁 ${listing.watchCount}</span>`
+      ? `<span class="watch-badge" title="${listing.watchCount} watcher${listing.watchCount === 1 ? '' : 's'}">👁 ${listing.watchCount}</span>`
       : '';
     const viewLink = listing.listingUrl
-      ? `<a class="view-ebay-link" href="${esc(listing.listingUrl)}" target="_blank" rel="noopener noreferrer">View on eBay</a>`
+      ? `<a class="view-ebay-link" href="${esc(listing.listingUrl)}" target="_blank" rel="noopener noreferrer" title="Open this listing on eBay">eBay ↗</a>`
       : '';
 
     card.innerHTML = `
-      ${img}
+      <div class="listing-thumb">${img}${watchBadge}</div>
       <div class="listing-title">${esc(listing.title || 'Untitled listing')}</div>
       <div class="listing-meta">
         <span>Price<strong>${money(listing.price)}</strong></span>
@@ -3073,9 +3187,10 @@
       </div>
       <div class="listing-footer">
         <span class="${statusClass(listing.status)}">${esc(displayStatus(listing.status))}</span>
-        ${watchBadge}
-        ${viewLink}
-        <button class="btn btn-secondary small" type="button">Edit</button>
+        <span class="listing-footer-actions">
+          ${viewLink}
+          <button class="btn btn-secondary small" type="button">Edit</button>
+        </span>
       </div>`;
 
     card.querySelector('button')?.addEventListener('click', event => {
@@ -3702,6 +3817,9 @@
   function addActivity(title, detail) {
     const list = $('activity-list');
     if (!list) return;
+    // The "no activity yet" block is markup, not a row — the first real entry
+    // retires it.
+    list.querySelector('.state')?.remove();
     const item = document.createElement('div');
     item.className = 'activity-item';
     item.innerHTML = `<strong>${esc(title)}</strong><span>${esc(detail)} - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
@@ -3731,35 +3849,38 @@
     const step2Done = hasEbay   !== null && hasEbay   !== undefined ? hasEbay   : isConnected;
     const step3Done = hasOpenAi !== null && hasOpenAi !== undefined ? hasOpenAi : false;
 
-    // Step 1 — Anthropic key
-    const icon1 = $('step1-icon');
-    const btn1  = $('step1-btn');
-    if (step1Done) {
-      if (icon1) { icon1.textContent = '✓'; icon1.style.background = '#166534'; icon1.style.color = '#4ade80'; }
-      if (btn1)  { btn1.textContent = '✓ Key saved'; btn1.disabled = true; btn1.style.opacity = '.5'; }
-    }
-
-    // Step 2 — eBay
-    const icon2 = $('step2-icon');
-    const btn2  = $('step2-btn');
-    if (step2Done) {
-      if (icon2) { icon2.textContent = '✓'; icon2.style.background = '#166534'; icon2.style.color = '#4ade80'; }
-      if (btn2)  { btn2.textContent = '✓ Connected'; btn2.disabled = true; btn2.style.opacity = '.5'; }
-    }
-
-    // Step 3 — OpenAI (optional, just show checkmark if present)
-    const icon3 = $('step3-icon');
-    const btn3  = $('step3-btn');
-    if (step3Done) {
-      if (icon3) { icon3.textContent = '✓'; icon3.style.background = '#166534'; icon3.style.color = '#4ade80'; }
-      if (btn3)  { btn3.textContent = '✓ Key saved'; btn3.disabled = true; btn3.style.opacity = '.5'; }
-    }
+    // The done look lives in .setup-step.is-done, so a step can go back to
+    // pending if the key is later cleared — the old inline styles were
+    // one-way and left a green tick on a step that no longer applied.
+    markSetupStep('step1', step1Done, 'Key saved');
+    markSetupStep('step2', step2Done, 'Connected');
+    markSetupStep('step3', step3Done, 'Key saved');
 
     // Hide checklist once the two required steps are done (step 3 is optional)
     if (step1Done && step2Done) {
       checklist.classList.add('hidden');
     } else {
       checklist.classList.remove('hidden');
+    }
+  }
+
+  function markSetupStep(prefix, done, doneLabel) {
+    const row  = $(`${prefix}-row`);
+    const icon = $(`${prefix}-icon`);
+    const btn  = $(`${prefix}-btn`);
+    const step = prefix.replace('step', '');
+
+    row?.classList.toggle('is-done', done);
+    if (icon) icon.textContent = done ? '✓' : step;
+    if (btn) {
+      if (done) {
+        if (!btn.dataset.pendingLabel) btn.dataset.pendingLabel = btn.textContent;
+        btn.textContent = `✓ ${doneLabel}`;
+        btn.disabled = true;
+      } else if (btn.dataset.pendingLabel) {
+        btn.textContent = btn.dataset.pendingLabel;
+        btn.disabled = false;
+      }
     }
   }
 
@@ -6698,6 +6819,96 @@
       .replace(/"/g, '&quot;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+  }
+
+  // ── Empty / loading / error states ──────────────────────────────────────
+  // Every data view in the app has the same three non-happy moments, and each
+  // one used to be a sentence in a grey bar — which reads as a defect whether
+  // it is one or not. These build the one state block the CSS styles, so a
+  // view that has nothing to show still looks deliberate and, where an action
+  // would fix it, offers that action instead of describing it.
+
+  /**
+   * @param {{variant?: 'empty'|'error'|'success', icon?: string, title: string,
+   *          body?: string, detail?: string, actions?: {label: string, id?: string,
+   *          kind?: string, href?: string}[], hint?: string}} opts
+   */
+  function stateBlockHtml(opts) {
+    const variant = opts.variant || 'empty';
+    const cls = variant === 'empty' ? 'state' : `state state--${variant}`;
+    const icon = opts.icon
+      ? `<svg aria-hidden="true"><use href="#${esc(opts.icon)}"/></svg>`
+      : `<svg aria-hidden="true"><use href="#${variant === 'error' ? 'i-alert' : 'i-inbox'}"/></svg>`;
+
+    const actions = (opts.actions || []).map(a => {
+      const kind = a.kind || 'btn-secondary';
+      return a.href
+        ? `<a class="btn ${esc(kind)}" href="${esc(a.href)}" target="_blank" rel="noopener noreferrer">${esc(a.label)}</a>`
+        : `<button class="btn ${esc(kind)}" type="button"${a.id ? ` data-state-action="${esc(a.id)}"` : ''}>${esc(a.label)}</button>`;
+    }).join('');
+
+    return `
+      <div class="${cls}${opts.compact ? ' state--compact' : ''}${opts.inline ? ' state--inline' : ''}">
+        <div class="state-icon">${icon}</div>
+        <div class="state-title">${esc(opts.title)}</div>
+        ${opts.body ? `<p class="state-body">${esc(opts.body)}</p>` : ''}
+        ${opts.detail ? `<div class="state-detail">${esc(opts.detail)}</div>` : ''}
+        ${actions ? `<div class="state-actions">${actions}</div>` : ''}
+        ${opts.hint ? `<p class="state-hint">${esc(opts.hint)}</p>` : ''}
+      </div>`;
+  }
+
+  /**
+   * Renders a state block into a container and wires its buttons. `handlers`
+   * maps the action ids used above onto functions — declared next to the
+   * state so the copy and the thing it promises can't drift apart.
+   */
+  function renderState(container, opts, handlers = {}) {
+    const el = typeof container === 'string' ? $(container) : container;
+    if (!el) return;
+    el.innerHTML = stateBlockHtml(opts);
+    el.querySelectorAll('[data-state-action]').forEach(btn => {
+      const fn = handlers[btn.dataset.stateAction];
+      if (fn) btn.addEventListener('click', fn);
+    });
+  }
+
+  /** Card-shaped placeholders sized like the real listing cards they replace. */
+  function skeletonCardsHtml(count = 8) {
+    const one = `
+      <div class="skeleton-card" aria-hidden="true">
+        <div class="skeleton skeleton-media"></div>
+        <div class="skeleton skeleton-line tall w-90"></div>
+        <div class="skeleton skeleton-line w-50"></div>
+        <div class="skeleton-meta">
+          <div class="skeleton skeleton-line"></div>
+          <div class="skeleton skeleton-line"></div>
+          <div class="skeleton skeleton-line w-70"></div>
+          <div class="skeleton skeleton-line w-40"></div>
+        </div>
+      </div>`;
+    return one.repeat(count);
+  }
+
+  function skeletonRowsHtml(count = 6) {
+    const one = `
+      <div class="skeleton-row" aria-hidden="true">
+        <div class="skeleton skeleton-avatar"></div>
+        <div class="skeleton-fill">
+          <div class="skeleton skeleton-line w-70" style="margin-bottom:8px"></div>
+          <div class="skeleton skeleton-line w-40"></div>
+        </div>
+      </div>`;
+    return one.repeat(count);
+  }
+
+  /** The listings bar reports counts, progress and failures; each reads differently. */
+  function setListingsFeedback(text, tone = 'info') {
+    const el = $('listings-feedback');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('is-error', tone === 'error');
+    el.classList.toggle('is-busy', tone === 'busy');
   }
 
   // ── Photo Editor (opens in new window) ───────────────────────────────────
