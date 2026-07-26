@@ -3316,20 +3316,11 @@
       window._nlVisualDescription = data.visualDescription || '';
       window._nlImageType = 'product_photo';
 
-      // First found photo → main preview + auto background removal → Picture 1.
-      // Remaining found photos go straight into the gallery slots as-is.
+      // Condition-aware: NEW items may use a found stock photo; USED items must show the seller's
+      // REAL unit (representative-photo library or a prompt) — never a stock image.
       const foundUrls = (data.imageUrls || []).filter(u => u && (u.startsWith('http') || u.startsWith('/')));
       const absUrls = foundUrls.map(u => u.startsWith('/') ? window.location.origin + u : u);
-      if (absUrls[0]) {
-        const previewImg = $('nl-preview-img');
-        if (previewImg) previewImg.src = absUrls[0];
-        $('nl-drop-zone')?.classList.add('hidden');
-        $('nl-preview-wrap')?.classList.remove('hidden');
-        nlAutoRemoveBg(absUrls[0]);
-        absUrls.slice(1).forEach((u, i) => setPhotoSlotUrl(i + 1, u));
-      } else {
-        addActivity('No photos found online', 'Drop or paste a photo manually, or try a more specific item name');
-      }
+      await nlApplyResearchPhotos(data, absUrls, itemName);
 
       const activeTab = draftTabs.find(t => t.id === activeDraftTabId);
       if (activeTab) { activeTab.title = data.title || 'New Draft'; renderDraftTabs(); }
@@ -3347,6 +3338,69 @@
       input?.classList.remove('loading');
       if (btn) { btn.disabled = false; btn.textContent = 'Auto-Fill'; }
     }
+  }
+
+  // Condition-aware photo application for AI research results. NEW items may use a found stock
+  // photo; USED items must show the seller's REAL unit — so pull from the representative-photo
+  // library for the model, or prompt the seller to add a real photo. Never a stock image on used.
+  async function nlApplyResearchPhotos(data, absUrls, nameHint) {
+    const cond = (data.condition || $('nl-condition')?.value || '').toUpperCase();
+    const isUsed = cond.startsWith('USED') || cond === 'FOR_PARTS' || /\bused\b/i.test(nameHint || data.title || '');
+
+    if (isUsed) {
+      try {
+        const q = new URLSearchParams({ model: data.model || '', title: data.title || nameHint || '' });
+        const lib = await fetch('/api/photos/library/for-listing?' + q).then(r => r.json()).catch(() => ({}));
+        if (lib && lib.matched && (lib.photos || []).length) {
+          const urls = lib.photos.map(u => u.startsWith('/') ? window.location.origin + u : u);
+          const previewImg = $('nl-preview-img');
+          if (previewImg) previewImg.src = urls[0];
+          $('nl-drop-zone')?.classList.add('hidden');
+          $('nl-preview-wrap')?.classList.remove('hidden');
+          urls.forEach((u, i) => setPhotoSlotUrl(i, u));
+          if (lib.disclosure) nlAppendDisclosure(lib.disclosure);
+          addActivity('Used item — pulled your library photos', `${urls.length} real photo(s) for ${lib.modelKey}`);
+          return;
+        }
+      } catch (e) { /* non-fatal */ }
+      // No library set for this model yet — refuse the stock image, prompt for a real photo.
+      nlPromptUsedPhoto();
+      return;
+    }
+
+    // NEW item — a found stock photo is acceptable (existing behavior).
+    if (absUrls[0]) {
+      const previewImg = $('nl-preview-img');
+      if (previewImg) previewImg.src = absUrls[0];
+      $('nl-drop-zone')?.classList.add('hidden');
+      $('nl-preview-wrap')?.classList.remove('hidden');
+      nlAutoRemoveBg(absUrls[0]);
+      absUrls.slice(1).forEach((u, i) => setPhotoSlotUrl(i + 1, u));
+    } else {
+      addActivity('No photos found online', 'Drop or paste a photo manually, or try a more specific item name');
+    }
+  }
+
+  // Used item with no library photos: clear any stock image, reveal + highlight the drop zone so
+  // the seller adds a real photo of their actual unit.
+  function nlPromptUsedPhoto() {
+    $('nl-preview-wrap')?.classList.add('hidden');
+    const drop = $('nl-drop-zone');
+    if (drop) {
+      drop.classList.remove('hidden');
+      drop.classList.add('field-flagged');
+      setTimeout(() => drop.classList.remove('field-flagged'), 5000);
+    }
+    addActivity('Used item — add a real photo',
+      "Stock photos aren't allowed for used items. Drop a photo of your actual unit (or add it to this model's photo library).");
+  }
+
+  // Append the representative-photo disclosure to the plain-text description once.
+  function nlAppendDisclosure(text) {
+    const t = $('nl-desc-text');
+    if (!t || !text || t.value.includes(text)) return;
+    t.value = (t.value ? t.value + '\n\n' : '') + text;
+    if (typeof nlUpdateDescCount === 'function') nlUpdateDescCount();
   }
 
   async function nlAnalyze() {
@@ -3969,6 +4023,61 @@
 
   function nlClearPolicyHighlights() {
     ['nl-title', 'nl-desc-text', 'nl-description', 'nl-desc-preview'].forEach(id => $(id)?.classList.remove('field-flagged'));
+    document.querySelectorAll('#nl-specifics-list .field-flagged').forEach(el => el.classList.remove('field-flagged'));
+    document.querySelectorAll('#nl-specifics-list .specific-row.field-flagged').forEach(el => el.classList.remove('field-flagged'));
+  }
+
+  // Called after a publish failure — when eBay rejects for a MISSING/INVALID item specific (e.g.
+  // "The item specific Chipset/GPU Model is missing"), find that specific's row and highlight it so
+  // the seller can jump straight to the box to fix. If the required specific isn't present at all,
+  // add an empty row pre-labeled with its name, then highlight + focus its value box.
+  function nlHighlightMissingSpecifics(errorText) {
+    const text = errorText || '';
+    const names = new Set();
+    const patterns = [
+      /item specific(?:\s+name)?\s+["']?(.+?)["']?\s+is\s+missing/gi,
+      /item specific(?:\s+name)?\s+["']?(.+?)["']?\s+is\s+required/gi,
+      /missing\s+(?:required\s+)?item specifics?:?\s*["']?([^."'\n]+)["']?/gi,
+      /(?:enter|add|provide)\s+a?\s*(?:valid\s+)?value\s+for\s+(?:the\s+)?["']?(.+?)["']?[.,]/gi,
+    ];
+    for (const re of patterns) {
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        m[1].split(/,|\band\b/).forEach(n => {
+          const name = n.replace(/["'.]/g, '').replace(/\s+/g, ' ').trim();
+          // Guard against over-capturing whole sentences.
+          if (name && name.length <= 60 && !/\bmissing\b|\brequired\b|\blisting\b/i.test(name)) names.add(name);
+        });
+      }
+    }
+    if (names.size === 0) return false;
+
+    let firstEl = null;
+    names.forEach(name => {
+      const norm = name.toLowerCase();
+      let row = Array.from(document.querySelectorAll('#nl-specifics-list .specific-row'))
+        .find(r => (r.querySelector('input')?.value || '').trim().toLowerCase() === norm);
+      if (!row) {
+        nlAddSpecificRow(name, '');
+        const all = document.querySelectorAll('#nl-specifics-list .specific-row');
+        row = all[all.length - 1];
+      }
+      if (row) {
+        row.classList.add('field-flagged');
+        const valInput = row.querySelectorAll('input')[1];
+        valInput?.classList.add('field-flagged');
+        firstEl = firstEl || valInput || row;
+      }
+    });
+
+    if (firstEl) {
+      const note = `\n\n⚠ eBay needs a value for item specific(s): "${[...names].join('", "')}" — highlighted below. Enter a value and republish.`;
+      const el = $('nl-result-msg');
+      if (el) el.innerHTML += esc(note).replace(/\n/g, '<br>');
+      firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => firstEl.focus(), 300);
+    }
+    return true;
   }
 
   // Called after a publish/save failure — if the error looks like eBay's generic content-policy
@@ -4259,6 +4368,7 @@
           'Failed' + where + ': ' + short
           + (details !== short ? '\n\nDetails: ' + details : ''));
         nlHighlightPolicyIssues(short + ' ' + details);
+        nlHighlightMissingSpecifics(short + ' ' + details);
         addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed',
           'HTTP ' + res.status + ': ' + short);
         return;

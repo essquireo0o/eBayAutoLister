@@ -40,7 +40,10 @@ public class SellThroughCalculatorTests
 
         Assert.Null(result.SellThroughRate);
         Assert.True(result.RateIsUnbounded);
-        Assert.Contains("low competition", result.Interpretation, StringComparison.OrdinalIgnoreCase);
+        // A missing denominator must NOT masquerade as "Excellent / 100%" — it is reported as
+        // unverified/low-confidence so zero-competition noise can't look like a guaranteed flip.
+        Assert.Contains("unverified", result.Interpretation, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(100, result.SellThroughScore);
     }
 
     [Fact]

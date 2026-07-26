@@ -22,7 +22,13 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
 
         // Per-unit normalization: a "lot of 10" sold at $500 is a $50 comparable, not a $500 one.
         var perUnit = localComparables.Select(NormalizeToUnitPrice).ToList();
-        var trimmed = MarketplacePricingCalculator.RemovePriceOutliers(perUnit);
+        // Identity guard (general, all items): when the target has a real model/part identifier,
+        // restrict the pricing set to comps whose title actually contains it — so a cheap item
+        // can't be priced off comps of a different, often pricier product that merely shares a
+        // brand/keyword (e.g. a $74 "FANUC GP50 fuse" priced off $1050 FANUC drives). Falls back to
+        // the unfiltered set when the guard would leave too few comps to trust.
+        var identityFiltered = ApplyIdentityGuard(target, perUnit);
+        var trimmed = MarketplacePricingCalculator.RemovePriceOutliers(identityFiltered);
 
         var strongRecent = trimmed
             .Where(c => c.MatchScore >= StrongMatchThreshold && (c.SoldDate is null || (now - c.SoldDate.Value).TotalDays <= RecentDays))
@@ -72,6 +78,27 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
 
         return estimate;
     }
+
+    // Keep only comps whose title contains one of the target's distinctive model/part tokens
+    // (a token with a digit, or length >= 4). General across categories; a no-op when the target
+    // has no usable identifier, and it never zeroes out the estimate (falls back if < 3 survive).
+    private static List<MarketplaceComparableResult> ApplyIdentityGuard(
+        NormalizedProduct target, List<MarketplaceComparableResult> comps)
+    {
+        var tokens = new[] { target.Model, target.PartNumber }
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .SelectMany(s => Norm(s).Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Where(t => t.Length >= 3 && (t.Any(char.IsDigit) || t.Length >= 4))
+            .Distinct()
+            .ToList();
+        if (tokens.Count == 0) return comps;
+
+        var kept = comps.Where(c => { var t = Norm(c.Title); return tokens.Any(t.Contains); }).ToList();
+        return kept.Count >= 3 ? kept : comps;
+    }
+
+    private static string Norm(string? s) =>
+        new string((s ?? "").ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());
 
     private static MarketplaceComparableResult NormalizeToUnitPrice(MarketplaceComparableResult c)
     {

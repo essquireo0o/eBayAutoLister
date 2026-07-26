@@ -38,12 +38,15 @@ public sealed class SellThroughCalculator(LiquidityScoringService liquidity)
 
         if (activeComparableCount <= 0)
         {
-            // Sold history exists but nothing is currently listed — never report an infinite
-            // rate; flag it as low competition with a denominator we can't actually trust.
+            // Sold history exists but nothing is currently listed — the sell-through DENOMINATOR is
+            // missing, so we cannot honestly report a rate. Do NOT claim "100% / Excellent" off a
+            // non-existent denominator (that made zero-competition noise masquerade as a top
+            // opportunity). Surface it as unverified/low-confidence instead. RateIsUnbounded lets
+            // the UI render "—" rather than a fake percentage.
             analysis.RateIsUnbounded = soldCount > 0;
             analysis.SellThroughRate = null;
-            analysis.SellThroughScore = soldCount > 0 ? 100 : 0;
-            analysis.Interpretation = soldCount > 0 ? "Excellent (low competition, limited denominator confidence)" : "Unknown";
+            analysis.SellThroughScore = soldCount > 0 ? 40 : 0;
+            analysis.Interpretation = soldCount > 0 ? "Unverified — no active comps to measure against" : "Unknown";
             return analysis;
         }
 

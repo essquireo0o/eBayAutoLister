@@ -52,6 +52,11 @@ public class Credentials
 
     // Owner dashboard
     public string AdminKey { get; set; } = "";
+
+    // Hosted sold-comps API (comps.php on inglisting.com -> ing_sold_listings MariaDB). When Url is
+    // set, the app queries the hosted marketplace instead of the local C:\INGListing Marketplace.db.
+    public string MarketCompsApiUrl { get; set; } = "";
+    public string MarketCompsApiKey { get; set; } = "";
 }
 
 public class CredentialsStore
@@ -116,6 +121,8 @@ public class CredentialsStore
         if (!string.IsNullOrWhiteSpace(creds.StripeSecretKey))      _data.StripeSecretKey      = creds.StripeSecretKey;
         if (!string.IsNullOrWhiteSpace(creds.StripePublishableKey)) _data.StripePublishableKey = creds.StripePublishableKey;
         if (!string.IsNullOrWhiteSpace(creds.StripeWebhookSecret))  _data.StripeWebhookSecret  = creds.StripeWebhookSecret;
+        if (!string.IsNullOrWhiteSpace(creds.MarketCompsApiUrl))     _data.MarketCompsApiUrl     = creds.MarketCompsApiUrl;
+        if (!string.IsNullOrWhiteSpace(creds.MarketCompsApiKey))     _data.MarketCompsApiKey     = creds.MarketCompsApiKey;
         Persist();
     }
 

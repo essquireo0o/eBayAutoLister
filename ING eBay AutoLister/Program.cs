@@ -167,7 +167,16 @@ builder.Services.AddSingleton<TerapeakPriceCache>();
 // Opportunity Finder's Supplier File Analyzer with real local comps before falling back to
 // Terapeak. See ExternalMarketplaceDb / MarketplaceRepository for the read-only guarantees.
 builder.Services.AddSingleton<ExternalMarketplaceDb>();
-builder.Services.AddSingleton<IMarketplaceRepository, MarketplaceRepository>();
+builder.Services.AddSingleton<MarketplaceRepository>();
+// Hosted sold-comps path — queries comps.php on inglisting.com (ing_sold_listings MariaDB) and
+// reuses the exact same ComparableMatcher scoring as the local repo. Selected below when
+// MarketCompsApiUrl is configured; otherwise the local Marketplace.db repository is used.
+builder.Services.AddSingleton<HostedMarketplaceClient>();
+builder.Services.AddSingleton<HostedMarketplaceRepository>();
+builder.Services.AddSingleton<IMarketplaceRepository>(sp =>
+    !string.IsNullOrWhiteSpace(sp.GetRequiredService<CredentialsStore>().Get().MarketCompsApiUrl)
+        ? sp.GetRequiredService<HostedMarketplaceRepository>()
+        : sp.GetRequiredService<MarketplaceRepository>());
 // Structured brand/model/part-number extraction from free-text titles — see
 // ProductIdentityExtractor. Stateless; used before every local sold-history search.
 builder.Services.AddSingleton<ProductIdentityExtractor>();
@@ -221,6 +230,17 @@ app.UseCors();
     {
         FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(photosDir),
         RequestPath  = "/generated-photos"
+    });
+}
+
+// Serve the representative-photo library (seller's real per-model stock photos) from photos/.
+{
+    var libDir = Path.Combine(app.Environment.ContentRootPath, "photos");
+    Directory.CreateDirectory(libDir);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(libDir),
+        RequestPath  = "/photos"
     });
 }
 
@@ -1672,7 +1692,12 @@ static void ApplyAnalysisToOpportunityItem(OpportunityListItem candidate, Market
     candidate.LiquidityScore = analysis.SellThrough.LiquidityScore;
     candidate.LiquidityLevel = analysis.SellThrough.LiquidityLevel;
     candidate.EstimatedDaysToSell = analysis.SellThrough.EstimatedDaysToSell;
-    candidate.SellThroughPercent = analysis.SellThrough.SellThroughRate ?? (analysis.SellThrough.RateIsUnbounded ? 100m : candidate.SellThroughPercent);
+    // No active comps to divide by => we can't honestly report a rate. Leave it null so the UI
+    // shows "—" (low confidence), instead of the old fake "100%" that made zero-competition noise
+    // look like a guaranteed flip.
+    candidate.SellThroughPercent = analysis.SellThrough.RateIsUnbounded
+        ? (decimal?)null
+        : (analysis.SellThrough.SellThroughRate ?? candidate.SellThroughPercent);
     candidate.IsHighThroughput = candidate.SellThroughPercent is > 50;
 
     candidate.QuickSalePrice = analysis.PriceEstimate.QuickSalePrice;
@@ -2011,6 +2036,45 @@ app.MapGet("/api/local-db/status", (ListingDatabase db) => Results.Ok(db.GetStat
 app.MapGet("/api/local-listings/placeholder", () => Results.Ok(PlaceholderListings.Get()));
 
 app.MapGet("/api/photos/default-folders", (PhotoLibrary photos) => Results.Ok(photos.GetDefaultFolders()));
+
+// ── Representative-photo library (USED items) ───────────────────────────────────────────────
+// Every model folder + its photo URLs, so the UI can show/manage the seller's real stock photos.
+app.MapGet("/api/photos/library", (PhotoLibrary photos) =>
+    Results.Ok(photos.GetAllFolders().Select(f => new { f.ModelKey, f.ImageCount, photos = photos.ListPhotoUrls(f.ModelKey) })));
+
+// Create an empty model folder (e.g. when the seller starts a new model's photo set).
+app.MapPost("/api/photos/library/create", (LibraryCreateRequest req, PhotoLibrary photos) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ModelKey)) return Results.BadRequest(new { error = "ModelKey is required" });
+    try { return Results.Ok(new { modelKey = photos.CreateFolder(req.ModelKey) }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+// Save one of the seller's REAL photos into a model's library. Send an already-cleaned image
+// (e.g. the /api/photos/remove-bg output re-encoded) or the raw upload — both are stored as-is.
+app.MapPost("/api/photos/library/upload", async (LibraryUploadRequest req, PhotoLibrary photos, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ModelKey) || string.IsNullOrWhiteSpace(req.ImageBase64))
+        return Results.BadRequest(new { error = "ModelKey and ImageBase64 are required" });
+    try
+    {
+        var ext = (req.MimeType ?? "").Contains("png") ? "png" : "jpg";
+        var url = await photos.SavePhotoAsync(req.ModelKey, Convert.FromBase64String(req.ImageBase64), ext);
+        log.Add("Info", "Representative photo saved", $"{req.ModelKey} -> {url}");
+        return Results.Ok(new { url });
+    }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+// For a used listing: return the matching model's representative photos + the disclosure line to
+// append to the description. matched=false means no library set yet for this model (prompt to add).
+app.MapGet("/api/photos/library/for-listing", (string? model, string? title, PhotoLibrary photos) =>
+{
+    var m = photos.ResolveForListing(model, title);
+    return m is null
+        ? Results.Ok(new { matched = false })
+        : Results.Ok(new { matched = true, m.ModelKey, photos = m.PhotoUrls, disclosure = m.Disclosure });
+});
 
 app.MapPost("/api/photos/fetch-url", async (FetchPhotoUrlRequest req, IHttpClientFactory http, IWebHostEnvironment env, ActionLog log) =>
 {
