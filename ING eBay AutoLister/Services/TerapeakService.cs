@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -25,32 +24,14 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     private static extern bool AllowSetForegroundWindow(int dwProcessId);
     private const int ASFW_ANY = -1;
 
-    private static string PlaywrightDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "npm", "node_modules", "playwright");
+    // node.exe resolution, the Playwright package directory and the run-a-throwaway-script
+    // plumbing all live in NodeRuntime now — FacebookMarketplaceService needs the identical
+    // setup for the same reason (no public search API, so drive a real logged-in browser).
+    private static string PlaywrightDir => NodeRuntime.PlaywrightDir;
 
     public bool IsConnected => File.Exists(_sessionPath);
     public bool IsLoginInProgress => _loginInProgress;
     public string? LastLoginError { get; private set; }
-
-    // A GUI process (double-click, startup shortcut, tray auto-launch) inherits whatever PATH
-    // its parent (usually explorer.exe) had cached at logon — installing Node.js later doesn't
-    // reach it until a full sign-out, even though a freshly-opened terminal sees it immediately.
-    // Relying on bare "node" + PATH search silently breaks for exactly that reason, so resolve a
-    // concrete node.exe path up front instead of trusting the inherited environment.
-    private static readonly Lazy<string> ResolvedNodeExe = new(() =>
-    {
-        string[] candidates =
-        [
-            Environment.GetEnvironmentVariable("ProgramFiles") is { } pf ? Path.Combine(pf, "nodejs", "node.exe") : "",
-            Environment.GetEnvironmentVariable("ProgramFiles(x86)") is { } pf86 ? Path.Combine(pf86, "nodejs", "node.exe") : "",
-            Environment.GetEnvironmentVariable("PATH")?
-                .Split(Path.PathSeparator)
-                .Select(dir => { try { return Path.Combine(dir, "node.exe"); } catch { return ""; } })
-                .FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p)) ?? ""
-        ];
-        return candidates.FirstOrDefault(File.Exists) ?? "node"; // last resort: let Process.Start try PATH itself
-    });
 
     // ── One-time interactive login ────────────────────────────────────────────
 
@@ -128,43 +109,23 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             "  try { await browser.close(); } catch (_) {}\n" +
             "})();\n";
 
-        var scriptFile = Path.Combine(Path.GetTempPath(), $"terapeak_login_{Guid.NewGuid():N}.cjs");
-        await File.WriteAllTextAsync(scriptFile, script);
-
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName               = ResolvedNodeExe.Value,
-                ArgumentList           = { scriptFile },
-                WorkingDirectory       = PlaywrightDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                UseShellExecute        = false,
-                CreateNoWindow         = true
-            };
-
             // Grant foreground rights before launch so the Chrome window this spawns can raise
             // itself above whatever the user is currently looking at, instead of opening
             // silently behind it. Only needed here — ScrapeAsync's browser is headless.
-            try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
+            var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(7), "terapeak_login",
+                beforeStart: () => { try { AllowSetForegroundWindow(ASFW_ANY); } catch { } });
 
-            using var proc = Process.Start(psi)!;
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-            var stderrTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(7));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
+            if (run.TimedOut)
             {
-                try { proc.Kill(entireProcessTree: true); } catch { }
                 LastLoginError = "No login completed within 7 minutes.";
                 log.Add("Warning", "Terapeak login timed out", LastLoginError);
                 return;
             }
 
-            var stdout = (await stdoutTask).Trim();
-            var stderr = await stderrTask;
+            var stdout = run.StdOut;
+            var stderr = run.StdErr;
 
             if (stdout == "SAVED")
                 log.Add("Info", "Terapeak connected", "Session saved — sold comps will now use real Terapeak data.");
@@ -185,7 +146,6 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         }
         finally
         {
-            try { File.Delete(scriptFile); } catch { }
             _loginInProgress = false;
         }
     }
@@ -227,60 +187,28 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             "  await browser.close();\n" +
             "})();\n";
 
-        var scriptFile = Path.Combine(Path.GetTempPath(), $"terapeak_scrape_{Guid.NewGuid():N}.cjs");
-        await File.WriteAllTextAsync(scriptFile, script);
+        var run = await NodeRuntime.RunAsync(script, TimeSpan.FromSeconds(40), "terapeak_scrape");
+        if (run.TimedOut)
+            return new TerapeakScrapeResult { Status = "error", Error = "Scrape timed out." };
 
-        try
+        if (string.IsNullOrWhiteSpace(run.StdOut))
+            return new TerapeakScrapeResult { Status = "error", Error = string.IsNullOrWhiteSpace(run.StdErr) ? "No output from scrape." : run.StdErr };
+
+        using var doc = JsonDocument.Parse(run.StdOut);
+        var loggedOut = doc.RootElement.TryGetProperty("loggedOut", out var lo) && lo.GetBoolean();
+        var bodyText  = doc.RootElement.TryGetProperty("bodyText", out var bt) ? bt.GetString() ?? "" : "";
+
+        if (loggedOut)
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName               = ResolvedNodeExe.Value,
-                ArgumentList           = { scriptFile },
-                WorkingDirectory       = PlaywrightDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                UseShellExecute        = false,
-                CreateNoWindow         = true
-            };
-
-            using var proc = Process.Start(psi)!;
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-            var stderrTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { }
-                return new TerapeakScrapeResult { Status = "error", Error = "Scrape timed out." };
-            }
-
-            var stdout = (await stdoutTask).Trim();
-            var stderr = await stderrTask;
-
-            if (string.IsNullOrWhiteSpace(stdout))
-                return new TerapeakScrapeResult { Status = "error", Error = string.IsNullOrWhiteSpace(stderr) ? "No output from scrape." : stderr };
-
-            using var doc = JsonDocument.Parse(stdout);
-            var loggedOut = doc.RootElement.TryGetProperty("loggedOut", out var lo) && lo.GetBoolean();
-            var bodyText  = doc.RootElement.TryGetProperty("bodyText", out var bt) ? bt.GetString() ?? "" : "";
-
-            if (loggedOut)
-            {
-                // No auto-reconnect here (removed 2026-07-15 along with the background scanner —
-                // see Program.cs) — popping a login window as a side effect of any scrape,
-                // including a passive on-demand lookup, is exactly the unattended behavior that
-                // was turned off. Reconnecting is the user's call, made explicitly in Settings.
-                Disconnect();
-                return new TerapeakScrapeResult { Status = "session_expired" };
-            }
-
-            return new TerapeakScrapeResult { Status = "ok", BodyText = bodyText, DebugScreenshotPath = debugShotPath };
+            // No auto-reconnect here (removed 2026-07-15 along with the background scanner —
+            // see Program.cs) — popping a login window as a side effect of any scrape,
+            // including a passive on-demand lookup, is exactly the unattended behavior that
+            // was turned off. Reconnecting is the user's call, made explicitly in Settings.
+            Disconnect();
+            return new TerapeakScrapeResult { Status = "session_expired" };
         }
-        finally
-        {
-            try { File.Delete(scriptFile); } catch { }
-        }
+
+        return new TerapeakScrapeResult { Status = "ok", BodyText = bodyText, DebugScreenshotPath = debugShotPath };
     }
 }
 

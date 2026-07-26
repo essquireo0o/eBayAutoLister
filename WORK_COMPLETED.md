@@ -373,3 +373,86 @@ exposes a fee API — so every derived figure is labelled an estimate in the UI.
 
 One test failure was found and **fixed in the code rather than the test**: the Mercari worksheet
 was missing the shared `sku` column that makes cross-site inventory reconcilable.
+
+---
+
+## 10. Facebook Marketplace local sourcing (autonomous session, 2026-07-26)
+
+Searches **local** Facebook Marketplace supply by zip code + radius from inside the Opportunity
+Finder, and prices what locals are asking against real eBay sold comps. Section 9 pushes finished
+drafts *out* to Facebook; this reads inventory *in*.
+
+### Why this makes the seller money
+
+Cheap local supply is where reseller margin actually comes from — an item bought at a local ask of
+$450 that sells on eBay for a $1,150 average is a $700 gross spread, and Marketplace is the largest
+local supply pool in the US. Until now the app could only tell the seller what things sell *for*;
+this tells them what they can *buy* today, within driving distance, and hands each result straight
+to the existing sold-comps pipeline.
+
+### Why it's a browser session and not an API
+
+Facebook publishes **no** Marketplace search API — not a restricted one, none. So this takes the
+exact posture `TerapeakService` already established, for the same reason:
+
+- One **visible** browser window, once, where the seller logs into **their own** Facebook account.
+  The app never sees or stores a password; the session cookie jar is saved to `facebook-session.json`.
+- Every later search is **headless and user-driven**. Nothing is scheduled, nothing runs in the
+  background, and no other feature can trigger a search as a side effect.
+- One search = one page load. No crawling, no enumeration; results are capped at 120 tiles.
+- An expired session is **reported**, never silently re-authenticated — reconnecting is the
+  person's decision, made in Settings (identical rule to Terapeak, see §Program.cs comments).
+- Per-card sold-comp lookups are one click each, never automatic for a whole result set.
+
+### Design: selectors isolated, meaning testable
+
+Facebook rewrites its DOM constantly, so the three concerns are split so that churn only ever
+touches one small file:
+
+| File | Role |
+|---|---|
+| `Services/FacebookMarketplaceSelectors.cs` | **New** — the only file with Facebook-specific strings. URL shape, login-detection, location-dialog and result-tile selectors, all as *candidate lists* tried in order (Facebook ships several layouts at once), plus the radii its dropdown actually offers |
+| `Services/FacebookMarketplaceService.cs` | **New** — browser plumbing only. Visible one-time login (waits on the `c_user` cookie, not a URL, so a half-finished 2FA never gets saved), then headless search: set location from the zip via the real dialog, scroll the virtualised grid, return each tile as `{href, imageUrl, lines[]}` |
+| `Services/FacebookMarketplaceParser.cs` | **New** — all interpretation, no browser. A tile has no field labels, so every line is classified by shape: price / price-drop / distance / posted-time / place / prose, with the longest prose line as the title |
+| `Services/NodeRuntime.cs` | **New** — node.exe + Playwright resolution and run-a-throwaway-script, extracted from `TerapeakService` so the Windows PATH-inheritance workaround isn't duplicated. `TerapeakService` now calls it (behaviour unchanged) |
+| `Models/FacebookMarketplaceModels.cs` | **New** — `FacebookRawCard`, `FacebookMarketplaceListing`, `FacebookMarketplaceSearchResult` |
+| `Program.cs` | DI + `POST /api/facebook/connect`, `GET /api/facebook/status`, `POST /api/facebook/disconnect`, `GET /api/facebook/search?q=&zip=&radius=` |
+| `wwwroot/index.html` | Settings card "Facebook Marketplace (Local Sourcing)" + `.fb-panel` in the Opportunity Finder. `app.js?v=30`, `style.css?v=25` |
+| `wwwroot/app.js` | `loadFacebookStatus` / `facebookConnect` / `facebookDisconnect` (same shape as the Terapeak trio, both banners painted from one status call), `runFacebookSearch`, `renderFacebookResults`, `facebookCheckComp`; zip + radius remembered in `localStorage` |
+| `wwwroot/style.css` | `.fb-*` — card grid, price-drop strike-through, spread colouring |
+| `ING eBay AutoLister.Tests/FacebookMarketplaceParserTests.cs` | **New** — 29 tests |
+
+### Judgement calls worth knowing about
+
+- **Radius is snapped, then echoed back.** Facebook only offers 1/2/5/10/20/40/60/80/100/250/500
+  miles, so a request for 45 is snapped to 40 and the UI reports *what was actually searched*.
+  Exact ties round **up** — one extra town beats missing one.
+- **A price drop is read, not ignored.** Two price lines on a tile means the lower is the live
+  price and the higher is the struck-through original, i.e. a motivated seller.
+- **"Free" is not $0.** Free items are listed but excluded from the min/median/max, which would
+  otherwise report a local floor of zero.
+- **Loosely-related padding is filtered out.** Facebook tops up thin results with unrelated items;
+  those are dropped by word-match — but if *nothing* matches, everything is returned rather than
+  reporting a false "no local supply".
+- **Zero results + location dialog never opened** is reported as probable selector drift, not as
+  an empty local market.
+- Distances are normalised to miles (Facebook shows km outside the US).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **177 passed**, 0 failed, 0 skipped (148 pre-existing + 29 new) |
+| Live endpoints (dev port 9347) | `/api/facebook/status` → not connected; `/api/facebook/search?radius=45` → snapped to 40 mi, URL built as `radius_in_km=64` |
+| Real browser (Playwright) | Settings card and Opportunity Finder panel render; Search disabled while disconnected; searching while disconnected shows the connect prompt instead of failing; with a stubbed API the result cards, summary, price-drop badge and per-card sold-comp lookup all render |
+| Browser console errors | **None** |
+
+One bug was found by that browser pass and fixed: the per-card comp lookup re-parsed the local
+ask out of the rendered price text, so a price-drop card ("$450 was $700") read as $450,700 and
+reported a nonsense spread. The card now carries the numeric price as a data attribute.
+
+**Not verified against a live Facebook session** — that needs the user's own account and an
+interactive login, which this session can't and shouldn't do. The selectors are therefore
+best-effort against Facebook's current published markup; if a real search returns zero results,
+`FacebookMarketplaceSelectors.cs` is the one file to tune.

@@ -28,6 +28,7 @@
     bindPgImggen();
     bindOpportunitySearch();
     bindSupplierAnalyzer();
+    bindFacebookMarketplace();
     bindPhotoLibrary();
     bindHomeButtons();
     bindForm();
@@ -140,6 +141,7 @@
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'settings'));
     await loadSettingsStatus();
     await loadTerapeakStatus();
+    await loadFacebookStatus();
   }
 
   const TERAPEAK_BANNERS = [
@@ -218,6 +220,235 @@
     await loadTerapeakStatus();
   }
 
+  // ── Facebook Marketplace (local sourcing) ────────────────────────────────
+  // Same connect/status/disconnect shape as Terapeak above, for the same reason: no public
+  // API, so the seller logs into their own account once in a real browser window and the
+  // saved session is reused. Searching is always a click — nothing polls Facebook.
+  const FACEBOOK_BANNERS = [
+    ['pg-facebook-status', 'pg-facebook-connect', 'pg-facebook-disconnect'],
+    ['fb-connect-status', 'fb-connect-btn', 'fb-disconnect-btn'],
+  ];
+
+  function paintFacebookBanner(statusEl, connectBtn, disconnectBtn, data) {
+    if (!statusEl) return;
+    if (data.loginInProgress) {
+      statusEl.textContent = 'Connecting — a browser window should appear, log into Facebook there.';
+      connectBtn?.classList.remove('hidden');
+      if (connectBtn) connectBtn.disabled = true;
+      disconnectBtn?.classList.add('hidden');
+    } else if (data.connected) {
+      statusEl.textContent = '✓ Connected — local Marketplace search is ready.';
+      connectBtn?.classList.add('hidden');
+      disconnectBtn?.classList.remove('hidden');
+    } else {
+      statusEl.textContent = data.lastError
+        ? `Facebook connect failed: ${data.lastError}`
+        : 'Not connected — click Connect to log into your own Facebook account once.';
+      connectBtn?.classList.remove('hidden');
+      if (connectBtn) connectBtn.disabled = false;
+      disconnectBtn?.classList.add('hidden');
+    }
+    const searchBtn = $('fb-search-btn');
+    if (searchBtn) searchBtn.disabled = !data.connected;
+  }
+
+  async function loadFacebookStatus() {
+    try {
+      const data = await fetch('/api/facebook/status').then(r => r.json());
+      FACEBOOK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
+        paintFacebookBanner($(statusId), $(connectId), $(disconnectId), data));
+      return data;
+    } catch (err) {
+      FACEBOOK_BANNERS.forEach(([statusId]) => {
+        const el = $(statusId);
+        if (el) el.textContent = `Unable to check Facebook status: ${err.message}`;
+      });
+      return null;
+    }
+  }
+
+  async function facebookConnect(e) {
+    const btn = e?.currentTarget || $('pg-facebook-connect');
+    try {
+      if (btn) btn.disabled = true;
+      const data = await fetch('/api/facebook/connect', { method: 'POST' }).then(r => r.json());
+      FACEBOOK_BANNERS.forEach(([statusId]) => {
+        const el = $(statusId);
+        if (el) el.textContent = data.message || 'Opening browser…';
+      });
+      const poll = setInterval(async () => {
+        const s = await fetch('/api/facebook/status').then(r => r.json()).catch(() => null);
+        if (s && !s.loginInProgress) {
+          clearInterval(poll);
+          await loadFacebookStatus();
+        }
+      }, 3000);
+    } catch (err) {
+      FACEBOOK_BANNERS.forEach(([statusId]) => {
+        const el = $(statusId);
+        if (el) el.textContent = `Connect failed: ${err.message}`;
+      });
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function facebookDisconnect() {
+    await fetch('/api/facebook/disconnect', { method: 'POST' }).catch(() => {});
+    await loadFacebookStatus();
+  }
+
+  function bindFacebookMarketplace() {
+    on('pg-facebook-connect', 'click', facebookConnect);
+    on('pg-facebook-disconnect', 'click', facebookDisconnect);
+    on('fb-connect-btn', 'click', facebookConnect);
+    on('fb-disconnect-btn', 'click', facebookDisconnect);
+    on('fb-search-btn', 'click', runFacebookSearch);
+    on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runFacebookSearch(); });
+    on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runFacebookSearch(); });
+    // The seller's zip and radius don't change between searches — remembering them is the
+    // difference between a two-field search and a one-field one.
+    const zip = localStorage.getItem('fbZip');
+    const radius = localStorage.getItem('fbRadius');
+    if (zip && $('fb-zip-input')) $('fb-zip-input').value = zip;
+    if (radius && $('fb-radius-select')) $('fb-radius-select').value = radius;
+  }
+
+  async function runFacebookSearch() {
+    const query = $('fb-query-input')?.value.trim() || '';
+    const zip = $('fb-zip-input')?.value.trim() || '';
+    const radius = $('fb-radius-select')?.value || '40';
+    const statusEl = $('fb-status');
+    const btn = $('fb-search-btn');
+
+    if (!query) {
+      if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
+      return;
+    }
+
+    localStorage.setItem('fbZip', zip);
+    localStorage.setItem('fbRadius', radius);
+
+    $('fb-results')?.classList.add('hidden');
+    if (btn) btn.disabled = true;
+    // A real browser has to load the page, set the location and scroll the grid — say so,
+    // because this is tens of seconds, not the sub-second an API call would be.
+    if (statusEl) statusEl.textContent = `Searching Facebook Marketplace within ${radius} miles${zip ? ` of ${zip}` : ''} — this opens a real page, give it up to a minute…`;
+
+    try {
+      const url = `/api/facebook/search?q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}`;
+      const data = await fetch(url).then(r => r.json());
+      renderFacebookResults(data);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Local search failed: ${err.message}`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderFacebookResults(data) {
+    const statusEl = $('fb-status');
+    const results = $('fb-results');
+    const list = $('fb-list');
+    const summary = $('fb-summary');
+    if (!list || !results) return;
+
+    if (data.status === 'not_connected') {
+      if (statusEl) statusEl.textContent = 'Connect your Facebook account above to search local listings.';
+      loadFacebookStatus();
+      return;
+    }
+    if (data.status === 'session_expired') {
+      if (statusEl) statusEl.textContent = 'Your saved Facebook session expired — click Connect Facebook to log in again.';
+      loadFacebookStatus();
+      return;
+    }
+    if (data.status !== 'ok') {
+      if (statusEl) statusEl.textContent = data.error || 'The local search didn\'t come back with anything usable.';
+      return;
+    }
+    if (!data.count) {
+      if (statusEl) statusEl.textContent = data.error
+        ? `No local listings found — ${data.error}`
+        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`;
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = '';
+    // Radius is echoed from the response, not the form: the server snaps it to one of
+    // Facebook's own dropdown values, so this reports what was actually searched.
+    summary.innerHTML =
+      `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} for "${esc(data.query)}" ` +
+      `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''} · ` +
+      `asking ${money(data.min)}–${money(data.max)} · median ${money(data.median)} ` +
+      `<a class="link-ext" href="${esc(data.searchUrl)}" target="_blank" rel="noopener">Open on Facebook ↗</a>`;
+
+    list.innerHTML = data.items.map(item => {
+      const drop = item.originalPrice
+        ? `<span class="fb-drop">was ${money(item.originalPrice)}</span>` : '';
+      const meta = [
+        item.location ? esc(item.location) : '',
+        item.distanceMiles != null ? `${item.distanceMiles} mi away` : '',
+        item.postedAgo ? esc(item.postedAgo) : '',
+      ].filter(Boolean).join(' · ');
+      return `
+        <div class="fb-card" data-title="${esc(item.title)}" data-price="${item.price ?? 0}">
+          ${item.imageUrl ? `<img class="fb-card-img" src="${esc(item.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<div class="fb-card-img fb-card-img-empty">📦</div>'}
+          <div class="fb-card-body">
+            <div class="fb-card-price">${item.isFree ? 'Free' : money(item.price)} ${drop}</div>
+            <div class="fb-card-title">${esc(item.title)}</div>
+            <div class="fb-card-meta">${meta}</div>
+            <div class="fb-card-actions">
+              <a class="btn btn-ghost small" href="${esc(item.url)}" target="_blank" rel="noopener">View on Facebook ↗</a>
+              <button class="btn btn-secondary small fb-comp-btn" type="button">Check eBay sold price</button>
+            </div>
+            <div class="fb-card-comp"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Sold-comp lookups are per-card and on demand — one click, one lookup. Checking every
+    // result automatically would fire a scrape per tile off a single search.
+    list.querySelectorAll('.fb-comp-btn').forEach(btn =>
+      btn.addEventListener('click', () => facebookCheckComp(btn)));
+
+    results.classList.remove('hidden');
+  }
+
+  // Prices the local ask against real eBay sold data using the existing /api/sold-comps
+  // pipeline (Terapeak session first, then Marketplace Insights) — the whole point of a
+  // local sourcing search is the spread between the two.
+  async function facebookCheckComp(btn) {
+    const card = btn.closest('.fb-card');
+    const out = card?.querySelector('.fb-card-comp');
+    const title = card?.dataset.title || '';
+    if (!out || !title) return;
+
+    btn.disabled = true;
+    out.textContent = 'Checking eBay sold prices…';
+    try {
+      const data = await fetch(`/api/sold-comps?q=${encodeURIComponent(title)}`).then(r => r.json());
+      const avg = data.average || data.median || 0;
+      if (!avg) {
+        out.innerHTML = `<span class="fb-comp-none">No sold comps found for this title. <a class="link-ext" href="${esc(data.fallbackUrl || '#')}" target="_blank" rel="noopener">Search eBay ↗</a></span>`;
+        return;
+      }
+      // The numeric price off the card, not the rendered text — a price-drop card shows two
+      // prices ("$450 was $700") and scraping the digits back out of that reads as $450,700.
+      const localAsk = parseFloat(card.dataset.price) || 0;
+      const spread = avg - localAsk;
+      // Gross spread only — this is sold price minus local ask, before eBay fees and
+      // shipping. The listing editor's profit panel is where the net number lives.
+      const verdict = localAsk > 0
+        ? `<span class="${spread > 0 ? 'fb-comp-good' : 'fb-comp-bad'}">${spread > 0 ? '+' : ''}${money(spread)} vs local ask (before fees &amp; shipping)</span>`
+        : '';
+      out.innerHTML = `<span class="fb-comp-val">eBay sold avg ${money(avg)}${data.count ? ` from ${data.count} comps` : ''}</span> ${verdict}`;
+    } catch (err) {
+      out.textContent = `Couldn't check sold prices: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function openSetupWithPolicies(status) {
     openSetup(status);
     if (isConnected) loadPolicies(false);
@@ -247,6 +478,7 @@
     $('opportunity-section')?.classList.remove('hidden');
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'opportunity'));
     loadTerapeakStatus();
+    loadFacebookStatus();
     loadHighSellThrough();
     loadLowCompetition();
     loadPricingRecommendations();

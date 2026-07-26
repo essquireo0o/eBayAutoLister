@@ -162,6 +162,11 @@ builder.Services.AddSingleton<StripeService>();
 builder.Services.AddSingleton<AnalyticsStore>();
 builder.Services.AddSingleton<TerapeakService>();
 builder.Services.AddSingleton<TerapeakPriceCache>();
+// Local sourcing — Facebook Marketplace has no public search API, so this uses the same
+// saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
+// then headless reads). User-driven only: never scheduled, never a side effect of anything
+// else. See FacebookMarketplaceService.
+builder.Services.AddSingleton<FacebookMarketplaceService>();
 // Local sold-history lookup — read-only against the externally-maintained Marketplace.db at
 // C:\INGListing\Data\Marketplace.db (populated by a separate collector process). Feeds the
 // Opportunity Finder's Supplier File Analyzer with real local comps before falling back to
@@ -1295,6 +1300,39 @@ app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terape
 {
     var scrape = await terapeak.ScrapeAsync(q);
     return Results.Ok(scrape);
+});
+
+// ── Facebook Marketplace (local sourcing) ─────────────────────────────────────
+// Same shape as the Terapeak endpoints above, because it's the same mechanism: a saved
+// logged-in browser session for a site with no public search API. Search is only ever
+// reached by an explicit click — nothing here is scheduled or triggered by another feature.
+
+app.MapPost("/api/facebook/connect", (FacebookMarketplaceService facebook) =>
+{
+    var (started, message) = facebook.StartLogin();
+    return Results.Ok(new { started, message });
+});
+
+app.MapGet("/api/facebook/status", (FacebookMarketplaceService facebook) =>
+    Results.Ok(new { connected = facebook.IsConnected, loginInProgress = facebook.IsLoginInProgress, lastError = facebook.LastLoginError }));
+
+app.MapPost("/api/facebook/disconnect", (FacebookMarketplaceService facebook) =>
+{
+    facebook.Disconnect();
+    return Results.Ok(new { connected = facebook.IsConnected });
+});
+
+// Radius comes back snapped to one of Facebook's own dropdown values, so the UI can report
+// what was actually searched rather than what was asked for.
+app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, FacebookMarketplaceService facebook) =>
+{
+    var result = await facebook.SearchAsync(q ?? "", zip ?? "", radius ?? 40);
+    return Results.Ok(new
+    {
+        result.Status, result.Query, result.ZipCode, result.RadiusMiles, result.SearchUrl,
+        result.Items, result.Count, result.Min, result.Median, result.Max, result.Error,
+        supportedRadii = FacebookMarketplaceSelectors.SupportedRadiiMiles,
+    });
 });
 
 // The whole opportunity-search-and-score pipeline behind the interactive /api/opportunities/search

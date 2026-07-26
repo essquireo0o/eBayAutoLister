@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=25" />
 </head>
 <body>
   <div class="app-shell">
@@ -734,6 +734,55 @@
             </div>
           </div>
 
+          <!-- Local sourcing: what's for sale near the seller right now, from their own
+               Facebook account (see FacebookMarketplaceService — no public API exists). -->
+          <div class="opp-supplier-panel fb-panel">
+            <h3 class="opp-supplier-heading">📍 Local Deals — Facebook Marketplace</h3>
+            <p class="opp-hint">Search Marketplace near you by zip code and radius, then compare what locals are asking against real eBay sold prices. Buy local, list on eBay.</p>
+
+            <div id="fb-connect-banner" class="opp-terapeak-banner fb-connect-banner">
+              <span class="opp-terapeak-icon">🔗</span>
+              <span id="fb-connect-status" class="opp-terapeak-status">Checking Facebook connection…</span>
+              <button id="fb-connect-btn" class="btn btn-primary small hidden" type="button">Connect Facebook</button>
+              <button id="fb-disconnect-btn" class="btn btn-secondary small hidden" type="button">Disconnect</button>
+            </div>
+
+            <div class="fb-search-row">
+              <div class="opp-field fb-field-keyword">
+                <label for="fb-query-input">What to look for</label>
+                <input id="fb-query-input" type="text" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
+              </div>
+              <div class="opp-field fb-field-zip">
+                <label for="fb-zip-input">Zip code</label>
+                <input id="fb-zip-input" type="text" inputmode="numeric" maxlength="10" placeholder="89101" />
+              </div>
+              <div class="opp-field fb-field-radius">
+                <label for="fb-radius-select">Radius</label>
+                <!-- Only the radii Facebook's own dropdown offers; anything else is snapped
+                     server-side (FacebookMarketplaceParser.NearestSupportedRadius). -->
+                <select id="fb-radius-select">
+                  <option value="5">5 miles</option>
+                  <option value="10">10 miles</option>
+                  <option value="20">20 miles</option>
+                  <option value="40" selected>40 miles</option>
+                  <option value="60">60 miles</option>
+                  <option value="80">80 miles</option>
+                  <option value="100">100 miles</option>
+                  <option value="250">250 miles</option>
+                  <option value="500">500 miles</option>
+                </select>
+              </div>
+              <button id="fb-search-btn" class="btn btn-primary opp-search-submit" type="button">📍 Search Local</button>
+            </div>
+
+            <div id="fb-status" class="mr-status"></div>
+
+            <div id="fb-results" class="hidden">
+              <div id="fb-summary" class="opp-results-summary"></div>
+              <div id="fb-list" class="fb-list"></div>
+            </div>
+          </div>
+
           <div class="opp-search-row">
             <div class="opp-field opp-field-keyword">
               <label for="opp-search-input">Keyword</label>
@@ -986,6 +1035,22 @@
             <button id="pg-terapeak-connect" class="btn btn-primary" type="button">Connect Terapeak</button>
             <button id="pg-terapeak-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             <span id="pg-terapeak-status" class="sd-test-msg">Not connected — sold comps will show links only.</span>
+          </div>
+        </div>
+
+        <!-- Facebook Marketplace — local sourcing supply, same saved-session approach as
+             Terapeak because Facebook has no public search API either. -->
+        <div class="setup-section imggen-settings-card">
+          <h3>Facebook Marketplace (Local Sourcing)</h3>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+            Facebook has no Marketplace search API, so this logs into <strong>your own</strong> Facebook account once in a real
+            browser window and saves that session locally to search local listings by zip code and radius. Your Facebook password
+            is never seen or stored by this app, and nothing is ever searched or posted without you clicking.
+          </p>
+          <div class="imggen-test-row">
+            <button id="pg-facebook-connect" class="btn btn-primary" type="button">Connect Facebook</button>
+            <button id="pg-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
+            <span id="pg-facebook-status" class="sd-test-msg">Not connected — local sourcing search is unavailable.</span>
           </div>
         </div>
 
@@ -1691,6 +1756,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>

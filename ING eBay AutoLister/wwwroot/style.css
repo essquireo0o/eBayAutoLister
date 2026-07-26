@@ -3670,6 +3670,103 @@ textarea {
 
 .opp-supplier-panel .nl-drop-zone { margin-top: 12px; }
 
+/* ── Facebook Marketplace local sourcing ──────────────────────────────────── */
+.fb-connect-banner { margin: 12px 0 4px; }
+
+.fb-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 12px;
+}
+.fb-field-keyword { flex: 2 1 260px; }
+.fb-field-zip     { flex: 0 1 130px; }
+.fb-field-radius  { flex: 0 1 150px; }
+.fb-search-row .opp-search-submit { flex: 0 0 auto; }
+
+/* Cards, not table rows: a Marketplace result is carried by its photo and its price —
+   a used local item is judged on condition at a glance the way a spec column can't convey. */
+.fb-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.fb-card {
+  display: flex;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.fb-card-img {
+  width: 92px;
+  height: 92px;
+  flex: 0 0 92px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #eef2f3;
+}
+.fb-card-img-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.fb-card-body { min-width: 0; flex: 1; }
+
+.fb-card-price {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+/* A struck-through original price means the seller already cut it — worth spotting. */
+.fb-drop {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger);
+  text-decoration: line-through;
+  margin-left: 6px;
+}
+
+.fb-card-title {
+  font-size: 13px;
+  color: var(--ink);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fb-card-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.fb-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.fb-card-comp {
+  font-size: 12px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.fb-comp-val  { font-weight: 600; color: var(--ink); }
+.fb-comp-good { font-weight: 600; color: var(--success); }
+.fb-comp-bad  { font-weight: 600; color: var(--danger); }
+.fb-comp-none { color: var(--muted); }
+
 /* Supplier rows have no thumbnail (unlike live-listing opp-result-row), so the info
    column reclaims that space instead of leaving a blank 56px gutter. */
 .opp-supplier-row {
