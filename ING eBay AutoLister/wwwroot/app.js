@@ -18,6 +18,335 @@
     return fetch(url, opts);
   }
 
+  // ── Reliability layer ─────────────────────────────────────────────────────
+  //
+  // One way to call the app, one way to describe a failure, and one place that decides whether a
+  // Retry button is honest. Before this, each caller wrote its own `fetch(...).then(r => r.json())`
+  // and its own `catch (err) { show(err.message) }`, so a rate limit, an expired eBay token and a
+  // 500 HTML error page all reached the seller as the same red line of unusable text — and the
+  // AI paths, which are the slowest and most expensive to redo, had the least helpful messages.
+
+  // A generated listing can legitimately take minutes at high thinking effort, so the ceiling is
+  // generous. It exists so a request that will never come back stops looking like one that is still
+  // working — an unbounded spinner is the failure sellers read as "this app is broken".
+  const AI_TIMEOUT_MS = 5 * 60 * 1000;
+  const PUBLISH_TIMEOUT_MS = 4 * 60 * 1000;
+  const QUICK_TIMEOUT_MS = 60 * 1000;
+
+  // Always resolves. Never throws, never rejects — the caller branches on `ok`.
+  async function callApi(url, { method = 'GET', body = null, timeoutMs = QUICK_TIMEOUT_MS } = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method,
+        signal: controller.signal,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+
+      if (res.ok && data !== null) return { ok: true, data, failure: null };
+      if (res.ok) return { ok: true, data: {}, failure: null };
+
+      // The server's own classification, when it gave one.
+      if (data && data.failure) return { ok: false, data, failure: data.failure };
+
+      // A body that isn't our envelope: an older endpoint, or ASP.NET's HTML error page. Both are
+      // reported as an app-side fault rather than pasted at the seller as-is.
+      return {
+        ok: false,
+        data,
+        failure: {
+          kind: 'Unknown',
+          headline: 'The app returned an error',
+          whatHappened: `The request came back as HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}.`,
+          whatToDo: 'Try again. If it keeps happening, open Logs and send the detail below.',
+          retryable: true,
+          fixAction: 'open-logs',
+          workPreserved: true,
+          technical: looksLikeHtml(text) ? 'The app sent back an error page instead of data.' : (data?.error || text || '').slice(0, 600),
+        },
+      };
+    } catch (err) {
+      const aborted = err.name === 'AbortError';
+      return {
+        ok: false,
+        data: null,
+        failure: aborted
+          ? {
+              kind: 'Timeout',
+              headline: 'That took too long and was stopped',
+              whatHappened: `No answer came back within ${Math.round(timeoutMs / 60000)} minutes, so the request was cancelled.`,
+              whatToDo: 'Try again. Everything you filled in is still here.',
+              retryable: true,
+              workPreserved: true,
+              technical: `Client timeout after ${timeoutMs} ms.`,
+            }
+          : {
+              kind: 'Network',
+              headline: 'Could not reach the app',
+              whatHappened: `The connection to ING AutoLister failed (${err.message}).`,
+              whatToDo: 'Check the app is still running, then try again. Your work is kept.',
+              retryable: true,
+              workPreserved: true,
+              technical: String(err.message || err),
+            },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function looksLikeHtml(text) {
+    const head = (text || '').trimStart().slice(0, 80).toLowerCase();
+    return head.startsWith('<!doctype') || head.startsWith('<html');
+  }
+
+  // Which button resolves this failure, if one can.
+  const FIX_ACTIONS = {
+    'ai-key':        { label: 'Open Settings',   run: () => handleNav('settings') },
+    'connect-ebay':  { label: 'Log into eBay',   run: () => startEbayLogin() },
+    'ebay-policies': { label: 'Open Settings',   run: () => handleNav('settings') },
+    'open-logs':     { label: 'Open Logs',       run: () => handleNav('logs') },
+  };
+
+  // The eBay sign-in button lives in more than one place depending on which screen is open, so the
+  // fix action finds whichever one is present rather than assuming a single id.
+  function startEbayLogin() {
+    const btn = $('btn-connect');
+    if (btn) { btn.click(); return; }
+    handleNav('settings');
+  }
+
+  // One failure, rendered the same way everywhere: what happened, what to do about it, the button
+  // that does it, and the raw text kept as evidence rather than as the headline.
+  function renderFailure(container, failure, options = {}) {
+    const el = typeof container === 'string' ? $(container) : container;
+    if (!el || !failure) return;
+
+    const fix = FIX_ACTIONS[failure.fixAction];
+    const buttons = [];
+    // Only offered when the server (or the transport) says another attempt could genuinely differ.
+    // A Retry button on a rejected API key teaches sellers to click Retry on everything.
+    if (failure.retryable && options.onRetry) buttons.push('<button type="button" class="btn btn-primary small" data-fp-retry>Try again</button>');
+    if (fix) buttons.push(`<button type="button" class="btn btn-secondary small" data-fp-fix>${esc(fix.label)}</button>`);
+    (options.extraButtons || []).forEach((b, i) =>
+      buttons.push(`<button type="button" class="btn btn-secondary small" data-fp-extra="${i}">${esc(b.label)}</button>`));
+
+    const attempts = failure.attempts > 1
+      ? `<p class="failure-attempts">Tried ${failure.attempts} times before giving up.</p>` : '';
+
+    const preserved = failure.workPreserved === false
+      ? '' : '<p class="failure-preserved">Nothing you entered has been lost.</p>';
+
+    el.innerHTML =
+      `<div class="failure-head">${esc(failure.headline || 'Something went wrong')}</div>` +
+      (failure.whatHappened ? `<p class="failure-what">${esc(failure.whatHappened)}</p>` : '') +
+      (failure.whatToDo ? `<p class="failure-todo">${esc(failure.whatToDo)}</p>` : '') +
+      preserved + attempts +
+      (buttons.length ? `<div class="failure-actions">${buttons.join('')}</div>` : '') +
+      (failure.technical
+        ? `<details class="failure-detail"><summary>Technical detail</summary><pre>${esc(failure.technical)}</pre></details>`
+        : '');
+
+    el.classList.remove('hidden');
+    el.querySelector('[data-fp-retry]')?.addEventListener('click', () => { hideFailure(el); options.onRetry(); });
+    el.querySelector('[data-fp-fix]')?.addEventListener('click', () => fix.run());
+    el.querySelectorAll('[data-fp-extra]').forEach(btn =>
+      btn.addEventListener('click', () => options.extraButtons[Number(btn.dataset.fpExtra)].run()));
+
+    // Bring it into view. Caught by measuring it in a real browser: the panel lives low in the
+    // modal's scrollable body, so a seller who was scrolled anywhere else got a failure message
+    // rendered 989px down a 950px viewport and behind the sticky footer — a perfect explanation of
+    // what went wrong that they never saw, which is the same as no message at all.
+    try {
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    } catch { el.scrollIntoView(); }
+  }
+
+  function hideFailure(container) {
+    const el = typeof container === 'string' ? $(container) : container;
+    if (!el) return;
+    el.innerHTML = '';
+    el.classList.add('hidden');
+  }
+
+  // ── Crash recovery: the listing in progress survives the tab ───────────────
+  //
+  // A Claude-written listing costs real API spend and a minute or two of waiting, and until now it
+  // lived only in the DOM: one accidental Ctrl+W, one refresh, one crash, and it was gone with no
+  // trace and no way back. Autosave puts it in the app's own database, so the work outlives the page.
+
+  // Long enough that typing a description isn't 400 round trips; short enough that almost nothing is
+  // lost if the tab dies mid-sentence.
+  const AUTOSAVE_DEBOUNCE_MS = 2500;
+
+  let workKey = null;
+  let autosaveTimer = null;
+  let lastAutosavePayload = '';
+
+  function currentWorkKey() {
+    if (!workKey) workKey = `wip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    return workKey;
+  }
+
+  function scheduleAutosave() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => { flushAutosave(false); }, AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  // `useBeacon` is the page-unload path: fetch is cancelled when the document goes away, and this is
+  // the one save that matters most — it is the save that makes the difference between recovering the
+  // listing and losing it.
+  function flushAutosave(useBeacon) {
+    clearTimeout(autosaveTimer);
+    let payload;
+    try {
+      payload = JSON.stringify(buildNlPayload());
+    } catch { return; }
+
+    // A no-op save is still a database write and a Prune pass. Skip when nothing changed.
+    if (payload === lastAutosavePayload) return;
+
+    const title = ($('nl-title')?.value || '').trim();
+    // An empty form is not work worth recovering, and offering it back as "unfinished work" on every
+    // launch would train sellers to dismiss the banner without reading it.
+    if (!title && payload.length < 400) return;
+
+    lastAutosavePayload = payload;
+    const body = { key: currentWorkKey(), label: title || 'Untitled listing', payload, stage: 'editing' };
+
+    if (useBeacon && navigator.sendBeacon) {
+      try {
+        navigator.sendBeacon('/api/work/autosave',
+          new Blob([JSON.stringify(body)], { type: 'application/json' }));
+        return;
+      } catch { /* fall through to the normal call */ }
+    }
+
+    callApi('/api/work/autosave', { method: 'POST', body, timeoutMs: 15000 });
+  }
+
+  function bindAutosave() {
+    const form = $('new-listing-overlay') || document;
+    // Capture phase, and on both events: `input` covers typing, `change` covers selects and the
+    // paste-and-blur case that never fires `input`.
+    ['input', 'change'].forEach(evt =>
+      form.addEventListener(evt, e => {
+        if (!e.target?.id?.startsWith('nl-')) return;
+        scheduleAutosave();
+      }, true));
+
+    // Both, deliberately: `pagehide` is the one that fires reliably on mobile and on tab discard,
+    // `beforeunload` on a desktop close. A duplicate save is free; a missed one is the whole problem.
+    window.addEventListener('beforeunload', () => flushAutosave(true));
+    window.addEventListener('pagehide', () => flushAutosave(true));
+  }
+
+  async function loadRecoverableWork() {
+    const banner = $('recovery-banner');
+    if (!banner) return;
+
+    const { ok, data } = await callApi('/api/work/recoverable', { timeoutMs: 15000 });
+    const items = (ok && data?.items) || [];
+    // Never announce recovery when there is nothing to recover.
+    if (!items.length) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
+
+    const rows = items.map((item, i) => {
+      const when = item.updatedUtc ? new Date(item.updatedUtc).toLocaleString() : 'recently';
+      const unknown = item.outcomeUnknown
+        ? '<span class="recovery-flag">publish outcome unknown</span>' : '';
+      const failed = item.lastError
+        ? `<span class="recovery-error">${esc(item.lastError.slice(0, 160))}</span>` : '';
+      return `<li class="recovery-row">
+          <div class="recovery-meta">
+            <span class="recovery-label">${esc(item.label || 'Untitled listing')}</span>
+            <span class="recovery-when">last saved ${esc(when)}</span>
+            ${unknown}${failed}
+          </div>
+          <div class="recovery-row-actions">
+            <button type="button" class="btn btn-primary small" data-recover="${i}">Restore</button>
+            ${item.outcomeUnknown ? `<button type="button" class="btn btn-secondary small" data-recover-check="${i}">Check eBay</button>` : ''}
+            <button type="button" class="btn btn-ghost small" data-recover-discard="${i}">Discard</button>
+          </div>
+        </li>`;
+    }).join('');
+
+    banner.innerHTML =
+      `<div class="recovery-head">${items.length === 1
+          ? 'An unfinished listing was recovered'
+          : `${items.length} unfinished listings were recovered`}</div>` +
+      '<p class="recovery-sub">These were being written when the app last closed. Nothing was lost.</p>' +
+      `<ul class="recovery-list">${rows}</ul>`;
+    banner.classList.remove('hidden');
+
+    banner.querySelectorAll('[data-recover]').forEach(btn =>
+      btn.addEventListener('click', () => restoreWork(items[Number(btn.dataset.recover)])));
+    banner.querySelectorAll('[data-recover-check]').forEach(btn =>
+      btn.addEventListener('click', () => checkRecoveredPublish(items[Number(btn.dataset.recoverCheck)])));
+    banner.querySelectorAll('[data-recover-discard]').forEach(btn =>
+      btn.addEventListener('click', () => discardWork(items[Number(btn.dataset.recoverDiscard)])));
+  }
+
+  function restoreWork(item) {
+    if (!item) return;
+    let payload;
+    try { payload = JSON.parse(item.payload || '{}'); }
+    catch {
+      addActivity('Could not restore that draft', 'The saved copy could not be read.');
+      return;
+    }
+
+    // Adopt the recovered key so continuing to edit updates that same row rather than starting a
+    // second one beside it — otherwise a restored draft would be offered back twice next launch.
+    workKey = item.key;
+    lastAutosavePayload = '';
+
+    openNewListingModal();
+    fillNlForm(payload);
+    // Photos are URLs into the app's own generated-photos folder, so a recovered draft keeps them.
+    if (Array.isArray(payload.imageUrls) && payload.imageUrls.length) {
+      nlClearAllPhotoSlots();
+      payload.imageUrls.filter(Boolean).forEach(url => nlAddPhotoRow(url));
+    }
+    addActivity('Draft restored', payload.title || item.label || 'Unfinished listing recovered');
+    loadRecoverableWork();
+  }
+
+  async function checkRecoveredPublish(item) {
+    if (!item) return;
+    let payload = {};
+    try { payload = JSON.parse(item.payload || '{}'); } catch { /* title fallback below */ }
+    const title = payload.title || item.label || '';
+    if (!title) return;
+
+    addActivity('Checking eBay', `Looking for "${title}" among your live listings…`);
+    const { ok, data, failure } = await callApi('/api/listing/check-published', {
+      method: 'POST', body: { title, workKey: item.key }, timeoutMs: 90000,
+    });
+
+    if (!ok) {
+      addActivity('Could not check eBay', failure?.whatHappened || 'The check did not complete.');
+      return;
+    }
+    addActivity(data.found ? 'It is already live on eBay' : 'It never went live', data.message || '');
+    if (data.found) loadListings('Listings refreshed after reconciling a publish');
+    loadRecoverableWork();
+  }
+
+  async function discardWork(item) {
+    if (!item) return;
+    if (!confirm(`Discard "${item.label || 'this draft'}"? This cannot be undone.`)) return;
+    await callApi('/api/work/discard', { method: 'POST', body: { key: item.key }, timeoutMs: 15000 });
+    if (workKey === item.key) { workKey = null; lastAutosavePayload = ''; }
+    loadRecoverableWork();
+  }
+
   async function init() {
     initPhotoGrid();          // render 6 photo slots on page load, not just on modal open
     initPhotoEditorPaste();
@@ -36,6 +365,7 @@
     initEditDrawer();
     bindMarketResearch();
     bindCrossListing();
+    bindAutosave();
     restoreListingViewMode();
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
@@ -57,6 +387,11 @@
 
     renderListings();
     updateStats();
+
+    // Last, and not awaited: a listing recovered from a crash is the most valuable thing on this
+    // page, but it must not delay the page loading — and if the check itself fails, the banner simply
+    // stays hidden rather than holding up everything behind it.
+    loadRecoverableWork();
 
     // Navigate to whatever section the URL hash specifies (supports reload + deep links)
     if (location.hash) handleNav(location.hash.slice(1));
@@ -5017,20 +5352,30 @@
 
     nlLoadSoldComps(itemName); // runs in parallel — independent of the listing fill below
 
+    hideFailure('nl-failure');
     try {
-      const res = await guardedFetch('/api/quick-fill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemName })
+      const { ok, data, failure } = await callApi('/api/quick-fill', {
+        method: 'POST', body: { itemName }, timeoutMs: AI_TIMEOUT_MS,
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || 'Quick-fill failed');
+
+      if (!ok) {
+        $('nl-ai-status')?.classList.add('hidden');
+        // The typed name is left in the box on purpose, so Try again costs nothing.
+        renderFailure('nl-failure', failure, { onRetry: () => nlQuickFillByName() });
+        addActivity('Quick-fill failed', failure?.headline || 'Unknown error');
+        return;
       }
-      const data = await res.json();
 
       nlClearAllPhotoSlots();
       fillNlForm(data);
+      scheduleAutosave();
+
+      // Quick-fill searches the web for a product photo and often finds none. That used to be a log
+      // line the seller never saw, leaving them a complete listing with an empty photo grid.
+      if (!(data.imageUrls || []).some(Boolean)) {
+        nlPhotoNotice('No product photo could be found online for this item. Add one before publishing — '
+                    + 'a listing with no picture rarely sells.');
+      }
       window._nlVisualDescription = data.visualDescription || '';
       window._nlImageType = 'product_photo';
 
@@ -5049,9 +5394,14 @@
       if (input) { input.value = ''; }
     } catch (err) {
       $('nl-ai-status')?.classList.add('hidden');
-      $('nl-ai-error')?.classList.remove('hidden');
-      if ($('nl-ai-error-msg')) $('nl-ai-error-msg').textContent = `Quick-fill failed: ${err.message}`;
-      addActivity('Quick-fill failed', err.message);
+      renderFailure('nl-failure', {
+        kind: 'Unknown',
+        headline: 'The app hit an unexpected error after quick-fill',
+        whatHappened: 'The listing may be partly filled in; check the fields before publishing.',
+        whatToDo: 'Try again, or fill in what is missing by hand.',
+        retryable: true, workPreserved: true, technical: String(err?.message || err),
+      }, { onRetry: () => nlQuickFillByName() });
+      addActivity('Quick-fill failed', String(err?.message || err));
     } finally {
       input?.classList.remove('loading');
       if (btn) { btn.disabled = false; btn.textContent = 'Auto-Fill'; }
@@ -5138,17 +5488,27 @@
     $('nl-ai-status')?.classList.remove('hidden');
     $('nl-ai-done')?.classList.add('hidden');
     $('nl-ai-error')?.classList.add('hidden');
+    hideFailure('nl-failure');
     if ($('nl-ai-msg')) $('nl-ai-msg').textContent = 'Analyzing with AI…';
 
     try {
-      const res = await guardedFetch('/api/analyze', {
+      const { ok, failure, data } = await callApi('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: nlImageBase64, mimeType: nlMimeType })
+        body: { imageBase64: nlImageBase64, mimeType: nlMimeType },
+        timeoutMs: AI_TIMEOUT_MS,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+
+      if (!ok) {
+        // The uploaded photo is still held in nlImageBase64, so Try again re-runs the analysis
+        // without asking the seller to find and drop the file a second time.
+        $('nl-ai-status')?.classList.add('hidden');
+        renderFailure('nl-failure', failure, { onRetry: () => nlAnalyze() });
+        addActivity('AI analysis failed', failure?.headline || 'Unknown error');
+        return;
+      }
+
       fillNlForm(data);
+      scheduleAutosave();
       window._nlVisualDescription = data.visualDescription || '';
       window._nlImageType = data.imageType || 'webpage_screenshot';
       if (data.title) nlLoadSoldComps(data.title);
@@ -5164,15 +5524,19 @@
       const usedNeedsRealPhoto = !isProductPhoto && nlIsUsedListing(data);
       let firstPhotoUrl = null;
 
+      // Every branch below used to swallow its failure as `catch { /* non-fatal */ }`. It is not
+      // non-fatal: the analysis carries on, the photo grid stays empty, and the seller finds out when
+      // a photoless listing fails to sell. The analysis really has succeeded, so these are notices
+      // rather than failure panels — but they are shown, and they do not fade away.
       if (isProductPhoto && nlImageBase64) {
         // Clean product photo — save the uploaded image directly
-        try {
-          const res = await fetch('/api/photos/save-uploaded', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageBase64: nlImageBase64, mimeType: nlMimeType || 'image/jpeg' })
-          });
-          if (res.ok) { const { url } = await res.json(); firstPhotoUrl = url; nlAddPhotoRow(url); }
-        } catch (e) { /* non-fatal */ }
+        const saved = await callApi('/api/photos/save-uploaded', {
+          method: 'POST',
+          body: { imageBase64: nlImageBase64, mimeType: nlMimeType || 'image/jpeg' },
+        });
+        if (saved.ok && saved.data?.url) { firstPhotoUrl = saved.data.url; nlAddPhotoRow(saved.data.url); }
+        else nlPhotoNotice('Your photo could not be saved — add it again before publishing. '
+                         + (saved.failure?.whatToDo || ''));
       } else if (usedNeedsRealPhoto) {
         const applied = await nlApplyUsedLibraryPhotos(data);
         if (!applied) nlPromptUsedPhoto();
@@ -5183,15 +5547,15 @@
           if (firstUrl.startsWith('/')) {
             firstPhotoUrl = window.location.origin + firstUrl;
           } else {
-            try {
-              const res = await fetch('/api/photos/fetch-url', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: firstUrl })
-              });
-              if (res.ok) { const { url } = await res.json(); firstPhotoUrl = window.location.origin + url; }
-            } catch (e) { /* non-fatal */ }
+            const fetched = await callApi('/api/photos/fetch-url', { method: 'POST', body: { url: firstUrl } });
+            if (fetched.ok && fetched.data?.url) firstPhotoUrl = window.location.origin + fetched.data.url;
+            else nlPhotoNotice('The product photo from that page could not be downloaded — add a photo '
+                             + 'before publishing. ' + (fetched.failure?.whatToDo || ''));
           }
         }
+      } else {
+        nlPhotoNotice('No photo came back with this analysis. Add at least one before publishing — '
+                    + 'listings without pictures rarely sell.');
       }
 
       // Update the active tab title
@@ -5209,11 +5573,30 @@
         else if (nlImageBase64) nlAutoRemoveBgFromBase64(nlImageBase64, nlMimeType || 'image/jpeg');
       }
     } catch (err) {
+      // Reached only on a bug in the code above — callApi itself never throws.
       $('nl-ai-status')?.classList.add('hidden');
-      $('nl-ai-error')?.classList.remove('hidden');
-      if ($('nl-ai-error-msg')) $('nl-ai-error-msg').textContent = `AI analysis failed: ${err.message}`;
-      addActivity('AI analysis failed', err.message);
+      renderFailure('nl-failure', {
+        kind: 'Unknown',
+        headline: 'The app hit an unexpected error after the analysis',
+        whatHappened: 'The listing may be partly filled in; check the fields before publishing.',
+        whatToDo: 'Try the analysis again, or fill in what is missing by hand.',
+        retryable: true,
+        workPreserved: true,
+        technical: String(err?.message || err),
+      }, { onRetry: () => nlAnalyze() });
+      addActivity('AI analysis failed', String(err?.message || err));
     }
+  }
+
+  // A photo problem that does not stop the listing but must not be missed either. Deliberately does
+  // not auto-hide: a notice that disappears after four seconds is how a listing reaches eBay with no
+  // picture and nobody remembers being told.
+  function nlPhotoNotice(message, tone = 'warn') {
+    const el = $('nl-photo-upload-status');
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.className = 'nl-photo-upload-status ' + tone;
+    el.textContent = message;
   }
 
   async function nlGeneratePhotos(title, description, visualDescription = '', imageType = '') {
@@ -6505,29 +6888,47 @@
         itemSpecifics:           nlCollectSpecifics(),
       };
 
-      const res = await fetch('/api/improve-seo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const { ok, data, failure } = await callApi('/api/improve-seo', {
+        method: 'POST', body: payload, timeoutMs: AI_TIMEOUT_MS,
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || 'SEO improvement failed');
+
+      if (!ok) {
+        $('nl-ai-status')?.classList.add('hidden');
+        // The listing is untouched on failure — the rewrite is applied only on success — so the
+        // original title and description are still exactly as the seller left them.
+        renderFailure('nl-failure', failure, { onRetry: () => nlImproveSeo() });
+        addActivity('SEO improvement failed', failure?.headline || 'Unknown error');
+        return;
       }
-      const data = await res.json();
+
       fillNlForm(data);
+      scheduleAutosave();
       $('nl-ai-status')?.classList.add('hidden');
       $('nl-ai-done')?.classList.remove('hidden');
       addActivity('SEO improved', data.title || 'Title and description updated');
     } catch (err) {
       $('nl-ai-status')?.classList.add('hidden');
-      $('nl-ai-error')?.classList.remove('hidden');
-      if ($('nl-ai-error-msg')) $('nl-ai-error-msg').textContent = 'SEO improvement failed: ' + err.message;
-      addActivity('SEO improvement failed', err.message);
+      renderFailure('nl-failure', {
+        kind: 'Unknown', headline: 'The app hit an unexpected error during the SEO rewrite',
+        whatHappened: 'Your listing has not been changed.',
+        whatToDo: 'Try again, or carry on editing by hand.',
+        retryable: true, workPreserved: true, technical: String(err?.message || err),
+      }, { onRetry: () => nlImproveSeo() });
+      addActivity('SEO improvement failed', String(err?.message || err));
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Improve SEO + Description'; }
     }
   }
+
+  // One publish at a time, enforced here as well as by disabling the buttons. The buttons are not
+  // enough on their own: /api/listing/post's success path wires up its own "Publish to eBay Live"
+  // button, the readiness gate can re-enter this, and Enter in a text field submits the form — three
+  // routes to a second in-flight publish, which is how one item becomes two live listings.
+  let publishInFlight = false;
+
+  // Set only by nlSubmitWithoutPhotos, so the "every photo failed" gate can be passed once,
+  // deliberately, rather than being silently skipped every time.
+  let nlPhotosDeliberatelyEmpty = false;
 
   async function nlSubmit(mode) {
     const payload = buildNlPayload();
@@ -6544,10 +6945,24 @@
     // an unfinished draft is the point of a draft.
     if (mode === 'publish' && nlBlockersStopPublish()) return;
 
+    if (publishInFlight) {
+      nlSetResult('', mode === 'publish'
+        ? 'Already publishing this listing — waiting for eBay to answer.'
+        : 'Already saving.');
+      return;
+    }
+
+    // Committed to disk before anything is sent. If the app dies mid-publish, this is the row that
+    // comes back as "publish outcome unknown" with a Check eBay button beside it.
+    payload.workKey = currentWorkKey();
+    flushAutosave(false);
+
+    publishInFlight = true;
     const publishBtn = $('nl-btn-publish');
     const draftBtn = $('nl-btn-draft');
     if (publishBtn) publishBtn.disabled = true;
     if (draftBtn) draftBtn.disabled = true;
+    hideFailure('nl-failure');
 
     const endpoint = mode === 'publish' ? '/api/listing/publish' : '/api/listing/post';
     nlSetResult('', mode === 'publish' ? 'Publishing to eBay…' : 'Saving draft…');
@@ -6555,22 +6970,65 @@
     try {
       // Upload photos to eBay EPS before publishing so eBay has accessible URLs
       if (mode === 'publish' && payload.imageUrls && payload.imageUrls.length > 0) {
+        const wanted = payload.imageUrls.length;
         payload.imageUrls = await uploadPhotosToEbay(payload.imageUrls);
+
+        // A listing that reaches eBay with no photograph does not sell, and this used to be a
+        // four-second status line that then auto-hid — the publish carried on regardless and the
+        // seller found out from the live listing. It is now a decision they get to make.
+        if (payload.imageUrls.length === 0 && wanted > 0 && !nlPhotosDeliberatelyEmpty) {
+          nlSetResult('error', 'None of the photos could be uploaded to eBay.');
+          renderFailure('nl-failure', {
+            kind: 'Photos',
+            headline: `None of the ${wanted} photo${wanted === 1 ? '' : 's'} reached eBay`,
+            whatHappened: 'Every photo upload failed, so publishing now would put a listing live with no '
+                        + 'pictures at all.',
+            whatToDo: 'Try again — photo uploads usually fail on a temporary connection problem. Publishing '
+                    + 'without pictures is possible but sells very badly.',
+            retryable: true,
+            workPreserved: true,
+            technical: 'See Logs for the per-photo eBay upload errors.',
+          }, {
+            onRetry: () => nlSubmit(mode),
+            extraButtons: [{
+              label: 'Publish without photos',
+              run: () => { hideFailure('nl-failure'); nlSubmitWithoutPhotos(mode); },
+            }],
+          });
+          addActivity('Publish stopped', 'No photos could be uploaded to eBay.');
+          return;
+        }
       }
 
-      const { res, body } = await safePost(endpoint, payload);
+      const { ok, data: body, failure } = await callApi(endpoint, {
+        method: 'POST', body: payload, timeoutMs: PUBLISH_TIMEOUT_MS,
+      });
 
-      if (!res.ok) {
-        const short   = body.error   || 'Request failed';
-        const details = body.details || short;
-        const where   = body.where   ? ' [' + body.where + ']' : '';
-        nlSetResult('error',
-          'Failed' + where + ': ' + short
-          + (details !== short ? '\n\nDetails: ' + details : ''));
+      if (!ok) {
+        const short = failure?.headline || body?.error || 'Request failed';
+        const details = failure?.technical || body?.details || short;
+        nlSetResult('error', (body?.where ? '[' + body.where + '] ' : '') + short);
+
+        // Kept: both of these read eBay's own words to point at the field that needs changing, and
+        // eBay's words are still carried through in the technical detail.
         nlHighlightPolicyIssues(short + ' ' + details);
         nlHighlightMissingSpecifics(short + ' ' + details);
-        addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed',
-          'HTTP ' + res.status + ': ' + short);
+
+        // A publish whose outcome the app cannot vouch for gets a "look, don't resend" button
+        // instead of a Retry: pressing Retry on a publish that actually succeeded is what creates
+        // the duplicate listing this whole path exists to prevent.
+        const uncertain = mode === 'publish'
+          && ['Timeout', 'Network', 'UpstreamServerError'].includes(failure?.kind);
+
+        renderFailure('nl-failure', failure || {
+          kind: 'Unknown', headline: short, whatHappened: details,
+          whatToDo: 'Fix what is named above, then try again.', retryable: false, workPreserved: true,
+        }, {
+          onRetry: failure?.retryable ? () => nlSubmit(mode) : null,
+          extraButtons: uncertain ? [{ label: 'Check eBay', run: () => nlCheckPublished(payload) }] : [],
+        });
+
+        addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed', short);
         return;
       }
 
@@ -6578,10 +7036,23 @@
         const link = body.listingUrl
           ? ' <a href="' + esc(body.listingUrl) + '" target="_blank" rel="noopener noreferrer">View on eBay</a>'
           : '';
-        nlSetResult('success', '✓ Published live! Listing ID: ' + (body.listingId || '-') + (link ? ' —' : ''));
+        // Three distinct outcomes, said plainly. "Already live" and "just published" are not the same
+        // thing, and a seller told the wrong one either goes looking for a listing that does not
+        // exist or publishes a duplicate of one that does.
+        const headline = body.alreadyPublished
+          ? '✓ Already live — no second listing was created. ID: ' + (body.listingId || '-')
+          : body.reconciled
+            ? '✓ It did go live — the confirmation just got lost on the way back. ID: ' + (body.listingId || '-')
+            : '✓ Published live! Listing ID: ' + (body.listingId || '-');
+        nlSetResult('success', headline + (link ? ' —' : ''));
         $('nl-result-msg').innerHTML += link;
+        if (body.message) {
+          $('nl-result-msg').innerHTML += '<span class="nl-result-note">' + esc(body.message) + '</span>';
+        }
         addActivity('Listing published live', 'ID: ' + (body.listingId || '-') + '; Offer: ' + (body.offerId || '-'));
         loadListings('Listings refreshed after publish');
+        // Published work is no longer unfinished work — stop offering it back.
+        loadRecoverableWork();
       } else {
         const offerId = body.offerId || '-';
         const el = $('nl-result-msg');
@@ -6597,12 +7068,76 @@
         addActivity('Draft saved', 'Offer ID: ' + offerId);
       }
     } catch (err) {
-      nlSetResult('error', 'Unexpected error: ' + err.message);
-      addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed', err.message);
+      // callApi does not throw, so anything landing here is a bug in this function rather than a
+      // failed request — say so honestly instead of blaming eBay, and never imply work was lost.
+      nlSetResult('error', 'The app hit an unexpected error before finishing.');
+      renderFailure('nl-failure', {
+        kind: 'Unknown',
+        headline: 'The app hit an unexpected error',
+        whatHappened: 'Something failed inside the app while ' + (mode === 'publish' ? 'publishing' : 'saving') + '.',
+        whatToDo: 'Your listing is still on screen and autosaved. Try again, and send the detail below if it '
+                + 'keeps happening.',
+        retryable: true,
+        workPreserved: true,
+        technical: String(err?.message || err),
+      }, { onRetry: () => nlSubmit(mode), });
+      addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed', String(err?.message || err));
     } finally {
+      publishInFlight = false;
       if (publishBtn) publishBtn.disabled = false;
       if (draftBtn) draftBtn.disabled = false;
     }
+  }
+
+  // The seller has decided a photoless listing is better than no listing. Their call to make, so it
+  // is offered as a button rather than decided for them in either direction.
+  async function nlSubmitWithoutPhotos(mode) {
+    nlPhotosDeliberatelyEmpty = true;
+    try { await nlSubmit(mode); }
+    finally { nlPhotosDeliberatelyEmpty = false; }
+  }
+
+  // "Did it actually go live?", asked without sending anything. This is the button offered instead of
+  // Retry after a timeout, because a retry there is exactly what produces a duplicate listing.
+  async function nlCheckPublished(payload) {
+    nlSetResult('', 'Checking your live eBay listings…');
+    const { ok, data, failure } = await callApi('/api/listing/check-published', {
+      method: 'POST',
+      body: { title: payload.title, workKey: payload.workKey },
+      timeoutMs: 90000,
+    });
+
+    if (!ok) {
+      renderFailure('nl-failure', failure, { onRetry: () => nlCheckPublished(payload) });
+      nlSetResult('error', 'The check did not complete.');
+      return;
+    }
+
+    if (data.found) {
+      hideFailure('nl-failure');
+      const link = data.listingUrl
+        ? ' <a href="' + esc(data.listingUrl) + '" target="_blank" rel="noopener noreferrer">View on eBay</a>'
+        : '';
+      nlSetResult('success', '✓ It is live on eBay — listing ID ' + (data.listingId || '-') + '.' + (link ? ' —' : ''));
+      $('nl-result-msg').innerHTML += link +
+        '<span class="nl-result-note">' + esc(data.message || '') + '</span>';
+      addActivity('Publish reconciled', 'The listing was already live — no duplicate was created.');
+      loadListings('Listings refreshed after reconciling a publish');
+      loadRecoverableWork();
+      return;
+    }
+
+    // Not found is good news here, and worth saying so plainly: it makes publishing again safe.
+    renderFailure('nl-failure', {
+      kind: 'NotFound',
+      headline: 'It did not go live',
+      whatHappened: data.message || 'No live listing with this title was found on your account.',
+      whatToDo: 'Publishing again is safe — there is nothing to duplicate.',
+      retryable: true,
+      workPreserved: true,
+      technical: '',
+    }, { onRetry: () => nlSubmit('publish') });
+    nlSetResult('', 'Not found on eBay — publishing again is safe.');
   }
 
   // ── Settings page: Image Generation section ──────────────────

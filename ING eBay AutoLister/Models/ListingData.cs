@@ -85,6 +85,23 @@ public class AnalyzeUrlRequest { public string Url { get; set; } = ""; }
 
 public class QuickFillRequest { public string ItemName { get; set; } = ""; }
 
+/// <summary>One debounced snapshot of a listing being written, so a crash cannot take it.</summary>
+public class WorkAutosaveRequest
+{
+    /// <summary>Stable per-draft id minted by the client and reused for every later save.</summary>
+    public string Key { get; set; } = "";
+
+    /// <summary>What to call this draft in the recovery banner — normally its title so far.</summary>
+    public string? Label { get; set; }
+
+    /// <summary>The form state, serialised by the client. Opaque to the server on purpose.</summary>
+    public string? Payload { get; set; }
+
+    public string? Stage { get; set; }
+}
+
+public class WorkDiscardRequest { public string Key { get; set; } = ""; }
+
 public class SoldComp
 {
     public string Title { get; set; } = "";
@@ -304,6 +321,17 @@ public class GeneratePhotosRequest
 public class PostListingRequest : ListingData
 {
     public string? EbayToken { get; set; }
+
+    /// <summary>
+    /// The autosave key of the draft this publish came from, when there is one.
+    /// </summary>
+    /// <remarks>
+    /// Lets the publish outcome be written back against the recovered draft, so a listing that went
+    /// live stops being offered back as unfinished work, and one that failed keeps eBay's reason
+    /// attached to it. Optional: the duplicate-publish guard keys on the listing's content, never on
+    /// this, so an old client that doesn't send it is still protected.
+    /// </remarks>
+    public string? WorkKey { get; set; }
     public string ListingFormat { get; set; } = "FIXED_PRICE";
     public int DurationDays { get; set; } = 30;
     // Per-listing policy overrides (fall back to saved credentials when blank)

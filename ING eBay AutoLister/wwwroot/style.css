@@ -6295,3 +6295,241 @@ td.skeleton-cell { padding: 0 !important; }
   .asp-just-filled { animation: none; background: var(--gold-soft); }
   .rd-chevron { transition: none; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Reliability: failure panels, recovered work, photo notices
+
+   These three carry the app's worst moments, and the previous treatment gave the
+   worst moment the smallest box: a one-line red bar holding either a raw API
+   string or a fragment of an HTML error page. A failure needs room for what
+   happened, what to do about it, and the button that does it — which is the
+   difference between a seller who fixes it in ten seconds and one who concludes
+   the app is broken.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.failure-panel {
+  margin: var(--s3) 0;
+  padding: var(--s4);
+  border: 1px solid var(--danger-line);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+}
+
+.failure-head {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--danger);
+  margin-bottom: var(--s2);
+  letter-spacing: -0.01em;
+}
+
+.failure-what,
+.failure-todo,
+.failure-preserved,
+.failure-attempts {
+  margin: 0 0 var(--s2);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-strong, #16333a);
+}
+
+/* What to do next is the line the seller acts on, so it gets the weight. */
+.failure-todo { font-weight: 700; }
+
+/* Reassurance, not an alarm — deliberately quieter than everything above it. */
+.failure-preserved,
+.failure-attempts {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+/* Evidence, folded away. Sellers forward this when asking for help, so it is always
+   present — but it is never the first thing they read. */
+.failure-detail {
+  margin-top: var(--s3);
+  font-size: 12px;
+}
+
+.failure-detail summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  user-select: none;
+}
+
+.failure-detail summary:focus-visible {
+  outline: var(--focus-ring, 2px solid var(--teal));
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.failure-detail pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s3);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* Recovered work. Teal rather than red: finding a listing again is good news, and
+   dressing it as an error is how a seller dismisses the banner without reading it. */
+.recovery-banner {
+  margin-bottom: var(--s4);
+  padding: var(--s4);
+  border: 1px solid var(--info-line);
+  border-left: 3px solid var(--info);
+  border-radius: var(--r-md);
+  background: var(--info-soft);
+}
+
+.recovery-head {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--info);
+  letter-spacing: -0.01em;
+}
+
+.recovery-sub {
+  margin: var(--s1) 0 var(--s3);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.recovery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.recovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: var(--s3);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.recovery-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recovery-label {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46ch;
+}
+
+.recovery-when {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* An unresolved publish is the one row that needs a second look, so it is marked
+   rather than left to read like an ordinary unfinished draft. */
+.recovery-flag {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-line);
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.recovery-error {
+  font-size: 11px;
+  color: var(--danger);
+  font-weight: 600;
+  max-width: 60ch;
+}
+
+.recovery-row-actions {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+/* A photo problem that does not stop the listing. Amber, and it stays put — the old
+   version auto-hid after four seconds, which is how a listing reached eBay with no
+   picture and nobody remembered being told. */
+.nl-photo-upload-status.warn {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-line);
+  border-radius: var(--r-sm);
+  padding: var(--s2) var(--s3);
+  font-weight: 700;
+  line-height: 1.5;
+  align-items: flex-start;
+}
+
+.nl-photo-upload-status.warn::before {
+  background: var(--warning);
+  margin-top: 5px;
+}
+
+/* Follows a publish result, where "already live" and "just published" have to read
+   differently — a seller told the wrong one either hunts for a listing that does not
+   exist or duplicates one that does. */
+.nl-result-note {
+  display: block;
+  margin-top: var(--s2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 640px) {
+  .recovery-row { flex-direction: column; align-items: stretch; }
+  .recovery-row-actions { margin-left: 0; }
+  .recovery-label { max-width: none; white-space: normal; }
+}
+
+/* Full-width inside the AI listing modal: it sits above the two-column body, so it needs the
+   modal's own horizontal padding rather than a column's. */
+#new-listing-overlay .failure-panel {
+  margin: 0 40px var(--s3);
+  border-radius: var(--r-md);
+}
+
+@media (max-width: 900px) {
+  #new-listing-overlay .failure-panel { margin: 0 16px var(--s3); }
+}

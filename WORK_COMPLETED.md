@@ -1422,3 +1422,182 @@ login on a machine with someone watching the screen, and it is inherently timing
 whole reason for three layers is that no single one is reliable. What is verified is that the shipped
 JavaScript parses, that the burst is bounded (a test fails if anyone extends it into the typing
 window), and that the topmost pin is released on every path.
+
+## 18. Bulletproof reliability — no silent failures, no lost work, no duplicate listings (autonomous session, 2026-07-26)
+
+An audit of the four critical paths — research, pricing, photos, publish — looking for failures the
+seller either never sees or cannot recover from. It found three structural holes, each of which cost
+real money, and this session closed all three.
+
+### The three holes
+
+**1. An unhandled exception was the normal outcome, not the exceptional one.** `/api/analyze` — the
+main AI listing path — had **no try/catch at all**. Neither did `/api/photos/save-uploaded` or
+`/api/listing/update` (a live price revision the seller had just explicitly confirmed). An Anthropic
+rate limit, an expired eBay token, or a truncated image paste therefore reached ASP.NET's edge, which
+answered **500 with an HTML error page** — and every caller in `app.js` did `await res.text()` on the
+failure path, so the seller's error message was a fragment of HTML or a stack trace.
+
+**2. A single transient blip destroyed paid-for work.** There were **zero retries** anywhere on the
+AI path. Anthropic answering `529 overloaded` — the most common real failure on that path, and the one
+that clears fastest — discarded a listing analysis the seller had waited minutes and real API spend
+for, and told them `529`.
+
+**3. A publish that failed might have succeeded.** `AddFixedPriceItem` is not idempotent, and a
+timeout or a lost response does **not** mean eBay declined to create the listing. The seller pressed
+Publish again and got **two live listings for one physical item**: two insertion fees, two audiences,
+and an oversell the moment one sold. Nothing anywhere prevented this.
+
+Plus the quiet one: a listing in progress existed **only in the DOM**. One accidental tab close, one
+refresh, one crash, and an AI-written title, description and item specifics were gone with no trace.
+
+### What each critical path now guarantees
+
+| Path | Before | After |
+|---|---|---|
+| **Research** (`/api/sold-comps`) | A Terapeak scrape that threw — missing Node, crashed browser — escaped to a 500 | Guarded; a `source: none` answer now carries a `dataNote` saying **which source failed**, because "no sold comps" and "the lookup broke" are opposite facts and looked identical |
+| **Pricing** | Same 500, and a failed lookup was indistinguishable from a genuinely empty market | Same; no price is ever applied on failure, and the panel says so |
+| **Photos** | `catch { /* non-fatal */ }` on every save. It is not non-fatal: the listing published **with no photograph** and nobody was told | Every photo failure is reported. A publish where **all** photo uploads failed now **stops and asks**, instead of a 4-second status line that auto-hid |
+| **Publish** | One unguarded round trip; a lost response invited a duplicate | Three independent brakes, then reconciliation against the live account |
+
+### The publish path: three brakes, then look before you speak
+
+`PublishGuard` (new) sits in front of every publish:
+
+1. **An in-flight lease on the content fingerprint** — catches the double-click and the impatient
+   second press, with no storage round trip. Self-releasing after 5 minutes so a crashed request can
+   never lock publishing permanently.
+2. **A recent-publish record** in `WorkRecoveryStore` — catches a retry after the first attempt
+   already succeeded, *including one made after the app restarted*.
+3. **Reconciliation** — on a timeout, network drop, or eBay 5xx (and **only** those; an eBay
+   rejection is a definite no, and looking anyway would risk matching an older listing), the app
+   queries the seller's active listings **before it says anything**. If the listing is there, it
+   reports success with the real listing ID and says the confirmation was simply lost.
+
+Where the app still cannot be sure, it offers **Check eBay** rather than **Try again** — a retry
+there is precisely what creates the duplicate. `/api/listing/check-published` is read-only.
+
+The fingerprint deliberately **excludes photo URLs**: the publish path uploads photos to eBay first,
+so the same listing legitimately carries different URLs on a second attempt, and folding them in
+would make every retry look like new content and defeat the whole guard. `AddFixedPriceItem`'s
+timeout was also **raised** to 3 minutes — the one place a longer timeout is the safer choice, since
+giving up does not cancel it at eBay's end.
+
+### Never losing work
+
+`WorkRecoveryStore` (new SQLite table) keeps the listing being written alive outside the browser tab.
+Autosave is debounced 2.5s, flushed on `pagehide`/`beforeunload` via `sendBeacon` (a `fetch` is
+cancelled when the document goes away), and bounded — oversized payloads refused, repeated saves of
+one draft overwrite rather than accumulate, published records pruned.
+
+Server-side rather than `localStorage` for two reasons: it survives a cleared cache, a different
+browser and the app restarting mid-publish, and it puts the recovery record in the same place as the
+publish journal — which is what lets the guard answer "did this already go live?" after a restart.
+
+A row still marked `publishing` means the app went down between sending the listing and hearing back.
+That row is **shown**, flagged `publish outcome unknown`, with a **Check eBay** button — rather than
+hidden on the assumption it worked.
+
+### Retries that are honest about what is worth retrying
+
+`ResilientCall` gives every AI call three attempts with exponential backoff and jitter, honouring a
+server's `Retry-After` whenever it asks for longer, capped at 30 seconds because a seller is sitting
+in front of it. It retries **only** kinds `FailureTranslator.IsTransient` agrees are transient — a
+rejected API key fails immediately and says what to fix, rather than making the seller wait out three
+attempts first.
+
+The JSON parse runs **inside** the retried block, deliberately: a truncated or prose-wrapped reply is
+a bad sample, not a bad request, and a fresh sample almost always parses.
+
+Nothing retries a write to eBay. That path uses `PublishGuard` instead.
+
+### One way to describe a failure
+
+`FailureTranslator` (new, pure, 60 tests) turns any exception into a headline, what happened, what to
+do, whether a retry is honest, and the raw text kept as evidence. `renderFailure` in `app.js` renders
+all of it the same way everywhere, with the button that resolves it — **Open Settings**, **Log into
+eBay**, **Open Logs**, **Check eBay** — and the technical detail folded away rather than used as the
+headline.
+
+`retryable` is the load-bearing field. A Retry button on a permanent failure teaches sellers to click
+Retry on everything; no Retry on a transient one throws away work that would have succeeded. Both
+cost money, so the distinction is decided once, in one place.
+
+Classification is **domain-scoped**, which prevents a real defect: `Contains("429")` would read eBay's
+own rejection text — which routinely quotes prices — as a rate limit, and tell a seller to wait when
+what they need to do is fix the listing. `MentionsHttpStatus` requires the number to actually be used
+as a status, and there is a test for `"Item price 429.00 exceeds the maximum"`.
+
+### Five defects the live runs caught
+
+Every one came from pointing the running app at the real thing, not from reading the code:
+
+1. **Anthropic's `invalid_request_error` was reported as a network failure.** A real `/api/analyze`
+   call on a file that was not an image came back "Could not reach Anthropic — check your connection"
+   after **three retries**. The SDK raises it as an `HttpRequestException`, so it fell into the
+   network branch. Anthropic had answered instantly and correctly; it was the input that could never
+   work. Now `BadInput`, not retryable, **1 attempt instead of 3** (0.8s instead of ~5s), and it
+   surfaces Anthropic's own sentence: *"Anthropic rejected it: Could not process image."*
+2. **eBay's JSON error body was pasted at the seller as the explanation.** The prefix strip only
+   matched a single-word call name, so `Inventory item failed (HTTP 400): {"errors":[...]}` kept its
+   prefix, the JSON check never fired, and the whole payload became the message. Now multi-word names
+   are stripped and eBay's own `longMessage` is extracted — verified live against the real API.
+3. **The failure panel rendered where nobody could read it.** Measured in a browser at 950px tall:
+   the panel was at y=989 in a 950px viewport, **behind the sticky footer**. Adding `scrollIntoView`
+   then exposed the real cause — it was inside the left column, which is a **115px scroller holding
+   864px of content**, so a 240px panel showed a ~115px slice with its headline hidden behind the
+   strip above. Moved to full width above the two-column body.
+4. **`quick-fill` finding no product photo was a log line the seller never saw**, leaving them a
+   complete listing with an empty photo grid. Now a visible notice that does not auto-hide.
+5. **A second publish had three routes past the disabled buttons** — the draft path wires up its own
+   "Publish to eBay Live" button, the readiness gate can re-enter, and Enter submits the form. Now a
+   module-level in-flight lock as well.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/FailureModels.cs` | **New** — `FailureDomain`, `FailureKind`, `FailureInfo`, `AppFailureException` |
+| `Services/FailureTranslator.cs` | **New** — exception to actionable failure. Pure, domain-scoped, string-driven so an unrecognised error degrades gracefully instead of falling through to a 500 |
+| `Services/ResilientCall.cs` | **New** — bounded retries, backoff + jitter, `Retry-After`, transient-only |
+| `Services/PublishGuard.cs` | **New** — content fingerprint, in-flight lease, duplicate window, reconciliation match |
+| `Services/WorkRecoveryStore.cs` | **New** — autosave + publish journal in the app's own SQLite database |
+| `Services/ClaudeService.cs` | All six model calls funnel through one `CallModelAsync` — retries, a 4-minute wall-clock bound, and the parse inside the retried block |
+| `Services/EbayService.cs` | `AddFixedPriceItem` timeout raised to 3 minutes, with the reasoning recorded |
+| `Models/ListingData.cs` | `PostListingRequest.WorkKey`; `WorkAutosaveRequest`, `WorkDiscardRequest` |
+| `Program.cs` | `FailureJson` / `BadInputJson` / `Guarded` helpers; guarded `analyze`, `analyze-url`, `improve-seo`, `ai-modify`, `quick-fill`, `sold-comps`, `photos/*`, `listing/post`, `listing/publish`, `listing/update`, `local-listings/save-edit`; new `listing/check-published`, `work/autosave`, `work/recoverable`, `work/discard` |
+| `wwwroot/app.js` | `callApi` (always resolves, with timeouts), `renderFailure`/`hideFailure`, autosave + recovery banner, `publishInFlight` lock, `nlCheckPublished`, `nlPhotoNotice`, photoless-publish gate. `?v=41` |
+| `wwwroot/index.html` | Recovery banner, full-width `#nl-failure`. `app.js?v=41`, `style.css?v=34` |
+| `wwwroot/style.css` | `.failure-*`, `.recovery-*`, `.nl-photo-upload-status.warn`, `.nl-result-note`. `?v=34` |
+| Tests | **New** `FailureTranslatorTests` (60), `ResilientCallTests` (17), `PublishGuardTests` (22), `WorkRecoveryStoreTests` (21) |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **561 passed**, 0 failed, 0 skipped (was 451; +110 new) |
+| `node --check app.js` | Clean |
+| Live `/api/analyze`, no image | 400 with a renderable body — was `Results.BadRequest("ImageBase64 is required")` |
+| Live `/api/analyze`, non-image file | `BadInput`, 1 attempt, 0.8s, Anthropic's own sentence — was `Network`, 3 attempts, "check your connection" |
+| Live `/api/listing/update`, confirmed, bad offer | `EbayRejected` with eBay's `longMessage` — **was an unguarded 500 with an HTML body** |
+| Live `/api/photos/save-uploaded`, corrupt base64 | `BadInput`, "That image did not arrive intact" — **was an unguarded 500** |
+| Live `/api/photos/fetch-url`, dead host | `Network`, retryable |
+| Live `/api/sold-comps?q=antminer s19` | Still real data: 50 comps, $167.57 average, $128.75 median |
+| Live publish gates | No title → refused locally, nothing sent; price 0 → refused locally |
+| Live `/api/listing/check-published` | Read-only against the real 87-listing account; correctly `found: false` for a title that isn't there |
+| Live autosave round trip | Save → recover → discard; a 300KB payload refused as `too_large` **without throwing** |
+| Real browser (Playwright, live account, dev ports 9411–9415) | Recovery banner renders 2 rows with the `publish outcome unknown` flag and **Check eBay** only on the row that needs it; Restore populates title, price and description; autosave captures a typed edit within 4s; failure panel shows headline / what happened / what to do / attempts / buttons / folded detail; **Try again** re-issues the request (verified by request count); **Open Settings** navigates; every page still renders |
+| Browser console | **No JS errors.** The only console entries are the browser's own notes about the HTTP 400 status our failure responses deliberately return |
+| Anything published to eBay | **Nothing.** No publish was executed; the gates were exercised, never passed through to a live write |
+| Test data | All rows created during verification were deleted afterwards; the app database is untracked by git |
+
+**Not verified:** the duplicate-publish guard against a real duplicate, and reconciliation against a
+real lost response. Both need an actual live publish on the seller's account — a buyer-visible,
+hard-to-reverse write that is theirs to make. Both are covered by unit tests over the pure logic
+(fingerprint stability, lease reclaim, duplicate window, title matching including the "don't mistake
+a listing from last month for the one just published" case), and the reconciliation lookup delegates
+to the same `GetListingsAsync` the dashboard already exercises against 87 real listings. Also
+unverified live: the blocked-Craigslist and Anthropic-529 paths, since neither service failed that way
+during the session — both are covered by tests, and the 529 handling is the same code path the live
+`invalid_request_error` case exercised end to end.

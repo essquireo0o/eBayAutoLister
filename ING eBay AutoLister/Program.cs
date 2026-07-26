@@ -157,6 +157,10 @@ builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
 builder.Services.AddSingleton<ActionLog>();
 builder.Services.AddSingleton<DraftStore>();
+// Crash recovery and duplicate-publish protection. Singletons, and PublishGuard must be one:
+// its in-flight leases live in memory, and a per-request instance would hold no lease at all.
+builder.Services.AddSingleton<WorkRecoveryStore>();
+builder.Services.AddSingleton<PublishGuard>();
 builder.Services.AddSingleton<LicenseService>();
 builder.Services.AddSingleton<StripeService>();
 builder.Services.AddSingleton<AnalyticsStore>();
@@ -448,14 +452,79 @@ static IResult? TrialGuard(CredentialsStore store, LicenseService license)
     return null; // Freeware — no restrictions
 }
 
+// ── Failure reporting ─────────────────────────────────────────────
+// Every critical path answers with a body the page can render, whatever went wrong inside it.
+//
+// The failure this replaces: an unhandled exception reached ASP.NET's edge, which answered 500 with
+// an HTML error page. Every caller in app.js does `await res.text()` or `.json()` on the failure
+// path, so the seller's "AI analysis failed" message was either a stack trace or a fragment of HTML
+// — and on /api/analyze and /api/listing/update there was no try/catch at all, so that was the
+// normal outcome of a rate limit or an expired eBay token.
+//
+// `error` and `details` stay at the top level because existing callers read exactly those two
+// fields; `failure` is the added structure new UI reads. Nothing that already worked is moved.
+static IResult FailureJson(FailureInfo failure) => Results.Json(new
+{
+    ok = false,
+    error = failure.Headline,
+    details = string.IsNullOrWhiteSpace(failure.Technical) ? failure.WhatHappened : failure.Technical,
+    failure = new
+    {
+        kind = failure.Kind.ToString(),
+        domain = failure.Domain.ToString(),
+        headline = failure.Headline,
+        whatHappened = failure.WhatHappened,
+        whatToDo = failure.WhatToDo,
+        retryable = failure.Retryable,
+        retryAfterSeconds = failure.RetryAfterSeconds,
+        fixAction = failure.FixAction,
+        attempts = failure.Attempts,
+        workPreserved = failure.WorkPreserved,
+        technical = failure.Technical,
+    },
+}, statusCode: 400);
+
+// Something the seller supplied is missing or unusable. Same shape as a real failure so one bit of
+// UI renders both, but never retryable — repeating the same bad input repeats the same answer.
+static IResult BadInputJson(string headline, string whatHappened, string whatToDo) =>
+    FailureJson(new FailureInfo
+    {
+        Kind = FailureKind.BadInput,
+        Headline = headline,
+        WhatHappened = whatHappened,
+        WhatToDo = whatToDo,
+        Retryable = false,
+    });
+
+// Runs an endpoint body so no exception can escape as a 500. A cancelled request is rethrown
+// untouched: the browser has gone, and there is nothing left to render a message for.
+static async Task<IResult> Guarded<T>(FailureDomain domain, string operation, ActionLog log, Func<Task<T>> work)
+{
+    try
+    {
+        return Results.Ok(await work());
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, domain);
+        log.Add("Warning", operation + " failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+}
+
 // ── AI analysis ───────────────────────────────────────────────────
-app.MapPost("/api/analyze", async (AnalyzeRequest req, ClaudeService claude, CredentialsStore store, LicenseService license) =>
+app.MapPost("/api/analyze", async (AnalyzeRequest req, ClaudeService claude, CredentialsStore store,
+    LicenseService license, ActionLog log, CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrEmpty(req.ImageBase64))
-        return Results.BadRequest("ImageBase64 is required");
-    var listing = await claude.AnalyzeImageAsync(req.ImageBase64, req.MimeType);
-    return Results.Ok(listing);
+        return BadInputJson("No photo reached the app",
+            "The image did not arrive with the request, so there was nothing to analyse.",
+            "Drop the photo in again, or use Browse rather than paste.");
+
+    return await Guarded(FailureDomain.Ai, "AI listing from photo", log,
+        () => claude.AnalyzeImageAsync(req.ImageBase64, req.MimeType, ct));
 });
 
 app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService claude, EbayService ebay, IHttpClientFactory httpFactory, IWebHostEnvironment env, ActionLog log, CredentialsStore store, LicenseService license) =>
@@ -583,10 +652,15 @@ app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService clau
         return Results.Ok(listing2);
 
     }
+    catch (OperationCanceledException) { throw; }
     catch (Exception ex)
     {
-        log.Add("Warning", "Analyze URL failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
+        // Domain is Ai rather than Photos: the request may fail on the page load or on the model,
+        // and the AI branch already reports a network failure honestly. What matters is that a
+        // rate-limited model here reads as "wait a moment", not as "that URL is broken".
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
+        log.Add("Warning", "Analyze URL failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
     }
 });
 
@@ -857,45 +931,43 @@ app.MapPost("/api/improve-seo", async (ImproveSeoRequest req, ClaudeService clau
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrWhiteSpace(req.Title) && string.IsNullOrWhiteSpace(req.Description))
-        return Results.BadRequest(new { error = "Title or description is required." });
-    try
+        return BadInputJson("Nothing to improve yet",
+            "The SEO pass rewrites an existing title and description, and both are empty.",
+            "Add a title — even a rough one — then run it again.");
+
+    return await Guarded(FailureDomain.Ai, "AI SEO rewrite", log, async () =>
     {
         var improved = await claude.ImproveSeoAsync(req);
         log.Add("Info", "SEO improvement complete", improved.Title);
-        return Results.Ok(improved);
-    }
-    catch (Exception ex)
-    {
-        log.Add("Warning", "SEO improvement failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
-    }
+        return improved;
+    });
 });
 
 app.MapPost("/api/ai-modify", async (ModifyListingRequest req, ClaudeService claude, ActionLog log, CredentialsStore store, LicenseService license) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrWhiteSpace(req.Instruction))
-        return Results.BadRequest(new { error = "Instruction is required." });
-    try
+        return BadInputJson("No instruction given",
+            "This needs a sentence describing the change you want.",
+            "Type what to change — for example \"make the title shorter and mention it's tested\".");
+
+    return await Guarded(FailureDomain.Ai, "AI listing edit", log, async () =>
     {
         var modified = await claude.ModifyListingAsync(req);
         log.Add("Info", "AI modification applied", req.Instruction);
-        return Results.Ok(modified);
-    }
-    catch (Exception ex)
-    {
-        log.Add("Warning", "AI modification failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
-    }
+        return modified;
+    });
 });
 
 app.MapPost("/api/quick-fill", async (QuickFillRequest req, ClaudeService claude, IHttpClientFactory httpFactory, IWebHostEnvironment env, ActionLog log, CredentialsStore store, LicenseService license) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrWhiteSpace(req.ItemName))
-        return Results.BadRequest(new { error = "Item name is required." });
+        return BadInputJson("No item name typed",
+            "Quick-fill works from the product's name, and the box was empty.",
+            "Type what the item is — brand and model is plenty — then run it again.");
 
-    try
+    return await Guarded(FailureDomain.Ai, "AI quick-fill", log, async () =>
     {
         log.Add("Info", "Quick-fill from item name", req.ItemName);
 
@@ -954,13 +1026,8 @@ app.MapPost("/api/quick-fill", async (QuickFillRequest req, ClaudeService claude
         var listing = await claude.AnalyzeProductNameAsync(req.ItemName, firstImageBase64, firstImageMime);
         listing.ImageUrls = savedUrls;
 
-        return Results.Ok(listing);
-    }
-    catch (Exception ex)
-    {
-        log.Add("Warning", "Quick-fill failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
-    }
+        return listing;
+    });
 });
 
 app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace, ActionLog log) =>
@@ -995,22 +1062,42 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
         catch { return primaryAverage; }
     }
 
+    // Why there is no data, when there is none. "No sold comps" and "the lookup broke" look identical
+    // in an empty results panel, and they are opposite situations: one means the item genuinely has no
+    // recent sales history — real, useful information for a pricing decision — and the other means the
+    // app failed and the seller should not conclude anything at all from the blank panel.
+    var dataNote = "";
+
     // 1) Real Terapeak data, if the seller has connected their session (Settings > Terapeak)
     if (terapeak.IsConnected)
     {
-        var scrape = await terapeak.ScrapeAsync(q);
-        if (scrape.Status == "ok")
+        try
         {
-            var parsed = TerapeakMarketService.ParseTerapeakBodyText(scrape.BodyText, q);
-            if (parsed is not null)
+            var scrape = await terapeak.ScrapeAsync(q);
+            if (scrape.Status == "ok")
             {
-                var average = await BlendLocalAverageAsync(parsed.Average);
-                return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, Average = average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak" });
+                var parsed = TerapeakMarketService.ParseTerapeakBodyText(scrape.BodyText, q);
+                if (parsed is not null)
+                {
+                    var average = await BlendLocalAverageAsync(parsed.Average);
+                    return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, Average = average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak" });
+                }
+            }
+            else if (scrape.Status == "session_expired")
+            {
+                log.Add("Warning", "Terapeak session expired", "Reconnect in Settings.");
+                dataNote = "Your Terapeak session has expired, so its sold data was not available. "
+                         + "Reconnect it in Settings.";
             }
         }
-        else if (scrape.Status == "session_expired")
+        catch (Exception ex)
         {
-            log.Add("Warning", "Terapeak session expired", "Reconnect in Settings.");
+            // Was unguarded, and this is a browser-driven scrape: a missing Node runtime or a crashed
+            // headless browser threw straight past the endpoint, so pressing Research Sold Prices
+            // answered with a 500 HTML page.
+            var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+            log.Add("Warning", "Terapeak lookup failed", $"{failure.Kind} — {failure.Technical}");
+            dataNote = "Terapeak could not be reached for this search, so its sold data is missing here.";
         }
     }
 
@@ -1026,11 +1113,18 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
     }
     catch (Exception ex)
     {
-        log.Add("Warning", "Sold comps lookup failed", ex.Message);
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+        log.Add("Warning", "Sold comps lookup failed", $"{failure.Kind} — {failure.Technical}");
+        if (dataNote.Length == 0) dataNote = failure.WhatHappened + " " + failure.WhatToDo;
     }
 
-    // 3) Links only
-    return Results.Ok(new { query = q, items = Array.Empty<object>(), count = 0, average = 0, median = 0, min = 0, max = 0, terapeakUrl, fallbackUrl, source = "none" });
+    // 3) Links only. Still a 200 with a usable body: the eBay research links work in the seller's own
+    // logged-in browser and are a real answer, not a consolation prize.
+    return Results.Ok(new
+    {
+        query = q, items = Array.Empty<object>(), count = 0, average = 0, median = 0, min = 0, max = 0,
+        terapeakUrl, fallbackUrl, source = "none", dataNote,
+    });
 });
 
 // Opportunity Finder — live auctions ending soon for a keyword, ranked by estimated profit
@@ -2817,8 +2911,12 @@ app.MapGet("/api/photos/library/for-listing", (string? model, string? title, Pho
 
 app.MapPost("/api/photos/fetch-url", async (FetchPhotoUrlRequest req, IHttpClientFactory http, IWebHostEnvironment env, ActionLog log) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Url)) return Results.BadRequest("URL required");
-    try
+    if (string.IsNullOrWhiteSpace(req.Url))
+        return BadInputJson("No image link given",
+            "There was no URL to fetch a picture from.",
+            "Paste the image's address, or drop the picture straight into the photo box.");
+
+    return await Guarded(FailureDomain.Photos, "Fetch photo by URL", log, async () =>
     {
         using var client = http.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(15);
@@ -2831,29 +2929,35 @@ app.MapPost("/api/photos/fetch-url", async (FetchPhotoUrlRequest req, IHttpClien
         await File.WriteAllBytesAsync(Path.Combine(photosDir, filename), bytes);
         var url = $"/generated-photos/{filename}";
         log.Add("Info", "Product photo fetched", req.Url[..Math.Min(80, req.Url.Length)]);
-        return Results.Ok(new { url });
-    }
-    catch (Exception ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
+        return new { url };
+    });
 });
 
+// A photo that fails to save here used to be the app's quietest and most expensive failure. Both
+// `Convert.FromBase64String` (truncated paste) and `WriteAllBytesAsync` (full disk, antivirus lock)
+// threw straight out to a 500, and every caller in app.js swallowed it as `catch { /* non-fatal */ }`
+// — so the listing carried on to publish with no photograph and nobody was told. A photoless eBay
+// listing does not sell, which makes a silent skip here worse than a loud refusal.
 app.MapPost("/api/photos/save-uploaded", async (SaveUploadedPhotoRequest req, IWebHostEnvironment env, ActionLog log) =>
 {
     if (string.IsNullOrWhiteSpace(req.ImageBase64))
-        return Results.BadRequest("ImageBase64 is required");
+        return BadInputJson("No image data arrived",
+            "The photo did not reach the app, so there was nothing to save.",
+            "Add the photo again.");
 
-    var photosDir = Path.Combine(env.ContentRootPath, "generated-photos");
-    Directory.CreateDirectory(photosDir);
+    return await Guarded(FailureDomain.Photos, "Save uploaded photo", log, async () =>
+    {
+        var photosDir = Path.Combine(env.ContentRootPath, "generated-photos");
+        Directory.CreateDirectory(photosDir);
 
-    var ext = (req.MimeType ?? "").Contains("png") ? "png" : "jpg";
-    var filename = $"upload_{Guid.NewGuid():N}.{ext}";
-    await File.WriteAllBytesAsync(Path.Combine(photosDir, filename), Convert.FromBase64String(req.ImageBase64));
+        var ext = (req.MimeType ?? "").Contains("png") ? "png" : "jpg";
+        var filename = $"upload_{Guid.NewGuid():N}.{ext}";
+        await File.WriteAllBytesAsync(Path.Combine(photosDir, filename), Convert.FromBase64String(req.ImageBase64));
 
-    var url = $"/generated-photos/{filename}";
-    log.Add("Info", "Uploaded product photo saved", filename);
-    return Results.Ok(new { url });
+        var url = $"/generated-photos/{filename}";
+        log.Add("Info", "Uploaded product photo saved", filename);
+        return new { url };
+    });
 });
 
 app.MapPost("/api/photos/remove-bg", async (RemoveBgRequest req, IWebHostEnvironment env, ActionLog log) =>
@@ -2950,10 +3054,15 @@ result.save(sys.argv[2], 'PNG')
         log.Add("Info", "Background removed", Path.GetFileName(outputFile));
         return Results.Ok(new { url });
     }
+    catch (OperationCanceledException) { throw; }
     catch (Exception ex)
     {
-        log.Add("Warning", "Background removal failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
+        // Background removal is a nicety, not a requirement, and the message says so: a seller whose
+        // machine has no Python should be told their photo is fine as it is, not left thinking the
+        // listing is broken.
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Photos);
+        log.Add("Warning", "Background removal failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
     }
     finally
     {
@@ -3226,22 +3335,90 @@ app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay
             message = "Draft offer created. It has not been published."
         });
     }
+    catch (OperationCanceledException) { throw; }
     catch (Exception ex)
     {
-        var shortError = ex.Message.Length > 300 ? ex.Message[..300] + "…" : ex.Message;
-        log.Add("Warning", "Create Draft: failed", shortError);
-        return Results.Json(
-            new { ok = false, error = shortError, details = ex.Message, where = "CreateDraft" },
-            statusCode: 400);
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ebay);
+        log.Add("Warning", "Create Draft: failed", $"{failure.Kind} — {failure.Technical}");
+        // `where` is kept: nlHighlightPolicyIssues reads it to point at the field that needs fixing.
+        return Results.Json(new
+        {
+            ok = false,
+            error = failure.Headline,
+            details = string.IsNullOrWhiteSpace(failure.Technical) ? failure.WhatHappened : failure.Technical,
+            where = "CreateDraft",
+            failure = new
+            {
+                kind = failure.Kind.ToString(),
+                domain = failure.Domain.ToString(),
+                headline = failure.Headline,
+                whatHappened = failure.WhatHappened,
+                whatToDo = failure.WhatToDo,
+                retryable = failure.Retryable,
+                retryAfterSeconds = failure.RetryAfterSeconds,
+                fixAction = failure.FixAction,
+                attempts = failure.Attempts,
+                workPreserved = true,
+                technical = failure.Technical,
+            },
+        }, statusCode: 400);
     }
 });
 
-app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService ebay, ActionLog log, CredentialsStore store, LicenseService license) =>
+// The one endpoint that creates something buyers can see and pay for, and therefore the one whose
+// failure handling has to assume its own error report might be wrong.
+//
+// A publish that fails on the way back — a timeout, a dropped connection, an eBay 500 — does not mean
+// eBay declined to create the listing. It means the app never heard the answer. Reporting that as a
+// plain failure invites the seller to press Publish again, and the outcome is two live listings for
+// one physical item: two insertion fees, two audiences, and an oversell the moment one sells. So on
+// exactly those failures the app looks at the account before it says anything.
+app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService ebay, ActionLog log,
+    CredentialsStore store, LicenseService license, PublishGuard guard) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    if (string.IsNullOrWhiteSpace(req.Title))
+        return BadInputJson("This listing has no title",
+            "eBay will not accept a listing without one, so nothing was sent.",
+            "Add a title, then publish.");
+    if (req.Price <= 0)
+        return BadInputJson("This listing has no price",
+            "eBay will not accept a price of zero, so nothing was sent.",
+            "Set a price above zero, then publish.");
+
+    var fingerprint = PublishGuard.Fingerprint(req);
+    var verdict = guard.Begin(fingerprint, req.WorkKey);
+
+    if (verdict.Decision == PublishDecision.AlreadyPublished)
+        return Results.Ok(new
+        {
+            offerId = "",
+            listingId = verdict.ListingId,
+            sku = "",
+            listingUrl = string.IsNullOrEmpty(verdict.ListingId) ? "" : $"https://www.ebay.com/itm/{verdict.ListingId}",
+            alreadyPublished = true,
+            message = "This listing is already live — it was published moments ago, so a second copy was not "
+                    + "created. Open it below to check.",
+        });
+
+    if (verdict.Decision == PublishDecision.AlreadyRunning)
+        return FailureJson(new FailureInfo
+        {
+            Kind = FailureKind.BadInput,
+            Domain = FailureDomain.Ebay,
+            Headline = "This listing is already being published",
+            WhatHappened = "An identical publish is still running. Sending a second would risk two live "
+                         + "listings for one item.",
+            WhatToDo = "Wait for the one in progress to finish. Refresh your listings in a moment to see it.",
+            Retryable = false,
+        });
+
     try
     {
         var result = await ebay.PublishListingAsync(req);
+        guard.Succeeded(fingerprint, req.WorkKey, result.ListingId);
+
         var listingUrl = !string.IsNullOrEmpty(result.ListingId)
             ? $"https://www.ebay.com/itm/{result.ListingId}"
             : "";
@@ -3250,16 +3427,120 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
     }
     catch (Exception ex)
     {
-        log.Add("Warning", "eBay publish failed", ex.Message);
-        return Results.BadRequest(new { error = ex.Message });
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ebay);
+        guard.Failed(fingerprint, req.WorkKey, failure.Technical);
+        log.Add("Warning", "eBay publish failed", $"{failure.Kind} — {failure.Technical}");
+
+        // Only these three can lie about the outcome. An eBay rejection is a definite no: nothing was
+        // created, so looking for it would only risk matching some earlier listing with the same title.
+        if (failure.Kind is FailureKind.Timeout or FailureKind.Network or FailureKind.UpstreamServerError)
+        {
+            var found = await TryFindJustPublishedAsync(ebay, log, req.Title);
+            if (found is not null)
+            {
+                guard.Succeeded(fingerprint, req.WorkKey, found.ListingId);
+                log.Add("Info", "Publish reconciled after a failed response",
+                    $"eBay had created listing {found.ListingId} despite the error — no duplicate was made.");
+                return Results.Ok(new
+                {
+                    offerId = found.OfferId,
+                    listingId = found.ListingId,
+                    sku = found.Sku,
+                    listingUrl = string.IsNullOrEmpty(found.ListingUrl)
+                        ? $"https://www.ebay.com/itm/{found.ListingId}"
+                        : found.ListingUrl,
+                    reconciled = true,
+                    message = "The connection to eBay dropped before it confirmed — but the listing did go "
+                            + "live. It is shown below. Nothing was published twice.",
+                });
+            }
+
+            return FailureJson(failure with
+            {
+                WhatHappened = failure.WhatHappened + " The app then checked your active listings and did not "
+                             + "find it, so it does not appear to have gone live.",
+                WhatToDo = "Publishing again is safe — the check above found no listing for it. Your listing is "
+                         + "saved and still on screen.",
+                Retryable = true,
+            });
+        }
+
+        return FailureJson(failure);
     }
 });
 
+// Answers "is it actually live?" — used both after a failed publish and by the seller's own
+// Check eBay button.
+//
+// Never throws. It is called on a path that has already failed once, and a reconciliation that
+// itself blows up would replace a recoverable situation with a confusing one.
+static async Task<EbayListingSummary?> TryFindJustPublishedAsync(EbayService ebay, ActionLog log, string? title)
+{
+    try
+    {
+        var active = await ebay.GetListingsAsync();
+        return PublishGuard.MatchPublished(active, title, DateTimeOffset.UtcNow, PublishGuard.DuplicateWindow);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Could not check whether the listing went live", ex.Message);
+        return null;
+    }
+}
+
+// The Check eBay button. Deliberately read-only: it looks, reports, and changes nothing — the
+// decision to publish again stays the seller's.
+app.MapPost("/api/listing/check-published", async (PostListingRequest req, EbayService ebay, ActionLog log,
+    PublishGuard guard) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Title))
+        return BadInputJson("Nothing to look for",
+            "Checking eBay matches on the listing's title, and there isn't one.",
+            "Add the title back, then check again.");
+
+    var found = await TryFindJustPublishedAsync(ebay, log, req.Title);
+    if (found is null)
+        return Results.Ok(new
+        {
+            found = false,
+            message = "No live listing with this title was found on your account, so it did not go through. "
+                    + "Publishing again is safe.",
+        });
+
+    // Recorded so the duplicate guard knows about a listing it never saw created — a publish that
+    // succeeded during an app restart, for instance.
+    guard.Succeeded(PublishGuard.Fingerprint(req), req.WorkKey, found.ListingId);
+
+    return Results.Ok(new
+    {
+        found = true,
+        listingId = found.ListingId,
+        listingUrl = string.IsNullOrEmpty(found.ListingUrl)
+            ? $"https://www.ebay.com/itm/{found.ListingId}"
+            : found.ListingUrl,
+        price = found.Price,
+        message = "It is live on eBay — the earlier error was only the reply getting lost. Do not publish "
+                + "again or you will have two listings for one item.",
+    });
+});
+
+// The local save is the seller's safety net — it is what "your work is kept" means on every failure
+// message elsewhere — so it gets the same treatment as the paths that talk to eBay. A locked database
+// used to surface here as a 500 with an HTML body on the one action whose whole job is not losing work.
 app.MapPost("/api/local-listings/save-edit", (UpdateListingRequest req, ListingDatabase db, ActionLog log) =>
 {
-    var result = db.SaveEdit(req);
-    log.Add("Info", "Local edit saved", string.IsNullOrWhiteSpace(req.Sku) ? req.Title : req.Sku);
-    return Results.Ok(result);
+    try
+    {
+        var result = db.SaveEdit(req);
+        log.Add("Info", "Local edit saved", string.IsNullOrWhiteSpace(req.Sku) ? req.Title : req.Sku);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        log.Add("Warning", "Local edit save failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
 });
 
 app.MapPost("/api/listing/update", async (UpdateListingRequest req, EbayService ebay, ActionLog log) =>
@@ -3267,12 +3548,107 @@ app.MapPost("/api/listing/update", async (UpdateListingRequest req, EbayService 
     if (!req.ManualRevisionConfirmed)
     {
         log.Add("Warning", "eBay revise blocked", "Manual revision confirmation was missing.");
-        return Results.BadRequest("Manual revision confirmation is required before revising eBay.");
+        return BadInputJson("This change was not confirmed",
+            "Revising a live listing needs an explicit confirmation, and none was sent — so nothing on eBay "
+          + "was touched.",
+            "Confirm the change and try again.");
     }
 
-    await ebay.UpdateListingAsync(req);
-    log.Add("Info", "eBay listing revised", string.IsNullOrWhiteSpace(req.Sku) ? req.OfferId : req.Sku);
-    return Results.Ok();
+    // Was an unguarded `await`: any eBay refusal on a live revision — an expired token most of all —
+    // reached the browser as a 500 HTML page, on an action the seller had just explicitly confirmed.
+    return await Guarded(FailureDomain.Ebay, "Revise live eBay listing", log, async () =>
+    {
+        await ebay.UpdateListingAsync(req);
+        log.Add("Info", "eBay listing revised", string.IsNullOrWhiteSpace(req.Sku) ? req.OfferId : req.Sku);
+        return new { ok = true };
+    });
+});
+
+// ── Crash recovery: keeping a listing in progress alive outside the browser tab ────
+//
+// Before this, a listing being written existed only in the DOM. A Claude-written title, description
+// and item specifics cost real API spend and a minute or two of waiting, and every one was a single
+// accidental tab close, refresh, or crash away from being gone with no trace and no way back.
+app.MapPost("/api/work/autosave", (WorkAutosaveRequest req, WorkRecoveryStore work, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Key))
+        return BadInputJson("Autosave had no key",
+            "The app could not tell which draft to save against.",
+            "Reload the page — your current work is still on screen.");
+
+    try
+    {
+        var saved = work.Save(new WorkSnapshot
+        {
+            Key = req.Key,
+            Label = req.Label ?? "",
+            Stage = string.IsNullOrWhiteSpace(req.Stage) ? WorkStage.Editing : req.Stage!,
+            Payload = req.Payload ?? "",
+        });
+
+        // Reported rather than thrown. Autosave runs while the seller types; interrupting them to
+        // announce that a background save was too big would be worse than the problem.
+        if (!saved)
+        {
+            log.Add("Warning", "Autosave skipped", $"Payload for {req.Key} exceeded {WorkRecoveryStore.MaxPayloadBytes} bytes.");
+            return Results.Ok(new { saved = false, reason = "too_large" });
+        }
+
+        return Results.Ok(new { saved = true });
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        log.Add("Warning", "Autosave failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+});
+
+app.MapGet("/api/work/recoverable", (WorkRecoveryStore work, ActionLog log) =>
+{
+    try
+    {
+        var rows = work.Recoverable();
+        return Results.Ok(new
+        {
+            items = rows.Select(r => new
+            {
+                key = r.Key,
+                label = r.Label,
+                stage = r.Stage,
+                payload = r.Payload,
+                lastError = r.LastError,
+                listingId = r.ListingId,
+                attemptCount = r.AttemptCount,
+                updatedUtc = r.UpdatedUtc,
+                // A row still marked publishing means the app went down between sending the listing
+                // and hearing back. The seller needs to be told the outcome is unknown rather than
+                // have it hidden on the assumption it worked.
+                outcomeUnknown = r.Stage == WorkStage.Publishing,
+            }),
+        });
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Could not read recoverable work", ex.Message);
+        return Results.Ok(new { items = Array.Empty<object>() });
+    }
+});
+
+app.MapPost("/api/work/discard", (WorkDiscardRequest req, WorkRecoveryStore work, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Key)) return Results.Ok(new { discarded = false });
+    try
+    {
+        var discarded = work.Discard(req.Key);
+        if (discarded) log.Add("Info", "Recovered draft discarded", req.Key);
+        return Results.Ok(new { discarded });
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        return FailureJson(failure);
+    }
 });
 
 // ── Owner dashboard ───────────────────────────────────────────────

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=33" />
+  <link rel="stylesheet" href="style.css?v=34" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -117,6 +117,14 @@
       </div>
 
       <section id="dashboard-section" class="dashboard-section">
+
+        <!--
+          Recovered work. Rendered only when the app finds a listing that was being written and never
+          made it live — after a crash, an accidental tab close, or a publish whose outcome was never
+          confirmed. Sits above everything else because getting that work back is more urgent than
+          anything else on the page.
+        -->
+        <div id="recovery-banner" class="recovery-banner hidden" role="status" aria-live="polite"></div>
 
         <!-- Setup checklist — hidden once both required steps complete -->
         <div id="setup-checklist" class="setup-checklist hidden">
@@ -369,6 +377,18 @@
             <div id="nl-sold-comp-list" class="nl-sold-comp-table"></div>
           </div>
 
+          <!--
+            Structured failure panel: what happened, what to do, and the button that does it.
+
+            Deliberately here — full width, above the two-column body — rather than inside the left
+            "Photo & Analysis" column where it started out. Measured in a real browser at 950px tall,
+            that column is a 115px-high scroller holding 864px of content, so a 240px failure panel
+            placed in it showed the seller a ~115px slice of the explanation and hid the headline
+            behind the strip above. An error message you have to go hunting for is the same as no
+            error message.
+          -->
+          <div id="nl-failure" class="failure-panel hidden" role="alert"></div>
+
           <div class="new-listing-body">
 
             <!-- Left: image + AI panel -->
@@ -417,6 +437,10 @@
                 </div>
               </div>
 
+              <!--
+                Kept for compatibility with the plain one-line messages some paths still set, and
+                hidden whenever the structured panel below is showing.
+              -->
               <div id="nl-ai-error" class="nl-ai-error hidden">
                 <span id="nl-ai-error-msg"></span>
                 <button id="nl-btn-retry" class="btn btn-ghost small" type="button">Retry</button>
@@ -2045,6 +2069,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=40"></script>
+  <script src="app.js?v=41"></script>
 </body>
 </html>

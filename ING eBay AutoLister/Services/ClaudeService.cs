@@ -10,12 +10,24 @@ using Message = Anthropic.SDK.Messaging.Message;
 
 namespace ING_eBay_AutoLister.Services;
 
-public class ClaudeService(CredentialsStore creds)
+public class ClaudeService(CredentialsStore creds, ActionLog log)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    /// <summary>
+    /// Wall-clock ceiling on one model call, including reading the reply.
+    /// </summary>
+    /// <remarks>
+    /// Generous, because writing a full listing at high thinking effort legitimately takes a while and
+    /// cutting off a call that was about to succeed wastes the spend and the seller's wait. But it is
+    /// a real bound: without one, a connection that stops producing bytes leaves the seller watching a
+    /// spinner with no end and no explanation, which is the failure mode that reads as "the app is
+    /// broken" even though nothing crashed.
+    /// </remarks>
+    private static readonly TimeSpan ModelCallTimeout = TimeSpan.FromMinutes(4);
 
     private static readonly HashSet<string> AllowedConditions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -137,12 +149,47 @@ public class ClaudeService(CredentialsStore creds)
         return new AnthropicClient(key);
     }
 
+    /// <summary>
+    /// Sends one request to the model and parses the reply, retrying transient failures.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every AI call in the app goes through here, so the retry behaviour is decided once. It used to
+    /// be decided nowhere: a single "overloaded" from Anthropic — the most common failure on this path
+    /// and the one that clears fastest — discarded a listing analysis the seller had waited minutes
+    /// for, and told them only <c>529</c>.
+    /// </para>
+    /// <para>
+    /// The parse runs inside the retried block deliberately. A truncated or prose-wrapped reply is a
+    /// transient fault of the same kind as a network blip: the request was fine, this particular
+    /// sample was not, and a fresh sample almost always parses. Leaving the parse outside would mean
+    /// paying for a retry-worthy failure and reporting it as fatal.
+    /// </para>
+    /// </remarks>
+    private Task<T> CallModelAsync<T>(
+        Func<MessageParameters> buildRequest,
+        Func<MessageResponse, T> parse,
+        string operation,
+        CancellationToken cancellationToken = default)
+    {
+        return ResilientCall.RunAsync(async () =>
+        {
+            var client = BuildClient();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(ModelCallTimeout);
+
+            var response = await client.Messages.GetClaudeMessageAsync(buildRequest(), timeout.Token);
+            return parse(response);
+        }, FailureDomain.Ai, operation, log, ResilientCall.DefaultAttempts, cancellationToken);
+    }
+
+    private static string TextOf(MessageResponse response, string fallback) =>
+        response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? fallback;
+
     // ── URL / web-page analysis → full listing ───────────────────────────────
 
-    public async Task<ListingData> AnalyzeUrlAsync(string pageText, string? imageBase64, string? imageMimeType)
+    public Task<ListingData> AnalyzeUrlAsync(string pageText, string? imageBase64, string? imageMimeType)
     {
-        var client = BuildClient();
-
         var contentBlocks = new List<ContentBase>();
 
         if (!string.IsNullOrWhiteSpace(imageBase64))
@@ -208,21 +255,22 @@ public class ClaudeService(CredentialsStore creds)
             new() { Role = RoleType.User, Content = contentBlocks }
         };
 
-        var response = await client.Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model      = "claude-opus-4-8",
-            MaxTokens  = 8192,
-            Messages   = messages,
-            Thinking   = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
-        });
-
-        var raw = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "{}";
-        return DeserializeListing(raw);
+        return CallModelAsync(
+            () => new MessageParameters
+            {
+                Model      = "claude-opus-4-8",
+                MaxTokens  = 8192,
+                Messages   = messages,
+                Thinking   = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
+            },
+            response => DeserializeListing(TextOf(response, "{}")),
+            "AI listing from URL");
     }
 
     // ── Image analysis → full listing ────────────────────────────────────────
 
-    public async Task<ListingData> AnalyzeImageAsync(string base64Image, string mimeType)
+    public Task<ListingData> AnalyzeImageAsync(string base64Image, string mimeType,
+        CancellationToken cancellationToken = default)
     {
         var prompt = $"""
             You are an expert eBay seller and SEO specialist with 10+ years of experience.
@@ -272,16 +320,17 @@ public class ClaudeService(CredentialsStore creds)
             }
         };
 
-        var response = await BuildClient().Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model    = "claude-opus-4-8",
-            MaxTokens = 8192,
-            Messages  = messages,
-            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
-        });
-
-        var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "{}";
-        return DeserializeListing(text);
+        return CallModelAsync(
+            () => new MessageParameters
+            {
+                Model    = "claude-opus-4-8",
+                MaxTokens = 8192,
+                Messages  = messages,
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
+            },
+            response => DeserializeListing(TextOf(response, "{}")),
+            "AI listing from photo",
+            cancellationToken);
     }
 
     // ── Supplier file analysis → extracted products (dropship profit calculator) ────────────
@@ -344,17 +393,20 @@ public class ClaudeService(CredentialsStore creds)
             }
         };
 
-        var response = await BuildClient().Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model     = "claude-opus-4-8",
-            MaxTokens = 4096,
-            Messages  = messages,
-            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.medium }
-        });
-
-        var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "[]";
-        var json = ExtractJsonArray(text);
-        var products = JsonSerializer.Deserialize<List<SupplierProduct>>(json, JsonOptions) ?? [];
+        var products = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-opus-4-8",
+                MaxTokens = 4096,
+                Messages  = messages,
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.medium }
+            },
+            response =>
+            {
+                var json = ExtractJsonArray(TextOf(response, "[]"));
+                return JsonSerializer.Deserialize<List<SupplierProduct>>(json, JsonOptions) ?? [];
+            },
+            "AI supplier-file extraction");
 
         foreach (var p in products)
         {
@@ -373,7 +425,8 @@ public class ClaudeService(CredentialsStore creds)
 
     // ── Item name only → full listing (quick-fill) ──────────────────────────
 
-    public async Task<ListingData> AnalyzeProductNameAsync(string itemName, string? imageBase64, string? imageMimeType)
+    public Task<ListingData> AnalyzeProductNameAsync(string itemName, string? imageBase64, string? imageMimeType,
+        CancellationToken cancellationToken = default)
     {
         var contentBlocks = new List<ContentBase>();
 
@@ -438,16 +491,17 @@ public class ClaudeService(CredentialsStore creds)
             new() { Role = RoleType.User, Content = contentBlocks }
         };
 
-        var response = await BuildClient().Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model     = "claude-opus-4-8",
-            MaxTokens = 8192,
-            Messages  = messages,
-            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
-        });
-
-        var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "{}";
-        return DeserializeListing(text);
+        return CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-opus-4-8",
+                MaxTokens = 8192,
+                Messages  = messages,
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
+            },
+            response => DeserializeListing(TextOf(response, "{}")),
+            "AI listing from product name",
+            cancellationToken);
     }
 
     // ── SEO improvement pass ─────────────────────────────────────────────────
@@ -494,16 +548,16 @@ public class ClaudeService(CredentialsStore creds)
             new() { Role = RoleType.User, Content = [ new TextContent { Text = prompt } ] }
         };
 
-        var response = await BuildClient().Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model    = "claude-opus-4-8",
-            MaxTokens = 8192,
-            Messages  = messages,
-            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
-        });
-
-        var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "{}";
-        var improved = DeserializeListing(text);
+        var improved = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model    = "claude-opus-4-8",
+                MaxTokens = 8192,
+                Messages  = messages,
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
+            },
+            response => DeserializeListing(TextOf(response, "{}")),
+            "AI SEO rewrite");
 
         // Preserve fields that the improve pass shouldn't override
         improved.Price                    = req.Price > 0 ? req.Price : improved.Price;
@@ -553,16 +607,16 @@ public class ClaudeService(CredentialsStore creds)
             new() { Role = RoleType.User, Content = [ new TextContent { Text = prompt } ] }
         };
 
-        var response = await BuildClient().Messages.GetClaudeMessageAsync(new MessageParameters
-        {
-            Model     = "claude-opus-4-8",
-            MaxTokens = 8192,
-            Messages  = messages,
-            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
-        });
-
-        var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "{}";
-        var modified = DeserializeListing(text);
+        var modified = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-opus-4-8",
+                MaxTokens = 8192,
+                Messages  = messages,
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
+            },
+            response => DeserializeListing(TextOf(response, "{}")),
+            "AI listing edit");
 
         // Always preserve photos — the instruction never touches those
         modified.ImageUrls = req.ImageUrls?.Count > 0 ? req.ImageUrls : modified.ImageUrls;

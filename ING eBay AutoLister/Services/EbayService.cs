@@ -1397,6 +1397,15 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             log.Add("Info", $"AFPI:Desc:{chunk++}", c2);
 
         var client  = httpClientFactory.CreateClient();
+
+        // Longer than the 100-second default, deliberately, and this is the one place in the app
+        // where a *longer* timeout is the safer choice. Giving up on AddFixedPriceItem does not
+        // cancel it at eBay's end: a listing created just after we stopped waiting is live, invisible
+        // to the app, and about to be duplicated by a seller who reasonably assumes it failed. Waiting
+        // three minutes for a slow-but-successful publish costs patience; timing out on one costs a
+        // second set of eBay fees and an oversell.
+        client.Timeout = TimeSpan.FromMinutes(3);
+
         var request = new HttpRequestMessage(HttpMethod.Post, TradingEndpoint)
         {
             Content = new StringContent(xml, Encoding.UTF8, "text/xml")
