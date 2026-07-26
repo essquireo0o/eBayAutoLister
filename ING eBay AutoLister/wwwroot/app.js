@@ -248,8 +248,10 @@
       if (connectBtn) connectBtn.disabled = false;
       disconnectBtn?.classList.add('hidden');
     }
-    const searchBtn = $('fb-search-btn');
-    if (searchBtn) searchBtn.disabled = !data.connected;
+    ['fb-search-btn', 'fb-arb-btn'].forEach(id => {
+      const btn = $(id);
+      if (btn) btn.disabled = !data.connected;
+    });
   }
 
   async function loadFacebookStatus() {
@@ -303,8 +305,13 @@
     on('fb-connect-btn', 'click', facebookConnect);
     on('fb-disconnect-btn', 'click', facebookDisconnect);
     on('fb-search-btn', 'click', runFacebookSearch);
-    on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runFacebookSearch(); });
-    on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runFacebookSearch(); });
+    on('fb-arb-btn', 'click', runLocalArbitrage);
+    // Enter runs the ranked scan, not the plain list — the ranking is what the panel is for,
+    // and the plain list is one click away.
+    on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
+    on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
+    on('fb-arb-sort', 'change', renderArbitrageRows);
+    on('fb-arb-hide-losers', 'change', renderArbitrageRows);
     // The seller's zip and radius don't change between searches — remembering them is the
     // difference between a two-field search and a one-field one.
     const zip = localStorage.getItem('fbZip');
@@ -345,6 +352,27 @@
     }
   }
 
+  // Everything that isn't a usable result set, handled the same way for both the plain list and
+  // the arbitrage ranking: an expired or missing session is a prompt to reconnect, never a
+  // silent empty table. Returns true when it handled (and therefore ended) the render.
+  function handleFacebookNonResult(data, statusEl) {
+    if (data.status === 'not_connected') {
+      if (statusEl) statusEl.textContent = 'Connect your Facebook account above to search local listings.';
+      loadFacebookStatus();
+      return true;
+    }
+    if (data.status === 'session_expired') {
+      if (statusEl) statusEl.textContent = 'Your saved Facebook session expired — click Connect Facebook to log in again.';
+      loadFacebookStatus();
+      return true;
+    }
+    if (data.status !== 'ok') {
+      if (statusEl) statusEl.textContent = data.error || 'The local search didn\'t come back with anything usable.';
+      return true;
+    }
+    return false;
+  }
+
   function renderFacebookResults(data) {
     const statusEl = $('fb-status');
     const results = $('fb-results');
@@ -352,20 +380,7 @@
     const summary = $('fb-summary');
     if (!list || !results) return;
 
-    if (data.status === 'not_connected') {
-      if (statusEl) statusEl.textContent = 'Connect your Facebook account above to search local listings.';
-      loadFacebookStatus();
-      return;
-    }
-    if (data.status === 'session_expired') {
-      if (statusEl) statusEl.textContent = 'Your saved Facebook session expired — click Connect Facebook to log in again.';
-      loadFacebookStatus();
-      return;
-    }
-    if (data.status !== 'ok') {
-      if (statusEl) statusEl.textContent = data.error || 'The local search didn\'t come back with anything usable.';
-      return;
-    }
+    if (handleFacebookNonResult(data, statusEl)) return;
     if (!data.count) {
       if (statusEl) statusEl.textContent = data.error
         ? `No local listings found — ${data.error}`
@@ -447,6 +462,188 @@
     } finally {
       btn.disabled = false;
     }
+  }
+
+  // ── Local arbitrage ranking ──────────────────────────────────────────────
+  // The whole local-sourcing feature in one table: every local listing priced against real
+  // eBay sold comps, ranked by what's left after fees. Held here so the sort/filter controls
+  // re-render from the same response instead of re-running a multi-minute scan.
+  let arbitrageData = null;
+
+  const ARB_VERDICTS = {
+    goldmine: { label: '💎 Goldmine', cls: 'goldmine' },
+    solid:    { label: '✅ Worth it', cls: 'solid' },
+    thin:     { label: '⚠️ Thin', cls: 'thin' },
+    pass:     { label: '✕ Pass', cls: 'pass' },
+    no_data:  { label: '? No data', cls: 'nodata' },
+  };
+
+  async function runLocalArbitrage() {
+    const query = $('fb-query-input')?.value.trim() || '';
+    const zip = $('fb-zip-input')?.value.trim() || '';
+    const radius = $('fb-radius-select')?.value || '40';
+    const statusEl = $('fb-status');
+    const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
+
+    if (!query) {
+      if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
+      return;
+    }
+
+    localStorage.setItem('fbZip', zip);
+    localStorage.setItem('fbRadius', radius);
+
+    $('fb-results')?.classList.add('hidden');
+    $('fb-arb-results')?.classList.add('hidden');
+    buttons.forEach(b => { b.disabled = true; });
+    // Honest about the cost: a Marketplace page load, then a sold-comp lookup per distinct
+    // product, then up to five Terapeak lookups. Minutes, not seconds.
+    if (statusEl) {
+      statusEl.textContent = `Searching Marketplace within ${radius} miles${zip ? ` of ${zip}` : ''}, then pricing every result against eBay sold data — this can take a couple of minutes…`;
+    }
+
+    try {
+      const url = `/api/facebook/arbitrage?q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}`;
+      const data = await fetch(url).then(r => r.json());
+      renderArbitrage(data);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Local arbitrage scan failed: ${err.message}`;
+    } finally {
+      buttons.forEach(b => { b.disabled = false; });
+    }
+  }
+
+  function renderArbitrage(data) {
+    const statusEl = $('fb-status');
+    const wrap = $('fb-arb-results');
+    if (!wrap) return;
+
+    if (handleFacebookNonResult(data, statusEl)) return;
+    if (!data.localListingsFound) {
+      if (statusEl) {
+        statusEl.textContent = data.error
+          ? `No local listings found — ${data.error}`
+          : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`;
+      }
+      return;
+    }
+    if (!data.count) {
+      if (statusEl) statusEl.textContent = `Found ${data.localListingsFound} local listing(s), but none had a price to work from.`;
+      return;
+    }
+
+    arbitrageData = data;
+    if (statusEl) statusEl.textContent = '';
+
+    const scanned = [
+      `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} priced for "${esc(data.query)}"`,
+      `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''}`,
+      data.goldmineCount ? `<strong class="fb-arb-hit">${data.goldmineCount} goldmine${data.goldmineCount === 1 ? '' : 's'}</strong>` : 'no goldmines this time',
+      `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
+    ].join(' · ');
+    $('fb-arb-summary').innerHTML =
+      `${scanned} <a class="link-ext" href="${esc(data.searchUrl)}" target="_blank" rel="noopener">Open on Facebook ↗</a>` +
+      `<div class="fb-arb-sources">Priced ${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} against sold comps` +
+      `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} of them re-checked live on Terapeak` : ''}` +
+      `${data.terapeakConnected ? '' : ' · Terapeak not connected — sold-comps database only'}.</div>`;
+
+    const warn = $('fb-arb-warning');
+    if (warn) {
+      warn.textContent = data.dataWarning || '';
+      warn.classList.toggle('hidden', !data.dataWarning);
+    }
+
+    renderArbitrageRows();
+    wrap.classList.remove('hidden');
+  }
+
+  // Re-sorting and filtering are pure client-side views over the response already in hand —
+  // changing the sort must never re-run the scan.
+  function renderArbitrageRows() {
+    const body = $('fb-arb-body');
+    if (!body || !arbitrageData) return;
+
+    const sort = $('fb-arb-sort')?.value || 'profit';
+    const hideLosers = !!$('fb-arb-hide-losers')?.checked;
+
+    let rows = arbitrageData.items.slice();
+    if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
+
+    // Unpriced rows always sort last whatever the key — "we couldn't price this" isn't a zero.
+    const nullsLast = (a, b, key) => (a[key] == null) - (b[key] == null) || null;
+    // A free item's ROI is unbounded, not missing — it belongs at the top of an ROI sort, not
+    // below a listing that loses money.
+    const roiOf = r => (r.roiPercent != null ? r.roiPercent : r.netProfit > 0 && r.localAsk === 0 ? Infinity : null);
+    const cmp = {
+      profit: (a, b) => nullsLast(a, b, 'netProfit') ?? (b.netProfit - a.netProfit),
+      // Two unbounded ROIs are equal, not NaN — Infinity - Infinity would corrupt the sort.
+      roi: (a, b) => { const x = roiOf(a), y = roiOf(b); return (x == null) - (y == null) || (x === y ? 0 : y - x); },
+      margin: (a, b) => nullsLast(a, b, 'marginPercent') ?? (b.marginPercent - a.marginPercent),
+      distance: (a, b) => nullsLast(a, b, 'distanceMiles') ?? (a.distanceMiles - b.distanceMiles),
+      ask: (a, b) => a.localAsk - b.localAsk,
+    }[sort];
+    rows.sort(cmp);
+
+    const shown = $('fb-arb-shown');
+    if (shown) {
+      shown.textContent = rows.length === arbitrageData.items.length
+        ? `${rows.length} shown`
+        : `${rows.length} of ${arbitrageData.items.length} shown`;
+    }
+
+    body.innerHTML = rows.length
+      ? rows.map(arbitrageRowHtml).join('')
+      : '<tr><td colspan="10" class="fb-arb-empty">Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.</td></tr>';
+  }
+
+  function arbitrageRowHtml(row, index) {
+    const verdict = ARB_VERDICTS[row.verdict] || ARB_VERDICTS.no_data;
+    const meta = [
+      row.distanceMiles != null ? `${row.distanceMiles} mi` : '',
+      row.location ? esc(row.location) : '',
+      row.postedAgo ? esc(row.postedAgo) : '',
+      row.originalPrice ? `was ${money(row.originalPrice)} — price dropped` : '',
+    ].filter(Boolean).join(' · ');
+
+    // A free item has no cost basis, so its ROI is unbounded rather than zero.
+    const roi = row.roiPercent != null ? `${Math.round(row.roiPercent)}%`
+      : row.netProfit > 0 && row.localAsk === 0 ? '∞' : '—';
+
+    const evidence = row.ebayExpectedSale == null
+      ? '<span class="fb-arb-muted">no sold history</span>'
+      : [
+          `${row.soldCompCount} sold comp${row.soldCompCount === 1 ? '' : 's'}`,
+          row.terapeakCompCount ? `${row.terapeakCompCount} Terapeak` : '',
+          row.confidenceLevel ? esc(row.confidenceLevel) : '',
+          row.liquidityLevel ? esc(row.liquidityLevel) : '',
+        ].filter(Boolean).join(' · ');
+
+    // The comp lookup runs on the fullest title in the product group, which may not be this
+    // row's own wording — say so rather than implying the match was against this exact tile.
+    const pricedAs = row.pricedAs && row.pricedAs !== row.title
+      ? ` title="Priced as: ${esc(row.pricedAs)}"` : '';
+
+    return `
+      <tr class="fb-arb-row fb-arb-row-${verdict.cls}">
+        <td class="fb-arb-th-rank">${index + 1}</td>
+        <td class="fb-arb-item">
+          ${row.imageUrl ? `<img class="fb-arb-thumb" src="${esc(row.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="fb-arb-thumb fb-arb-thumb-empty">📦</span>'}
+          <span class="fb-arb-item-text">
+            <a class="fb-arb-title" href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.title)} ↗</a>
+            <span class="fb-arb-meta">${meta}</span>
+            <span class="fb-verdict fb-verdict-${verdict.cls}">${verdict.label}</span>
+            <span class="fb-arb-note">${esc(row.verdictNote)}</span>
+          </span>
+        </td>
+        <td class="num">${row.localAsk > 0 ? money(row.localAsk) : 'Free'}</td>
+        <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
+        <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
+        <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}</td>
+        <td class="num">${roi}</td>
+        <td class="num">${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
+        <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
+        <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
+      </tr>`;
   }
 
   async function openSetupWithPolicies(status) {

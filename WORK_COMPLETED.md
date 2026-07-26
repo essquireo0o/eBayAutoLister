@@ -456,3 +456,117 @@ reported a nonsense spread. The card now carries the numeric price as a data att
 interactive login, which this session can't and shouldn't do. The selectors are therefore
 best-effort against Facebook's current published markup; if a real search returns zero results,
 `FacebookMarketplaceSelectors.cs` is the one file to tune.
+
+---
+
+## 11. Local Arbitrage — the "goldmine" ranking (autonomous session, 2026-07-26)
+
+Section 10 answers *"what is for sale near me?"*. This answers the question that actually makes
+money: **"which of those is worth driving to?"** — one zip code + radius + keyword, every local
+Facebook Marketplace result priced against real eBay sold data, ranked by what's left **after
+fees**.
+
+`GET /api/facebook/arbitrage?q=&zip=&radius=` → the `💰 Find Goldmines` button in the Opportunity
+Finder.
+
+### Why it's a net number, not a spread
+
+The per-card check added in §10 shows the gross spread (sold average − local ask) and says so.
+Gross is the number that talks people into bad buys: a $600 local ask against a $900 sold average
+looks like $300 until eBay's 13.25% + $0.40 and the shipping take $120 of it. Every row here goes
+through the **same `ProfitCalculator` + `FeeProfile`** as the dropship and supplier-file paths — a
+local flip is worth exactly what a dropship of the same item is worth, so it is costed by the same
+rules rather than a second, friendlier formula.
+
+Each row carries **net profit, ROI, margin** and a **max-to-pay** price: the highest local ask that
+still breaks even. Net profit falls exactly one dollar per dollar paid, so that ceiling is exact
+arithmetic, not a heuristic — it's the number to walk into a driveway negotiation with, which a
+bare profit figure doesn't give you.
+
+### Reuse, not a second pricing engine
+
+`FindLocalArbitrageAsync` calls the existing `AnalyzeProductAsync`, so a local listing is priced by
+the identical stack the rest of the app uses: `ProductNormalizer` → hosted sold-comps database
+(`HostedMarketplaceRepository`, or the local `Marketplace.db` when the hosted API isn't configured)
+→ `ComparableMatcher` → `MarketPriceEstimator` (which is where **Terapeak** enters, and where the
+adaptive local-vs-Terapeak blend is decided) → `ProfitCalculator` / `ConfidenceScoringService`.
+Nothing about pricing is reimplemented here; the new code is the local half, the rationing and the
+ranking.
+
+### Rationing — one click must not become hundreds of lookups
+
+| Rule | Why |
+|---|---|
+| Comp lookups are per distinct **product**, not per tile | Five listings of the same drill are one lookup. Grouped on `TerapeakMarketService.BuildCacheKey(normalized title)` — the same signature Terapeak caches on — with the **fullest** title in each group used for the lookup, since the matcher can only work with the words it's given |
+| Pass 1 is **cache-only** (`allowRealScrape: false`) | A product Terapeak already knows costs nothing and must not consume the budget — the same pre-check the Opportunity Finder uses |
+| Pass 2 spends **≤ 5 real Terapeak scrapes** (hard cap 10) | `SelectScrapeTargets` corroborates the biggest preliminary profits first, then products the comps DB couldn't price at all, biggest local ask first. Known losers are never worth a scrape |
+| `maxItems` clamped 1–60, default 30 | Bounds the fan-out of a single click |
+| Skipped entirely when Terapeak isn't connected | The sold-comps DB alone still produces a full ranking |
+
+### Verdicts are earned by evidence, not by arithmetic
+
+`💎 Goldmine` requires **all** of: ROI ≥ 75%, net ≥ $75, ≥ 5 sold comps, confidence ≥ 50. Anything
+profitable on fewer than 3 comps is `⚠️ Thin` however large the number — the same lesson as the
+sell-through badge in commit `b65e570`. 400% ROI on a $5 buy is `⚠️ Thin` too: $20 is a real margin
+and a pointless drive. Losers show as `✕ Pass` and unpriceable rows as `? No data` rather than
+being hidden — silently dropping listings from a *sourcing* search is how a real deal gets missed.
+
+### Judgement calls worth knowing about
+
+- **Shipping is booked on both sides.** Buyers paid it (revenue, and eBay charges its final value
+  fee on it) and it costs the seller the same to ship. Booking it on one side only is how an
+  estimate ends up either inflated or double-charged. When the comps sold with free shipping there
+  is no observed figure, so it falls back to `FeeProfile.DefaultShippingCost` like every other
+  profit path in the app.
+- **Free items are the best cost basis, not a missing one.** ROI shows as `∞` rather than 0%
+  (undefined, not zero) and they still rank on net profit.
+- **Sorting and filtering are pure client-side views** over the response already in hand — changing
+  the sort must never re-run a multi-minute scan. Verified in the browser.
+- **"Priced as" is exposed** (title attribute on the resell cell) whenever the group's lookup title
+  differs from the row's own wording, rather than implying the match was against that exact tile.
+- **Not modelled: your drive, your time, or condition risk on a used local item.** Said plainly in
+  the panel footnote instead of being buried in a fabricated "estimated cost" column.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/LocalArbitrageModels.cs` | **New** — `LocalArbitrageOpportunity` (local buy / eBay resale / money / verdict) and `LocalArbitrageResult` (+ what the run actually did: products priced, scrapes used, which sources were available) |
+| `Services/LocalArbitrageAnalyzer.cs` | **New** — `ResalePricing`, `LocalArbitrageGroup`, and the analyzer itself: `Build` (the money, via `ProfitCalculator`) plus the pure `Judge` / `GroupByProduct` / `SelectScrapeTargets` / `Rank` / `SourceLabel` |
+| `Program.cs` | DI + `GET /api/facebook/arbitrage`, and `FindLocalArbitrageAsync` — the two-pass orchestration over `AnalyzeProductAsync` |
+| `wwwroot/index.html` | `💰 Find Goldmines` beside the existing search, `#fb-arb-results` ranked table, sort/filter toolbar, honesty footnote. `app.js?v=31`, `style.css?v=26` |
+| `wwwroot/app.js` | `runLocalArbitrage`, `renderArbitrage`, `renderArbitrageRows`, `arbitrageRowHtml`; `handleFacebookNonResult` extracted so the plain list and the ranking share one not-connected/expired path |
+| `wwwroot/style.css` | `.fb-arb-*` table, `.fb-verdict-*` badges — badge colour tracks evidence strength, not the size of the number |
+| `ING eBay AutoLister.Tests/LocalArbitrageAnalyzerTests.cs` | **New** — 33 tests |
+
+### Degradation
+
+- **Facebook not connected / session expired** — the status passes straight through and the UI shows
+  the same connect prompt the plain local search shows, never an empty ranking table. Both buttons
+  are disabled while disconnected.
+- **No pricing source at all** — when nothing could be priced, the response probes whether the
+  sold-comps database is even reachable and returns a `dataWarning` naming what to connect
+  (Terapeak, the comps DB, or both). The probe runs only on that path, since the hosted one costs a
+  real HTTP request.
+- **Nothing profitable** — says so ("this search has no local flip worth driving to") instead of
+  rendering an empty table.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **210 passed**, 0 failed, 0 skipped (177 pre-existing + 33 new) |
+| Live endpoint (dev port 9351) | `/api/facebook/arbitrage?q=antminer s19&zip=89101&radius=45` while disconnected → `not_connected`, radius snapped 45 → 40, empty ranking, no exception |
+| Real browser (Playwright, stubbed API) | Table renders and ranks; goldmine row gold-edged; free item shows `∞` ROI; unpriced row shows dashes and sorts last; sort by profit/ROI/margin/distance/price and "only show items that profit" all re-render **without re-fetching**; a disconnected response shows the connect prompt and re-disables both buttons |
+| Browser console errors | **None** |
+
+Two bugs were found by that browser pass and fixed in the code: the sort toolbar's `<select>` was
+inheriting the panel's full-width form styling and pushing the controls onto three lines, and an
+ROI sort put a free item (unbounded ROI) *below* a listing that loses money — free now sorts first,
+with `Infinity - Infinity` guarded so two free items compare equal instead of `NaN`.
+
+**Not verified against a live Facebook session or a populated comps database** — that needs the
+user's own Facebook login and the hosted API credentials, neither of which this session can or
+should use. The pricing stack it delegates to is the one the Opportunity Finder already exercises;
+what is unproven end-to-end is the two-pass orchestration over real search results.

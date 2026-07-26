@@ -208,6 +208,10 @@ builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
 builder.Services.AddSingleton<CrossListingFeeProfile>();
 builder.Services.AddSingleton<CrossListingExporter>();
+// Local arbitrage — prices each Facebook Marketplace result against the sold-comps database and
+// Terapeak, then ranks by net profit after fees. Pure ranking/verdict logic plus ProfitCalculator;
+// the pricing lookups themselves are orchestrated in FindLocalArbitrageAsync below.
+builder.Services.AddSingleton<LocalArbitrageAnalyzer>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -1334,6 +1338,164 @@ app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, Fa
         supportedRadii = FacebookMarketplaceSelectors.SupportedRadiiMiles,
     });
 });
+
+// The local-arbitrage ranking: the same zip/radius/keyword search as above, but every result is
+// priced against real eBay sold data and ranked by what's left after fees. Deliberately a
+// separate endpoint from /api/facebook/search rather than a flag on it — this one costs a comp
+// lookup per distinct product and can spend Terapeak scrapes, so it only ever runs when someone
+// clicks the button that says so.
+app.MapGet("/api/facebook/arbitrage", async (
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget,
+    FacebookMarketplaceService facebook, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    var result = await FindLocalArbitrageAsync(
+        q ?? "", zip ?? "", radius ?? 40,
+        // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
+        // too, so an unbounded request would turn one click into hundreds of lookups.
+        Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+        facebook, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+
+    return Results.Ok(result);
+});
+
+// Local arbitrage: search local Marketplace supply, price every result against real eBay sold
+// data, rank by net profit after fees. Reuses AnalyzeProductAsync (and therefore the hosted
+// sold-comps database, ComparableMatcher, MarketPriceEstimator and Terapeak) rather than pricing
+// items a second way — a local flip is worth exactly what a dropship of the same item is worth.
+//
+// Two things are rationed on purpose, because one click here fans out into many lookups:
+//   * comp lookups are per distinct PRODUCT, not per tile (five listings of the same drill are
+//     one lookup), and
+//   * real Terapeak scrapes only ever happen in the second pass, only for the products that pass
+//     LocalArbitrageAnalyzer.SelectScrapeTargets, and only up to terapeakBudget. Pass 1 is
+//     cache-only, so a product Terapeak already knows about costs nothing.
+static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
+    string q, string zip, int radius, int maxItems, int terapeakBudget,
+    FacebookMarketplaceService facebook, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var search = await facebook.SearchAsync(q, zip, radius);
+
+    var result = new LocalArbitrageResult
+    {
+        Status = search.Status, Query = search.Query, ZipCode = search.ZipCode,
+        RadiusMiles = search.RadiusMiles, SearchUrl = search.SearchUrl, Error = search.Error,
+        LocalListingsFound = search.Count, TerapeakConnected = terapeak.IsConnected,
+    };
+    // not_connected / session_expired / error all pass straight through so the UI can show the
+    // same connect prompt the plain local search shows, instead of an empty ranking table.
+    if (search.Status != "ok" || search.Count == 0) return result;
+
+    // A tile with no parseable price has no cost basis, so there is no profit to compute for it.
+    // "Free" is kept — it's the best possible cost basis, not a missing one.
+    var priceable = search.Items.Where(i => i.Price is > 0 || i.IsFree).Take(maxItems).ToList();
+    result.ItemsAnalyzed = priceable.Count;
+
+    // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
+    // differently-worded tiles for the same product share both the group and the cached scrape.
+    var groups = LocalArbitrageAnalyzer.GroupByProduct(
+        priceable, l => TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
+    result.ProductsPriced = groups.Count;
+
+    async Task<ResalePricing> PriceAsync(LocalArbitrageGroup group, bool allowScrape)
+    {
+        var analysis = await AnalyzeProductAsync(
+            group.LookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: allowScrape,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        return ResalePricing.From(analysis, group.LookupTitle);
+    }
+
+    // ── Pass 1: sold-comps database + whatever Terapeak already has cached. No scrapes. ─────────
+    var pricing = new Dictionary<string, ResalePricing>();
+    var cached = new Dictionary<string, bool>();
+    foreach (var group in groups)
+    {
+        // Same cache-only pre-check the Opportunity Finder uses: a product Terapeak already knows
+        // must not consume the scrape budget, and this costs one SQLite read, never a page load.
+        cached[group.Key] = await terapeakMarket.GetAsync(
+            normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+        pricing[group.Key] = await PriceAsync(group, allowScrape: false);
+    }
+
+    // ── Pass 2: spend the scrape budget on the products where it changes a decision ─────────────
+    if (terapeak.IsConnected && terapeakBudget > 0)
+    {
+        var byKey = groups.ToDictionary(g => g.Key);
+        var targets = LocalArbitrageAnalyzer.SelectScrapeTargets(
+            groups.Select(g =>
+            {
+                // The group's best buy is what decides whether the group is worth a scrape;
+                // a free listing is the cheapest there is, not a missing price.
+                var cheapest = g.Listings.OrderBy(l => l.IsFree ? 0m : l.Price ?? decimal.MaxValue).First();
+                var preliminary = pricing[g.Key].HasPrice
+                    ? analyzer.Build(cheapest, pricing[g.Key], feeProfile).NetProfit
+                    : null;
+                return (g.Key, PreliminaryProfit: preliminary, HasTerapeak: cached[g.Key], LocalAsk: g.LowestAsk);
+            }), terapeakBudget);
+
+        foreach (var key in targets)
+        {
+            pricing[key] = await PriceAsync(byKey[key], allowScrape: true);
+            result.TerapeakScrapesUsed++;
+        }
+    }
+
+    // ── Rank ────────────────────────────────────────────────────────────────────────────────────
+    var rows = groups
+        .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile)))
+        .ToList();
+
+    result.Items = LocalArbitrageAnalyzer.Rank(rows);
+    result.GoldmineCount = result.Items.Count(r => r.Verdict == "goldmine");
+    // What the whole board is worth if every profitable listing on it were bought and flipped —
+    // an upper bound on the search, not a forecast.
+    result.TotalPotentialProfit = Math.Round(result.Items.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
+
+    if (result.Items.All(r => r.EbayExpectedSale is null))
+    {
+        result.SoldCompsConfigured = await SoldCompsReachableAsync(marketplace, ct);
+        result.DataWarning = (result.SoldCompsConfigured, terapeak.IsConnected) switch
+        {
+            (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these locally.",
+            (true, _) => "The sold-comps database had no history for any of these titles. Connecting Terapeak would add a second source.",
+            (false, true) => "Terapeak is connected but returned no sold history for these titles.",
+        };
+    }
+    else
+    {
+        result.SoldCompsConfigured = result.Items.Any(r => r.SoldCompCount > 0);
+    }
+
+    sw.Stop();
+    log.Add("Info", "Local arbitrage scan",
+        $"\"{q}\" within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")}; " +
+        $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
+        $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +
+        $"Goldmines: {result.GoldmineCount}; Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
+
+// Only called when nothing could be priced — the hosted path's probe is a real HTTP request, so
+// it isn't worth spending on a run that already has its answer.
+static async Task<bool> SoldCompsReachableAsync(IMarketplaceRepository marketplace, CancellationToken ct)
+{
+    try { return await marketplace.IsAvailableAsync(ct); }
+    catch (OperationCanceledException) { throw; }
+    catch { return false; }
+}
 
 // The whole opportunity-search-and-score pipeline behind the interactive /api/opportunities/search
 // endpoint. When a seller is given with no keyword, this skips the broad market-value estimate

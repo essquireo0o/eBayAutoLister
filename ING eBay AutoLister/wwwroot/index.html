@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=25" />
+  <link rel="stylesheet" href="style.css?v=26" />
 </head>
 <body>
   <div class="app-shell">
@@ -772,7 +772,11 @@
                   <option value="500">500 miles</option>
                 </select>
               </div>
-              <button id="fb-search-btn" class="btn btn-primary opp-search-submit" type="button">📍 Search Local</button>
+              <button id="fb-search-btn" class="btn btn-secondary opp-search-submit" type="button">📍 Search Local</button>
+              <!-- The paid-for version of the same search: every result priced against sold
+                   comps + Terapeak and ranked by profit. Its own button because it costs a
+                   comp lookup per product (see /api/facebook/arbitrage). -->
+              <button id="fb-arb-btn" class="btn btn-primary opp-search-submit" type="button">💰 Find Goldmines</button>
             </div>
 
             <div id="fb-status" class="mr-status"></div>
@@ -780,6 +784,50 @@
             <div id="fb-results" class="hidden">
               <div id="fb-summary" class="opp-results-summary"></div>
               <div id="fb-list" class="fb-list"></div>
+            </div>
+
+            <!-- Local arbitrage ranking: buy local $X -> resell ~$Y -> net $Z. -->
+            <div id="fb-arb-results" class="hidden">
+              <div id="fb-arb-summary" class="opp-results-summary"></div>
+              <div id="fb-arb-warning" class="fb-arb-warning hidden"></div>
+              <div class="fb-arb-controls">
+                <label for="fb-arb-sort">Sort by</label>
+                <select id="fb-arb-sort">
+                  <option value="profit" selected>Net profit</option>
+                  <option value="roi">ROI %</option>
+                  <option value="margin">Margin %</option>
+                  <option value="distance">Distance</option>
+                  <option value="ask">Local price</option>
+                </select>
+                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
+                <span id="fb-arb-shown" class="fb-arb-shown"></span>
+              </div>
+              <div class="fb-arb-table-wrap">
+                <table class="fb-arb-table">
+                  <thead>
+                    <tr>
+                      <th class="fb-arb-th-rank">#</th>
+                      <th>Local listing</th>
+                      <th class="num">Buy local</th>
+                      <th class="num">Resell on eBay</th>
+                      <th class="num">Fees</th>
+                      <th class="num">Net profit</th>
+                      <th class="num">ROI</th>
+                      <th class="num">Margin</th>
+                      <th class="num">Max to pay</th>
+                      <th>Evidence</th>
+                    </tr>
+                  </thead>
+                  <tbody id="fb-arb-body"></tbody>
+                </table>
+              </div>
+              <p class="fb-arb-footnote">
+                Resale prices are real eBay sold comps (sold-comps database blended with Terapeak where
+                both have data), not asking prices. Profit subtracts eBay's standard final value fee and
+                any shipping the comps show buyers paying — it does <strong>not</strong> include your
+                drive, your time, or the risk that a used local item isn't what the photo says. Verify
+                condition in person before buying.
+              </p>
             </div>
           </div>
 
@@ -1756,6 +1804,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=30"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>
