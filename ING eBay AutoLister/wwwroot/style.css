@@ -3476,6 +3476,8 @@ textarea {
 
 .opp-verified-tag.opp-verified  { color: var(--success); }
 .opp-verified-tag.opp-estimate  { color: var(--muted); }
+/* Unverifiable sell-through — deliberately reads as a warning, never as the green "matched" tag. */
+.opp-verified-tag.opp-thin-data { color: var(--warning); cursor: help; }
 
 .opp-result-score {
   display: flex;

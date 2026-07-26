@@ -1054,7 +1054,7 @@ app.MapGet("/api/opportunities/search", async (string? q, string? seller, string
     var pricedItems  = opportunities.Where(x => x.ProfitPercent.HasValue).ToList();
     var avgProfitPercent = pricedItems.Count > 0 ? Math.Round(pricedItems.Average(x => x.ProfitPercent!.Value), 1) : (decimal?)null;
     var best = pricedItems.OrderByDescending(x => x.ProfitPercent!.Value).FirstOrDefault();
-    var bestOpportunity = best is null ? null : new { best.Title, best.Url, ProfitPercent = best.ProfitPercent, best.IsVerified };
+    var bestOpportunity = best is null ? null : new { best.Title, best.Url, ProfitPercent = best.ProfitPercent, best.IsVerified, best.SellThroughUnverified };
 
     return Results.Ok(new
     {
@@ -1698,7 +1698,11 @@ static void ApplyAnalysisToOpportunityItem(OpportunityListItem candidate, Market
     candidate.SellThroughPercent = analysis.SellThrough.RateIsUnbounded
         ? (decimal?)null
         : (analysis.SellThrough.SellThroughRate ?? candidate.SellThroughPercent);
-    candidate.IsHighThroughput = candidate.SellThroughPercent is > 50;
+    // Any leftover percentage here came from the broad first pass, not from a rate we could verify
+    // for this item — flag it so the row wears "low confidence — thin data" instead of the green
+    // Terapeak-matched badge.
+    candidate.SellThroughUnverified = SellThroughCalculator.IsUnverified(analysis.SellThrough);
+    candidate.IsHighThroughput = !candidate.SellThroughUnverified && candidate.SellThroughPercent is > 50;
 
     candidate.QuickSalePrice = analysis.PriceEstimate.QuickSalePrice;
     candidate.RecommendedListingPrice = analysis.PriceEstimate.RecommendedListingPrice;

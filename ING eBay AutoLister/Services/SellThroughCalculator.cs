@@ -19,6 +19,12 @@ public sealed class SellThroughCalculator(LiquidityScoringService liquidity)
         (0m, 0), (5m, 3), (15m, 12), (35m, 30), (60m, 55), (100m, 100),
     ];
 
+    // A rate we can't stand behind: either no measurable rate at all, or the degenerate
+    // zero-active-comps denominator above. Callers use this to downgrade the UI's confidence
+    // badge instead of letting thin data wear the same "verified" green as a real match.
+    public static bool IsUnverified(SellThroughAnalysis analysis) =>
+        analysis.SellThroughRate is null || analysis.RateIsUnbounded;
+
     public SellThroughAnalysis Calculate(
         string productQuery, IReadOnlyList<MarketplaceComparableResult> soldComparables,
         int activeComparableCount, decimal? candidatePrice = null, decimal? medianActivePrice = null,

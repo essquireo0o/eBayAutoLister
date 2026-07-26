@@ -144,6 +144,11 @@ public class OpportunityListItem
     // How fast this exact item's comps actually sell on eBay (Terapeak sell-through %) — only
     // populated once the per-item Terapeak recheck verifies this candidate, same as ProfitPercent.
     public decimal? SellThroughPercent { get; set; }
+    // True when that sell-through couldn't be measured for this item (no rate, or the degenerate
+    // zero-active-comps denominator — see SellThroughCalculator.IsUnverified). The row is running
+    // on thin data, so the UI shows a low-confidence indicator instead of the green
+    // "Terapeak-matched" badge that would make it read as a guaranteed flip.
+    public bool SellThroughUnverified { get; set; }
     // Sell-through / liquidity (see LiquidityScoringService) — only populated when the per-item
     // recheck was priced from the local sold-history database, since that's the only source with
     // per-comparable sold dates to compute velocity/trend from (Terapeak only returns aggregates).

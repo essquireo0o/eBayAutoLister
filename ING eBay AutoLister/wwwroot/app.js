@@ -580,7 +580,10 @@
     const best = data.bestOpportunity;
     const bestTag  = best ? 'a' : 'div';
     const bestAttr = best ? `href="${esc(best.url)}" target="_blank" rel="noopener"` : '';
-    const bestNote = best ? `${best.isVerified ? '✓ Terapeak-matched — ' : '(rough estimate) '}${esc(best.title)}` : 'No priced opportunities';
+    const bestPrefix = !best ? ''
+      : best.sellThroughUnverified ? '⚠ Low confidence — thin data — '
+      : best.isVerified ? '✓ Terapeak-matched — ' : '(rough estimate) ';
+    const bestNote = best ? `${bestPrefix}${esc(best.title)}` : 'No priced opportunities';
 
     grid.innerHTML = `
       <${bestTag} class="stat-card" ${bestAttr}>
@@ -616,6 +619,10 @@
   }
 
   let lastOpportunityData = null;
+
+  // Shown wherever a row's sell-through couldn't be verified — sold comps with no active listings
+  // to divide by, so the rate (and the profit built on it) is a guess, not a measurement.
+  const THIN_DATA_TITLE = 'Sell-through could not be verified for this item — too few comparable sold and active listings to measure. Treat the profit estimate as unproven.';
 
   const OPP_FILTERS = [
     ['opp-filter-underpriced',  it => it.isUnderpriced],
@@ -725,7 +732,11 @@
     const listingLabel = isAuction ? 'Auction' : 'Fixed Price';
     const bidsText     = isAuction ? `${it.bidCount} bid${it.bidCount === 1 ? '' : 's'}` : '—';
     const timeText     = isAuction ? formatEndsIn(it.endDate) : '—';
+    // A row whose sell-through couldn't be measured (no active comps to divide by) never gets the
+    // green "matched" badge — the profit number rests on thin data, so say so instead of letting it
+    // read as a guaranteed flip.
     const verifiedTag  = it.profitPercent == null ? ''
+      : it.sellThroughUnverified ? `<span class="opp-verified-tag opp-thin-data" title="${esc(THIN_DATA_TITLE)}">⚠ Low confidence — thin data</span>`
       : it.isVerified ? '<span class="opp-verified-tag opp-verified">✓ Terapeak-matched</span>'
       : '<span class="opp-verified-tag opp-estimate">rough estimate</span>';
     const scoreClass = it.opportunityScore == null ? '' : it.opportunityScore >= 60 ? 'good' : it.opportunityScore >= 35 ? 'mid' : 'bad';

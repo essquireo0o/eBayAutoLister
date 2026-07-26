@@ -58,6 +58,32 @@ public class SellThroughCalculatorTests
         Assert.Equal(0, result.SellThroughScore);
     }
 
+    [Fact]
+    public void IsUnverified_MeasuredRate_IsFalse()
+    {
+        var calc = CreateCalculator();
+        var now = DateTime.UtcNow;
+
+        var result = calc.Calculate("query", SoldComparables(4, now), activeComparableCount: 8, nowUtc: now);
+
+        Assert.False(SellThroughCalculator.IsUnverified(result));
+    }
+
+    [Theory]
+    [InlineData(5, 0)]  // degenerate denominator — sold history but nothing active to divide by
+    [InlineData(0, 0)]  // no data at all
+    public void IsUnverified_DegenerateOrMissingDenominator_IsTrue(int sold, int active)
+    {
+        var calc = CreateCalculator();
+        var now = DateTime.UtcNow;
+
+        var result = calc.Calculate("query", SoldComparables(sold, now), active, nowUtc: now);
+
+        // Drives the UI's "low confidence — thin data" indicator: these rows must never wear the
+        // green Terapeak-matched badge, which would read as a guaranteed flip.
+        Assert.True(SellThroughCalculator.IsUnverified(result));
+    }
+
     [Theory]
     [InlineData(1, 40, "Poor")]      // 2.5% — strictly under 5%
     [InlineData(3, 15, "Moderate")]  // 20%
