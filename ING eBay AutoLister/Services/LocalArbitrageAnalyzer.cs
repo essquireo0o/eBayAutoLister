@@ -50,17 +50,20 @@ public sealed class ResalePricing
     }
 }
 
-// Several Marketplace tiles for the same product share one comp lookup: the resale side is a
+// Several local listings for the same product share one comp lookup: the resale side is a
 // property of the product, not of who is selling it locally, and pricing five listings of the
 // same drill five times would spend five times the lookups for one answer.
+//
+// Grouping runs across sources, not within one, which is where multi-source pays for itself: the
+// same drill on Craigslist and on Facebook is one comp lookup, not two.
 public sealed class LocalArbitrageGroup
 {
     public string Key { get; set; } = "";
-    // The fullest title in the group — Marketplace titles for the same item range from
+    // The fullest title in the group — local titles for the same item range from
     // "Antminer S19j Pro 104TH miner" to "miner", and the comp matcher can only work with
     // what it's given.
     public string LookupTitle { get; set; } = "";
-    public List<FacebookMarketplaceListing> Listings { get; set; } = [];
+    public List<LocalSupplyListing> Listings { get; set; } = [];
 
     public decimal LowestAsk => Listings.Where(l => l.Price is > 0).Select(l => l.Price!.Value)
         .DefaultIfEmpty(0m).Min();
@@ -87,11 +90,13 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
     // Below this the sold history is too sparse to call anything, however good the arithmetic.
     private const int ThinCompCount = 3;
 
-    public LocalArbitrageOpportunity Build(FacebookMarketplaceListing listing, ResalePricing? resale, FeeProfile fees)
+    public LocalArbitrageOpportunity Build(LocalSupplyListing listing, ResalePricing? resale, FeeProfile fees)
     {
         var localAsk = listing.Price ?? 0m;
         var row = new LocalArbitrageOpportunity
         {
+            Source = listing.Source,
+            SourceLabel = listing.SourceLabel,
             ItemId = listing.ItemId,
             Title = listing.Title,
             Url = listing.Url,
@@ -101,6 +106,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             Location = listing.Location,
             DistanceMiles = listing.DistanceMiles,
             PostedAgo = listing.PostedAgo,
+            PostedUtc = listing.PostedUtc,
         };
 
         if (resale is null || !resale.HasPrice)
@@ -194,7 +200,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
     // One comp lookup per product, not per tile. Keyed by the caller (a normalized product
     // signature), with the fullest title in each group used for the lookup.
     public static List<LocalArbitrageGroup> GroupByProduct(
-        IEnumerable<FacebookMarketplaceListing> listings, Func<FacebookMarketplaceListing, string> keySelector)
+        IEnumerable<LocalSupplyListing> listings, Func<LocalSupplyListing, string> keySelector)
     {
         var groups = new List<LocalArbitrageGroup>();
         var byKey = new Dictionary<string, LocalArbitrageGroup>(StringComparer.OrdinalIgnoreCase);

@@ -23,8 +23,12 @@ namespace ING_eBay_AutoLister.Services;
 /// Every selector and URL lives in FacebookMarketplaceSelectors; all text interpretation lives
 /// in FacebookMarketplaceParser. This file is only browser plumbing, so when Facebook reshuffles
 /// its DOM the fix is a one-line string edit next door.
+///
+/// As an <see cref="ILocalSupplySource"/> this is the expensive, session-based end of the range —
+/// CraigslistService is the same interface with no login and a plain HTTPS GET behind it. The
+/// arbitrage pipeline treats both identically.
 /// </summary>
-public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log)
+public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) : ILocalSupplySource
 {
     private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "facebook-session.json");
     private volatile bool _loginInProgress;
@@ -38,6 +42,15 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log)
     public bool IsConnected => File.Exists(_sessionPath);
     public bool IsLoginInProgress => _loginInProgress;
     public string? LastLoginError { get; private set; }
+
+    // ── ILocalSupplySource ────────────────────────────────────────────────────
+    public string Id => FacebookMarketplaceParser.SourceId;
+    public string Label => FacebookMarketplaceParser.SourceLabel;
+    public bool RequiresConnection => true;
+    public bool IsAvailable => IsConnected;
+    public string AvailabilityNote => IsConnected
+        ? "Connected — searches run in a headless browser, so give them a minute."
+        : "Needs a one-time login to your own Facebook account (Settings).";
 
     // ── One-time interactive login ────────────────────────────────────────────
 
@@ -107,7 +120,8 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log)
     /// <paramref name="zip"/> within <paramref name="radiusMiles"/>. One page load per call,
     /// only ever from a user action.
     /// </summary>
-    public async Task<FacebookMarketplaceSearchResult> SearchAsync(string query, string zip, int radiusMiles)
+    public async Task<LocalSupplySearchResult> SearchAsync(
+        string query, string zip, int radiusMiles, CancellationToken ct = default)
     {
         var snappedRadius = FacebookMarketplaceParser.NearestSupportedRadius(radiusMiles);
 
@@ -182,8 +196,10 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log)
         return result;
     }
 
-    private static FacebookMarketplaceSearchResult Fail(string status, string query, string? zip, int radius, string? error = null) => new()
+    private static LocalSupplySearchResult Fail(string status, string query, string? zip, int radius, string? error = null) => new()
     {
+        SourceId    = FacebookMarketplaceParser.SourceId,
+        SourceLabel = FacebookMarketplaceParser.SourceLabel,
         Status      = status,
         Query       = query,
         ZipCode     = zip ?? "",

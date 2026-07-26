@@ -570,3 +570,124 @@ with `Infinity - Infinity` guarded so two free items compare equal instead of `N
 user's own Facebook login and the hosted API credentials, neither of which this session can or
 should use. The pricing stack it delegates to is the one the Opportunity Finder already exercises;
 what is unproven end-to-end is the two-pass orchestration over real search results.
+
+---
+
+## 12. Craigslist sourcing + a source-pluggable arbitrage view (autonomous session, 2026-07-26)
+
+Sections 10 and 11 could only answer "what's near me, and which of it is worth driving to" **if the
+seller had connected a Facebook account first**. This adds Craigslist — which needs **no login at
+all** — and makes the ranking source-pluggable, so both sites land in one ranked table with a source
+label per row.
+
+`GET /api/local/arbitrage?q=&zip=&radius=&sources=craigslist,facebook` behind the same
+`💰 Find Goldmines` button.
+
+### Why Craigslist is the source that actually gets used
+
+The goldmine table was gated on a Facebook login: a fresh install had a local-sourcing feature that
+did nothing until the seller logged a browser into their own account. Craigslist search results are
+**public**, so this path is a plain HTTPS GET — no account, no session, no Playwright, no cookies.
+`CraigslistService` is ~150 lines against `FacebookMarketplaceService`'s ~390 for the same job, and
+the source picker now defaults to whatever can answer *right now*, which on a clean install is
+Craigslist alone.
+
+### What Craigslist actually serves today (checked against the live site, not assumed)
+
+The plan was the RSS feed. Reality, verified during this session:
+
+| URL | Result |
+|---|---|
+| `…/search/sss?query=iphone&format=rss` | **403 Forbidden** — every user agent, including Chrome's |
+| `…/search/sss?query=iphone&postal=89101&search_distance=25` | **200**, 95 posts, filter honoured |
+
+Craigslist renders results **twice**: a JavaScript grid, and an `ol.cl-static-search-results` list
+emitted server-side and hidden by CSS for clients that run JS. That static list is complete, needs
+no browser, and honours `postal` + `search_distance`. So the static list is the **primary** path and
+RSS is the fallback, tried only when the page came back fine and empty — the opposite of the
+intended order, because that's what the site does. The RSS parser is kept and tested: it's one cheap
+request on an otherwise-empty search, it still works on some boards, and it carries a real timestamp
+and a thumbnail the static list doesn't.
+
+The app identifies itself honestly (`ING-AutoLister/1.0 …`) rather than impersonating Chrome —
+checked, and it gets the same 200. One search is one request (two if the first found nothing): no
+paging, no crawling, no following into post pages.
+
+### Source-pluggable, meaning the pipeline no longer knows what a Facebook is
+
+| Before | After |
+|---|---|
+| `FacebookMarketplaceListing` | `LocalSupplyListing` (+ `Source`, `SourceLabel`, `PostedUtc`) |
+| `FacebookMarketplaceSearchResult` | `LocalSupplySearchResult` (+ `SourceId`, `ScopeLabel`) |
+| `LocalArbitrageAnalyzer.Build(FacebookMarketplaceListing, …)` | `Build(LocalSupplyListing, …)` |
+| `facebook.SearchAsync(...)` called directly | `ILocalSupplySource.SearchAsync(...)` over a registry |
+
+Adding OfferUp is now: implement `ILocalSupplySource`, register it, done. The picker in the UI is
+rendered from `/api/local/sources`, so a new source appears there **without an HTML change**.
+
+Products are grouped **across** sources, which is where multi-source pays for itself: the same drill
+listed on Craigslist *and* Facebook is one sold-comp lookup, not two.
+
+### Judgement calls worth knowing about
+
+- **`$0` is "no price stated", not free.** Found by running a live search: craigslist prints `$0` for
+  every post whose seller left the price blank, and they're common. Read literally, each one is a
+  free item with unbounded ROI — a whole class of fake goldmines at the top of the table. A `$0` post
+  is dropped unless the wording says it's free.
+- **One site failing must never blank a search another site answered.** `RollUpStatus` returns `ok`
+  if *any* source returned results; the connect/expired prompts only appear when nothing answered.
+  The search buttons are no longer gated on the Facebook connection — only on "is any source ticked".
+- **The analysis cap is shared round-robin, not applied to one flat list.** Craigslist returns ~50
+  rows from one cheap call and Facebook a handful from an expensive page load, so cheapest-first over
+  the merged list would spend the whole budget on one site and report the other as having no local
+  supply.
+- **Craigslist is organised by metro, so a zip picks a board.** `CraigslistSites` maps ~230 sites by
+  ZIP3 prefix, falls back to the numerically nearest prefix (USPS assigned them geographically), and
+  **reports which board it picked** — with a manual override, because that fallback is a heuristic
+  and a seller on a boundary knows their own metro. Craigslist itself does the real distance
+  filtering from `postal` + `search_distance`, so the site choice only has to land on the right city.
+- **Craigslist publishes no per-post distance** (it filters server-side instead), so those rows show
+  a dash rather than a fabricated number, and the panel footnote says so.
+- **Post ids are unique per site, not across sites**, so dedupe keys on `(source, id)`. Both live
+  permalink shapes are parsed — the classic `7712345678.html` and the current
+  `craigslist.org/view/d/<slug>/<id>`.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/LocalSupplyModels.cs` | **New** — `LocalSupplyListing`, `LocalSupplySearchResult`, `LocalSupplySourceOutcome`, `LocalSupplyMultiResult`, `LocalSupplySourceInfo` |
+| `Services/ILocalSupplySource.cs` | **New** — the interface + `LocalSupplySources` registry (resolves `sources=`, decides what "no preference" means) |
+| `Services/CraigslistService.cs` | **New** — public search, no login: static-list fetch, RSS fallback, rate-limit handling |
+| `Services/CraigslistParser.cs` | **New** — search URL, RSS/RDF parse, static-HTML parse, title/price/place cleanup. All pure |
+| `Services/CraigslistSites.cs` | **New** — ~230 craigslist metros with their ZIP3 coverage, and the zip → site resolution |
+| `Services/LocalSupplyMerger.cs` | **New** — status roll-up, cross-source merge, round-robin cap sharing |
+| `Services/LocalSupplyResults.cs` | **New** — relevance filter, dedupe and ask-spread summary, shared by both sources (lifted out of `FacebookMarketplaceParser`) |
+| `Services/FacebookMarketplaceService.cs` | Now implements `ILocalSupplySource`; returns the shared result type |
+| `Services/FacebookMarketplaceParser.cs` | Emits `LocalSupplyListing`; relevance/dedupe/summary delegated to `LocalSupplyResults` |
+| `Services/LocalArbitrageAnalyzer.cs` | Source-agnostic: `Build`/`GroupByProduct` take `LocalSupplyListing`; rows carry the source |
+| `Models/LocalArbitrageModels.cs` | `Source`/`SourceLabel`/`PostedUtc` on the opportunity, `Sources[]` on the result |
+| `Program.cs` | DI for both sources + registry; `GET /api/local/sources`, `/api/local/search`, `/api/local/arbitrage`, `/api/craigslist/search`, `/api/craigslist/sites`. `FindLocalArbitrageAsync` now takes `IReadOnlyList<ILocalSupplySource>`. `/api/facebook/arbitrage` kept as a Facebook-only alias |
+| `wwwroot/index.html` | Source picker, Craigslist metro override, Source column, renamed panel. `app.js?v=32`, `style.css?v=27` |
+| `wwwroot/app.js` | `loadLocalSources`, `selectedSourceIds`, `refreshLocalSearchButtons`, `loadCraigslistSites`, `renderSourceOutcomes`; `runFacebookSearch` → `runLocalSearch`, `handleFacebookNonResult` → `handleLocalNonResult`; source badges on cards and rows |
+| `wwwroot/style.css` | `.local-source*`, `.cl-site-row`, `.local-badge*` |
+| `ING eBay AutoLister.Tests/CraigslistParserTests.cs` | **New** — 27 tests |
+| `ING eBay AutoLister.Tests/CraigslistSitesTests.cs` | **New** — 20 tests |
+| `ING eBay AutoLister.Tests/LocalSupplyMergerTests.cs` | **New** — 12 tests |
+| `ING eBay AutoLister.Tests/LocalSupplySourcesTests.cs` | **New** — 6 tests |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **278 passed**, 0 failed, 0 skipped (210 pre-existing + 68 new) |
+| Live Craigslist search (dev port 9363) | `/api/craigslist/search?q=iphone&zip=89101&radius=25` → **48 real listings**, $1–$950, Las Vegas board, real titles/prices/locations |
+| Live multi-source (dev port 9364) | `sources=craigslist,facebook` while Facebook is disconnected → `status: ok`, Craigslist results returned, Facebook reported `not_connected` — **the disconnected site did not blank the search** |
+| Live arbitrage end-to-end | 2 listings found → analyzed → grouped into 2 products → priced → ranked, with the honest `no_data` verdict and data warning (no comps DB configured here) |
+| Real browser (Playwright) | Picker renders from the API with correct badges; both search buttons **enabled while Facebook is disconnected**; 301-entry site override populated and width-constrained; Source column and badges render; source chips report each site's outcome; footnote and warning render |
+| Browser console errors | **None** |
+
+**Not verified:** the Facebook half of a mixed-source ranking against a live Facebook session, and
+profit numbers against a populated comps database — both need credentials this session can't use.
+The Craigslist half was exercised end-to-end against the real site.

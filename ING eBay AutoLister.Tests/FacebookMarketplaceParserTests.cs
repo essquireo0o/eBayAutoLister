@@ -267,7 +267,7 @@ public class FacebookMarketplaceParserTests
     public void FilterByRelevance_WhenNothingWordMatches_KeepsEverything()
     {
         // Better to show results the seller can judge than to report a false "no local supply".
-        var items = new List<FacebookMarketplaceListing>
+        var items = new List<LocalSupplyListing>
         {
             new() { ItemId = "1", Title = "Bitcoin mining rig", Price = 500m },
         };
@@ -281,7 +281,7 @@ public class FacebookMarketplaceParserTests
     public void FilterByRelevance_IgnoresShortNoiseTokens()
     {
         // "s9" is two characters; matching on it would let every title through.
-        var items = new List<FacebookMarketplaceListing>
+        var items = new List<LocalSupplyListing>
         {
             new() { ItemId = "1", Title = "Antminer S9 miner", Price = 100m },
             new() { ItemId = "2", Title = "Kids bike s9 sticker", Price = 20m },

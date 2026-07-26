@@ -248,10 +248,10 @@
       if (connectBtn) connectBtn.disabled = false;
       disconnectBtn?.classList.add('hidden');
     }
-    ['fb-search-btn', 'fb-arb-btn'].forEach(id => {
-      const btn = $(id);
-      if (btn) btn.disabled = !data.connected;
-    });
+    // The search buttons are NOT tied to Facebook any more: Craigslist needs no login, so a
+    // disconnected Facebook only removes one source. What gates the buttons is whether any
+    // source is ticked at all — see refreshLocalSearchButtons.
+    refreshLocalSearchButtons();
   }
 
   async function loadFacebookStatus() {
@@ -259,6 +259,8 @@
       const data = await fetch('/api/facebook/status').then(r => r.json());
       FACEBOOK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintFacebookBanner($(statusId), $(connectId), $(disconnectId), data));
+      // A Facebook connect/disconnect changes what the source list says about itself.
+      loadLocalSources();
       return data;
     } catch (err) {
       FACEBOOK_BANNERS.forEach(([statusId]) => {
@@ -299,13 +301,87 @@
     await loadFacebookStatus();
   }
 
+  // ── Pluggable local supply sources ───────────────────────────────────────
+  // The panel below searches whichever sites are ticked here, and the list is rendered from
+  // /api/local/sources rather than hard-coded — a source added on the server shows up here on
+  // its own. Craigslist is public (no login); Facebook needs its saved session.
+  let localSources = [];
+
+  function selectedSourceIds() {
+    return [...document.querySelectorAll('#local-source-picker input[type=checkbox]')]
+      .filter(cb => cb.checked).map(cb => cb.value);
+  }
+
+  // Gated on "is any site selected", not on any one site's connection: Craigslist alone is a
+  // complete local search, so a disconnected Facebook must not disable the buttons.
+  function refreshLocalSearchButtons() {
+    const picked = selectedSourceIds();
+    ['fb-search-btn', 'fb-arb-btn'].forEach(id => {
+      const btn = $(id);
+      if (btn) btn.disabled = picked.length === 0;
+    });
+    // The metro override only means anything to Craigslist.
+    $('cl-site-row')?.classList.toggle('hidden', !picked.includes('craigslist'));
+    if (picked.includes('craigslist')) loadCraigslistSites();
+  }
+
+  async function loadLocalSources() {
+    const picker = $('local-source-picker');
+    if (!picker) return;
+    try {
+      localSources = await fetch('/api/local/sources').then(r => r.json());
+    } catch (err) {
+      picker.textContent = `Couldn't load local sources: ${err.message}`;
+      return;
+    }
+
+    // A remembered choice wins; on a first run the default is everything that can answer right
+    // now, which on a fresh install is Craigslist alone.
+    const saved = (localStorage.getItem('localSources') || '').split(',').filter(Boolean);
+    picker.innerHTML = localSources.map(s => {
+      const checked = saved.length ? saved.includes(s.id) : s.available;
+      const badge = !s.requiresConnection ? 'no login'
+        : s.available ? 'connected' : 'needs login';
+      return `<label class="local-source${s.available ? '' : ' local-source-off'}" title="${esc(s.note || '')}">
+                <input type="checkbox" value="${esc(s.id)}"${checked ? ' checked' : ''} />
+                <span class="local-source-name">${esc(s.label)}</span>
+                <span class="local-source-badge">${badge}</span>
+              </label>`;
+    }).join('');
+
+    picker.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
+      localStorage.setItem('localSources', selectedSourceIds().join(','));
+      refreshLocalSearchButtons();
+    }));
+    refreshLocalSearchButtons();
+  }
+
+  // Craigslist's metro list is ~230 entries and only matters if the auto-picked board is wrong,
+  // so it's fetched once, on demand, rather than on every page load.
+  async function loadCraigslistSites() {
+    const sel = $('cl-site-select');
+    if (!sel || sel.dataset.loaded) return;
+    sel.dataset.loaded = '1';
+    try {
+      const sites = await fetch('/api/craigslist/sites').then(r => r.json());
+      sel.insertAdjacentHTML('beforeend', sites
+        .map(s => `<option value="${esc(s.id)}">${esc(s.label)}, ${esc(s.state)}</option>`).join(''));
+      const saved = localStorage.getItem('clSite');
+      if (saved) sel.value = saved;
+    } catch {
+      // Auto-resolution from the zip still works; only the manual override is unavailable.
+      sel.dataset.loaded = '';
+    }
+  }
+
   function bindFacebookMarketplace() {
     on('pg-facebook-connect', 'click', facebookConnect);
     on('pg-facebook-disconnect', 'click', facebookDisconnect);
     on('fb-connect-btn', 'click', facebookConnect);
     on('fb-disconnect-btn', 'click', facebookDisconnect);
-    on('fb-search-btn', 'click', runFacebookSearch);
+    on('fb-search-btn', 'click', runLocalSearch);
     on('fb-arb-btn', 'click', runLocalArbitrage);
+    on('cl-site-select', 'change', e => localStorage.setItem('clSite', e.currentTarget.value));
     // Enter runs the ranked scan, not the plain list — the ranking is what the panel is for,
     // and the plain list is one click away.
     on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
@@ -320,10 +396,31 @@
     if (radius && $('fb-radius-select')) $('fb-radius-select').value = radius;
   }
 
-  async function runFacebookSearch() {
+  // The form values every local search shares, plus the selected sources. Craigslist's metro
+  // override rides along and is ignored by every other source.
+  function localSearchParams() {
     const query = $('fb-query-input')?.value.trim() || '';
     const zip = $('fb-zip-input')?.value.trim() || '';
     const radius = $('fb-radius-select')?.value || '40';
+    const sources = selectedSourceIds();
+    const site = $('cl-site-select')?.value || '';
+
+    localStorage.setItem('fbZip', zip);
+    localStorage.setItem('fbRadius', radius);
+
+    const qs = `q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}` +
+      `&sources=${encodeURIComponent(sources.join(','))}` +
+      (site ? `&craigslistSite=${encodeURIComponent(site)}` : '');
+
+    return { query, zip, radius, sources, qs };
+  }
+
+  function sourceLabelsFor(ids) {
+    return ids.map(id => localSources.find(s => s.id === id)?.label || id).join(' + ');
+  }
+
+  async function runLocalSearch() {
+    const { query, zip, radius, sources, qs } = localSearchParams();
     const statusEl = $('fb-status');
     const btn = $('fb-search-btn');
 
@@ -331,20 +428,23 @@
       if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
       return;
     }
-
-    localStorage.setItem('fbZip', zip);
-    localStorage.setItem('fbRadius', radius);
+    if (!sources.length) {
+      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
+      return;
+    }
 
     $('fb-results')?.classList.add('hidden');
     if (btn) btn.disabled = true;
-    // A real browser has to load the page, set the location and scroll the grid — say so,
-    // because this is tens of seconds, not the sub-second an API call would be.
-    if (statusEl) statusEl.textContent = `Searching Facebook Marketplace within ${radius} miles${zip ? ` of ${zip}` : ''} — this opens a real page, give it up to a minute…`;
+    // Honest about the cost, which differs per source: Craigslist is one HTTPS request, Facebook
+    // is a real browser loading a page and scrolling a grid.
+    if (statusEl) {
+      statusEl.textContent = `Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}` +
+        `${sources.includes('facebook') ? ' — Facebook opens a real page, so give it up to a minute…' : '…'}`;
+    }
 
     try {
-      const url = `/api/facebook/search?q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}`;
-      const data = await fetch(url).then(r => r.json());
-      renderFacebookResults(data);
+      const data = await fetch(`/api/local/search?${qs}`).then(r => r.json());
+      renderLocalResults(data);
     } catch (err) {
       if (statusEl) statusEl.textContent = `Local search failed: ${err.message}`;
     } finally {
@@ -353,11 +453,16 @@
   }
 
   // Everything that isn't a usable result set, handled the same way for both the plain list and
-  // the arbitrage ranking: an expired or missing session is a prompt to reconnect, never a
-  // silent empty table. Returns true when it handled (and therefore ended) the render.
-  function handleFacebookNonResult(data, statusEl) {
+  // the arbitrage ranking. With several sources these statuses only appear when NONE of them
+  // answered — one disconnected site never blanks results another site returned.
+  // Returns true when it handled (and therefore ended) the render.
+  function handleLocalNonResult(data, statusEl) {
+    if (data.status === 'no_sources') {
+      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
+      return true;
+    }
     if (data.status === 'not_connected') {
-      if (statusEl) statusEl.textContent = 'Connect your Facebook account above to search local listings.';
+      if (statusEl) statusEl.textContent = 'Connect your Facebook account above, or tick Craigslist — it needs no login.';
       loadFacebookStatus();
       return true;
     }
@@ -373,14 +478,38 @@
     return false;
   }
 
-  function renderFacebookResults(data) {
+  // What each site contributed, including the ones that couldn't answer and why — with several
+  // sources in one table, "24 results" alone hides that a site failed silently.
+  function renderSourceOutcomes(sources) {
+    const el = $('local-source-status');
+    if (!el) return;
+    if (!sources || !sources.length) { el.innerHTML = ''; return; }
+
+    el.innerHTML = sources.map(s => {
+      const ok = s.status === 'ok';
+      const detail = ok
+        ? `${s.count} listing${s.count === 1 ? '' : 's'}${s.scopeLabel ? ` · ${esc(s.scopeLabel)}` : ''}`
+        : s.status === 'not_connected' ? 'not connected'
+        : s.status === 'session_expired' ? 'session expired'
+        : 'no results';
+      const link = s.searchUrl
+        ? ` <a class="link-ext" href="${esc(s.searchUrl)}" target="_blank" rel="noopener">open ↗</a>` : '';
+      return `<span class="local-source-chip${ok ? '' : ' local-source-chip-off'}">
+                <strong>${esc(s.label)}</strong> ${detail}${link}
+                ${s.error ? `<span class="local-source-chip-err">${esc(s.error)}</span>` : ''}
+              </span>`;
+    }).join('');
+  }
+
+  function renderLocalResults(data) {
     const statusEl = $('fb-status');
     const results = $('fb-results');
     const list = $('fb-list');
     const summary = $('fb-summary');
     if (!list || !results) return;
 
-    if (handleFacebookNonResult(data, statusEl)) return;
+    renderSourceOutcomes(data.sources);
+    if (handleLocalNonResult(data, statusEl)) return;
     if (!data.count) {
       if (statusEl) statusEl.textContent = data.error
         ? `No local listings found — ${data.error}`
@@ -389,13 +518,13 @@
     }
 
     if (statusEl) statusEl.textContent = '';
-    // Radius is echoed from the response, not the form: the server snaps it to one of
-    // Facebook's own dropdown values, so this reports what was actually searched.
+    // Radius is echoed from the response, not the form: Facebook snaps it to one of its own
+    // dropdown values, so this reports what was actually searched. Per-site links live in the
+    // source chips above, since each site has its own results URL.
     summary.innerHTML =
       `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} for "${esc(data.query)}" ` +
       `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''} · ` +
-      `asking ${money(data.min)}–${money(data.max)} · median ${money(data.median)} ` +
-      `<a class="link-ext" href="${esc(data.searchUrl)}" target="_blank" rel="noopener">Open on Facebook ↗</a>`;
+      `asking ${money(data.min)}–${money(data.max)} · median ${money(data.median)}`;
 
     list.innerHTML = data.items.map(item => {
       const drop = item.originalPrice
@@ -409,11 +538,13 @@
         <div class="fb-card" data-title="${esc(item.title)}" data-price="${item.price ?? 0}">
           ${item.imageUrl ? `<img class="fb-card-img" src="${esc(item.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<div class="fb-card-img fb-card-img-empty">📦</div>'}
           <div class="fb-card-body">
-            <div class="fb-card-price">${item.isFree ? 'Free' : money(item.price)} ${drop}</div>
+            <div class="fb-card-price">${item.isFree ? 'Free' : money(item.price)} ${drop}
+              <span class="local-badge local-badge-${esc(item.source)}">${esc(item.sourceLabel || item.source)}</span>
+            </div>
             <div class="fb-card-title">${esc(item.title)}</div>
             <div class="fb-card-meta">${meta}</div>
             <div class="fb-card-actions">
-              <a class="btn btn-ghost small" href="${esc(item.url)}" target="_blank" rel="noopener">View on Facebook ↗</a>
+              <a class="btn btn-ghost small" href="${esc(item.url)}" target="_blank" rel="noopener">View listing ↗</a>
               <button class="btn btn-secondary small fb-comp-btn" type="button">Check eBay sold price</button>
             </div>
             <div class="fb-card-comp"></div>
@@ -479,9 +610,7 @@
   };
 
   async function runLocalArbitrage() {
-    const query = $('fb-query-input')?.value.trim() || '';
-    const zip = $('fb-zip-input')?.value.trim() || '';
-    const radius = $('fb-radius-select')?.value || '40';
+    const { query, zip, radius, sources, qs } = localSearchParams();
     const statusEl = $('fb-status');
     const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
 
@@ -489,22 +618,23 @@
       if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
       return;
     }
-
-    localStorage.setItem('fbZip', zip);
-    localStorage.setItem('fbRadius', radius);
+    if (!sources.length) {
+      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
+      return;
+    }
 
     $('fb-results')?.classList.add('hidden');
     $('fb-arb-results')?.classList.add('hidden');
     buttons.forEach(b => { b.disabled = true; });
-    // Honest about the cost: a Marketplace page load, then a sold-comp lookup per distinct
-    // product, then up to five Terapeak lookups. Minutes, not seconds.
+    // Honest about the cost: every selected site is searched, then one sold-comp lookup per
+    // distinct product, then up to five Terapeak lookups. Minutes, not seconds.
     if (statusEl) {
-      statusEl.textContent = `Searching Marketplace within ${radius} miles${zip ? ` of ${zip}` : ''}, then pricing every result against eBay sold data — this can take a couple of minutes…`;
+      statusEl.textContent = `Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}, ` +
+        'then pricing every result against eBay sold data — this can take a couple of minutes…';
     }
 
     try {
-      const url = `/api/facebook/arbitrage?q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}`;
-      const data = await fetch(url).then(r => r.json());
+      const data = await fetch(`/api/local/arbitrage?${qs}`).then(r => r.json());
       renderArbitrage(data);
     } catch (err) {
       if (statusEl) statusEl.textContent = `Local arbitrage scan failed: ${err.message}`;
@@ -518,7 +648,8 @@
     const wrap = $('fb-arb-results');
     if (!wrap) return;
 
-    if (handleFacebookNonResult(data, statusEl)) return;
+    renderSourceOutcomes(data.sources);
+    if (handleLocalNonResult(data, statusEl)) return;
     if (!data.localListingsFound) {
       if (statusEl) {
         statusEl.textContent = data.error
@@ -535,14 +666,20 @@
     arbitrageData = data;
     if (statusEl) statusEl.textContent = '';
 
+    // Which sites are actually in this ranking — a mixed table has to say so, and a site that
+    // returned nothing shouldn't be implied to have been searched fruitfully.
+    const searched = (data.sources || []).filter(s => s.status === 'ok' && s.count)
+      .map(s => `${esc(s.label)} (${s.count})`).join(' + ');
+
     const scanned = [
       `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} priced for "${esc(data.query)}"`,
       `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''}`,
+      searched ? `from ${searched}` : '',
       data.goldmineCount ? `<strong class="fb-arb-hit">${data.goldmineCount} goldmine${data.goldmineCount === 1 ? '' : 's'}</strong>` : 'no goldmines this time',
       `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
-    ].join(' · ');
+    ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
-      `${scanned} <a class="link-ext" href="${esc(data.searchUrl)}" target="_blank" rel="noopener">Open on Facebook ↗</a>` +
+      scanned +
       `<div class="fb-arb-sources">Priced ${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} against sold comps` +
       `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} of them re-checked live on Terapeak` : ''}` +
       `${data.terapeakConnected ? '' : ' · Terapeak not connected — sold-comps database only'}.</div>`;
@@ -593,7 +730,7 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : '<tr><td colspan="10" class="fb-arb-empty">Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.</td></tr>';
+      : '<tr><td colspan="11" class="fb-arb-empty">Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.</td></tr>';
   }
 
   function arbitrageRowHtml(row, index) {
@@ -635,6 +772,7 @@
             <span class="fb-arb-note">${esc(row.verdictNote)}</span>
           </span>
         </td>
+        <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
         <td class="num">${row.localAsk > 0 ? money(row.localAsk) : 'Free'}</td>
         <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
@@ -676,6 +814,9 @@
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'opportunity'));
     loadTerapeakStatus();
     loadFacebookStatus();
+    // Also loaded on its own, not only off the back of the Facebook status call: Craigslist is
+    // searchable whether or not that call succeeds.
+    loadLocalSources();
     loadHighSellThrough();
     loadLowCompetition();
     loadPricingRecommendations();

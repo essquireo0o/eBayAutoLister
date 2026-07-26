@@ -11,10 +11,11 @@ public class LocalArbitrageAnalyzerTests
     private static readonly LocalArbitrageAnalyzer Analyzer = new(new ProfitCalculator());
     private static readonly FeeProfile Fees = new(); // 13.25% + $0.40, no promoted/shipping/labor
 
-    private static FacebookMarketplaceListing Listing(
+    private static LocalSupplyListing Listing(
         decimal? price, string title = "Bitmain Antminer S19j Pro", string id = "1", double? miles = 12) =>
         new()
         {
+            Source = "facebook", SourceLabel = "Facebook Marketplace",
             ItemId = id, Title = title, Url = $"https://www.facebook.com/marketplace/item/{id}/",
             Price = price, IsFree = price is null, DistanceMiles = miles, Location = "Las Vegas, NV",
         };
@@ -111,6 +112,9 @@ public class LocalArbitrageAnalyzerTests
         var row = Analyzer.Build(listing, pricing, Fees);
 
         Assert.Equal("778", row.ItemId);
+        // One ranked table mixes sites, so a row has to say which one to go and buy on.
+        Assert.Equal("facebook", row.Source);
+        Assert.Equal("Facebook Marketplace", row.SourceLabel);
         Assert.Equal(90m, row.OriginalPrice);       // price-drop tiles are motivated sellers
         Assert.Equal(12, row.DistanceMiles);
         Assert.Equal("2 hours ago", row.PostedAgo);

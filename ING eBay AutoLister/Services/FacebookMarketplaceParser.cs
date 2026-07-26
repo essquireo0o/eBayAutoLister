@@ -15,6 +15,9 @@ namespace ING_eBay_AutoLister.Services;
 /// </summary>
 public static class FacebookMarketplaceParser
 {
+    public const string SourceId = "facebook";
+    public const string SourceLabel = "Facebook Marketplace";
+
     private static readonly Regex ItemIdRx   = new(@"/marketplace/item/(\d+)", RegexOptions.Compiled);
     private static readonly Regex PriceRx    = new(@"^\$\s*([\d,]+(?:\.\d{1,2})?)$", RegexOptions.Compiled);
     private static readonly Regex DistanceRx = new(@"^(?:about\s+)?([\d.]+)\s*(?:mi|mile|miles|km|kilometers?)\s*(?:away)?$",
@@ -38,16 +41,18 @@ public static class FacebookMarketplaceParser
         return options.OrderBy(o => Math.Abs(o - requestedMiles)).ThenByDescending(o => o).First();
     }
 
-    public static FacebookMarketplaceListing? ParseCard(FacebookRawCard card)
+    public static LocalSupplyListing? ParseCard(FacebookRawCard card)
     {
         var itemId = ItemIdRx.Match(card.Href ?? "").Groups[1].Value;
         if (string.IsNullOrEmpty(itemId)) return null;
 
-        var listing = new FacebookMarketplaceListing
+        var listing = new LocalSupplyListing
         {
-            ItemId   = itemId,
-            Url      = $"https://www.facebook.com/marketplace/item/{itemId}/",
-            ImageUrl = card.ImageUrl ?? "",
+            Source      = SourceId,
+            SourceLabel = SourceLabel,
+            ItemId      = itemId,
+            Url         = $"https://www.facebook.com/marketplace/item/{itemId}/",
+            ImageUrl    = card.ImageUrl ?? "",
         };
 
         var prices = new List<decimal>();
@@ -118,64 +123,38 @@ public static class FacebookMarketplaceParser
     /// scrolls, so the same item is scraped more than once), keeps only what actually
     /// relates to the query, and summarises the local ask-price spread.
     /// </summary>
-    public static FacebookMarketplaceSearchResult BuildResult(
+    public static LocalSupplySearchResult BuildResult(
         IEnumerable<FacebookRawCard> cards, string query, string zip, int radiusMiles)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var items = new List<FacebookMarketplaceListing>();
-
-        foreach (var card in cards ?? [])
-        {
-            var listing = ParseCard(card);
-            if (listing is null || !seen.Add(listing.ItemId)) continue;
-            items.Add(listing);
-        }
+        var parsed = (cards ?? []).Select(ParseCard).Where(l => l is not null).Select(l => l!);
+        var items = LocalSupplyResults.Dedupe(parsed);
 
         items = FilterByRelevance(items, query);
         items = [.. items.OrderBy(i => i.Price ?? 0m)];
 
-        var result = new FacebookMarketplaceSearchResult
+        var (min, median, max) = LocalSupplyResults.Summarize(items);
+
+        return new LocalSupplySearchResult
         {
+            SourceId    = SourceId,
+            SourceLabel = SourceLabel,
             Status      = "ok",
             Query       = query,
             ZipCode     = zip,
             RadiusMiles = NearestSupportedRadius(radiusMiles),
             SearchUrl   = FacebookMarketplaceSelectors.BuildSearchUrl(query, radiusMiles),
+            ScopeLabel  = string.IsNullOrWhiteSpace(zip) ? "" : $"within {NearestSupportedRadius(radiusMiles)} mi of {zip}",
             Items       = items,
+            Min = min, Median = median, Max = max,
         };
-
-        var priced = items.Where(i => i.Price is > 0m).Select(i => i.Price!.Value).OrderBy(p => p).ToList();
-        if (priced.Count > 0)
-        {
-            result.Min    = priced[0];
-            result.Max    = priced[^1];
-            result.Median = priced.Count % 2 == 1
-                ? priced[priced.Count / 2]
-                : (priced[priced.Count / 2 - 1] + priced[priced.Count / 2]) / 2m;
-        }
-
-        return result;
     }
 
     /// <summary>
     /// Facebook pads a thin result set with loosely-related items ("people also searched"),
-    /// which would drag a local price median somewhere meaningless. Keep tiles whose title
-    /// carries at least one real word from the query — but if that would empty the result,
-    /// return everything and let the seller judge, rather than reporting a false "no local
-    /// supply" for an item that simply doesn't word-match.
+    /// which would drag a local price median somewhere meaningless. Craigslist does the same
+    /// thing with "few local results found", so the rule itself now lives in
+    /// <see cref="LocalSupplyResults"/> and both sources share it.
     /// </summary>
-    public static List<FacebookMarketplaceListing> FilterByRelevance(List<FacebookMarketplaceListing> items, string query)
-    {
-        var tokens = Regex.Split(query?.ToLowerInvariant() ?? "", @"[^a-z0-9]+")
-            .Where(t => t.Length >= 3)
-            .ToList();
-
-        if (tokens.Count == 0 || items.Count == 0) return items;
-
-        var matched = items
-            .Where(i => tokens.Any(t => i.Title.Contains(t, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        return matched.Count > 0 ? matched : items;
-    }
+    public static List<LocalSupplyListing> FilterByRelevance(List<LocalSupplyListing> items, string query) =>
+        LocalSupplyResults.FilterByRelevance(items, query);
 }

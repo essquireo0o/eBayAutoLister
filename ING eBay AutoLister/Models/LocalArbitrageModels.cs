@@ -9,12 +9,16 @@ namespace ING_eBay_AutoLister.Models;
 // is net of fees rather than a gross spread.
 // See Services/LocalArbitrageAnalyzer.cs.
 
-// One local listing, priced. The local half comes straight from the Marketplace
-// tile; the resale half is shared by every listing of the same product (one comp
+// One local listing, priced. The local half comes straight from the source's
+// listing; the resale half is shared by every listing of the same product (one comp
 // lookup serves all of them), and only the money columns are per-listing.
 public class LocalArbitrageOpportunity
 {
     // ── The local buy ────────────────────────────────────────────────────────
+    // Which site to go buy it on: craigslist | facebook | ... One ranked table mixes them, so
+    // the row has to say where it came from — the drive and the haggling differ by site.
+    public string Source { get; set; } = "";
+    public string SourceLabel { get; set; } = "";
     public string ItemId { get; set; } = "";
     public string Title { get; set; } = "";
     public string Url { get; set; } = "";
@@ -25,6 +29,8 @@ public class LocalArbitrageOpportunity
     public string Location { get; set; } = "";
     public double? DistanceMiles { get; set; }
     public string PostedAgo { get; set; } = "";
+    // Only the sources that publish a real timestamp set this (Craigslist does, Facebook doesn't).
+    public DateTime? PostedUtc { get; set; }
 
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
@@ -69,14 +75,20 @@ public class LocalArbitrageOpportunity
 
 public class LocalArbitrageResult
 {
-    // Passed straight through from the Marketplace search so the UI keeps its
-    // existing connect/expired prompts: ok | not_connected | session_expired | error
+    // Rolled up across every source that was searched (LocalSupplyMerger.RollUpStatus), so one
+    // disconnected site never blanks a ranking another site filled: ok | not_connected |
+    // session_expired | error | no_sources. The UI keeps its per-source connect prompts.
     public string Status { get; set; } = "";
     public string Query { get; set; } = "";
     public string ZipCode { get; set; } = "";
     public int RadiusMiles { get; set; }
+    // The first searched source's own results URL, kept so the existing "open the search" link
+    // still works; Sources below carries one per site.
     public string SearchUrl { get; set; } = "";
     public string? Error { get; set; }
+
+    // What each site contributed, including the ones that couldn't answer and why.
+    public List<LocalSupplySourceOutcome> Sources { get; set; } = [];
 
     public List<LocalArbitrageOpportunity> Items { get; set; } = [];
     public int Count => Items.Count;

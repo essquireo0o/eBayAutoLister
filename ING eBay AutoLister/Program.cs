@@ -167,6 +167,16 @@ builder.Services.AddSingleton<TerapeakPriceCache>();
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
 // else. See FacebookMarketplaceService.
 builder.Services.AddSingleton<FacebookMarketplaceService>();
+// Craigslist is the same job with none of that machinery: public search, no login, an RSS feed
+// and craigslist's own postal+distance filter. See CraigslistService.
+builder.Services.AddSingleton<CraigslistService>();
+// Both sites behind one interface, so the arbitrage pipeline (grouping → comp lookup → profit →
+// ranking) never learns which site a listing came from and a third source is a registration.
+// Order matters: no-login sources first, so a seller who has connected nothing still gets
+// results from a default search. See ILocalSupplySource / LocalSupplySources.
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<CraigslistService>());
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
+builder.Services.AddSingleton<LocalSupplySources>();
 // Local sold-history lookup — read-only against the externally-maintained Marketplace.db at
 // C:\INGListing\Data\Marketplace.db (populated by a separate collector process). Feeds the
 // Opportunity Finder's Supplier File Analyzer with real local comps before falling back to
@@ -1328,9 +1338,9 @@ app.MapPost("/api/facebook/disconnect", (FacebookMarketplaceService facebook) =>
 
 // Radius comes back snapped to one of Facebook's own dropdown values, so the UI can report
 // what was actually searched rather than what was asked for.
-app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, FacebookMarketplaceService facebook) =>
+app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, FacebookMarketplaceService facebook, CancellationToken ct) =>
 {
-    var result = await facebook.SearchAsync(q ?? "", zip ?? "", radius ?? 40);
+    var result = await facebook.SearchAsync(q ?? "", zip ?? "", radius ?? 40, ct);
     return Results.Ok(new
     {
         result.Status, result.Query, result.ZipCode, result.RadiusMiles, result.SearchUrl,
@@ -1339,14 +1349,69 @@ app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, Fa
     });
 });
 
-// The local-arbitrage ranking: the same zip/radius/keyword search as above, but every result is
-// priced against real eBay sold data and ranked by what's left after fees. Deliberately a
-// separate endpoint from /api/facebook/search rather than a flag on it — this one costs a comp
-// lookup per distinct product and can spend Terapeak scrapes, so it only ever runs when someone
-// clicks the button that says so.
-app.MapGet("/api/facebook/arbitrage", async (
-    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget,
-    FacebookMarketplaceService facebook, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+// ── Craigslist (local sourcing, no login) ─────────────────────────────────────
+// The easy source, and deliberately nothing like the Facebook one above: craigslist search
+// results are public, so this is a plain HTTPS GET for an RSS feed. No account, no saved session,
+// no browser, nothing to connect. See CraigslistService.
+
+// Craigslist is organised by metro, so a zip picks a regional site (CraigslistSites). The site
+// actually searched comes back in scopeLabel, and `site` overrides it — a seller on a metro
+// boundary knows their own board better than a zip-prefix table does.
+app.MapGet("/api/craigslist/search", async (string q, string? zip, int? radius, string? site, CraigslistService craigslist, CancellationToken ct) =>
+{
+    var result = await craigslist.SearchAsync(q ?? "", zip ?? "", radius ?? 40, site, ct);
+    return Results.Ok(new
+    {
+        result.Status, result.Query, result.ZipCode, result.RadiusMiles, result.SearchUrl,
+        result.ScopeLabel, result.Items, result.Count, result.Min, result.Median, result.Max, result.Error,
+        resolvedSite = CraigslistSites.Resolve(zip, site)?.Id ?? "",
+    });
+});
+
+app.MapGet("/api/craigslist/sites", () => Results.Ok(
+    CraigslistSites.All.Select(s => new { s.Id, s.Label, s.State }).OrderBy(s => s.State).ThenBy(s => s.Label)));
+
+// ── Pluggable local supply ────────────────────────────────────────────────────
+// Which sites can be searched right now, for the source picker. A source that needs connecting
+// is still listed, with the reason — hiding it would just make the feature look absent.
+app.MapGet("/api/local/sources", (LocalSupplySources sources) => Results.Ok(sources.Describe()));
+
+// One local search across every selected site, merged into a single list. `sources` is a
+// comma-separated list of ids (craigslist,facebook); omitted means everything available now.
+app.MapGet("/api/local/search", async (
+    string q, string? zip, int? radius, string? sources, string? craigslistSite,
+    LocalSupplySources registry, CancellationToken ct) =>
+{
+    var picked = registry.Resolve(sources);
+    var radiusMiles = radius ?? 40;
+    var results = new List<LocalSupplySearchResult>();
+
+    // Sequential, not parallel: one of these sites is searched by driving a real browser, and
+    // running that alongside anything else is how a slow search becomes a stuck one.
+    foreach (var source in picked)
+        results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, ct));
+
+    return Results.Ok(LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles));
+});
+
+// The one site-specific knob in the local-sourcing feature, kept at the HTTP edge rather than
+// pushed into ILocalSupplySource: craigslist is organised by metro, so a seller on a boundary
+// sometimes has to name their own board (see CraigslistSites). Every other source ignores it, and
+// nothing below this line knows the parameter exists.
+static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
+    ILocalSupplySource source, string q, string zip, int radius, string? craigslistSite, CancellationToken ct) =>
+    source is CraigslistService craigslist && !string.IsNullOrWhiteSpace(craigslistSite)
+        ? craigslist.SearchAsync(q, zip, radius, craigslistSite, ct)
+        : source.SearchAsync(q, zip, radius, ct);
+
+// The local-arbitrage ranking: the same zip/radius/keyword search as above, across every selected
+// site, but every result is priced against real eBay sold data and ranked by what's left after
+// fees. Deliberately a separate endpoint from the plain searches rather than a flag on them —
+// this one costs a comp lookup per distinct product and can spend Terapeak scrapes, so it only
+// ever runs when someone clicks the button that says so.
+app.MapGet("/api/local/arbitrage", async (
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sources, string? craigslistSite,
+    LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
@@ -1357,47 +1422,90 @@ app.MapGet("/api/facebook/arbitrage", async (
         // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
         // too, so an unbounded request would turn one click into hundreds of lookups.
         Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
-        facebook, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
-        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+        registry.Resolve(sources), craigslistSite, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
+        profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
 
     return Results.Ok(result);
 });
 
-// Local arbitrage: search local Marketplace supply, price every result against real eBay sold
-// data, rank by net profit after fees. Reuses AnalyzeProductAsync (and therefore the hosted
-// sold-comps database, ComparableMatcher, MarketPriceEstimator and Terapeak) rather than pricing
-// items a second way — a local flip is worth exactly what a dropship of the same item is worth.
+// The original Facebook-only route, kept working: it predates the source picker, and silently
+// changing what an existing URL searches would be worse than one line of aliasing.
+app.MapGet("/api/facebook/arbitrage", async (
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget,
+    LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    var result = await FindLocalArbitrageAsync(
+        q ?? "", zip ?? "", radius ?? 40,
+        Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+        registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null, marketplace, normalizer, matcher,
+        priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
+        terapeak, analyzer, log, ct);
+
+    return Results.Ok(result);
+});
+
+// Local arbitrage: search local supply on every selected site, price every result against real
+// eBay sold data, rank by net profit after fees. Reuses AnalyzeProductAsync (and therefore the
+// hosted sold-comps database, ComparableMatcher, MarketPriceEstimator and Terapeak) rather than
+// pricing items a second way — a local flip is worth exactly what a dropship of the same item is
+// worth, and a Craigslist flip is worth exactly what a Facebook one is.
+//
+// Source-pluggable: everything below the search loop is written against ILocalSupplySource and
+// LocalSupplyListing, so Craigslist, Facebook and whatever comes next go through one pipeline and
+// land in one ranked table. Products are grouped ACROSS sources, which is where that pays off —
+// the same drill listed on both sites costs one comp lookup, not two.
 //
 // Two things are rationed on purpose, because one click here fans out into many lookups:
-//   * comp lookups are per distinct PRODUCT, not per tile (five listings of the same drill are
+//   * comp lookups are per distinct PRODUCT, not per listing (five listings of the same drill are
 //     one lookup), and
 //   * real Terapeak scrapes only ever happen in the second pass, only for the products that pass
 //     LocalArbitrageAnalyzer.SelectScrapeTargets, and only up to terapeakBudget. Pass 1 is
 //     cache-only, so a product Terapeak already knows about costs nothing.
 static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     string q, string zip, int radius, int maxItems, int terapeakBudget,
-    FacebookMarketplaceService facebook, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    IReadOnlyList<ILocalSupplySource> sources, string? craigslistSite,
+    IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    var search = await facebook.SearchAsync(q, zip, radius);
+
+    // Sequential: one of these sources drives a real browser, and running that concurrently with
+    // anything else turns a slow search into a stuck one.
+    var searches = new List<LocalSupplySearchResult>();
+    foreach (var source in sources)
+        searches.Add(await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, ct));
+
+    var search = LocalSupplyMerger.Merge(searches, q, zip, radius);
 
     var result = new LocalArbitrageResult
     {
         Status = search.Status, Query = search.Query, ZipCode = search.ZipCode,
-        RadiusMiles = search.RadiusMiles, SearchUrl = search.SearchUrl, Error = search.Error,
+        // Echoed from the response rather than the request: Facebook snaps a radius to its own
+        // dropdown values, so this reports what was actually searched.
+        RadiusMiles = searches.FirstOrDefault()?.RadiusMiles ?? radius,
+        SearchUrl = searches.FirstOrDefault(s => s.Status == "ok")?.SearchUrl ?? searches.FirstOrDefault()?.SearchUrl ?? "",
+        Error = search.Error,
+        Sources = search.Sources,
         LocalListingsFound = search.Count, TerapeakConnected = terapeak.IsConnected,
     };
-    // not_connected / session_expired / error all pass straight through so the UI can show the
-    // same connect prompt the plain local search shows, instead of an empty ranking table.
+    // not_connected / session_expired / error pass straight through so the UI can show the same
+    // connect prompt the plain local search shows, instead of an empty ranking table. With
+    // several sources this only happens when NONE of them answered — see RollUpStatus.
     if (search.Status != "ok" || search.Count == 0) return result;
 
-    // A tile with no parseable price has no cost basis, so there is no profit to compute for it.
-    // "Free" is kept — it's the best possible cost basis, not a missing one.
-    var priceable = search.Items.Where(i => i.Price is > 0 || i.IsFree).Take(maxItems).ToList();
+    // A listing with no parseable price has no cost basis, so there is no profit to compute for
+    // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
+    // out across sources rather than applied to one flat cheapest-first list, which would spend
+    // the whole budget on whichever site returned the most rows.
+    var priceable = LocalSupplyMerger.TakeBalanced(
+        search.Items.Where(i => i.Price is > 0 || i.IsFree), maxItems);
     result.ItemsAnalyzed = priceable.Count;
 
     // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
@@ -1480,7 +1588,8 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 
     sw.Stop();
     log.Add("Info", "Local arbitrage scan",
-        $"\"{q}\" within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")}; " +
+        $"\"{q}\" within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")} " +
+        $"on {string.Join(" + ", sources.Select(s => s.Id))}; " +
         $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
         $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +
         $"Goldmines: {result.GoldmineCount}; Duration: {sw.ElapsedMilliseconds}ms");

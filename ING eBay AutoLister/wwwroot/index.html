@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=26" />
+  <link rel="stylesheet" href="style.css?v=27" />
 </head>
 <body>
   <div class="app-shell">
@@ -734,11 +734,20 @@
             </div>
           </div>
 
-          <!-- Local sourcing: what's for sale near the seller right now, from their own
-               Facebook account (see FacebookMarketplaceService — no public API exists). -->
+          <!-- Local sourcing: what's for sale near the seller right now, across every site they
+               pick. Craigslist needs no login at all (public search + RSS, see CraigslistService);
+               Facebook needs a one-time login to their own account because it publishes no search
+               API (FacebookMarketplaceService). Both arrive as the same LocalSupplyListing. -->
           <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Local Deals — Facebook Marketplace</h3>
-            <p class="opp-hint">Search Marketplace near you by zip code and radius, then compare what locals are asking against real eBay sold prices. Buy local, list on eBay.</p>
+            <h3 class="opp-supplier-heading">📍 Local Deals — Craigslist &amp; Facebook Marketplace</h3>
+            <p class="opp-hint">Search local classifieds near you by zip code and radius, then compare what locals are asking against real eBay sold prices. Buy local, list on eBay. <strong>Craigslist needs no login.</strong></p>
+
+            <!-- Source picker, rendered from /api/local/sources so a new source appears here
+                 without touching this markup. -->
+            <div class="local-sources">
+              <span class="local-sources-label">Search on</span>
+              <div id="local-source-picker" class="local-source-picker">Loading sources…</div>
+            </div>
 
             <div id="fb-connect-banner" class="opp-terapeak-banner fb-connect-banner">
               <span class="opp-terapeak-icon">🔗</span>
@@ -775,11 +784,23 @@
               <button id="fb-search-btn" class="btn btn-secondary opp-search-submit" type="button">📍 Search Local</button>
               <!-- The paid-for version of the same search: every result priced against sold
                    comps + Terapeak and ranked by profit. Its own button because it costs a
-                   comp lookup per product (see /api/facebook/arbitrage). -->
+                   comp lookup per product (see /api/local/arbitrage). -->
               <button id="fb-arb-btn" class="btn btn-primary opp-search-submit" type="button">💰 Find Goldmines</button>
             </div>
 
+            <!-- Craigslist posts live on one metro board each, so a zip picks a site. Shown only
+                 while Craigslist is selected; "Auto" is right for almost everyone, and the site
+                 actually searched is reported with the results either way. -->
+            <div id="cl-site-row" class="cl-site-row hidden">
+              <label for="cl-site-select">Craigslist site</label>
+              <select id="cl-site-select">
+                <option value="">Auto — nearest to my zip</option>
+              </select>
+              <span class="cl-site-hint">Only needed if the auto-picked board is the wrong metro.</span>
+            </div>
+
             <div id="fb-status" class="mr-status"></div>
+            <div id="local-source-status" class="local-source-status"></div>
 
             <div id="fb-results" class="hidden">
               <div id="fb-summary" class="opp-results-summary"></div>
@@ -808,6 +829,7 @@
                     <tr>
                       <th class="fb-arb-th-rank">#</th>
                       <th>Local listing</th>
+                      <th>Source</th>
                       <th class="num">Buy local</th>
                       <th class="num">Resell on eBay</th>
                       <th class="num">Fees</th>
@@ -826,7 +848,8 @@
                 both have data), not asking prices. Profit subtracts eBay's standard final value fee and
                 any shipping the comps show buyers paying — it does <strong>not</strong> include your
                 drive, your time, or the risk that a used local item isn't what the photo says. Verify
-                condition in person before buying.
+                condition in person before buying. Craigslist filters by distance on its own end and
+                doesn't publish a per-post distance, so those rows show a dash rather than a guess.
               </p>
             </div>
           </div>
@@ -1100,6 +1123,10 @@
             <button id="pg-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             <span id="pg-facebook-status" class="sd-test-msg">Not connected — local sourcing search is unavailable.</span>
           </div>
+          <p style="font-size:13px;color:var(--muted);margin-top:12px">
+            Not connecting Facebook doesn't switch local sourcing off: <strong>Craigslist searches with no login at all</strong>
+            and needs nothing set up here. Connect Facebook to search both at once.
+          </p>
         </div>
 
         <!-- Listing Defaults — pre-filled into every new listing -->
@@ -1804,6 +1831,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=32"></script>
 </body>
 </html>

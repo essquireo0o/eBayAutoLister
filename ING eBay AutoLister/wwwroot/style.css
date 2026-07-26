@@ -3670,6 +3670,103 @@ textarea {
 
 .opp-supplier-panel .nl-drop-zone { margin-top: 12px; }
 
+/* ── Local sourcing: pluggable sources (Craigslist, Facebook Marketplace) ──── */
+/* The picker is rendered from /api/local/sources, so these styles have to work for a source
+   that doesn't exist yet — nothing here keys off a specific site except the badge colours. */
+.local-sources {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.local-sources-label { font-weight: 600; }
+.local-source-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.local-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+.local-source input { margin: 0; }
+.local-source-name { font-size: 12px; color: var(--ink); font-weight: 600; }
+/* A source needing a login is dimmed but never hidden — hiding it makes the feature look absent. */
+.local-source-off { opacity: 0.75; }
+.local-source-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: #eef4f4;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* Craigslist's metro override. Only shown while Craigslist is ticked. */
+.cl-site-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* Width is pinned for the same reason the sort control's is: the panel's form styling would
+   otherwise stretch this select to the full row and push the hint onto its own line. */
+.cl-site-row select {
+  width: auto;
+  flex: 0 0 auto;
+  max-width: 280px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.cl-site-hint { font-style: italic; }
+
+/* Per-source outcome chips: with several sites in one table, "24 results" alone would hide
+   that one of them failed. */
+.local-source-status {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.local-source-chip {
+  font-size: 11px;
+  color: var(--muted);
+  background: #f1f7f7;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.local-source-chip strong { color: var(--ink); }
+.local-source-chip-off { background: #fdf6ec; }
+.local-source-chip-err { display: block; color: #a05a00; margin-top: 2px; }
+
+/* Which site to go and buy on — carried on every card and every ranked row. */
+.local-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #fff;
+  background: var(--muted);
+  vertical-align: middle;
+}
+.local-badge-craigslist { background: #4a2f83; }
+.local-badge-facebook   { background: #1877f2; }
+
 /* ── Facebook Marketplace local sourcing ──────────────────────────────────── */
 .fb-connect-banner { margin: 12px 0 4px; }
 
