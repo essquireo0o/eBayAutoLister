@@ -1832,6 +1832,217 @@ app.MapPost("/api/inventory/reprice", async (
     return Results.Ok(result);
 });
 
+// ── Offers to watchers ────────────────────────────────────────────────────────────────────────
+// The warmest audience a seller ever gets for free: people who found the item, looked at it, and
+// told eBay to remember it. This finds them, sizes a private discount that still clears the
+// seller's profit floor, and sends it — without moving the public price a cent.
+app.MapGet("/api/offers/watchers", async (
+    int? maxItems, int? minWatchers, decimal? minProfit, int? terapeakBudget,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    var floorProfit = Math.Max(0m, minProfit ?? 0m);
+    var watchers = Math.Clamp(minWatchers ?? 1, 0, 500);
+
+    // The board is the inventory-health scan seen from a different angle, so it reuses that scan
+    // whole rather than re-deriving market price, break-even and cost basis a second way. The only
+    // difference is which listings are worth the lookups: watched ones, biggest audience first.
+    var health = await ScanInventoryHealthAsync(
+        Math.Clamp(maxItems ?? 120, 1, 400), Math.Clamp(terapeakBudget ?? 3, 0, 15), minDays: 0,
+        ebay, costBasis, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
+        minWatchers: watchers, watchersFirst: true);
+
+    if (health.Status == "ebay_unavailable")
+        return Results.Ok(new WatcherOfferResult { Status = "ebay_unavailable", Error = health.Error });
+
+    // eBay's own answer to "can I send an offer on this right now". Asked once for the whole
+    // account, not per listing.
+    List<string>? eligibleIds = null;
+    var needsReconnect = false;
+    var eligibilityNote = "";
+    try
+    {
+        eligibleIds = await ebay.GetOfferEligibleListingIdsAsync();
+        if (eligibleIds is null)
+            eligibilityNote = "eBay's eligibility list couldn't be read this scan, so the offers below are unverified — a send may still be refused.";
+    }
+    catch (EbayPermissionException ex)
+    {
+        // The watcher counts and the suggested offers are all still true and worth showing; only
+        // the sending is blocked, and the fix is one click.
+        needsReconnect = true;
+        eligibilityNote = ex.Message;
+        log.Add("Warning", "Offers to watchers: eBay permission missing", ex.Message);
+    }
+    catch (Exception ex)
+    {
+        eligibilityNote = "eBay's eligibility list couldn't be read this scan, so the offers below are unverified — a send may still be refused.";
+        log.Add("Warning", "find_eligible_items failed (non-fatal)", ex.Message);
+    }
+
+    var eligibleSet = eligibleIds is null ? null : new HashSet<string>(eligibleIds, StringComparer.OrdinalIgnoreCase);
+
+    var rows = health.Items.Select(h =>
+    {
+        bool? eligible = eligibleSet is null ? null : eligibleSet.Contains(h.ListingId);
+        var note = eligible == false
+            ? "eBay isn't offering this one to watchers right now — offers need a fixed-price listing with stock, and eBay blocks a repeat offer for a while after one goes out."
+            : "";
+        return WatcherOfferAdvisor.Build(h, eligible, note, floorProfit, feeProfile);
+    }).ToList();
+
+    var result = new WatcherOfferResult
+    {
+        ActiveListings = health.ActiveListings,
+        ItemsAnalyzed = health.ItemsAnalyzed,
+        ProductsPriced = health.ProductsPriced,
+        TerapeakScrapesUsed = health.TerapeakScrapesUsed,
+        EligibilityChecked = eligibleSet is not null,
+        EligibilityNote = eligibilityNote,
+        NeedsReconnect = needsReconnect,
+        DataWarning = health.DataWarning,
+        MinNetProfit = floorProfit,
+        DefaultMessage = WatcherOfferAdvisor.DefaultMessage,
+        Items = WatcherOfferAdvisor.Rank(rows),
+    };
+    result.Summary = WatcherOfferAdvisor.Summarize(result.Items);
+
+    log.Add("Info", "Offers-to-watchers scan",
+        $"Watched listings: {result.ItemsAnalyzed} of {result.ActiveListings} active; " +
+        $"Watchers: {result.Summary.TotalWatchers}; Ready to send: {result.Summary.ReadyToSend} " +
+        $"reaching {result.Summary.WatchersReachable} watcher(s); Blocked by floor: {result.Summary.BlockedByFloor}; " +
+        $"Not eligible: {result.Summary.NotEligible}");
+
+    return Results.Ok(result);
+});
+
+// Sends the offers. The same three brakes the repricer uses, because this is the other endpoint in
+// the app that puts a buyer-visible number on a live listing:
+//   1. It previews by default — `dryRun` has to be explicitly false.
+//   2. `confirmed` has to be true on top of that.
+//   3. Every offer price is re-checked against a floor the SERVER recomputes from the stored cost
+//      basis, not the one the browser sent. Selling under it takes a deliberate opt-in, which is
+//      then on the record in the action log.
+app.MapPost("/api/offers/send", async (
+    SendWatcherOffersRequest req, EbayService ebay, CostBasisStore costBasis, FeeProfile feeProfile,
+    ProfitCalculator profitCalc, ActionLog log) =>
+{
+    var items = req?.Items ?? [];
+    var dryRun = req is null || req.DryRun || !req.Confirmed;
+    var result = new SendWatcherOffersResult { DryRun = dryRun, Requested = items.Count };
+
+    if (items.Count == 0) return Results.Ok(result);
+    if (items.Count > 50)
+        return Results.BadRequest("Too many listings in one send — 50 at a time is the limit.");
+
+    var message = WatcherOfferAdvisor.CleanMessage(req?.Message);
+    var minProfit = Math.Max(0m, req?.MinNetProfit ?? 0m);
+    var allCosts = costBasis.GetAll();
+
+    foreach (var item in items)
+    {
+        var discount = item.DiscountPercent;
+        var offerPrice = WatcherOfferAdvisor.OfferPriceFor(item.ListPrice, discount);
+        var row = new SendWatcherOfferResultItem
+        {
+            ListingId = item.ListingId, Title = item.Title, DiscountPercent = discount,
+            ListPrice = item.ListPrice, OfferPrice = offerPrice, WatchCount = item.WatchCount,
+        };
+        result.Items.Add(row);
+
+        if (string.IsNullOrWhiteSpace(item.ListingId))
+        {
+            row.Status = "skipped";
+            row.Message = "No eBay listing ID — no offer can be sent for this one.";
+            result.Skipped++;
+            continue;
+        }
+
+        if (item.ListPrice <= 0m)
+        {
+            row.Status = "skipped";
+            row.Message = "This listing has no price to discount.";
+            result.Skipped++;
+            continue;
+        }
+
+        if (discount < WatcherOfferAdvisor.EbayMinDiscountPercent || discount > WatcherOfferAdvisor.MaxDiscountPercent)
+        {
+            row.Status = "skipped";
+            row.Message = $"{discount}% is outside the {WatcherOfferAdvisor.EbayMinDiscountPercent}–{WatcherOfferAdvisor.MaxDiscountPercent}% range — eBay won't carry a smaller offer, and a deeper one needs a repricing decision.";
+            result.Skipped++;
+            continue;
+        }
+
+        // Recomputed here rather than trusted from the request: the floor is the safety property of
+        // this endpoint, and a number that arrived over HTTP is not one.
+        var cost = CostBasisStore.Find(allCosts, item.ListingId, item.Sku);
+        if (cost is not null && !(req?.AllowBelowFloor ?? false))
+        {
+            var breakEven = profitCalc.Calculate(
+                supplierUnitCost: cost.TotalUnitCost, quantity: 1, expectedSalePrice: offerPrice,
+                quickSalePrice: offerPrice, buyerPaidShipping: 0m, fees: feeProfile).BreakEvenSalePrice;
+
+            var floor = breakEven == decimal.MaxValue
+                ? null
+                : WatcherOfferAdvisor.ProfitFloorPrice(breakEven, minProfit, feeProfile);
+
+            if (floor is decimal f && offerPrice < f)
+            {
+                row.Status = "skipped";
+                row.Message = minProfit > 0m
+                    ? $"${offerPrice:0.00} leaves less than the ${minProfit:0.00} profit you asked to keep (floor ${f:0.00} on a ${cost.TotalUnitCost:0.00} cost)."
+                    : $"${offerPrice:0.00} is below the ${f:0.00} break-even on a ${cost.TotalUnitCost:0.00} cost basis.";
+                result.Skipped++;
+                continue;
+            }
+        }
+
+        if (dryRun)
+        {
+            row.Status = "preview";
+            row.Message = $"Would offer {discount}% off — ${item.ListPrice:0.00} → ${offerPrice:0.00}" +
+                          (item.WatchCount > 0 ? $" to {item.WatchCount} watcher{(item.WatchCount == 1 ? "" : "s")}." : ".");
+            continue;
+        }
+
+        try
+        {
+            var offerId = await ebay.SendOfferToWatchersAsync(
+                item.ListingId, discount, message, Math.Max(1, item.Quantity), req?.AllowCounterOffer ?? true);
+            row.Status = "sent";
+            row.OfferId = offerId;
+            row.Message = $"Offered {discount}% off (${offerPrice:0.00})" +
+                          (item.WatchCount > 0 ? $" to {item.WatchCount} watcher{(item.WatchCount == 1 ? "" : "s")}." : ".");
+            result.Sent++;
+            result.WatchersReached += Math.Max(0, item.WatchCount);
+            log.Add("Info", "Offer sent to watchers",
+                $"{item.ListingId} \"{item.Title}\": {discount}% off, ${item.ListPrice:0.00} → ${offerPrice:0.00}" +
+                ((req?.AllowBelowFloor ?? false) ? " (profit floor overridden by the seller)" : ""));
+        }
+        catch (EbayPermissionException ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Offer send blocked by missing eBay permission", ex.Message);
+        }
+        catch (Exception ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Offer send failed", $"{item.ListingId}: {ex.Message}");
+        }
+    }
+
+    return Results.Ok(result);
+});
+
 // Pulls the seller's live eBay listings, prices each against the same sold-comps + Terapeak stack
 // every other screen uses, and works out what each should be priced at to actually sell.
 //
@@ -1847,7 +2058,10 @@ static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct)
+    InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct,
+    // Set by the offers-to-watchers board, which cares about a different slice of the same
+    // inventory: only listings with an audience, biggest audience first.
+    int minWatchers = 0, bool watchersFirst = false)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var nowUtc = DateTime.UtcNow;
@@ -1875,9 +2089,17 @@ static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
     if (minDays > 0)
         active = active.Where(l => InventoryHealthAnalyzer.DaysListed(l.StartTimeUtc, nowUtc) >= minDays).ToList();
 
+    if (minWatchers > 0)
+        active = active.Where(l => l.WatchCount >= minWatchers).ToList();
+
     // Highest asking price first when the cap bites: if only part of the inventory can be scanned
-    // in one pass, the part holding the most money is the part worth scanning.
-    var scanned = active.OrderByDescending(l => l.Price * Math.Max(1, l.Quantity)).Take(maxItems).ToList();
+    // in one pass, the part holding the most money is the part worth scanning. For the offers
+    // board the same logic points at watchers instead — a listing nobody is watching cannot be
+    // offered to anyone, however expensive it is.
+    var scanned = (watchersFirst
+            ? active.OrderByDescending(l => l.WatchCount).ThenByDescending(l => l.Price * Math.Max(1, l.Quantity))
+            : active.OrderByDescending(l => l.Price * Math.Max(1, l.Quantity)))
+        .Take(maxItems).ToList();
     result.ItemsAnalyzed = scanned.Count;
     if (scanned.Count == 0) return result;
 

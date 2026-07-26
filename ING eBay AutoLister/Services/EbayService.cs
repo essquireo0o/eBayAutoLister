@@ -56,7 +56,10 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             "https://api.ebay.com/oauth/api_scope",
             "https://api.ebay.com/oauth/api_scope/sell.inventory",
             "https://api.ebay.com/oauth/api_scope/sell.account",
-            "https://api.ebay.com/oauth/api_scope/sell.fulfillment"));
+            "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+            // Send Offer to Interested Buyers. Sellers connected before this was added keep working
+            // everywhere else; the offers screen tells them to reconnect (EbayPermissionException).
+            "https://api.ebay.com/oauth/api_scope/sell.negotiation"));
 
         return $"{AuthUrl}?client_id={Uri.EscapeDataString(c.EbayClientId)}" +
                $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
@@ -1504,6 +1507,167 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
     }
 
+    // ── Negotiation API: offers to the people watching a listing ──────────────
+    // eBay's Send Offer to Interested Buyers. The two calls below are the whole API surface for
+    // it: ask which listings currently have an audience worth offering to, then send one.
+    //
+    // Both need the sell.negotiation OAuth scope, which older saved connections in this app do not
+    // carry (it was added to GetAuthorizationUrl alongside this feature). eBay answers a token
+    // without it with a 403, so that case is separated out into EbayPermissionException and turned
+    // into "reconnect eBay" rather than a raw HTTP error nobody can act on.
+
+    /// <summary>
+    /// The listing IDs eBay says are eligible for an offer to interested buyers right now, or null
+    /// when eBay could not be asked.
+    /// </summary>
+    /// <remarks>
+    /// Null is a real answer and is carried through to the UI as "unknown", never flattened to an
+    /// empty list: an empty list means "eBay says none of your listings qualify", and showing that
+    /// when the call actually failed would tell a seller with fifty watched listings that they have
+    /// no offers to send.
+    /// </remarks>
+    public async Task<List<string>?> GetOfferEligibleListingIdsAsync()
+    {
+        var token = await GetOrRefreshTokenAsync();
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Add("X-EBAY-C-MARKETPLACE-ID", "EBAY_US");
+
+        var ids = new List<string>();
+        const int limit = 100;
+        var offset = 0;
+
+        while (offset < 2000)
+        {
+            var response = await client.GetAsync(
+                $"{BaseUrl}/sell/negotiation/v1/find_eligible_items?limit={limit}&offset={offset}");
+            var body = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                log.Add("Warning", $"find_eligible_items HTTP {(int)response.StatusCode}",
+                    body[..Math.Min(600, body.Length)]);
+
+                if (IsPermissionFailure(response, body))
+                    throw new EbayPermissionException(
+                        "Your saved eBay connection doesn't include permission to send offers to watchers. " +
+                        "Click \"Log into eBay\" to reconnect — that grants it, and nothing else changes.");
+
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("eligibleItems", out var items) || items.ValueKind != JsonValueKind.Array)
+                break;
+
+            var page = 0;
+            foreach (var item in items.EnumerateArray())
+            {
+                page++;
+                var listingId = Str(item, "listingId");
+                if (!string.IsNullOrWhiteSpace(listingId)) ids.Add(listingId);
+            }
+
+            if (page < limit) break;
+            offset += limit;
+        }
+
+        log.Add("Info", $"eBay reports {ids.Count} listing(s) eligible for an offer to watchers", "");
+        return ids;
+    }
+
+    /// <summary>
+    /// Sends one private, time-limited discount to everyone watching a listing. Returns eBay's
+    /// offer ID.
+    /// </summary>
+    /// <remarks>
+    /// The public price is untouched — this is the whole reason the feature exists. If no watcher
+    /// accepts, the seller has given away nothing.
+    /// </remarks>
+    public async Task<string> SendOfferToWatchersAsync(
+        string listingId, int discountPercent, string? message, int quantity, bool allowCounterOffer)
+    {
+        var token = await GetOrRefreshTokenAsync();
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Add("X-EBAY-C-MARKETPLACE-ID", "EBAY_US");
+
+        var payload = new
+        {
+            offeredItems = new[]
+            {
+                new
+                {
+                    listingId,
+                    // eBay takes the discount as a whole-percent string, not a target price.
+                    discountPercentage = discountPercent.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    quantity = Math.Max(1, quantity),
+                }
+            },
+            // Omitted rather than guessed: eBay applies its own default expiry (48 hours at the
+            // time of writing), and pinning a duration it later stops accepting would fail the send.
+            message = string.IsNullOrWhiteSpace(message) ? null : message.Trim(),
+            allowCounterOffer,
+        };
+
+        var content = new StringContent(JsonSerializer.Serialize(payload, _json), Encoding.UTF8, "application/json");
+        content.Headers.Add("Content-Language", "en-US");
+
+        var response = await client.PostAsync(
+            $"{BaseUrl}/sell/negotiation/v1/send_offer_to_interested_buyers", content);
+        var body = await response.Content.ReadAsStringAsync();
+
+        log.Add(response.IsSuccessStatusCode ? "Info" : "Warning",
+            $"send_offer_to_interested_buyers HTTP {(int)response.StatusCode}",
+            $"{listingId} at {discountPercent}% off — {body[..Math.Min(600, body.Length)]}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            if (IsPermissionFailure(response, body))
+                throw new EbayPermissionException(
+                    "Your saved eBay connection doesn't include permission to send offers to watchers. " +
+                    "Click \"Log into eBay\" to reconnect — that grants it, and nothing else changes.");
+
+            throw new Exception($"eBay refused the offer: {ExtractRestError(body)}");
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (doc.RootElement.TryGetProperty("offers", out var offers)
+            && offers.ValueKind == JsonValueKind.Array && offers.GetArrayLength() > 0)
+            return Str(offers[0], "offerId");
+
+        return "";
+    }
+
+    // A token that predates a scope, not a broken request. eBay signals it with a 403, and (on some
+    // paths) with a 400 whose message names the missing permission.
+    private static bool IsPermissionFailure(HttpResponseMessage response, string body) =>
+        response.StatusCode == System.Net.HttpStatusCode.Forbidden
+        || body.Contains("insufficient permission", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("Insufficient permissions", StringComparison.OrdinalIgnoreCase);
+
+    // eBay's REST errors are a JSON envelope; the useful sentence is inside it.
+    private static string ExtractRestError(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+            {
+                var first = errors[0];
+                var message = Str(first, "message");
+                var longMessage = Str(first, "longMessage");
+                var text = string.IsNullOrWhiteSpace(longMessage) ? message : longMessage;
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+        }
+        catch (JsonException) { /* not JSON — fall through to the raw body */ }
+
+        return body[..Math.Min(300, body.Length)];
+    }
+
     private async Task CreateInventoryItemAsync(HttpClient client, PostListingRequest req, string sku, string? locationKey = null)
     {
         var totalOz = req.WeightLbs * 16 + req.WeightOz;
@@ -2394,6 +2558,11 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
     }
 }
+
+// A saved connection that is valid but was granted before this app asked for a permission it now
+// needs. Distinct from a failure because the fix is different and specific: reconnect eBay, which
+// is one click, rather than "something went wrong".
+public sealed class EbayPermissionException(string message) : Exception(message);
 
 public sealed record PublishListingResult(string OfferId, string ListingId, string Sku);
 public sealed record SellerHubDraftResult(string DraftId, string SellerHubUrl);

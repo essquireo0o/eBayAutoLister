@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=35" />
+  <link rel="stylesheet" href="style.css?v=36" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -50,6 +50,7 @@
         <p class="nav-group-label">Grow</p>
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
+        <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
 
         <p class="nav-group-label">Account</p>
         <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
@@ -1267,6 +1268,9 @@
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
+            <!-- The other half of the same inventory: a stuck listing WITH watchers doesn't need a
+                 public markdown, it needs an offer to the people already interested. -->
+            <button id="inv-to-offers" class="btn btn-secondary" type="button">👁 Offers to watchers</button>
             <button id="inv-scan-btn" class="btn btn-primary" type="button">🔎 Scan My Listings</button>
             <button id="inv-close" class="nl-close-btn" type="button" title="Close">✕</button>
           </div>
@@ -1369,6 +1373,132 @@
           <div class="inv-confirm-actions">
             <button id="inv-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
             <button id="inv-confirm-go" class="btn btn-primary" type="button">Yes — reprice on eBay</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Offers to Watchers (full-page overlay, same shape as Inventory Health) ──
+           A watcher is the warmest audience a seller gets for free. eBay's Send Offer to
+           Interested Buyers puts a private, time-limited discount in front of exactly those
+           people — and unlike a markdown it costs nothing if nobody accepts, because the public
+           price never moves. Backed by /api/offers/watchers and /api/offers/send. -->
+      <section id="offers-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="wo-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Offers to Watchers</div>
+              <h2>👁 Turn Watchers Into Buyers</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="wo-scan-btn" class="btn btn-primary" type="button">👁 Find My Watchers</button>
+            <button id="wo-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+          <p class="opp-hint">
+            Finds every live listing someone is watching, then sizes a private discount for those
+            watchers — deep enough to close, never below your break-even plus the profit you want to keep.
+            <strong>Your public price never moves</strong>, and if nobody accepts, it costs you nothing.
+            Nothing reaches eBay until you confirm it.
+          </p>
+
+          <div class="inv-controls">
+            <div class="opp-field inv-field-small">
+              <label for="wo-min-watchers">Only listings with</label>
+              <select id="wo-min-watchers">
+                <option value="1" selected>1+ watcher</option>
+                <option value="3">3+ watchers</option>
+                <option value="5">5+ watchers</option>
+                <option value="10">10+ watchers</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="wo-max-items">Scan up to</label>
+              <select id="wo-max-items">
+                <option value="50">50 listings</option>
+                <option value="120" selected>120 listings</option>
+                <option value="250">250 listings</option>
+                <option value="400">400 listings</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="wo-min-profit">Keep at least (per sale)</label>
+              <input id="wo-min-profit" class="wo-profit-input" type="number" min="0" step="1" value="0" placeholder="0" />
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="wo-filter">Show</label>
+              <select id="wo-filter">
+                <option value="ready" selected>Only offers ready to send</option>
+                <option value="all">Everything</option>
+                <option value="no_room">Blocked by my floor</option>
+                <option value="not_eligible">Not eligible on eBay</option>
+              </select>
+            </div>
+            <span id="wo-status" class="inv-status"></span>
+          </div>
+          </div>
+
+          <div id="wo-warning" class="inv-warning hidden"></div>
+
+          <div id="wo-summary" class="inv-summary hidden"></div>
+
+          <div id="wo-bulk-bar" class="inv-bulk-bar hidden">
+            <label class="inv-select-all">
+              <input id="wo-select-all" type="checkbox" />
+              Select every ready offer
+            </label>
+            <span id="wo-selection-note" class="inv-selection-note">Nothing selected.</span>
+            <button id="wo-preview-btn" class="btn btn-secondary small" type="button" disabled>Preview offers</button>
+            <button id="wo-send-btn" class="btn btn-primary small" type="button" disabled>Send offers…</button>
+          </div>
+
+          <div id="wo-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-opportunity"/></svg></div>
+              <div class="state-title">Somebody is already interested. Go get them.</div>
+              <p class="state-body">Scanning reads your live listings, counts who is watching each one, and works out the discount that converts a watcher without eating the profit — checked against what you paid.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('wo-scan-btn')?.click()">Find my watchers</button>
+              </div>
+              <p class="state-hint">Read-only. No offer is sent until you confirm it.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            eBay decides which listings can carry an offer and how long each one lasts (about 48 hours).
+            Offers go to the people watching a listing, so watcher counts come from eBay and change by the hour.
+            Break-even uses the cost basis recorded in Inventory Health plus the fee assumptions in the profit
+            model — eBay publishes no per-account fee API.
+          </p>
+        </div>
+      </section>
+
+      <!-- The confirmation gate. Sending is buyer-visible and cannot be recalled, so the message,
+           the counter-offer choice and the floor override all live here, on one screen, next to
+           the exact list of what is about to go out. -->
+      <div id="wo-confirm-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box">
+          <h3>Send these offers to your watchers?</h3>
+          <p class="inv-confirm-sub">Each watcher gets a private discount that expires in about 48 hours. Your public listing price does not change, and an offer cannot be recalled once sent.</p>
+          <p id="wo-confirm-total" class="wo-confirm-total"></p>
+          <div id="wo-confirm-list" class="inv-confirm-list"></div>
+          <label class="wo-message-label" for="wo-message">Message to watchers <span class="wo-message-count" id="wo-message-count">0/250</span></label>
+          <textarea id="wo-message" class="wo-message" rows="2" maxlength="250"></textarea>
+          <label class="inv-confirm-override">
+            <input id="wo-allow-counter" type="checkbox" checked />
+            Let watchers counter-offer (a counter is another chance at the sale)
+          </label>
+          <label class="inv-confirm-override">
+            <input id="wo-allow-loss" type="checkbox" />
+            Allow offers below my floor (clearing stock at a deliberate loss)
+          </label>
+          <div class="inv-confirm-actions">
+            <button id="wo-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="wo-confirm-go" class="btn btn-primary" type="button">Yes — send on eBay</button>
           </div>
         </div>
       </div>
@@ -2158,6 +2288,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=42"></script>
+  <script src="app.js?v=43"></script>
 </body>
 </html>

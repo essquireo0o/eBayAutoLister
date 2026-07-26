@@ -361,6 +361,7 @@
     bindRollTheDice();
     bindPhotoLibrary();
     bindInventoryHealth();
+    bindWatcherOffers();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -443,6 +444,7 @@
     if (page !== 'opportunity') $('opportunity-section')?.classList.add('hidden');
     if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
+    if (page !== 'offers') $('offers-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -471,6 +473,10 @@
       showInventorySection();
       return;
     }
+    if (page === 'offers') {
+      showOffersSection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -480,7 +486,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2064,6 +2070,397 @@
 
   function setInvStatus(text) {
     const el = $('inv-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // ── Offers to Watchers ───────────────────────────────────────────────────
+  // The warmest audience a seller gets for free: people who already found the item and hesitated.
+  // eBay's Send Offer to Interested Buyers puts a private, time-limited discount in front of
+  // exactly them, without moving the public price — so an offer nobody accepts costs nothing.
+  // See WatcherOfferAdvisor.cs for how deep each offer goes and what stops it.
+  let woScan     = null;   // last WatcherOfferResult, kept so filtering never re-scans
+  let woSelected = new Set();
+
+  function showOffersSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('offers-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'offers'));
+  }
+
+  function closeOffersSection() {
+    $('offers-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindWatcherOffers() {
+    on('wo-scan-btn', 'click', runOfferScan);
+    on('wo-close', 'click', closeOffersSection);
+    on('wo-home', 'click', closeOffersSection);
+    on('inv-to-offers', 'click', () => { location.hash = 'offers'; });
+    // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
+    on('wo-filter', 'change', renderOfferRows);
+    on('wo-select-all', 'change', toggleSelectAllOffers);
+    on('wo-preview-btn', 'click', () => submitOffers(true));
+    on('wo-send-btn', 'click', openOfferConfirm);
+    on('wo-confirm-cancel', 'click', () => $('wo-confirm-overlay')?.classList.add('hidden'));
+    on('wo-confirm-go', 'click', () => {
+      $('wo-confirm-overlay')?.classList.add('hidden');
+      submitOffers(false);
+    });
+    on('wo-message', 'input', updateOfferMessageCount);
+  }
+
+  async function runOfferScan() {
+    const btn = $('wo-scan-btn');
+    const minWatchers = $('wo-min-watchers')?.value || '1';
+    const maxItems    = $('wo-max-items')?.value || '120';
+    const minProfit   = Math.max(0, parseFloat($('wo-min-profit')?.value || '0') || 0);
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    setWoStatus('Reading your live listings and their watchers…');
+    $('wo-results').innerHTML = '<p class="opportunity-empty">Counting watchers and pricing each listing against sold comps — this takes a moment on a large inventory.</p>';
+
+    try {
+      const res  = await fetch(`/api/offers/watchers?minWatchers=${minWatchers}&maxItems=${maxItems}&minProfit=${minProfit}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      woScan = data;
+      woSelected.clear();
+      renderOfferScan();
+    } catch (err) {
+      woScan = null;
+      $('wo-summary')?.classList.add('hidden');
+      $('wo-bulk-bar')?.classList.add('hidden');
+      $('wo-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setWoStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '👁 Find My Watchers'; }
+    }
+  }
+
+  function renderOfferScan() {
+    const warn = $('wo-warning');
+
+    if (woScan.status === 'ebay_unavailable') {
+      $('wo-summary')?.classList.add('hidden');
+      $('wo-bulk-bar')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('wo-results').innerHTML =
+        '<p class="opportunity-empty">Your eBay account isn\'t connected, or the token has expired. Reconnect it in Settings, then scan again.</p>';
+      setWoStatus('');
+      return;
+    }
+
+    // A missing permission is not a failure of the scan: the watcher counts and the offers below
+    // are all real, and only sending is blocked — so the board still renders behind the banner.
+    const notes = [];
+    if (woScan.needsReconnect) notes.push(woScan.eligibilityNote || 'Reconnect eBay to send offers.');
+    else if (woScan.eligibilityNote) notes.push(woScan.eligibilityNote);
+    if (woScan.dataWarning) notes.push(woScan.dataWarning);
+
+    if (notes.length) {
+      warn.textContent = notes.join(' ');
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    renderOfferSummary(woScan.summary || {});
+    renderOfferRows();
+
+    const s = woScan.summary || {};
+    setWoStatus(
+      `${woScan.itemsAnalyzed} watched listing${woScan.itemsAnalyzed === 1 ? '' : 's'} of ${woScan.activeListings} active · ` +
+      `${s.totalWatchers} watcher${s.totalWatchers === 1 ? '' : 's'} in total` +
+      (woScan.eligibilityChecked ? ' · eligibility confirmed with eBay' : ' · eligibility not confirmed'));
+  }
+
+  // Leads with the audience, not the listing count: "9 listings" is a statistic, "47 people are
+  // watching your listings right now" is a reason to click send.
+  function renderOfferSummary(s) {
+    const el = $('wo-summary');
+    if (!el) return;
+
+    const tiles = [
+      { label: 'People watching', value: String(s.totalWatchers || 0),
+        sub: `${s.listingsWithWatchers || 0} listing${s.listingsWithWatchers === 1 ? '' : 's'} with an audience`,
+        tone: s.totalWatchers > 0 ? 'good' : '' },
+      { label: 'Offers ready', value: String(s.readyToSend || 0),
+        sub: s.readyToSend ? `reaching ${s.watchersReachable} watcher${s.watchersReachable === 1 ? '' : 's'}` : 'Nothing to send yet',
+        tone: s.readyToSend > 0 ? 'good' : '' },
+      { label: 'Average discount', value: `${Number(s.averageDiscountPercent || 0).toFixed(1)}%`,
+        sub: 'Sized per listing, never below your floor', tone: '' },
+      { label: 'If one of each is taken', value: money(s.revenueIfOneEachAccepts),
+        sub: s.netIfOneEachAccepts ? `${money(s.netIfOneEachAccepts)} net after fees` : 'Record cost basis to see net profit',
+        tone: s.revenueIfOneEachAccepts > 0 ? 'good' : '' },
+      { label: 'Margin you\'d give up', value: money(s.marginGivenUpIfAllAccept),
+        sub: 'Only if every offer is accepted — otherwise nothing', tone: '' },
+      { label: 'Held back', value: String((s.blockedByFloor || 0) + (s.notEligible || 0)),
+        sub: `${s.blockedByFloor || 0} under your floor · ${s.notEligible || 0} not eligible on eBay`,
+        tone: (s.blockedByFloor || 0) > 0 ? 'warn' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const WO_VERDICTS = {
+    ready:        { label: '✉️ Ready to send', cls: 'wo-v-ready' },
+    no_room:      { label: '🛑 Under my floor', cls: 'inv-v-underwater' },
+    not_eligible: { label: '⛔ Not eligible',   cls: 'inv-v-nodata' },
+    no_watchers:  { label: '👤 No watchers',   cls: 'inv-v-nodata' },
+    not_ready:    { label: '? No price',       cls: 'inv-v-nodata' },
+  };
+
+  function woFilterMatches(item, filter) {
+    switch (filter) {
+      case 'ready':        return item.canSend;
+      case 'no_room':      return item.verdict === 'no_room';
+      case 'not_eligible': return item.verdict === 'not_eligible';
+      default:             return true;
+    }
+  }
+
+  function renderOfferRows() {
+    if (!woScan) return;
+    const filter = $('wo-filter')?.value || 'ready';
+    const rows = (woScan.items || []).filter(i => woFilterMatches(i, filter));
+    const el = $('wo-results');
+
+    if (rows.length === 0) {
+      const total = (woScan.items || []).length;
+      el.innerHTML = `<p class="opportunity-empty">${
+        total === 0
+          ? 'No listings with watchers came back from eBay. Watchers build up as a listing gets views — check again in a few days, or lower the watcher filter.'
+          : 'Nothing matches that filter. Switch to "Everything" to see why each listing was held back.'}</p>`;
+      $('wo-bulk-bar')?.classList.add('hidden');
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th class="inv-col-check"></th>
+            <th>Listing</th>
+            <th class="num">Watching</th>
+            <th class="num">Age</th>
+            <th class="num">Your price</th>
+            <th class="num">Market</th>
+            <th class="num">Offer %</th>
+            <th class="num">They pay</th>
+            <th class="num">Your net</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(woRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.wo-check').forEach(cb => cb.addEventListener('change', onOfferCheck));
+    el.querySelectorAll('.wo-discount-input').forEach(inp => {
+      inp.addEventListener('change', onOfferDiscountEdit);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+    });
+
+    $('wo-bulk-bar')?.classList.remove('hidden');
+    refreshOfferSelectionNote();
+  }
+
+  function woRowHtml(item) {
+    const v = WO_VERDICTS[item.verdict] || WO_VERDICTS.no_watchers;
+    const checked = woSelected.has(item.listingId) ? 'checked' : '';
+
+    const discountCell = item.discountPercent != null
+      ? `<input class="wo-discount-input" type="number" step="1" min="5" max="25"
+                value="${Number(item.discountPercent)}" data-id="${esc(item.listingId)}"
+                title="Edit to override the suggested discount. eBay's minimum is 5%." />
+         <div class="inv-change down">${item.floorLimited ? 'at floor' : 'suggested'}</div>`
+      : '<span class="inv-dash">—</span>';
+
+    return `
+      <tr class="${item.canSend ? '' : 'wo-row-muted'}">
+        <td class="inv-col-check">${item.canSend
+          ? `<input class="wo-check" type="checkbox" data-id="${esc(item.listingId)}" ${checked} />`
+          : ''}</td>
+        <td class="inv-cell-title">
+          <div class="inv-title-row">
+            ${item.imageUrl ? `<img class="inv-thumb" src="${esc(item.imageUrl)}" alt="" loading="lazy" />` : ''}
+            <div>
+              ${item.url
+                ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title)}</a>`
+                : esc(item.title)}
+              <div class="inv-sub">${esc(item.sku || item.listingId)}${item.quantity > 1 ? ` · qty ${item.quantity}` : ''}${
+                item.costBasis != null ? ` · paid ${moneyExact(item.costBasis)}` : ' · no cost recorded'}</div>
+            </div>
+          </div>
+        </td>
+        <td class="num"><span class="wo-watchers ${item.watchCount >= 10 ? 'hot' : ''}">${item.watchCount} 👁</span></td>
+        <td class="num">${item.daysListed == null ? '<span class="inv-dash" title="eBay reported no start date">—</span>' : item.daysListed + 'd'}</td>
+        <td class="num">${moneyExact(item.listPrice)}</td>
+        <td class="num">${item.marketPrice != null && item.marketComparable !== false
+            ? `${moneyExact(item.marketPrice)}<div class="inv-sub">${item.soldCompCount + item.terapeakCompCount} comps</div>`
+            : '<span class="inv-dash">—</span>'}</td>
+        <td class="num inv-cell-suggested">${discountCell}</td>
+        <td class="num">${item.offerPrice != null
+            ? `<strong>${moneyExact(item.offerPrice)}</strong><div class="inv-sub">${item.marginGivenUp != null ? `−${moneyExact(item.marginGivenUp)}` : ''}</div>`
+            : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${item.netProfitAtOffer != null
+            ? `<span class="${item.netProfitAtOffer > 0 ? 'inv-gap-good' : 'inv-gap-bad'}">${moneyExact(item.netProfitAtOffer)}</span>${
+                item.netProfitAtListPrice != null ? `<div class="inv-sub">${moneyExact(item.netProfitAtListPrice)} at full price</div>` : ''}`
+            : '<span class="inv-dash" title="Record what you paid in Inventory Health to see net profit">—</span>'}</td>
+        <td class="inv-cell-verdict">
+          <span class="inv-verdict ${v.cls}">${v.label}</span>
+          <div class="inv-note">${esc(item.verdictNote)}</div>
+          ${(item.signals || []).length ? `<div class="inv-signals">${item.signals.map(s => esc(s)).join(' ')}</div>` : ''}
+        </td>
+      </tr>`;
+  }
+
+  function woItemById(listingId) {
+    return (woScan?.items || []).find(i => i.listingId === listingId) || null;
+  }
+
+  function onOfferCheck(e) {
+    const id = e.target.dataset.id;
+    if (e.target.checked) woSelected.add(id); else woSelected.delete(id);
+    refreshOfferSelectionNote();
+  }
+
+  function toggleSelectAllOffers(e) {
+    const filter = $('wo-filter')?.value || 'ready';
+    const on = e.target.checked;
+    // Only what is on screen — a select-all that ticks rows hidden behind a filter is how someone
+    // sends a discount on a listing they never looked at.
+    (woScan?.items || [])
+      .filter(i => woFilterMatches(i, filter) && i.canSend)
+      .forEach(i => { if (on) woSelected.add(i.listingId); else woSelected.delete(i.listingId); });
+    document.querySelectorAll('.wo-check').forEach(cb => { cb.checked = woSelected.has(cb.dataset.id); });
+    refreshOfferSelectionNote();
+  }
+
+  function refreshOfferSelectionNote() {
+    const picked = [...woSelected].map(woItemById).filter(Boolean);
+    const note = $('wo-selection-note');
+    if (note) {
+      if (picked.length === 0) note.textContent = 'Nothing selected.';
+      else {
+        const watchers = picked.reduce((sum, i) => sum + (i.watchCount || 0), 0);
+        const avg = picked.reduce((sum, i) => sum + (i.discountPercent || 0), 0) / picked.length;
+        note.textContent = `${picked.length} offer${picked.length === 1 ? '' : 's'} selected · ` +
+          `${watchers} watcher${watchers === 1 ? '' : 's'} reached · average ${avg.toFixed(1)}% off`;
+      }
+    }
+    const disabled = picked.length === 0;
+    if ($('wo-preview-btn')) $('wo-preview-btn').disabled = disabled;
+    if ($('wo-send-btn'))    $('wo-send-btn').disabled    = disabled;
+  }
+
+  // An edited discount is the seller's call. It is clamped to what eBay will carry so a typo can't
+  // produce a rejected send, and the server re-checks it against the profit floor either way.
+  function onOfferDiscountEdit(e) {
+    const item = woItemById(e.target.dataset.id);
+    if (!item) return;
+    const raw = parseInt(e.target.value, 10);
+    const value = Math.min(25, Math.max(5, isFinite(raw) ? raw : (item.discountPercent || 5)));
+    e.target.value = String(value);
+    item.discountPercent = value;
+    item.offerPrice = Math.round(item.listPrice * (100 - value)) / 100;
+    item.marginGivenUp = Math.round((item.listPrice - item.offerPrice) * 100) / 100;
+    const label = e.target.parentElement?.querySelector('.inv-change');
+    if (label) label.textContent = 'edited';
+    refreshOfferSelectionNote();
+  }
+
+  function updateOfferMessageCount() {
+    const box = $('wo-message');
+    const counter = $('wo-message-count');
+    if (box && counter) counter.textContent = `${box.value.length}/250`;
+  }
+
+  function openOfferConfirm() {
+    const picked = [...woSelected].map(woItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    // The scale of what is about to go out, above the list — the list scrolls, and "31 offers to
+    // 1,362 people" is the number the seller is actually deciding on.
+    const watchers = picked.reduce((sum, i) => sum + (i.watchCount || 0), 0);
+    const givenUp  = picked.reduce((sum, i) => sum + (i.marginGivenUp || 0), 0);
+    $('wo-confirm-total').textContent =
+      `${picked.length} offer${picked.length === 1 ? '' : 's'} to ${watchers} watcher${watchers === 1 ? '' : 's'} · ` +
+      `${moneyExact(givenUp)} of margin if every one is accepted`;
+
+    $('wo-confirm-list').innerHTML = picked.map(i => `
+      <div class="inv-confirm-row">
+        <span class="inv-confirm-title">${esc(i.title)}</span>
+        <span class="inv-confirm-prices">${i.watchCount} 👁 &nbsp; ${moneyExact(i.listPrice)} → <strong>${moneyExact(i.offerPrice)}</strong> (−${i.discountPercent}%)</span>
+      </div>`).join('');
+
+    const box = $('wo-message');
+    if (box && !box.value) box.value = woScan?.defaultMessage || '';
+    updateOfferMessageCount();
+    const loss = $('wo-allow-loss');
+    if (loss) loss.checked = false;
+    $('wo-confirm-overlay')?.classList.remove('hidden');
+  }
+
+  async function submitOffers(dryRun) {
+    const picked = [...woSelected].map(woItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    const body = {
+      items: picked.map(i => ({
+        listingId: i.listingId, sku: i.sku, title: i.title,
+        listPrice: i.listPrice, discountPercent: i.discountPercent,
+        watchCount: i.watchCount, quantity: 1,
+      })),
+      message: $('wo-message')?.value || '',
+      allowCounterOffer: $('wo-allow-counter')?.checked !== false,
+      minNetProfit: Math.max(0, parseFloat($('wo-min-profit')?.value || '0') || 0),
+      dryRun,
+      confirmed: !dryRun,
+      allowBelowFloor: !dryRun && !!$('wo-allow-loss')?.checked,
+    };
+
+    setWoStatus(dryRun ? 'Previewing…' : 'Sending offers on eBay…');
+    try {
+      const res  = await fetch('/api/offers/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'Sending failed.');
+      renderOfferOutcome(data);
+      if (!dryRun && data.sent > 0) {
+        addActivity(`${data.sent} offer${data.sent === 1 ? '' : 's'} sent to ${data.watchersReached} watcher${data.watchersReached === 1 ? '' : 's'}`,
+          'Private discounts sent from Offers to Watchers — your public prices did not change.');
+        // Those listings can't carry another offer for a while, so the board is stale for them.
+        await runOfferScan();
+      }
+    } catch (err) {
+      setWoStatus(`Sending failed: ${err.message || err}`);
+    }
+  }
+
+  function renderOfferOutcome(data) {
+    const parts = [];
+    if (data.dryRun) parts.push(`Preview only — nothing sent. ${data.items.length} offer${data.items.length === 1 ? '' : 's'} ready.`);
+    else parts.push(`${data.sent} sent to ${data.watchersReached} watcher${data.watchersReached === 1 ? '' : 's'}`);
+    if (data.skipped) parts.push(`${data.skipped} skipped`);
+    if (data.failed)  parts.push(`${data.failed} failed`);
+
+    const problems = (data.items || []).filter(i => i.status === 'skipped' || i.status === 'failed');
+    setWoStatus(parts.join(' · ') + (problems.length
+      ? ' — ' + problems.map(p => `${p.title}: ${p.message}`).join('; ')
+      : ''));
+  }
+
+  function setWoStatus(text) {
+    const el = $('wo-status');
     if (el) el.textContent = text || '';
   }
 

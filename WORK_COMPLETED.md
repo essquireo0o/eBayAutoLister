@@ -1708,3 +1708,120 @@ seller has to be able to see that rather than assume the market is empty.
   scan already exercises them, and both are covered by that feature's existing tests.
 * Nothing was published, listed, or written to eBay. Every eBay call this feature makes is a read-only
   Browse search.
+
+---
+
+## 20. Offers to Watchers — the money that already found you (autonomous session, 2026-07-26)
+
+Every other money feature in this app goes looking for a buyer: Roll the Dice hunts products, Local
+Deals hunts supply, Inventory Health hunts mispriced stock. This one doesn't have to look. The buyer
+already found the item, opened it, and told eBay to remember it — and then didn't buy.
+
+**Offers to Watchers** finds those people and sends them a private, time-limited discount through
+eBay's Send Offer to Interested Buyers, sized so it still clears the seller's own profit floor.
+
+### The money impact
+
+On the seller's real account, the first live scan found **1,527 people watching 53 live listings** —
+warm demand that was sitting there converting into nothing. eBay confirmed 31 of those listings could
+carry an offer right now, reaching **1,362 watchers in one click**.
+
+The reason this is the highest-leverage sales action on eBay, and why it is not a markdown:
+
+* a markdown gives margin to **everyone**, including the buyer who would have paid full price;
+* an offer gives it **only to people who already hesitated**, only for ~48 hours, and **only if they
+  accept** — the public price never moves, so an offer nobody takes costs the seller nothing at all.
+
+The board is priced on that difference. It shows what one accepted offer per listing is worth
+($22,619 gross on the 17-offer run above), what it would cost in margin **if every single one were
+accepted** ($2,501), and the net after fees on every row where the seller has recorded what they
+paid. Both the revenue and the margin figures are per-listing, not per-watcher — 688 watchers do not
+buy 688 units because an offer went out, and a headline that said so would be a lie with a dollar
+sign in front of it.
+
+### How deep each offer goes, and what stops it
+
+`WatcherOfferAdvisor` starts at eBay's 5% minimum and builds from there:
+
+| Input | Effect | Why |
+|---|---|---|
+| Age | +3 / +5 / +8 points at 30 / 90 / 180 days | The same age bands the repricer uses; the longer it sits, the more the price is the blocker |
+| Audience size | −2 at 10+ watchers, −1 at 5+, **+2 at 1-2** | A crowd is evidence the item is wanted, so it takes less to close. A single watcher is a maybe |
+| Priced above market | Deep enough to **reach the going rate** | A discount to a price that was never competitive closes nothing; the watchers can see the comps |
+| Already under market | Capped at 8% | The hesitation isn't about price; don't pay for it |
+| No cost basis recorded | Capped at 10% | Without a floor there is no way to know a 20% offer isn't a 20% loss |
+| Everything at once | Hard cap 25% | Past a quarter off, that's a repricing decision the seller looks at, not a default the app picked |
+
+Then four guards, each pinned by tests:
+
+1. **The break-even floor.** The offer price is never below what the item has to clear after every
+   fee, using the same `ProfitCalculator`/`FeeProfile` pair every other screen costs an item with.
+2. **A minimum-profit floor on top of it.** "Keep at least $25 per sale" raises the floor by
+   `$25 / (1 − fee fraction)`, not by $25 — buying back profit costs more than the profit, because
+   eBay's cut scales with the sale. A test asserts a sale at that floor really does leave $30.
+3. **The quick-sale price is a floor in its own right.** That's the price the comps say the item moves
+   at with no offer at all; discounting under it is paying for a sale the listing was already getting.
+4. **A failed comp match can't move anything.** `MarketComparable` comes straight from the
+   inventory-health scan, and the first live run proved why it matters: lot listings matching stray
+   $35 accessories. Those rows show no market price and get no market-driven discount.
+
+When even eBay's 5% minimum would land under the floor, the row says **"Under my floor"** and names
+the number rather than suggesting a smaller offer that loses money quietly.
+
+### Nothing reaches eBay by accident
+
+Same three brakes as the repricer, the app's only other buyer-visible write:
+
+1. **Previews by default** — `dryRun` must be explicitly false;
+2. **`confirmed` must also be true** — verified live: `dryRun:false, confirmed:false` still came back
+   as a preview with nothing sent;
+3. **The floor is recomputed on the server** from the stored cost basis, never trusted from the
+   browser. Verified live: a $189 offer on a $180-cost item was refused against its $207.95
+   break-even, and a $315 offer was refused against a $323.22 minimum-profit floor. The override
+   ("clearing stock at a deliberate loss") works and is written to the action log.
+
+eBay's own eligibility answer is respected before any of that — `find_eligible_items` is asked once
+per scan, and 21 of the seller's watched listings came back not eligible (lots, repeat offers inside
+eBay's cooldown) and are shown as such rather than failed on send.
+
+Sending needs the `sell.negotiation` OAuth scope, which is now requested at login. A connection saved
+before this feature existed keeps working everywhere else; the offers board still renders its full
+board off the watcher counts and tells the seller to reconnect, because the numbers are true either
+way and only the send is blocked.
+
+### Files
+
+* `Services/WatcherOfferAdvisor.cs` (new) — the ladder, `ProfitFloorPrice`, `Floor`, `NetProfitAt`,
+  `Suggest`, `OfferPriceFor`, `Build`, `Summarize`, `Rank`, `CleanMessage`.
+* `Models/WatcherOfferModels.cs` (new) — `WatcherOfferItem`, `WatcherOfferSummary`,
+  `WatcherOfferResult`, and the send request/result pair.
+* `Services/EbayService.cs` — `GetOfferEligibleListingIdsAsync`, `SendOfferToWatchersAsync`,
+  `EbayPermissionException`, `ExtractRestError`; the `sell.negotiation` OAuth scope added to
+  `GetAuthorizationUrl`.
+* `Program.cs` — `GET /api/offers/watchers`, `POST /api/offers/send`, and two optional parameters on
+  `ScanInventoryHealthAsync` (`minWatchers`, `watchersFirst`) so the offers board reuses that whole
+  scan rather than re-deriving market price, break-even and cost basis a second way.
+* `wwwroot/index.html` — the **Offers to Watchers** overlay, the sidebar entry, the cross-link from
+  Inventory Health, the send-confirmation gate, `app.js?v=43`, `style.css?v=36`.
+* `wwwroot/app.js` — `bindWatcherOffers`, `runOfferScan`, `renderOfferSummary`, `renderOfferRows`,
+  per-row discount editing (clamped to 5-25%), select-all-in-filter, preview, and the confirm gate.
+* `wwwroot/style.css` — the handful of classes genuinely new to this screen; the table, tiles and
+  bulk bar are Inventory Health's, because it is the same inventory seen from a different angle.
+* Tests: `WatcherOfferAdvisorTests.cs` (35 cases).
+
+### Verified
+
+* `dotnet build` — 0 errors. `dotnet test` — **660 passed, 0 failed** (625 before; +35 new).
+* **Live, against the seller's real eBay account**: 87 active listings → 53 with watchers → 1,527
+  watchers → eBay confirmed eligibility on 31 → board, tiles, filters, select-all, per-row discount
+  editing, preview and the confirmation gate all driven through the real UI with Playwright. No
+  console errors. The eligibility call succeeded on the existing token, so the reconnect path was
+  exercised only by its unit-level logic.
+* **Live server-side guards**: break-even refusal, minimum-profit refusal, the deliberate-loss
+  override, the 5-25% range check, the missing-listing-ID skip, and the "not confirmed means preview"
+  brake — all exercised end to end. The one temporary cost-basis row created for this was deleted.
+* **Not verified live: an actual send.** `POST /api/offers/send` with `dryRun:false, confirmed:true`
+  puts a real, buyer-visible, non-recallable offer in front of real watchers on the seller's account —
+  that is their click to make, not this session's. Every layer under it was exercised: the request
+  body, the floor re-check, the range check and the preview path all ran; only the final
+  `send_offer_to_interested_buyers` POST was not fired.
