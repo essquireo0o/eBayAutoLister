@@ -288,3 +288,88 @@ Port 9332 belongs to the installed app — set AUTOLISTER_DEV_PORT to another po
 - Phase 8 — AI Listing workflow improvements
 - Phase 9 — GUI polish pass
 - Phase 10+ — Additional tests, bug fixes, accessibility
+
+---
+
+## 9. Cross-Listing Exporter (autonomous session, 2026-07-26)
+
+Turns any finished eBay draft into ready-to-post listings for **Facebook Marketplace, Mercari
+and Amazon**, from inside the Edit Listing drawer.
+
+### Why this makes the seller money
+
+1. **Three times the buyer pool for work already done.** The seller already wrote the title,
+   description, specifics and photos. Cross-listing is pure incremental sell-through on
+   inventory that's already sitting there — this is the single feature Vendoo, List Perfectly
+   and Crosslist are built around, and it was the largest gap versus them.
+2. **It stops the silent margin leak.** Copying an eBay price straight onto Amazon is how
+   sellers quietly lose money: on a $1,250 item, Amazon's 15% referral fee nets $1,062.50
+   versus eBay's $1,083.98 — $21.48 gone per unit, invisibly. Every marketplace card shows a
+   **net-parity price**: the price that leaves the same take-home after *that* site's fees.
+3. **It finds headroom the seller didn't know they had.** The math runs both ways. Mercari
+   charges the seller no selling fee, so the panel reports that the same item can be listed
+   **$108.96 below** the eBay price and still take home an identical $1,083.98 — which is how
+   you win the cheapest-listing slot without earning a cent less.
+4. **It prevents rejected uploads before they happen.** Amazon flat-file rejections for a
+   missing GTIN, a missing brand, or unapproved used conditions are flagged per-marketplace
+   with a count badge on the tab, so the seller fixes them before wasting an upload cycle.
+
+### What it does that a copy-paste wouldn't
+
+| Problem | Handling |
+|---|---|
+| Title limits differ (Mercari 80, Facebook 100, Amazon 200) | Truncated **on a word boundary**, never mid-word, with a warning naming the limit |
+| Every other marketplace bans cross-site references | "eBay", "Free Shipping", "L@@K", "Buy It Now" etc. stripped from titles; description lines mentioning eBay removed, and the count is reported rather than done silently |
+| eBay descriptions are HTML | Converted to plain text with entity decoding and bullet preservation |
+| Facebook and Mercari have **no Item Specifics fields** | Brand / MPN / UPC / specifics folded into the description as a Details block, so structured data isn't silently lost |
+| Condition vocabularies don't overlap | Explicit per-site mapping; where a target has fewer grades, the item lands on the **lower** one rather than being oversold |
+| Amazon shows bullets, not prose | Up to 5 bullets derived from Item Specifics, topped up from description sentences |
+| Photos may be local app URLs | Warns that a CSV import can't fetch them |
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/CrossListingModels.cs` | **New** — `CrossListRequest`, `CrossListingResult`, `CrossListingExport` |
+| `Services/CrossListingExporter.cs` | **New** — title/description/condition adaptation, net-parity pricing, per-site warnings, CSV generation |
+| `Services/CrossListingFeeProfile.cs` | **New** — tunable fee assumptions per marketplace, same POCO-singleton pattern as `FeeProfile` |
+| `Program.cs` | DI registration + `POST /api/crosslist/export` |
+| `wwwroot/index.html` | `#xl-panel` in the listing form: target checkboxes, tabs, per-site card. `app.js?v=29`, `style.css?v=24` |
+| `wwwroot/style.css` | `.xl-*` styles — tabs with warning-count badges, teal/gold price card, missing-field highlighting |
+| `wwwroot/app.js` | `bindCrossListing`, `runCrossListing`, `renderCrossList*`, `crossListPriceNote`, `xlCopy`, `xlDownloadCsv`; plus `moneyExact()` because the existing `money()` rounds to whole dollars and would misstate a to-the-cent parity price |
+| `ING eBay AutoLister.Tests/CrossListingExporterTests.cs` | **New** — 27 tests |
+
+### CSV honesty
+
+Each export states what its CSV actually is, because two of the three are real and one isn't:
+
+- **Facebook** — `catalog_csv`, ingested directly by Commerce Manager's data-feed importer.
+- **Amazon** — `flat_file`, column names matching the Inventory Loader template.
+- **Mercari** — `manual`. Mercari has **no public bulk importer**, so the file is labelled a
+  worksheet and the copy buttons are presented as the real path. It is not passed off as an
+  import file.
+
+Fee rates are published standard rates, not the seller's account-specific ones — no marketplace
+exposes a fee API — so every derived figure is labelled an estimate in the UI.
+
+### Safety
+
+- Purely local text/CSV generation. **No request ever reaches Facebook, Mercari or Amazon**, and
+  the eBay listing is never read or modified.
+- Exported CSV cells are RFC 4180 quoted **and** formula-neutralised (`=`, `+`, `-`, `@` prefixed
+  with `'` unless the value is numeric). Listing text can originate from scraped supplier pages,
+  and these files are opened in Excel and Google Sheets by definition.
+- One deterministic SKU is shared across all three exports so inventory stays reconcilable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **148 passed**, 0 failed, 0 skipped (121 pre-existing + 27 new) |
+| Endpoint smoke test (live app, port 9345) | Parity math verified: Amazon $1,275.28 × 0.85 = $1,083.99 ≈ eBay net $1,083.98; Mercari parity = eBay net exactly at 0% fee |
+| Real browser (Playwright) | Panel opens in the Edit drawer, generates, switches tabs, re-renders per-site pricing, highlights missing required fields, renders warnings |
+| Browser console errors | **None** |
+
+One test failure was found and **fixed in the code rather than the test**: the Mercari worksheet
+was missing the shared `sku` column that makes cross-site inventory reconcilable.

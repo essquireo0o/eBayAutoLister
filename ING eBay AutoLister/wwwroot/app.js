@@ -33,6 +33,7 @@
     bindForm();
     initEditDrawer();
     bindMarketResearch();
+    bindCrossListing();
     restoreListingViewMode();
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
@@ -2286,6 +2287,241 @@
     }).join('') + (outliers
       ? `<div class="mr-outlier-note">${outliers} comparable${outliers === 1 ? '' : 's'} priced far from the median — highlighted above.</div>`
       : '');
+  }
+
+  // ── Cross-List to other marketplaces ───────────────────────────────────────
+  // Reformats the open draft for Facebook Marketplace, Mercari and Amazon via
+  // /api/crosslist/export. Everything here is local text and CSV — no request
+  // ever reaches those sites, and the eBay listing is never touched.
+
+  let lastCrossList = null;   // most recent /api/crosslist/export payload
+  let xlActiveTab   = '';
+
+  function bindCrossListing() {
+    if (!$('xl-panel')) return;
+
+    on('btn-xl-generate', 'click', runCrossListing);
+
+    $('xl-tabs')?.addEventListener('click', e => {
+      const tab = e.target.closest('.xl-tab');
+      if (!tab) return;
+      xlActiveTab = tab.dataset.market;
+      renderCrossListTabs();
+      renderCrossListCard();
+    });
+
+    $('xl-body')?.addEventListener('click', e => {
+      const btn = e.target.closest('[data-xl-action]');
+      if (!btn) return;
+      const listing = xlActiveListing();
+      if (!listing) return;
+
+      if (btn.dataset.xlAction === 'copy-title')  xlCopy(listing.title, 'Title');
+      if (btn.dataset.xlAction === 'copy-desc')   xlCopy(listing.description, 'Description');
+      if (btn.dataset.xlAction === 'copy-price')  xlCopy(Number(listing.netParityPrice || 0).toFixed(2), 'Price');
+      if (btn.dataset.xlAction === 'download')    xlDownloadCsv(listing);
+      if (btn.dataset.xlAction === 'open')        window.open(listing.createUrl, '_blank', 'noopener');
+    });
+  }
+
+  function xlActiveListing() {
+    return lastCrossList?.listings?.find(l => l.marketplace === xlActiveTab) || null;
+  }
+
+  function setCrossListStatus(msg, kind) {
+    const el = $('xl-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'xl-status' + (kind ? ' ' + kind : '');
+  }
+
+  async function runCrossListing() {
+    const targets = Array.from(document.querySelectorAll('[data-xl-target]'))
+      .filter(cb => cb.checked)
+      .map(cb => cb.dataset.xlTarget);
+
+    if (!targets.length) {
+      $('xl-results')?.classList.add('hidden');
+      return setCrossListStatus('Pick at least one marketplace to export to.', 'empty');
+    }
+
+    setCrossListStatus('Building marketplace listings…', 'working');
+    $('btn-xl-generate')?.setAttribute('disabled', 'disabled');
+
+    try {
+      const res = await fetch('/api/crosslist/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...buildPayload(), targets }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+
+      lastCrossList = data;
+      if (!data.listings?.some(l => l.marketplace === xlActiveTab))
+        xlActiveTab = data.listings?.[0]?.marketplace || '';
+
+      renderCrossList();
+      addActivity('Cross-listings generated', `${data.listings?.length || 0} marketplace(s)`);
+    } catch (err) {
+      $('xl-results')?.classList.add('hidden');
+      setCrossListStatus('Could not build the cross-listings: ' + (err?.message || 'unknown error'), 'error');
+    } finally {
+      $('btn-xl-generate')?.removeAttribute('disabled');
+    }
+  }
+
+  function renderCrossList() {
+    const results = $('xl-results');
+    if (!lastCrossList?.listings?.length) {
+      results?.classList.add('hidden');
+      return setCrossListStatus('Nothing to export from this draft yet.', 'empty');
+    }
+
+    results?.classList.remove('hidden');
+    setCrossListStatus(
+      `Ready. Your eBay listing at ${moneyExact(lastCrossList.ebayPrice)} nets you ` +
+      `${moneyExact(lastCrossList.ebayNet)} after ${moneyExact(lastCrossList.ebayFees)} in eBay fees — ` +
+      `each marketplace below is priced to match that.`, '');
+
+    $('xl-warnings').innerHTML = (lastCrossList.warnings || [])
+      .map(w => `<div class="xl-warning">${esc(w)}</div>`).join('');
+
+    renderCrossListTabs();
+    renderCrossListCard();
+  }
+
+  function renderCrossListTabs() {
+    const box = $('xl-tabs');
+    if (!box) return;
+    box.innerHTML = (lastCrossList?.listings || []).map(l => {
+      const count = (l.warnings || []).length;
+      return `<button type="button" class="xl-tab${l.marketplace === xlActiveTab ? ' active' : ''}"
+        role="tab" aria-selected="${l.marketplace === xlActiveTab}" data-market="${esc(l.marketplace)}">
+        ${esc(l.displayName)}${count ? `<span class="xl-tab-flag" title="${count} thing${count === 1 ? '' : 's'} to check">${count}</span>` : ''}
+      </button>`;
+    }).join('');
+  }
+
+  // The number that makes this worth doing: what the seller actually takes home
+  // on each site, and how far the price has to move to keep it level with eBay.
+  function crossListPriceNote(l) {
+    const ebayPrice = Number(lastCrossList?.ebayPrice) || 0;
+    const ebayNet   = Number(lastCrossList?.ebayNet) || 0;
+    const parity    = Number(l.netParityPrice) || 0;
+    const atSame    = Number(l.netAtSamePrice) || 0;
+
+    if (ebayPrice <= 0) return 'Set a price on this draft to see fee-adjusted pricing.';
+
+    const gap = Math.round((parity - ebayPrice) * 100) / 100;
+
+    if (Math.abs(gap) < 0.01)
+      return `${l.displayName}'s fees land within a cent of eBay's — list at the same ${moneyExact(ebayPrice)}.`;
+
+    if (gap < 0)
+      return `${l.displayName} takes ${moneyExact(ebayPrice - parity)} less than eBay in fees on this item. ` +
+             `You can undercut your own eBay price and list at ${moneyExact(parity)} while still taking home ` +
+             `${moneyExact(ebayNet)} — or list at ${moneyExact(ebayPrice)} and pocket ${moneyExact(atSame - ebayNet)} more.`;
+
+    return `Listing at your eBay price of ${moneyExact(ebayPrice)} here would only net ${moneyExact(atSame)} — ` +
+           `${moneyExact(ebayNet - atSame)} less than eBay, because of ${l.feePercent}% fees. ` +
+           `List at ${moneyExact(parity)} to take home the same ${moneyExact(ebayNet)}.`;
+  }
+
+  function renderCrossListCard() {
+    const box = $('xl-body');
+    const l = xlActiveListing();
+    if (!box) return;
+    if (!l) { box.innerHTML = ''; return; }
+
+    const titleOver = l.titleTruncated ? ' over' : '';
+    const descOver  = l.descriptionTruncated ? ' over' : '';
+    const importLabel = l.importSupport === 'manual' ? 'Download Worksheet CSV' : 'Download Import CSV';
+
+    box.innerHTML = `
+      <div class="xl-card">
+        <div class="xl-card-head">
+          <h4>${esc(l.displayName)}</h4>
+          <div class="xl-card-actions">
+            <button type="button" class="btn btn-secondary small" data-xl-action="open">Open ${esc(l.displayName)}</button>
+            <button type="button" class="btn btn-ghost small" data-xl-action="download">${esc(importLabel)}</button>
+          </div>
+        </div>
+
+        <div class="xl-price">
+          <div class="xl-price-cell">
+            <span>List at your eBay price</span><strong>${moneyExact(l.samePrice)}</strong>
+          </div>
+          <div class="xl-price-cell">
+            <span>You'd net</span><strong>${moneyExact(l.netAtSamePrice)}</strong>
+          </div>
+          <div class="xl-price-cell headline">
+            <span>Price to match eBay take-home</span><strong>${moneyExact(l.netParityPrice)}</strong>
+          </div>
+          <div class="xl-price-note">${esc(crossListPriceNote(l))}</div>
+          <div class="xl-price-note">${esc(l.feeNote)}</div>
+        </div>
+
+        <div class="xl-block">
+          <div class="xl-block-head">
+            <label>Title</label>
+            <span class="xl-count${titleOver}">${l.title.length} / ${l.titleLimit}</span>
+          </div>
+          <textarea rows="2" readonly>${esc(l.title)}</textarea>
+          <div class="xl-card-actions">
+            <button type="button" class="btn btn-primary small" data-xl-action="copy-title">Copy Title</button>
+            <button type="button" class="btn btn-ghost small" data-xl-action="copy-price">Copy Price</button>
+          </div>
+        </div>
+
+        <div class="xl-block">
+          <div class="xl-block-head">
+            <label>Description</label>
+            <span class="xl-count${descOver}">${l.description.length} / ${l.descriptionLimit}</span>
+          </div>
+          <textarea rows="9" readonly>${esc(l.description)}</textarea>
+          <div class="xl-card-actions">
+            <button type="button" class="btn btn-primary small" data-xl-action="copy-desc">Copy Description</button>
+          </div>
+        </div>
+
+        <div class="xl-fields">
+          ${(l.fields || []).map(f => `
+            <div class="xl-field${f.required && !f.value ? ' missing' : ''}">
+              <span>${esc(f.name)}${f.required ? ' *' : ''}</span>
+              <strong title="${esc(f.value || 'Missing')}">${esc(f.value || 'Missing')}</strong>
+            </div>`).join('')}
+        </div>
+
+        ${(l.warnings || []).length
+          ? `<div class="xl-warnings">${l.warnings.map(w => `<div class="xl-warning">${esc(w)}</div>`).join('')}</div>`
+          : ''}
+
+        <p class="xl-import-note">${esc(l.importNote)}</p>
+      </div>`;
+  }
+
+  async function xlCopy(text, label) {
+    try {
+      await navigator.clipboard.writeText(text || '');
+      setCrossListStatus(`${label} copied — paste it straight into ${xlActiveListing()?.displayName || 'the marketplace'}.`, '');
+    } catch {
+      setCrossListStatus('Could not access the clipboard. Select the text and copy it manually.', 'error');
+    }
+  }
+
+  function xlDownloadCsv(listing) {
+    // BOM so Excel opens the UTF-8 text with accents and symbols intact.
+    const blob = new Blob(['﻿' + (listing.csv || '')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = listing.csvFilename || 'cross-listing.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setCrossListStatus(`${listing.csvFilename} downloaded.`, '');
   }
 
   // ── Edit Listing drawer ────────────────────────────────────────────────────
@@ -5338,6 +5574,15 @@
   function money(value) {
     const number = parseFloat(value) || 0;
     return number.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  }
+
+  // money() rounds to whole dollars, which is fine for sold comps but would misstate a
+  // fee-adjusted cross-listing price by up to 50 cents — the cents are the whole point there.
+  function moneyExact(value) {
+    const number = parseFloat(value) || 0;
+    return number.toLocaleString(undefined, {
+      style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
   }
 
   function updateCharCount(inputId, countId, max) {

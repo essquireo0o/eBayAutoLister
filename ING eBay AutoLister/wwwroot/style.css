@@ -4044,6 +4044,198 @@ body.drawer-open {
 
 .mr-outlier-note { font-size: 12px; color: var(--warning); }
 
+/* ── Cross-List panel ─────────────────────────────────────────────────────
+   Marketplace tabs, then a per-site card: price parity, copyable title and
+   description, required fields, warnings, CSV. */
+
+.xl-wrap { display: flex; flex-direction: column; gap: 12px; }
+
+.xl-intro { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.55; }
+
+.xl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.xl-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.xl-target input { margin: 0; }
+
+.xl-status { font-size: 13px; }
+.xl-status.error   { color: var(--danger); }
+.xl-status.working { color: var(--muted); }
+.xl-status.empty   { color: var(--warning); }
+
+.xl-results { display: flex; flex-direction: column; gap: 12px; }
+
+.xl-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.xl-tab {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.xl-tab:hover { border-color: var(--teal-900); color: var(--ink); }
+
+.xl-tab.active {
+  background: var(--teal-900);
+  border-color: var(--teal-900);
+  color: #fff;
+}
+
+/* Count of blocking problems for that marketplace, so the seller sees which tab
+   needs attention before clicking into it. */
+.xl-tab-flag {
+  display: inline-block;
+  margin-left: 6px;
+  background: var(--warning);
+  color: #1c1500;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.xl-card { display: flex; flex-direction: column; gap: 12px; }
+
+.xl-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.xl-card-head h4 { margin: 0; font-size: 15px; color: var(--ink); }
+
+.xl-price {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  background: var(--teal-900);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.xl-price-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.xl-price-cell span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #9fc0c2;
+}
+
+.xl-price-cell strong { font-size: 20px; color: #fff; white-space: nowrap; }
+.xl-price-cell.headline strong { color: var(--gold); }
+
+.xl-price-note {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: #cfe4e5;
+  line-height: 1.5;
+}
+
+.xl-block { display: flex; flex-direction: column; gap: 6px; }
+
+.xl-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.xl-block-head label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+
+.xl-count { font-size: 11px; color: var(--muted); }
+.xl-count.over { color: var(--warning); font-weight: 700; }
+
+.xl-block textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--soft);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.xl-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.xl-field {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.xl-field span {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+
+.xl-field strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xl-field.missing { border-color: var(--warning); }
+.xl-field.missing strong { color: var(--warning); }
+
+.xl-warnings { display: flex; flex-direction: column; gap: 6px; }
+
+.xl-warning {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--soft);
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.xl-import-note { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.xl-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 720px) {
+  .xl-price-cell strong { font-size: 17px; }
+}
+
 /* ── Representative Photo Library ─────────────────────────────────────────
    Folder rail on the left, the selected model's photos on the right. */
 .pl-create-row {

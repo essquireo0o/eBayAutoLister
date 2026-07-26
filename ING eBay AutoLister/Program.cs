@@ -201,6 +201,8 @@ builder.Services.AddSingleton<FeeProfile>();
 builder.Services.AddSingleton<ProfitCalculator>();
 builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
+builder.Services.AddSingleton<CrossListingFeeProfile>();
+builder.Services.AddSingleton<CrossListingExporter>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -2334,6 +2336,27 @@ app.MapDelete("/api/local-drafts/delete/{filename}", (string filename, DraftStor
     drafts.DeleteDraft(filename);
     log.Add("Info", "Draft deleted", filename);
     return Results.Ok();
+});
+
+// ── Cross-listing exporter ────────────────────────────────────────
+// Reformats an existing draft for Facebook Marketplace / Mercari / Amazon. Purely local text and
+// CSV generation — it never contacts those sites and never touches the eBay listing.
+app.MapPost("/api/crosslist/export", (CrossListRequest req, CrossListingExporter exporter, ActionLog log) =>
+{
+    try
+    {
+        var result = exporter.Export(req);
+        var titlePreview = (req.Title ?? "").Trim();
+        if (titlePreview.Length > 60) titlePreview = titlePreview[..60] + "…";
+        log.Add("Info", "Cross-list export generated",
+            $"{result.Listings.Count} marketplace(s) for: {titlePreview}");
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Cross-list export failed", ex.Message);
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapPost("/api/listing/seller-hub-draft", async (PostListingRequest req, EbayService ebay, ActionLog log) =>
