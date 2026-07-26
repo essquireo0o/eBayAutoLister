@@ -358,6 +358,7 @@
     bindOpportunitySearch();
     bindSupplierAnalyzer();
     bindFacebookMarketplace();
+    bindRollTheDice();
     bindPhotoLibrary();
     bindInventoryHealth();
     bindHomeButtons();
@@ -1232,6 +1233,294 @@
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
         <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
       </tr>`;
+  }
+
+  // ── Roll the Dice ────────────────────────────────────────────────────────
+  // The board every other panel can't produce: the seller types nothing, the server sweeps whole
+  // categories of sold history, and what comes back is what to buy, for how much, and where.
+  //
+  // A roll is minutes of server work across four external systems, so it borrows the local panel's
+  // never-throw fetch contract (localFetchJson) — a roll that will never come back has to stop
+  // looking like one that is still working.
+  const DICE_TIMEOUT_MS = 10 * 60 * 1000;
+
+  let diceData = null;
+  let diceNextSeed = null;
+  let diceRolling = false;
+
+  const DICE_TIERS = {
+    jackpot: { label: '🎰 Jackpot', cls: 'jackpot' },
+    strong:  { label: '💰 Strong play', cls: 'strong' },
+    target:  { label: '🎯 Target price', cls: 'target' },
+    thin:    { label: '⚠️ Thin margin', cls: 'thin' },
+    watch:   { label: '👀 Watch — thin data', cls: 'watch' },
+    pass:    { label: '✕ Pass', cls: 'pass' },
+  };
+
+  function bindRollTheDice() {
+    // The dashboard band: one click has to produce a board, not a form to fill in.
+    on('btn-roll-dice', 'click', () => {
+      showOpportunitySection();
+      $('dice-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      rollTheDice(null);
+    });
+    on('dice-roll-btn', 'click', () => rollTheDice(null));
+    on('dice-again-btn', 'click', () => rollTheDice(diceNextSeed));
+    on('dice-only-buyable', 'change', renderDiceBoard);
+    on('dice-zip-input', 'keydown', e => { if (e.key === 'Enter') rollTheDice(null); });
+
+    // Same remembered zip and radius the local scan uses — a seller types their zip code once.
+    const zip = localStorage.getItem('fbZip');
+    const radius = localStorage.getItem('fbRadius');
+    if (zip && $('dice-zip-input')) $('dice-zip-input').value = zip;
+    if (radius && $('dice-radius-select')) {
+      const select = $('dice-radius-select');
+      if ([...select.options].some(o => o.value === radius)) select.value = radius;
+    }
+  }
+
+  function setDiceStatus(message, retry) {
+    const el = $('dice-status');
+    if (!el) return;
+    if (!message) { el.innerHTML = ''; return; }
+    el.innerHTML = esc(message) +
+      (retry ? ' <button type="button" class="btn btn-secondary small dice-retry-btn">Try again</button>' : '');
+    el.querySelector('.dice-retry-btn')?.addEventListener('click', () => rollTheDice(null));
+  }
+
+  // seed === null means "a fresh random roll"; passing the previous response's nextSeed is what
+  // makes Roll again sweep categories this seller hasn't just seen.
+  async function rollTheDice(seed) {
+    if (diceRolling) return;
+
+    const zip = $('dice-zip-input')?.value.trim() || '';
+    const radius = $('dice-radius-select')?.value || '40';
+    const niches = $('dice-niches-select')?.value || '4';
+    if (zip) localStorage.setItem('fbZip', zip);
+    localStorage.setItem('fbRadius', radius);
+
+    // Whatever sites the seller ticked in Local Deals. Omitted when nothing is ticked (or the
+    // picker hasn't loaded), which lets the server search everything reachable.
+    const sources = selectedSourceIds();
+
+    const qs = `niches=${encodeURIComponent(niches)}&zip=${encodeURIComponent(zip)}` +
+      `&radius=${encodeURIComponent(radius)}` +
+      (sources.length ? `&sources=${encodeURIComponent(sources.join(','))}` : '') +
+      (seed != null ? `&seed=${encodeURIComponent(seed)}` : '');
+
+    const buttons = ['dice-roll-btn', 'dice-again-btn', 'btn-roll-dice'].map($).filter(Boolean);
+    diceRolling = true;
+    buttons.forEach(b => { b.disabled = true; });
+    $('dice-results')?.classList.add('hidden');
+    // Honest about the cost: a sweep, a real sold-comp lookup per product, then a supply search
+    // per product. Minutes, not seconds — and Facebook loads a real browser page.
+    setDiceStatus(`🎲 Rolling — sweeping ${niches} categories of eBay sold history, pricing the best ` +
+      `products against real comps, then hunting for where to buy them` +
+      `${zip ? ` near ${zip}` : ' on eBay'}. Give it a minute or two…`);
+
+    const { data, error } = await localFetchJson(`/api/opportunities/roll-the-dice?${qs}`, DICE_TIMEOUT_MS);
+
+    diceRolling = false;
+    buttons.forEach(b => { b.disabled = false; });
+
+    if (!data) {
+      setDiceStatus(`The roll didn't complete. ${error}`, true);
+      return;
+    }
+    renderDice(data);
+  }
+
+  function renderDice(data) {
+    const wrap = $('dice-results');
+    if (!wrap) return;
+
+    diceNextSeed = data.nextSeed;
+    $('dice-again-btn')?.classList.remove('hidden');
+
+    if (data.status === 'error') {
+      setDiceStatus(data.error || 'The roll came back with nothing usable.', true);
+      return;
+    }
+
+    diceData = data;
+
+    const swept = (data.niches || []).length;
+    const summary = [
+      data.jackpotCount
+        ? `<strong class="fb-arb-hit">${data.jackpotCount} jackpot${data.jackpotCount === 1 ? '' : 's'}</strong>`
+        : `<strong>${data.count}</strong> play${data.count === 1 ? '' : 's'}`,
+      `across ${swept} categor${swept === 1 ? 'y' : 'ies'}`,
+      data.totalPotentialProfit > 0
+        ? `${money(data.totalPotentialProfit)} of profit sitting in supply you can buy right now`
+        : '',
+    ].filter(Boolean).join(' · ');
+
+    // The funnel, in full. What was thrown away matters as much as what survived: a short board is
+    // the guards working, and this is where a seller can see that rather than assume the sweep
+    // simply found nothing.
+    $('dice-summary').innerHTML = summary +
+      `<div class="fb-arb-sources">Mined ${data.compsScanned.toLocaleString()} sold comps → ` +
+      `${data.productsConsidered} product${data.productsConsidered === 1 ? '' : 's'} worth a look → ` +
+      `${data.productsPriced} priced against real comps → ${data.productsSourced} checked for supply` +
+      `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} re-checked live on Terapeak` : ''}. ` +
+      `${data.productsDropped ? `${data.productsDropped} dropped — too little sold history, or two reads of it that disagreed. ` : ''}` +
+      `${data.supplyRejected ? `${data.supplyRejected} cheap listing${data.supplyRejected === 1 ? '' : 's'} rejected as parts or accessories rather than the product. ` : ''}` +
+      `${data.terapeakConnected ? '' : 'Terapeak not connected — sold-comps database only. '}` +
+      `Roll #${data.seed} · ${data.rollsToCoverEverything} rolls covers all ${data.nichesInUniverse} categories.</div>`;
+
+    const warn = $('dice-warning');
+    if (warn) {
+      warn.textContent = data.dataWarning || '';
+      warn.classList.toggle('hidden', !data.dataWarning);
+    }
+
+    // Which categories were dug, and what each one gave up — a sweep that reports "no plays"
+    // without saying where it looked can't be trusted or repeated.
+    const chips = $('dice-niche-chips');
+    if (chips) {
+      chips.innerHTML = (data.niches || []).map(n => {
+        const detail = n.playsFound
+          ? `${n.playsFound} play${n.playsFound === 1 ? '' : 's'}`
+          : n.note ? esc(n.note)
+          : `${n.productsFound} product${n.productsFound === 1 ? '' : 's'}, none made the board`;
+        return `<span class="dice-chip${n.playsFound ? ' dice-chip-hit' : ''}">
+                  <strong>${esc(n.label)}</strong> ${detail}
+                  <span class="dice-chip-probe">${(n.probes || []).map(esc).join(', ')}</span>
+                </span>`;
+      }).join('');
+    }
+
+    // Which sourcing channels actually answered — an empty supply list has to be distinguishable
+    // from a site that was never searched.
+    const searched = [
+      data.ebaySupplySearched ? 'eBay Buy It Now' : '',
+      ...(data.sources || []).map(s => s.status === 'ok'
+        ? `${s.label} (${s.count})`
+        : `${s.label} — ${s.status === 'not_connected' ? 'not connected'
+            : s.status === 'session_expired' ? 'session expired' : 'unavailable'}`),
+    ].filter(Boolean);
+    setDiceStatus(searched.length
+      ? `Supply checked on: ${searched.join(' · ')}.`
+      : 'No supply sites were searched — add a zip code to include local classifieds.');
+
+    renderDiceBoard();
+    wrap.classList.remove('hidden');
+  }
+
+  // Filtering is a pure view over the response already in hand — it must never re-run a roll.
+  function renderDiceBoard() {
+    const board = $('dice-board');
+    if (!board || !diceData) return;
+
+    const onlyBuyable = !!$('dice-only-buyable')?.checked;
+    const all = diceData.plays || [];
+    const rows = onlyBuyable ? all.filter(p => p.sources && p.sources.length) : all;
+
+    const shown = $('dice-shown');
+    if (shown) {
+      shown.textContent = rows.length === all.length
+        ? `${rows.length} shown`
+        : `${rows.length} of ${all.length} shown`;
+    }
+
+    board.innerHTML = rows.length
+      ? rows.map(dicePlayHtml).join('')
+      : all.length
+        ? '<p class="opportunity-empty">Nothing on this board is for sale anywhere right now. The target prices above are still worth watching for — or roll again for different categories.</p>'
+        : '<p class="opportunity-empty">This roll found no product with enough sold history to stand behind. That is a real answer, not an error — roll again and the sweep moves on to different categories.</p>';
+
+    board.querySelectorAll('.dice-hunt-btn').forEach(btn =>
+      btn.addEventListener('click', () => huntPlayLocally(btn.dataset.query || '')));
+  }
+
+  function dicePlayHtml(play, index) {
+    const tier = DICE_TIERS[play.tier] || DICE_TIERS.watch;
+    // A live buy shows what it actually nets; a target shows what buying at the target would net.
+    const live = play.netProfit != null;
+    const headline = live ? play.netProfit : play.profitAtTarget;
+    const headlineNote = live
+      ? `net after fees, buying at ${moneyExact(play.bestBuyPrice)}`
+      : play.targetBuyPrice > 0
+        ? `net if you buy it at ${moneyExact(play.targetBuyPrice)}`
+        // No price clears the jackpot bar, so the honest headline is what's left at a cost of
+        // nothing — quoting "buy it at $0.00" would read as a bug.
+        : `net even if it were free — break even is ${moneyExact(play.maxBuyPrice)}`;
+
+    const facts = [
+      play.ebayExpectedSale != null ? `Sells for <strong>${money(play.ebayExpectedSale)}</strong>` : '',
+      `Break even at <strong>${moneyExact(play.maxBuyPrice)}</strong>`,
+      play.targetBuyPrice > 0 ? `Target buy <strong>${moneyExact(play.targetBuyPrice)}</strong>` : '',
+      play.roiPercent != null ? `${Math.round(play.roiPercent)}% ROI` : '',
+      play.daysToCash != null ? `~${play.daysToCash} days to cash` : '',
+    ].filter(Boolean).join(' · ');
+
+    const evidence = [
+      `${play.soldCompCount} sold comp${play.soldCompCount === 1 ? '' : 's'}`,
+      play.terapeakCompCount ? `${play.terapeakCompCount} Terapeak` : '',
+      play.confidenceLevel ? esc(play.confidenceLevel) : '',
+      play.liquidityLevel ? esc(play.liquidityLevel) : '',
+      play.estimatedMonthlySales > 0 ? `~${Math.round(play.estimatedMonthlySales)} sold/month` : '',
+    ].filter(Boolean).join(' · ');
+
+    const sources = (play.sources || []).map(src => {
+      const good = src.netProfit != null && src.netProfit > 0;
+      const meta = [
+        src.distanceMiles != null ? `${src.distanceMiles} mi` : '',
+        src.location ? esc(src.location) : '',
+        src.postedAgo ? esc(src.postedAgo) : '',
+      ].filter(Boolean).join(' · ');
+      return `<div class="dice-source">
+                <span class="local-badge local-badge-${esc(src.source)}">${esc(src.sourceLabel || src.source)}</span>
+                <a class="dice-source-title" href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.title)} ↗</a>
+                <span class="dice-source-buy">${moneyExact(src.buyPrice)}</span>
+                <span class="dice-source-net ${good ? 'good' : 'bad'}">${src.netProfit != null ? `${good ? '+' : ''}${money(src.netProfit)} net` : '—'}</span>
+                <span class="dice-source-meta">${meta}</span>
+              </div>`;
+    }).join('');
+
+    // eBay's own sold-listing search for the same keyword: the seller can check the comps behind
+    // the number themselves, with no API call and no trust required.
+    const soldUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(play.searchQuery || play.product)}&LH_Sold=1&LH_Complete=1`;
+
+    return `
+      <article class="dice-play dice-play-${tier.cls}">
+        <div class="dice-play-rank">${index + 1}</div>
+        ${play.imageUrl
+          ? `<img class="dice-play-thumb" src="${esc(play.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+          : '<div class="dice-play-thumb dice-play-thumb-empty">📦</div>'}
+        <div class="dice-play-body">
+          <div class="dice-play-head">
+            <span class="dice-tier dice-tier-${tier.cls}">${tier.label}</span>
+            <span class="dice-play-niche">${esc(play.nicheLabel)}</span>
+          </div>
+          <h4 class="dice-play-title">${esc(play.product)}</h4>
+          <div class="dice-play-money">
+            <span class="dice-play-profit ${headline > 0 ? 'good' : 'bad'}">${money(headline)}</span>
+            <span class="dice-play-profit-note">${headlineNote}</span>
+          </div>
+          <div class="dice-play-facts">${facts}</div>
+          <div class="dice-play-note">${esc(play.tierNote)}</div>
+          <div class="dice-play-evidence">${evidence}${play.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(play.disagreementMessage)}">⚠</span>` : ''}</div>
+          <div class="dice-play-where">${esc(play.whereToLook)}</div>
+          ${sources ? `<div class="dice-sources">${sources}</div>` : ''}
+          <div class="dice-play-actions">
+            <button class="btn btn-secondary small dice-hunt-btn" type="button" data-query="${esc(play.searchQuery)}">📍 Hunt this locally</button>
+            <a class="btn btn-ghost small" href="${esc(soldUrl)}" target="_blank" rel="noopener">See the sold comps ↗</a>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  // Hands the play straight to the local scan below — the roll says WHAT to buy, and Local Deals is
+  // already the panel that finds every one of them near you and ranks them.
+  function huntPlayLocally(query) {
+    if (!query) return;
+    const input = $('fb-query-input');
+    if (input) input.value = query;
+    const diceZip = $('dice-zip-input')?.value.trim() || '';
+    if (diceZip && $('fb-zip-input')) $('fb-zip-input').value = diceZip;
+    $('fb-arb-btn')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    runLocalArbitrage();
   }
 
   async function openSetupWithPolicies(status) {

@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=34" />
+  <link rel="stylesheet" href="style.css?v=35" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -176,6 +176,27 @@
             <button id="btn-import-listings" class="btn btn-primary" type="button">Import Listings</button>
             <button id="btn-new-ai-listing" class="btn btn-secondary" type="button">Create New AI Listing</button>
             <button id="btn-refresh-dashboard" class="btn btn-ghost light" type="button">Refresh Listings</button>
+          </div>
+        </div>
+
+        <!-- Roll the Dice. The only money feature on this page that asks the seller for nothing:
+             no keyword, no supplier file, no idea what to look for. It sweeps whole categories of
+             real sold data and comes back with what to buy and where. Given its own band rather
+             than a button in the hero row because for a seller who doesn't know what to sell, this
+             is the front door (see /api/opportunities/roll-the-dice). -->
+        <div class="dice-band">
+          <div class="dice-band-copy">
+            <p class="eyebrow">Don't know what to sell?</p>
+            <h2>🎲 Roll the Dice</h2>
+            <p class="dice-band-sub">
+              Sweeps whole categories of real eBay sold prices for the highest-profit products
+              selling right now, then goes and finds where you can buy them — with net profit after
+              fees, how fast it turns into cash, and how much sold history is behind the number.
+            </p>
+          </div>
+          <div class="dice-band-actions">
+            <button id="btn-roll-dice" class="btn btn-dice" type="button">🎲 Find the Money</button>
+            <span class="dice-band-note">No keyword needed · Free beta</span>
           </div>
         </div>
 
@@ -815,6 +836,74 @@
             <span id="opp-terapeak-status" class="opp-terapeak-status">Checking Terapeak connection…</span>
             <button id="opp-terapeak-connect" class="btn btn-primary small hidden" type="button">Connect Terapeak</button>
             <button id="opp-terapeak-disconnect" class="btn btn-secondary small hidden" type="button">Disconnect</button>
+          </div>
+
+          <!-- Roll the Dice — first panel in the finder on purpose: everything below it needs the
+               seller to already know what they're looking for, and this is the one that doesn't. -->
+          <div class="opp-supplier-panel dice-panel">
+            <h3 class="opp-supplier-heading">🎲 Roll the Dice — the biggest money on the board right now</h3>
+            <p class="opp-hint">
+              Sweeps several product categories of real eBay sold history at once, keeps only the
+              products with a genuine margin <em>and</em> genuine demand, then hunts for where each
+              one can be bought today. Add your zip code to include Craigslist and Facebook
+              Marketplace supply, not just eBay. <strong>Roll again</strong> sweeps different
+              categories every time.
+            </p>
+
+            <div class="dice-controls">
+              <div class="opp-field dice-field-zip">
+                <label for="dice-zip-input">Zip code <span class="dice-optional">optional</span></label>
+                <input id="dice-zip-input" type="text" inputmode="numeric" maxlength="10" placeholder="89101" />
+              </div>
+              <div class="opp-field">
+                <label for="dice-radius-select">Radius</label>
+                <select id="dice-radius-select">
+                  <option value="20">20 miles</option>
+                  <option value="40" selected>40 miles</option>
+                  <option value="60">60 miles</option>
+                  <option value="100">100 miles</option>
+                  <option value="250">250 miles</option>
+                </select>
+              </div>
+              <div class="opp-field">
+                <label for="dice-niches-select">Categories per roll</label>
+                <select id="dice-niches-select">
+                  <option value="2">2 — fastest</option>
+                  <option value="4" selected>4</option>
+                  <option value="6">6</option>
+                  <option value="8">8 — widest sweep</option>
+                </select>
+              </div>
+              <button id="dice-roll-btn" class="btn btn-dice opp-search-submit" type="button">🎲 Roll the Dice</button>
+              <button id="dice-again-btn" class="btn btn-secondary opp-search-submit hidden" type="button">🔄 Roll again — new categories</button>
+            </div>
+
+            <div id="dice-status" class="mr-status"></div>
+
+            <div id="dice-results" class="hidden">
+              <div id="dice-summary" class="opp-results-summary"></div>
+              <div id="dice-warning" class="fb-arb-warning hidden"></div>
+              <div id="dice-niche-chips" class="dice-niche-chips"></div>
+              <div class="dice-board-controls">
+                <label class="fb-arb-check"><input id="dice-only-buyable" type="checkbox" /> Only plays I can buy right now</label>
+                <span id="dice-shown" class="fb-arb-shown"></span>
+              </div>
+              <div id="dice-board" class="dice-board"></div>
+              <p class="fb-arb-footnote">
+                Resale prices are real eBay sold comps (the sold-comps database, blended with Terapeak
+                where both have data) — never asking prices. Profit subtracts eBay's standard final
+                value fee and the shipping the comps show buyers paying. <strong>Max to pay</strong> is
+                the price where the flip breaks even; <strong>target</strong> is what it takes to clear
+                $75 net at 75% ROI — the same bar Local Deals calls a goldmine.
+                A short board is the guards working, not an empty market: accessories, lots, broken-item
+                comps and anything that hasn't sold in four months are dropped before pricing; a product
+                needs at least five sold comps to appear at all; and supply priced under a quarter of
+                what the product itself sells for is rejected rather than booked as profit, because in
+                practice it's a spare part, an empty box or a broken unit. Nothing here accounts for your
+                drive, your time, or a used item not being what the photo says — verify condition before
+                you buy.
+              </p>
+            </div>
           </div>
 
           <div class="opp-supplier-panel">
@@ -2069,6 +2158,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=42"></script>
 </body>
 </html>

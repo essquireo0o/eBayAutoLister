@@ -24,6 +24,13 @@ public sealed class ResalePricing
     public string? DisagreementMessage { get; set; }
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
+    // How long the money stays tied up, and how many of these move a month — carried for the
+    // Roll the Dice board, where "days to cash" is part of judging one play against another. The
+    // local ranking doesn't use them; they cost nothing to carry, since AnalyzeProductAsync has
+    // already computed them.
+    public int? EstimatedDaysToSell { get; set; }
+    public decimal EstimatedMonthlySales { get; set; }
+    public int OpportunityScore { get; set; }
 
     public bool HasPrice => ExpectedSale is > 0 || Median is > 0;
 
@@ -46,6 +53,9 @@ public sealed class ResalePricing
             DisagreementMessage = analysis.PriceEstimate.DisagreementMessage,
             LiquidityScore = analysis.SellThrough.LiquidityScore,
             LiquidityLevel = analysis.SellThrough.LiquidityLevel,
+            EstimatedDaysToSell = analysis.SellThrough.EstimatedDaysToSell,
+            EstimatedMonthlySales = analysis.SellThrough.EstimatedMonthlySales,
+            OpportunityScore = analysis.Score.Score,
         };
     }
 }
@@ -81,10 +91,14 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
 {
     // A "goldmine" has to be earned on both axes — a big multiple AND enough sold history to
     // believe it. Thin data gets the honest label instead of the green badge.
-    private const decimal GoldmineRoiPercent = 75m;
-    private const decimal GoldmineProfit = 75m;
-    private const int GoldmineMinComps = 5;
-    private const int GoldmineMinConfidence = 50;
+    //
+    // Public because Roll the Dice quotes the same bar back at the seller ("pay under $X and this
+    // clears the goldmine threshold") — see JackpotHunter.TargetBuyPrice. One definition of a
+    // goldmine, not a second, friendlier one for the flashier feature.
+    public const decimal GoldmineRoiPercent = 75m;
+    public const decimal GoldmineProfit = 75m;
+    public const int GoldmineMinComps = 5;
+    public const int GoldmineMinConfidence = 50;
     private const decimal SolidRoiPercent = 30m;
     private const decimal SolidProfit = 25m;
     // Below this the sold history is too sparse to call anything, however good the arithmetic.

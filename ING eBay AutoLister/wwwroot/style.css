@@ -6533,3 +6533,284 @@ td.skeleton-cell { padding: 0 !important; }
 @media (max-width: 900px) {
   #new-listing-overlay .failure-panel { margin: 0 16px var(--s3); }
 }
+
+/* ── Roll the Dice ─────────────────────────────────────────────────────────────
+   The one feature a seller with no idea what to sell can use, so it gets the loudest
+   surface in the app: a full-width band on the dashboard and a gold-lit board in the
+   Opportunity Finder. Everything below still reads money in the same colours the rest
+   of the app uses — success/danger for profit, gold for a jackpot — because the point
+   is that these numbers are the same numbers, not a louder set of them. */
+.dice-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  flex-wrap: wrap;
+  margin-bottom: var(--s5);
+  padding: var(--s6) var(--s7);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--teal-700);
+  background:
+    radial-gradient(1200px 240px at 88% -40%, rgba(224, 187, 99, .28), transparent 60%),
+    linear-gradient(135deg, var(--teal-900), var(--teal-700));
+  box-shadow: var(--e3);
+  color: #fff;
+}
+
+.dice-band-copy { max-width: 720px; }
+.dice-band .eyebrow { color: var(--gold-light); }
+
+.dice-band h2 {
+  margin: var(--s1) 0 var(--s2);
+  font-size: var(--fs-2xl);
+  line-height: 1.15;
+  color: #fff;
+}
+
+.dice-band-sub {
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  color: rgba(255, 255, 255, .82);
+}
+
+.dice-band-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+}
+
+.dice-band-note {
+  font-size: var(--fs-xs);
+  text-align: center;
+  color: rgba(255, 255, 255, .7);
+}
+
+/* The one button in the app that should look like a lever worth pulling. */
+.btn-dice {
+  background: linear-gradient(180deg, var(--gold-light), var(--gold-dark));
+  border-color: #7d5a15;
+  color: #241a05;
+  font-size: var(--fs-md);
+  font-weight: 800;
+  letter-spacing: .01em;
+  padding: 12px 22px;
+  box-shadow: var(--e2), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+
+.btn-dice:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f0d38b, #b8862a);
+  box-shadow: var(--e3), 0 8px 22px rgba(199, 154, 54, .35), inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+
+.dice-panel { border-color: var(--gold); }
+
+.dice-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s3);
+  margin: var(--s4) 0 var(--s2);
+}
+
+.dice-field-zip { max-width: 130px; }
+
+.dice-optional {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+/* Where the sweep actually looked. Present even when a category gave up nothing — a roll
+   that reports "no plays" without saying where it dug can't be judged. */
+.dice-niche-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: var(--s3) 0;
+}
+
+.dice-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.dice-chip-hit {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+  color: var(--gold-dark);
+}
+
+.dice-chip-probe { color: var(--muted); font-size: var(--fs-2xs); }
+
+.dice-board-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin: var(--s3) 0 var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+.dice-board { display: flex; flex-direction: column; gap: var(--s3); }
+
+.dice-play {
+  display: flex;
+  gap: var(--s4);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.dice-play-jackpot { border-left-color: var(--gold); background: linear-gradient(90deg, var(--gold-soft), var(--card) 55%); }
+.dice-play-strong  { border-left-color: var(--success); }
+.dice-play-target  { border-left-color: var(--info); }
+.dice-play-thin    { border-left-color: var(--warning); }
+.dice-play-watch   { border-left-color: var(--line-strong); }
+.dice-play-pass    { border-left-color: var(--line-strong); opacity: .72; }
+
+.dice-play-rank {
+  flex: 0 0 24px;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--muted);
+  text-align: right;
+}
+
+.dice-play-thumb {
+  flex: 0 0 84px;
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+}
+
+.dice-play-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+
+.dice-play-body { flex: 1 1 auto; min-width: 0; }
+
+.dice-play-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.dice-tier {
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: #f1f4f5;
+  color: var(--muted);
+}
+
+.dice-tier-jackpot { background: var(--gold); color: #241a05; }
+.dice-tier-strong  { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-line); }
+.dice-tier-target  { background: var(--info-soft); color: var(--info); border: 1px solid var(--info-line); }
+.dice-tier-thin    { background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning-line); }
+
+.dice-play-niche { font-size: var(--fs-xs); color: var(--muted); }
+
+.dice-play-title {
+  margin: var(--s2) 0 var(--s1);
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.dice-play-money {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.dice-play-profit { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: -.01em; }
+.dice-play-profit.good { color: var(--success); }
+.dice-play-profit.bad  { color: var(--danger); }
+.dice-play-profit-note { font-size: var(--fs-sm); color: var(--ink-2); }
+
+.dice-play-facts,
+.dice-play-note,
+.dice-play-evidence,
+.dice-play-where {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.dice-play-facts { margin-top: var(--s1); }
+.dice-play-note { color: var(--ink); }
+.dice-play-evidence { color: var(--muted); }
+.dice-play-where { margin-top: var(--s1); font-weight: 600; color: var(--ink-2); }
+
+.dice-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.dice-source {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+}
+
+.dice-source-title {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dice-source-buy { font-weight: 700; color: var(--ink); }
+.dice-source-net { font-weight: 700; }
+.dice-source-net.good { color: var(--success); }
+.dice-source-net.bad  { color: var(--danger); }
+.dice-source-meta { color: var(--muted); font-size: var(--fs-xs); }
+
+.dice-play-actions {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-top: var(--s3);
+}
+
+/* eBay joins Craigslist and Facebook as a place supply comes from, so it needs the badge
+   colour the other two already have. */
+.local-badge-ebay { background: #0064d2; }
+
+@media (max-width: 900px) {
+  .dice-band { padding: var(--s5); }
+  .dice-band-actions { width: 100%; }
+  .dice-play { flex-wrap: wrap; }
+  .dice-play-thumb { flex-basis: 64px; width: 64px; height: 64px; }
+}

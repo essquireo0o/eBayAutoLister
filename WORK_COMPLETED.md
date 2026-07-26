@@ -1601,3 +1601,110 @@ to the same `GetListingsAsync` the dashboard already exercises against 87 real l
 unverified live: the blocked-Craigslist and Anthropic-529 paths, since neither service failed that way
 during the session — both are covered by tests, and the 529 handling is the same code path the live
 `invalid_request_error` case exercised end to end.
+
+---
+
+## 19. Roll the Dice — for the seller who doesn't know what to sell (autonomous session, 2026-07-26)
+
+Every money feature in this app until now started with something the seller already had: a keyword for
+Local Deals, a price list for the Supplier Analyzer, their own listings for Inventory Health. The
+seller who doesn't know **what to look for** — the one who most needs the app — had nothing to press.
+
+**Roll the Dice** is that button. It sweeps whole categories of the sold-comps database, keeps only the
+products with a real margin AND real demand, then goes and finds where those products can be bought
+today — pricing the flip with the same arithmetic the rest of the app already uses.
+
+### The money impact
+
+For a seller with no idea what to source, the alternative is guessing. A roll turns that into a ranked
+board of specific products, each with:
+
+* **net profit after fees on a buy that exists right now** — eBay Buy It Now, plus Craigslist and
+  Facebook Marketplace when a zip code is given;
+* **the most they can pay** (break-even) and **the price to pay** (`TargetBuyPrice` — the ask that
+  clears $75 net at 75% ROI, *the same bar Local Deals already calls a goldmine*);
+* **days to cash** and monthly sales velocity, so profit that takes six months to realise doesn't read
+  like profit that takes a week; and
+* **the evidence** — sold-comp count, confidence level, liquidity — on every single row.
+
+"Roll again" advances the sweep onto categories the last roll didn't touch, so seven rolls (at four
+categories a roll) have dug all 28. Every roll is reproducible from the seed printed on it.
+
+### Where the numbers come from — reused, not re-derived
+
+| Step | Reuses |
+|---|---|
+| Mine sold history per category | `IMarketplaceRepository.SearchByKeywordAsync` — hosted comps API or local SQLite, same matcher either way |
+| Price each surviving product | `AnalyzeProductAsync`, i.e. `ProductNormalizer` → `ComparableMatcher` → `MarketPriceEstimator` (**including its identity guard** and the local/Terapeak precision blend) → `SellThroughCalculator` → `ConfidenceScoringService` → `OpportunityScoringService` |
+| Ration live Terapeak scrapes | `LocalArbitrageAnalyzer.SelectScrapeTargets`, with a cache-only first pass — a product Terapeak already knows about costs nothing |
+| Cost every buy | `LocalArbitrageAnalyzer.Build` → `ProfitCalculator` + `FeeProfile`. An eBay listing is turned into a `LocalSupplyListing` (`JackpotHunter.AsSupplyListing`) precisely so buying on eBay and buying on Craigslist go through one profit path, not two |
+| Verdict tiers | `LocalArbitrageAnalyzer.Judge`'s goldmine/solid/thin/pass, mapped to jackpot/strong/thin/pass. Its four thresholds are now `public` so nothing here can invent a friendlier bar |
+
+New code is only the part that genuinely didn't exist: the category sweep and its rotation, and the
+clustering, screening, buy-side identity guard and play construction.
+
+### Six guards, because "jackpot" must never mean "hype"
+
+The first live run against the real comps database produced exactly the numbers this feature must never
+print: a $21 six-pack of HEPA filters booked as a **$97 flip**, and a $150 robot vacuum priced at
+**$504** off a keyword-tier comp match. Both are fixed, and every guard below is pinned by tests.
+
+1. **Pre-pricing screen** (`JackpotHunter.Screen`) — accessories, multi-unit lots, broken/for-parts comp
+   sets, medians under $40, products with no sale in 120 days, and clusters whose comps run more than
+   5x from cheapest to dearest (not one product) are dropped **before** a lookup is spent on them, each
+   with a recorded reason.
+2. **Vague clusters cost more evidence** — a cluster with no model-shaped token ("vitamix blender")
+   needs 6 sold comps where one keyed on a model number ("s19j") needs 4.
+3. **Minimum history to appear at all** (`HasEnoughHistoryToShow`) — 5+ comps. A two-comp estimate makes
+   the resale price, the break-even *and* the supply price floor meaningless, so the product is dropped
+   rather than shown with a caveat nobody reads.
+4. **The two reads must agree** (`EstimateAgreesWithSweep`) — the sweep's own cluster median and the
+   per-product estimate have to be within 2x of each other. This is what killed the $504 robot vacuum.
+5. **Buy-side identity guard** (`IsPlausibleSupply`) — a listing found on the buy side must not be an
+   accessory/parts/broken unit, must not say it merely *fits* the product, must not name a component the
+   product itself doesn't ("Dirty Water Tank to iRobot Roomba Combo 10 Max" — same brand, same model
+   number, $40 of plastic), must name the model, and must not be priced under **25% of the product's own
+   quick-sale price**. On one real roll this rejected 20 of the cheapest listings found.
+6. **Thin evidence can't wear a badge** — profit on fewer than 5 comps, or under 50 confidence, is capped
+   at "thin", and the "watch" note names the actual blocker (comp count vs. match confidence).
+
+The UI reports the whole funnel — comps mined → products worth a look → priced → sourced, plus how many
+were dropped and how much supply was rejected — because **a short board is the guards working**, and the
+seller has to be able to see that rather than assume the market is empty.
+
+### Files
+
+* `Services/CategorySweep.cs` (new) — 28 curated niches x 3 keyword probes each; deterministic,
+  seed-driven rotation (`Select`, `ProbesFor`, `NextSeed`, `RollsToCoverEverything`).
+* `Services/JackpotHunter.cs` (new) — `ProductSignature`/`Cluster` (sold listings → products, priced
+  per unit), `Screen`, `ShoppingQuery`, `IdentityTokens`/`IsPlausibleSupply`/`SupplyPriceFloor`,
+  `EstimateAgreesWithSweep`, `HasEnoughHistoryToShow`, `BreakEvenBuyPrice`, `TargetBuyPrice`,
+  `BuildPlay`, `JudgePlay`, `Rank`.
+* `Models/JackpotModels.cs` (new) — `JackpotCandidate`, `JackpotSourceOption`, `JackpotPlay`,
+  `JackpotNicheOutcome`, `JackpotResult`.
+* `Program.cs` — `GET /api/opportunities/roll-the-dice`, the four-phase `RollTheDiceAsync`
+  orchestration (sweep → screen → price → source), and DI registration.
+* `Services/LocalArbitrageAnalyzer.cs` — goldmine thresholds made public; `ResalePricing` now also
+  carries days-to-sell, monthly sales and the opportunity score, all already computed upstream.
+* `wwwroot/index.html` — the dashboard **Roll the Dice** band, the Opportunity Finder panel (zip /
+  radius / categories-per-roll, board, funnel, footnote), `app.js?v=42`, `style.css?v=35`.
+* `wwwroot/app.js` — `bindRollTheDice`, `rollTheDice(seed)`, `renderDice`, `renderDiceBoard`,
+  `dicePlayHtml`, and **Hunt this locally**, which hands a play's keyword straight to the existing
+  Local Deals scan.
+* `wwwroot/style.css` — dice band, board, tier badges, supply rows, `local-badge-ebay`.
+* Tests: `CategorySweepTests.cs` (13 cases), `JackpotHunterTests.cs` (51 cases).
+
+### Verified
+
+* `dotnet build` — 0 errors. `dotnet test` — **625 passed, 0 failed** (561 before; +64 new).
+* **Live, against the real hosted comps database and the real eBay Browse API**, at four different
+  seeds. A representative roll mined 527 sold comps across 4 categories → 11 products worth a look → 10
+  priced → 5 sourced → **9 plays**, with 1 product dropped on the evidence gates and 20 cheap listings
+  rejected as parts/accessories. Ranking, tiering, the funnel line, niche chips and supply rows all
+  rendered — driven through the real UI with Playwright (dashboard band → one click → board).
+* **Not verified live:** the local-classifieds half of sourcing (no zip was used, so no
+  Craigslist/Facebook scrape ran this session) and the Terapeak second pass (Terapeak isn't connected on
+  this machine). Both reuse `SearchLocalSourceAsync` / `SelectScrapeTargets` exactly as the Local Deals
+  scan already exercises them, and both are covered by that feature's existing tests.
+* Nothing was published, listed, or written to eBay. Every eBay call this feature makes is a read-only
+  Browse search.
