@@ -1825,3 +1825,180 @@ way and only the send is blocked.
   that is their click to make, not this session's. Every layer under it was exercised: the request
   body, the floor re-check, the range check and the preview path all ran; only the final
   `send_offer_to_interested_buyers` POST was not fired.
+
+---
+
+## 21. Liquidation Lot Analyzer — the one decision with the most money on it (autonomous session, 2026-07-26)
+
+Every money feature in this app so far prices **one item**: one product to source (§19), one local
+listing to flip (§11–12), one live listing to reprice (§13), one watcher to convert (§20). But the
+single biggest wins and the single biggest losses in reselling are not made one item at a time —
+they are made on **pallets, wholesale lots and estate/auction lots**, where a reseller commits
+hundreds or thousands of dollars in one go, usually against a "retail value" number that means
+nothing, and finds out whether they were right over the following six months.
+
+Paste the manifest (or photograph it), enter what the lot costs, and get the answer:
+**per-item resale → total lot resale → total cost → net profit → BUY / SKIP**, plus the highest
+price at which it is still a buy, and which handful of lines actually carry the value.
+
+`POST /api/lots/analyze` → the new **📦 Lot Analyzer** page.
+
+### The money
+
+Five numbers a pallet buyer cannot get anywhere else, each of which routinely decides a lot:
+
+1. **The fees and shipping on every unit.** This is what kills pallet math. On the sample manifest
+   below, 67 sellable units carry **$218 of eBay fees and $533 of shipping** — $751 that never
+   appears on the spreadsheet the lot was bought on, against a $1,446 resale.
+2. **The buyer's premium, the tax and the freight.** A $650 hammer price at a 15% premium, 8.375%
+   tax and $180 freight is **$990.10 all-in** — 52% more than the number the bidder was looking at.
+   The panel recomputes this live as those fields are typed.
+3. **The max bid.** Exact arithmetic, not a rule of thumb: net recovery is fixed by the manifest and
+   cost scales linearly with the ask, so `A = (R / (1 + r) − freight) / ((1 + premium)(1 + tax))`.
+   A test asserts that bidding exactly the max produces exactly the requested ROI. This is the
+   number to walk into the auction with.
+4. **The "retail value" test.** Manifests lead with MSRP. The sample's stated **$4,121 retail** is
+   worth **35% of that** on eBay. The retail column is *never* used as a value here — only as a
+   cross-check on whether the comp match makes sense.
+5. **Which lines carry the lot.** On the sample, **3 lines are 90.7% of the value**. Those are the
+   items to physically inspect before paying; the rest of the manifest is padding. A buyer who does
+   not know which three is buying blind.
+
+Plus **time to clear** — the slowest line sets the date, because the capital is not back until the
+last item sells — and **cost per sellable unit**, which is what each usable item really costs.
+
+### Reuse, not a second pricing engine
+
+| Step | Reuses |
+|---|---|
+| Read a CSV/TSV/pipe manifest | `ManifestParser` — **new**, deterministic, and it goes first |
+| Read a photo or prose lot description | `ClaudeService.AnalyzeManifestAsync` — **new**, fallback only |
+| Group lines into products | `TerapeakMarketService.BuildCacheKey` — the same key Terapeak caches on |
+| Price each product | `AnalyzeProductAsync`: `ProductNormalizer` → hosted comps DB → `ComparableMatcher` → `MarketPriceEstimator` → `SellThroughCalculator` → `ConfidenceScoringService` |
+| Cost every unit | `ProfitCalculator` + `FeeProfile` — a unit out of a pallet is costed by the same rules as a dropship, a local flip or a repriced listing |
+| Ration Terapeak scrapes | `LocalArbitrageAnalyzer.SelectScrapeTargets`, with a cache-only first pass |
+| Multi-pack detection | `ProductNormalizer`'s existing "lot of N" / "N pcs" quantity read |
+
+New code is only what genuinely did not exist: reading a manifest, recovery by grade, the cost
+allocation, the max-bid solve, the concentration analysis, and the verdict.
+
+### The deterministic parser goes first, on purpose
+
+Most manifests are spreadsheet exports. Columns can be read **exactly**: a parser cannot hallucinate
+a quantity or invent a line that was never on the pallet, and a 400-row manifest costs nothing to
+read. Claude is the fallback for what that cannot do — a photo of a printed manifest, or prose
+("estate lot: two Dewalt drills, a box of assorted cables"). A dropped `.csv`/`.txt` file is loaded
+straight into the paste box rather than sent to the model. The AI prompt is told plainly not to
+invent lines, because an imagined $400 item is a $400 error in a real purchase decision.
+
+Three parser traps are pinned by tests, because each produces a confident wrong number:
+**totals rows** counted as items (doubles a lot's apparent value), **"Extended Retail"** read as a
+unit price (multiplies every line by its quantity — `MatchHeader` now explicitly blocks line-total
+columns from the unit-price slot, a bug the tests caught), and **model years** read as quantities
+("2024 Ford F-150" is not 2,024 units).
+
+### Recovery is two numbers, shown and editable — not one hidden fudge
+
+A returns pallet does not yield 100% working units, and pretending otherwise is how these tools
+flatter bad lots. `LotAnalyzer.Grades` publishes **seven grades**, each with two separate figures,
+because they are two separate risks: **units sellable** (the dead, the missing, the empty boxes) and
+**price vs comps** (what the survivors fetch). Both are on screen, both are editable, and the deep
+discount on a returns pallet lives in the units that never sell rather than in a fictional haircut
+on the ones that do — the comps are already used-goods sales.
+
+The UI defaults to **tested customer returns (80% / 88%)**, not to the first grade in the list. The
+grades are ordered best-recovery first, so defaulting to index 0 would have defaulted a pallet tool
+to the rosiest assumptions in the app. Caught in the browser and fixed.
+
+### What it refuses to do
+
+The guards are the product. Most exist to **not** make a confident call:
+
+| Rule | Why |
+|---|---|
+| Multi-pack lines get **no price** | "Case of 12" against per-unit comps is the mistake that produced a 27% markdown on a working listing in §13. Multiplying by N would be worse — packs trade at a discount to N× |
+| Comp > 3× the stated retail → **excluded** | A mismatched product, not a bargain |
+| Comp < 5% of stated retail → **excluded** | An accessory match |
+| Comp < 15% of retail **on under 5 comps** → **excluded** | See below |
+| Coverage under 40% → **no verdict at all** | "Only 22% of this manifest could be priced" is not a skip, it is no answer |
+| Coverage under 60% → **"a lead, not a decision"** | The numbers are real for what was priced; the lot call is not |
+| Under 3 comps on a line → **"thin"**, never "priced" | The same evidence bar as §11 and §13 |
+| Net recovery ≤ 0 → **"dead lot"** | "Even free, this lot loses money" — said plainly |
+| Unprofitable but positive break-even → **"buy it lower"** | The useful answer is not "no", it is "yes, at $290" |
+| Ask price of 0 → **"add the ask"** | A resale total is not a verdict, and is not presented as one |
+| Lines the app refused to value are **never dropped** from the table | A line it would not price is exactly the one the buyer must eyeball |
+
+### Two defects the live runs caught
+
+Both were found by pointing this at the **real hosted comps database**, not reasoned about in the
+abstract, and both are now tests:
+
+1. **A $169 DeWalt DCD771C2 drill kit priced at $14 off two sold comps.** That is a spare battery,
+   not a drill kit. The original low-side guard sat at 2% of retail, so 8% sailed through — and it
+   *understates* a line, dragging the whole lot toward a wrong SKIP. Understating costs a buyer a
+   lot they should have bought, exactly as overstating costs them one they shouldn't. The low-side
+   check is now **scaled by evidence**: under 15% of stated retail is refused on fewer than 5 comps
+   and accepted with real history behind it, because some categories genuinely resell at a tenth of
+   MSRP. Excluding it dropped coverage from 79% to 58.7% — which is the honest number, and is
+   reported on screen.
+2. **A max bid built from half a manifest was being stated as a ceiling.** Every line the app
+   refuses to price can only *add* to what the lot returns, so at low coverage that number is a
+   **floor**, not a cap. Saying "bid there or walk" without the caveat would talk someone out of a
+   lot whose unpriced half was the good half. The verdict now says so.
+
+### A pre-existing navigation bug fixed on the way
+
+Closing any overlay (`showDashboard`) left `location.hash` still pointing at the closed section, so
+clicking that sidebar entry again set the hash to what it already was, fired no `hashchange`, and
+did **nothing** — and a reload landed on a section the user had already closed. This affected
+**Offers to Watchers, Inventory Health, Opportunity Finder and Photo Library**, not just the new
+page. Fixed at the shared source: the hash is cleared on close (`replaceState`, so no loop), and a
+nav click whose hash already matches navigates directly. Verified open → close → reopen on all five
+overlays.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/LotAnalysisModels.cs` | **New** — `ManifestLine`, `LotAnalysisRequest`, `LotGradeAssumption`, `LotLineAnalysis`, `LotTotals`, `LotConcentration`, `LotAnalysisResult` |
+| `Services/ManifestParser.cs` | **New** — delimiter detection, RFC 4180 splitting, header mapping (line-total columns blocked from the unit-price slot), headerless column inference, free-list parsing, money/quantity scalars |
+| `Services/LotAnalyzer.cs` | **New** — `Grades`/`Assumptions`, `BuildLine`, `RetailSanityCheck`, `AllocateCost`, `CostOf`, `Summarize`, `MaxAsk`, `Concentrate`, `Judge`, `Coverage`, `Rank` |
+| `Services/ClaudeService.cs` | `AnalyzeManifestAsync` — the photo/prose fallback extraction |
+| `Program.cs` | DI + `POST /api/lots/analyze`, `GET /api/lots/grades`, and the `AnalyzeLotAsync` orchestration (read → group → cache-only pass → rationed Terapeak pass → cost → judge) |
+| `wwwroot/index.html` | The **Lot Analyzer** section, sidebar entry, manifest input, cost/recovery controls. `app.js?v=44`, `style.css?v=37` |
+| `wwwroot/app.js` | `bindLotAnalyzer`, `runLotAnalysis`, `renderLot*`, `refreshLotCostLine`, the grade picker, file/photo drop; plus the shared nav-hash fix |
+| `wwwroot/style.css` | `.lot-*` — manifest input, cost fieldsets, verdict banner, concentration callout, value-carrying row edge |
+| `ING eBay AutoLister.Tests/ManifestParserTests.cs` | **New** — 28 cases |
+| `ING eBay AutoLister.Tests/LotAnalyzerTests.cs` | **New** — 56 cases |
+
+### Verified
+
+* `dotnet build` — **0 errors** (2 pre-existing `NU1903` warnings). `dotnet test` — **744 passed,
+  0 failed** (660 before; +84 new).
+* **Live, against the real hosted comps database** (dev ports 9371–9375). A 7-line returns manifest
+  at a $650 ask, 15% premium, $180 freight and 8.375% tax: 7 lines read → 7 products looked up →
+  4 priced → 1 excluded on the retail cross-check → **`buy_below`, break-even $412.92, max bid
+  $253.68 at 40% ROI**, 3 lines carrying 90.7% of the value, and resale at 35% of the manifest's
+  claimed retail. The plain-list path was exercised separately ("3x Ninja BL610", "…(qty 4)") with
+  no ask price → the `no_ask` verdict, quantities read correctly, and one line honestly showing a
+  **negative** net once $8/unit shipping is charged.
+* **Real browser (Playwright)**: sidebar entry, the live all-in cost line, grade switching resetting
+  both recovery figures, the empty-input guard, the verdict banner, chips, all 8 tiles, the
+  10-column table with value-carrying rows gold-edged and the excluded row labelled, the
+  concentration callout, and open/close/reopen on all five overlays. **No console errors.**
+* **Read-only end to end.** Nothing is listed, published, bought, bid on or sent anywhere; the only
+  outbound calls are the sold-comp lookups the app already makes.
+
+### Not verified / known limits
+
+* **The AI extraction path was not exercised live** — every live run used `useAi: false`, so the
+  deterministic parser was proven on its own. The prompt and its post-processing are covered only at
+  unit level.
+* **Without a retail column there is no cross-check.** In the plain-list run an Instant Pot priced at
+  $15.78/unit is plainly an accessory match, and with no stated MSRP the guard has nothing to test it
+  against. The row still shows its comp count and coverage still reflects what was priced, but a
+  manifest with a retail column is materially better protected than one without.
+* Recovery rates by grade are **published industry starting points**, not measurements of any
+  supplier — labelled as such on screen, and editable.
+* Not modelled: the buyer's time, storage, or units arriving different from the manifest. Said
+  plainly in the panel footnote rather than buried in a fabricated cost column.

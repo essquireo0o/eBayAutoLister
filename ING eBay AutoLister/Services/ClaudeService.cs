@@ -423,6 +423,111 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return products.Where(p => !string.IsNullOrWhiteSpace(p.ProductName) || !string.IsNullOrWhiteSpace(p.SearchQuery)).ToList();
     }
 
+    // ── Liquidation manifest / lot description → itemised lines ─────────────
+
+    /// <summary>
+    /// Reads a liquidation manifest that <see cref="ManifestParser"/> could not read on its own —
+    /// a photographed or screenshotted manifest, or a prose lot description of the kind auctions
+    /// and estate sales actually publish ("pallet of assorted power tools, includes two Dewalt
+    /// drills, a Milwaukee packout…").
+    ///
+    /// A clean CSV never reaches here: columns are read deterministically, which is both free and
+    /// impossible to hallucinate a quantity into. This is the fallback, and it is told plainly not
+    /// to invent lines, because an imagined $400 item is a $400 error in a buy decision.
+    /// </summary>
+    public async Task<List<ManifestLine>> AnalyzeManifestAsync(
+        string? manifestText, string? base64Image, string? mimeType, CancellationToken cancellationToken = default)
+    {
+        var prompt = $$"""
+            You are reading a LIQUIDATION MANIFEST for a reseller who is deciding whether to buy the
+            lot. The source is {{(string.IsNullOrWhiteSpace(base64Image) ? "the text below" : "the attached image" + (string.IsNullOrWhiteSpace(manifestText) ? "" : ", plus the text below"))}}.
+            It may be a pallet manifest, a wholesale lot sheet, an auction lot description, an estate
+            lot listing, or a photo of a printed manifest.
+
+            Extract EVERY distinct product line. For each one:
+            - Description: the item as written, cleaned up. Keep brand, model and the specs that
+              identify it. Do NOT merge different products into one line.
+            - Brand: brand/manufacturer if stated or obvious from the model, else empty string
+            - Model: model number / MPN / style code if stated, else empty string
+            - Upc: UPC/EAN/GTIN if stated, else empty string
+            - Quantity: units of THIS line in the lot. If it does not say, use 1. Read "2 pcs",
+              "x3", "QTY 4" and case counts. If the line is a case/pack of N of the same item and
+              the lot has M cases, Quantity is the number of SELLABLE units the buyer ends up with.
+            - UnitRetail: the manifest's stated retail/MSRP PER UNIT in US dollars, or null if none
+              is stated. If only an extended/total retail is shown, divide it by the quantity. Never
+              invent a retail price and never use your own estimate of what it sells for — this field
+              is only ever what the document itself claims.
+            - Condition: the condition/grade as stated for this line (e.g. "New", "Open box",
+              "Customer return", "Salvage"), else empty string
+            - SearchQuery: a SHORT eBay-search keyword string for this exact product — brand + model
+              + the one or two specs that distinguish it. This is what will be searched against real
+              sold listings, so no marketing words, no condition words, no quantities.
+
+            CRITICAL RULES:
+            - Extract only what is actually there. If the source is vague ("assorted housewares"),
+              return that as ONE line with the quantity it states — do not imagine what is in it.
+            - Never add a line that is not in the source. A made-up item becomes a made-up dollar
+              figure in a real purchase decision.
+            - Skip total/subtotal rows, page numbers, headers, terms and shipping notes.
+            - Extract up to 60 lines. If there are more, take the highest-value ones.
+
+            Return ONLY a valid JSON array — no markdown, no code fences, no extra text:
+            [
+              {
+                "Description": "",
+                "Brand": "",
+                "Model": "",
+                "Upc": "",
+                "Quantity": 1,
+                "UnitRetail": null,
+                "Condition": "",
+                "SearchQuery": ""
+              }
+            ]
+            {{(string.IsNullOrWhiteSpace(manifestText) ? "" : "\n\nMANIFEST TEXT:\n" + Truncate(manifestText, 20000))}}
+            """;
+
+        var content = new List<ContentBase>();
+        if (!string.IsNullOrWhiteSpace(base64Image))
+            content.Add(new ImageContent { Source = new ImageSource { MediaType = mimeType ?? "image/jpeg", Data = base64Image } });
+        content.Add(new TextContent { Text = prompt });
+
+        var messages = new List<Message> { new() { Role = RoleType.User, Content = content } };
+
+        var lines = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model = "claude-opus-4-8",
+                MaxTokens = 8192,
+                Messages = messages,
+                Thinking = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.medium }
+            },
+            response =>
+            {
+                var json = ExtractJsonArray(TextOf(response, "[]"));
+                return JsonSerializer.Deserialize<List<ManifestLine>>(json, JsonOptions) ?? [];
+            },
+            "AI manifest extraction",
+            cancellationToken);
+
+        foreach (var line in lines)
+        {
+            line.Description ??= "";
+            line.Brand ??= "";
+            line.Model ??= "";
+            line.Upc ??= "";
+            line.Condition ??= "";
+            line.Quantity = Math.Max(1, line.Quantity);
+            if (line.UnitRetail is <= 0m) line.UnitRetail = null;
+            if (string.IsNullOrWhiteSpace(line.SearchQuery)) line.SearchQuery = ManifestParser.BuildQuery(line);
+        }
+
+        return lines.Where(l => !string.IsNullOrWhiteSpace(l.Description) || !string.IsNullOrWhiteSpace(l.SearchQuery)).ToList();
+    }
+
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "\n[…manifest truncated…]";
+
     // ── Item name only → full listing (quick-fill) ──────────────────────────
 
     public Task<ListingData> AnalyzeProductNameAsync(string itemName, string? imageBase64, string? imageMimeType,

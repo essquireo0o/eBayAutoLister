@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=36" />
+  <link rel="stylesheet" href="style.css?v=37" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -51,6 +51,7 @@
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
+        <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
 
         <p class="nav-group-label">Account</p>
         <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
@@ -1503,6 +1504,150 @@
         </div>
       </div>
 
+      <!-- Liquidation Lot / Manifest Analyzer. One decision, a lot of money on it: pay the ask or
+           walk. Read-only end to end — nothing here lists, publishes or sends anything. -->
+      <section id="lots-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="lot-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Liquidation Lot Analyzer</div>
+              <h2>📦 Should You Buy This Pallet?</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="lot-analyze-btn" class="btn btn-primary" type="button">📦 Analyze This Lot</button>
+            <button id="lot-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">
+              Paste the manifest — a spreadsheet export, a lot description, anything — and say what the
+              lot costs. Every line gets priced against <strong>real eBay sold comps</strong>, every unit
+              gets charged its own fees and shipping, and you get the number that actually decides it:
+              <strong>net profit, and the most you can pay</strong>. A manifest's "retail value" column is
+              never used as a value here — only as a check on whether the match makes sense.
+            </p>
+
+            <div class="lot-input-grid">
+              <div class="lot-manifest-col">
+                <label class="lot-label" for="lot-manifest">The manifest</label>
+                <textarea id="lot-manifest" class="lot-manifest" rows="9" spellcheck="false"
+                  placeholder="Paste a CSV, a spreadsheet copy, or just describe the lot:&#10;&#10;Description, Qty, Unit Retail, Condition&#10;DeWalt DCD771C2 20V Drill Kit, 4, 169.00, Customer Return&#10;Ninja BL610 Blender, 6, 89.99, Shelf Pull&#10;&#10;…or: 3x Sony WH-1000XM4 headphones, 2 Instant Pot Duo 6qt, 12 assorted phone cases"></textarea>
+                <div class="lot-manifest-actions">
+                  <span id="lot-source-note" class="lot-source-note"></span>
+                  <button id="lot-sample-btn" class="btn btn-ghost small" type="button">Use a sample manifest</button>
+                </div>
+
+                <div id="lot-drop-zone" class="nl-drop-zone lot-drop-zone" tabindex="0">
+                  <div class="nl-drop-icon"></div>
+                  <p class="nl-drop-title">…or drop a photo or CSV of the manifest</p>
+                  <p class="nl-drop-sub">or <span class="link">click to browse</span> &nbsp;·&nbsp; JPG, PNG, CSV, TXT</p>
+                  <p class="nl-drop-hint">CSV and text files are read as columns — free, and it can't invent a line. Photos are read with AI.</p>
+                  <input id="lot-file-input" type="file" accept="image/*,.csv,.tsv,.txt" hidden />
+                </div>
+                <div id="lot-preview-wrap" class="nl-preview-wrap hidden">
+                  <img id="lot-preview-img" alt="Manifest photo" />
+                  <div style="margin-top:6px"><button id="lot-clear-image" class="btn btn-ghost small" type="button">Remove photo</button></div>
+                </div>
+              </div>
+
+              <div class="lot-cost-col">
+                <div class="lot-fieldset">
+                  <div class="lot-fieldset-title">What the lot costs</div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-ask">Ask / hammer price ($)</label>
+                    <input id="lot-ask" type="number" min="0" step="1" value="0" />
+                  </div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-premium" title="Auction houses add this to the hammer price. It is the cost line pallet buyers forget most often.">Buyer's premium (%)</label>
+                    <input id="lot-premium" type="number" min="0" max="40" step="0.5" value="0" />
+                  </div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-freight">Freight / pickup ($)</label>
+                    <input id="lot-freight" type="number" min="0" step="1" value="0" />
+                  </div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-tax">Sales tax (%)</label>
+                    <input id="lot-tax" type="number" min="0" max="20" step="0.1" value="0" />
+                  </div>
+                  <div id="lot-cost-line" class="lot-cost-line">All-in cost: $0</div>
+                </div>
+
+                <div class="lot-fieldset">
+                  <div class="lot-fieldset-title">What you'll actually recover</div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-grade">Lot grade</label>
+                    <select id="lot-grade"></select>
+                  </div>
+                  <div class="lot-assumption-row">
+                    <div class="opp-field inv-field-small">
+                      <label for="lot-sellable" title="Share of the units that are worth listing at all.">Units sellable (%)</label>
+                      <input id="lot-sellable" type="number" min="0" max="100" step="1" />
+                    </div>
+                    <div class="opp-field inv-field-small">
+                      <label for="lot-price-factor" title="What a sellable unit of this grade fetches against the sold comps.">Price vs comps (%)</label>
+                      <input id="lot-price-factor" type="number" min="0" max="100" step="1" />
+                    </div>
+                  </div>
+                  <p id="lot-grade-note" class="lot-grade-note"></p>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-handling" title="Ship, box, label and handle — charged on every unit you sell.">Ship &amp; pack per unit ($)</label>
+                    <input id="lot-handling" type="number" min="0" step="0.5" value="8" />
+                  </div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-target-roi">ROI you want (%)</label>
+                    <input id="lot-target-roi" type="number" min="0" max="500" step="5" value="40" />
+                  </div>
+                  <div class="opp-field inv-field-small">
+                    <label for="lot-max-lines">Price up to</label>
+                    <select id="lot-max-lines">
+                      <option value="25">25 lines</option>
+                      <option value="60" selected>60 lines</option>
+                      <option value="100">100 lines</option>
+                      <option value="150">150 lines</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="inv-controls lot-run-row">
+              <button id="lot-run-btn" class="btn btn-primary" type="button">📦 Analyze This Lot</button>
+              <span id="lot-status" class="inv-status"></span>
+            </div>
+          </div>
+
+          <div id="lot-warning" class="inv-warning hidden"></div>
+          <div id="lot-verdict" class="lot-verdict hidden"></div>
+          <div id="lot-summary" class="inv-summary hidden"></div>
+          <div id="lot-concentration" class="lot-concentration hidden"></div>
+
+          <div id="lot-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-opportunity"/></svg></div>
+              <div class="state-title">The biggest money in reselling is made — and lost — on lots.</div>
+              <p class="state-body">A pallet is one decision worth hundreds or thousands of dollars, usually made on a "retail value" number that means nothing. Paste the manifest and the ask, and get the real one: what it resells for, what the fees and shipping take, and the highest price at which it's still a buy.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('lot-sample-btn')?.click()">Try a sample manifest</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing is listed, bought or sent anywhere.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            Resale prices come from real sold comps (the sold-comps database, plus Terapeak when it's
+            connected) and use the <strong>quick-sale</strong> figure, because a lot gets liquidated, not
+            held out for the top price. Fees use the same profit model as the rest of the app — eBay
+            publishes no per-account fee API. Recovery rates by grade are industry starting points shown
+            above and editable; your own experience of a supplier beats them. Not modelled: your time,
+            storage, or the units that arrive different from the manifest.
+          </p>
+        </div>
+      </section>
+
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
           <div>
@@ -2288,6 +2433,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=43"></script>
+  <script src="app.js?v=44"></script>
 </body>
 </html>

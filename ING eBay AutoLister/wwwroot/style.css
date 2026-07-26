@@ -6882,3 +6882,177 @@ td.skeleton-cell { padding: 0 !important; }
   .dice-play { flex-wrap: wrap; }
   .dice-play-thumb { flex-basis: 64px; width: 64px; height: 64px; }
 }
+
+/* ── Liquidation Lot / Manifest Analyzer ──────────────────────────────────
+   Reuses the inventory-health tiles, table, warning bar and footnote
+   wholesale — it is the same money model pointed at a pallet instead of a
+   shelf, and it should read like it. What lives here is only what this
+   screen genuinely adds: the manifest input, the cost/recovery controls,
+   the verdict banner and the value-concentration callout. */
+
+.lot-input-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr);
+  gap: var(--s5);
+  margin-top: var(--s4);
+}
+
+.lot-manifest-col { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.lot-cost-col { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+
+.lot-label {
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.lot-manifest {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  /* Manifests are columns. A monospace box makes a misread column obvious
+     to the eye before the analysis has to report it. */
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.lot-manifest:focus { outline: none; border-color: var(--teal-600); box-shadow: 0 0 0 3px rgba(26,107,115,0.12); }
+
+.lot-manifest-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.lot-source-note { font-size: 11.5px; color: var(--muted); }
+
+.lot-drop-zone { padding: 18px 16px; }
+
+.lot-fieldset {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: var(--s4);
+  background: var(--soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.lot-fieldset-title {
+  font-size: 11px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--teal-700);
+}
+
+.lot-assumption-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+
+.lot-grade-note { font-size: 11px; color: var(--muted); line-height: 1.45; }
+
+.lot-cost-line {
+  margin-top: 2px;
+  padding-top: var(--s3);
+  border-top: 1px dashed var(--line-strong);
+  font-size: 13px;
+  color: var(--ink);
+}
+.lot-cost-parts { color: var(--muted); font-size: 11.5px; }
+
+.lot-run-row { margin-top: var(--s4); }
+
+/* The verdict. One line, unmissable, with the two prices worth walking into
+   a negotiation with sitting under it. */
+.lot-verdict {
+  margin: var(--s4) 0;
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.lot-v-buy    { border-left-color: var(--success); background: #f2faf6; }
+.lot-v-below  { border-left-color: var(--gold); background: var(--gold-soft); }
+.lot-v-thin   { border-left-color: var(--warning); background: #fffaf1; }
+.lot-v-skip   { border-left-color: var(--danger); background: #fdf4f3; }
+.lot-v-nodata { border-left-color: var(--line-strong); background: var(--soft); }
+
+.lot-verdict-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.lot-verdict-badge { font-size: 20px; font-weight: 900; letter-spacing: .01em; color: var(--ink); }
+.lot-verdict-net { font-size: 20px; font-weight: 800; color: var(--ink-2); }
+.lot-verdict-note { margin-top: 6px; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+
+.lot-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s3); }
+
+.lot-chip {
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.lot-chip-strong { border-color: var(--gold); background: var(--gold-soft); color: var(--gold-dark); font-weight: 700; }
+
+/* Which few lines carry the lot — the items to physically check before paying. */
+.lot-concentration {
+  margin: var(--s4) 0;
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.lot-conc-head { font-size: 14px; font-weight: 800; color: var(--ink); }
+.lot-conc-warn { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--gold-dark); font-weight: 600; }
+
+.lot-conc-list { margin: var(--s3) 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.lot-conc-list li { font-size: 12.5px; color: var(--ink); display: flex; justify-content: space-between; gap: var(--s3); }
+.lot-conc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lot-conc-share { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lot-conc-foot { margin-top: var(--s3); font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+
+/* Table: the value-carrying rows get a gold edge, because those are the ones
+   a buyer has to inspect. */
+.lot-table td { vertical-align: top; }
+.lot-row-key { background: rgba(199,154,54,0.05); }
+.lot-row-key td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
+
+.lot-key-flag {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--gold-soft);
+  color: var(--gold-dark);
+  white-space: nowrap;
+}
+
+.lot-s-priced   { background: #e3f2ec; color: var(--success); }
+.lot-s-thin     { background: #fdf0e2; color: var(--warning); }
+.lot-s-excluded { background: #f3e6f7; color: #6b2d7a; }
+.lot-s-nodata   { background: var(--soft); color: var(--muted); }
+
+@media (max-width: 1000px) {
+  .lot-input-grid { grid-template-columns: 1fr; }
+}

@@ -362,6 +362,7 @@
     bindPhotoLibrary();
     bindInventoryHealth();
     bindWatcherOffers();
+    bindLotAnalyzer();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -430,7 +431,13 @@
     on('btn-table-view', 'click', () => setViewMode('table'));
 
     document.querySelectorAll('.nav-item').forEach(btn => {
-      btn.addEventListener('click', () => { location.hash = btn.dataset.page || 'dashboard'; });
+      btn.addEventListener('click', () => {
+        const page = btn.dataset.page || 'dashboard';
+        // Setting the hash to what it already is fires no hashchange, so the click would do
+        // nothing at all. Navigate directly in that case.
+        if (location.hash.slice(1) === page) handleNav(page);
+        else location.hash = page;
+      });
     });
 
     window.addEventListener('hashchange', () => {
@@ -445,6 +452,7 @@
     if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
+    if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -477,6 +485,10 @@
       showOffersSection();
       return;
     }
+    if (page === 'lots') {
+      showLotsSection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -486,7 +498,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -494,6 +506,12 @@
 
   function showDashboard() {
     hideOverlaySections();
+    // Closing an overlay has to clear the hash too, or the URL keeps claiming we're on a page
+    // that is no longer open — which breaks the next click on that sidebar entry and makes a
+    // reload land on a section the user already closed. replaceState fires no hashchange, so
+    // this can't loop back into handleNav.
+    if (location.hash && location.hash !== '#dashboard')
+      history.replaceState(null, '', location.pathname + location.search);
     $('dashboard-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'dashboard'));
   }
@@ -3031,6 +3049,430 @@
   // ── Supplier File Analyzer (dropship profit calculator) ─────────────────
   let oppSupplierImageBase64 = '';
   let oppSupplierMimeType = 'image/jpeg';
+
+  // ── Liquidation Lot / Manifest Analyzer ────────────────────────────────────────────────────
+  // Paste a manifest, give the ask, get a buy/skip call. See LotAnalyzer.cs for the recovery
+  // assumptions, the exact max-bid solve and every case where it refuses to make a call.
+  let lotGrades       = [];
+  let lotImageBase64  = '';
+  let lotImageMime    = '';
+  let lotScan         = null;   // last LotAnalysisResult, kept so re-sorting never re-analyzes
+
+  const LOT_SAMPLE = [
+    'Description,Qty,Unit Retail,Condition',
+    'DeWalt DCD771C2 20V MAX Cordless Drill Driver Kit,4,169.00,Customer Return',
+    'Ninja BL610 Professional 72oz Countertop Blender,6,89.99,Shelf Pull',
+    'Sony WH-1000XM4 Wireless Noise Cancelling Headphones,2,348.00,Open Box',
+    'Instant Pot Duo 7-in-1 6 Quart Pressure Cooker,5,99.95,Customer Return',
+    'Anker PowerCore 10000 Portable Charger,20,25.99,New',
+    'Assorted phone cases mixed models,40,19.99,New',
+    'Keurig K-Classic K55 Single Serve Coffee Maker,3,129.99,Customer Return',
+    'TOTAL,80,4021.55,',
+  ].join('\n');
+
+  function showLotsSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('lots-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'lots'));
+    loadLotGrades();
+  }
+
+  function closeLotsSection() {
+    $('lots-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindLotAnalyzer() {
+    on('lot-close', 'click', closeLotsSection);
+    on('lot-home',  'click', closeLotsSection);
+    on('lot-analyze-btn', 'click', runLotAnalysis);
+    on('lot-run-btn',     'click', runLotAnalysis);
+    on('lot-sample-btn',  'click', () => {
+      const box = $('lot-manifest');
+      if (box) { box.value = LOT_SAMPLE; box.focus(); }
+      if ($('lot-ask') && !parseFloat($('lot-ask').value)) $('lot-ask').value = '650';
+      refreshLotCostLine();
+    });
+    on('lot-grade', 'change', () => applyLotGrade($('lot-grade').value, true));
+    on('lot-clear-image', 'click', lotClearImage);
+
+    ['lot-ask', 'lot-premium', 'lot-freight', 'lot-tax'].forEach(id => on(id, 'input', refreshLotCostLine));
+    ['lot-grade', 'lot-handling', 'lot-target-roi'].forEach(id => on(id, 'change', saveLotPrefs));
+
+    const zone  = $('lot-drop-zone');
+    const input = $('lot-file-input');
+    zone?.addEventListener('click', e => { if (e.target !== input) input?.click(); });
+    zone?.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone?.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over'); });
+    zone?.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = e.dataTransfer?.files?.[0];
+      if (file) lotLoadFile(file);
+    });
+    input?.addEventListener('change', () => { if (input.files[0]) lotLoadFile(input.files[0]); });
+
+    restoreLotPrefs();
+    refreshLotCostLine();
+  }
+
+  // A CSV or text file is read as text and dropped straight into the paste box, because the
+  // deterministic column parser is both free and unable to invent a line that wasn't on the
+  // pallet. Only a photo needs the AI path.
+  function lotLoadFile(file) {
+    const mime = file.type || '';
+    const name = (file.name || '').toLowerCase();
+    const isText = mime.startsWith('text/') || /\.(csv|tsv|txt)$/.test(name);
+
+    const reader = new FileReader();
+    if (isText) {
+      reader.onload = ev => {
+        const box = $('lot-manifest');
+        if (box) box.value = String(ev.target.result || '');
+        addActivity('Manifest loaded', file.name || 'Manifest file');
+        setLotStatus('Manifest file loaded — set the ask price and analyze.');
+      };
+      reader.readAsText(file);
+      return;
+    }
+    if (!mime.startsWith('image/')) {
+      setLotStatus('That file type can\'t be read. Use a CSV, a text file, or a photo of the manifest.');
+      return;
+    }
+    lotImageMime = mime;
+    reader.onload = ev => {
+      lotImageBase64 = String(ev.target.result).split(',')[1];
+      $('lot-preview-img').src = ev.target.result;
+      $('lot-drop-zone')?.classList.add('hidden');
+      $('lot-preview-wrap')?.classList.remove('hidden');
+      addActivity('Manifest photo loaded', file.name || 'Manifest photo');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function lotClearImage() {
+    lotImageBase64 = '';
+    lotImageMime = '';
+    $('lot-drop-zone')?.classList.remove('hidden');
+    $('lot-preview-wrap')?.classList.add('hidden');
+    if ($('lot-file-input')) $('lot-file-input').value = '';
+  }
+
+  async function loadLotGrades() {
+    if (lotGrades.length) return;
+    try {
+      const res = await fetch('/api/lots/grades');
+      const data = await res.json();
+      lotGrades = data.grades || [];
+    } catch { lotGrades = []; }
+
+    const sel = $('lot-grade');
+    if (!sel || !lotGrades.length) return;
+    sel.innerHTML = lotGrades.map(g => `<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');
+    // The grades are listed best-recovery first, so the first option is also the rosiest set of
+    // assumptions in the app. Defaulting a pallet tool to that is how it flatters a bad lot, so
+    // the default matches the server's: tested customer returns, the honest middle.
+    const saved = localStorage.getItem('lotGrade');
+    sel.value = saved && lotGrades.some(g => g.id === saved) ? saved
+      : (lotGrades.some(g => g.id === 'customer_returns') ? 'customer_returns' : sel.value);
+    applyLotGrade(sel.value, true);
+  }
+
+  // The two recovery numbers are shown, not hidden in the server — a buyer who has opened forty
+  // of these pallets knows their own rate. Changing the grade resets them to that grade's default.
+  function applyLotGrade(id, resetOverrides) {
+    const grade = lotGrades.find(g => g.id === id);
+    if (!grade) return;
+    if (resetOverrides) {
+      if ($('lot-sellable'))     $('lot-sellable').value     = grade.sellableRatePercent;
+      if ($('lot-price-factor')) $('lot-price-factor').value = grade.priceFactorPercent;
+    }
+    const note = $('lot-grade-note');
+    if (note) note.textContent = `${grade.note} Defaults: ${grade.sellableRatePercent}% of units sellable, at ${grade.priceFactorPercent}% of the sold-comp price. Edit either if you know better.`;
+  }
+
+  function saveLotPrefs() {
+    localStorage.setItem('lotGrade', $('lot-grade')?.value || '');
+    localStorage.setItem('lotHandling', $('lot-handling')?.value || '');
+    localStorage.setItem('lotTargetRoi', $('lot-target-roi')?.value || '');
+  }
+
+  function restoreLotPrefs() {
+    const handling = localStorage.getItem('lotHandling');
+    const roi = localStorage.getItem('lotTargetRoi');
+    if (handling && $('lot-handling')) $('lot-handling').value = handling;
+    if (roi && $('lot-target-roi'))    $('lot-target-roi').value = roi;
+  }
+
+  function lotNum(id, fallback = 0) {
+    const value = parseFloat($(id)?.value);
+    return isFinite(value) ? value : fallback;
+  }
+
+  // Mirrors LotAnalyzer.CostOf exactly: tax follows the hammer plus the premium (which is how
+  // auction houses bill it), freight is invoiced separately.
+  function refreshLotCostLine() {
+    const ask = Math.max(0, lotNum('lot-ask'));
+    const premium = Math.round(ask * Math.max(0, lotNum('lot-premium')) / 100 * 100) / 100;
+    const tax = Math.round((ask + premium) * Math.max(0, lotNum('lot-tax')) / 100 * 100) / 100;
+    const freight = Math.max(0, lotNum('lot-freight'));
+    const total = ask + premium + tax + freight;
+    const el = $('lot-cost-line');
+    if (!el) return;
+    const parts = [];
+    if (premium > 0) parts.push(`${moneyExact(premium)} premium`);
+    if (tax > 0)     parts.push(`${moneyExact(tax)} tax`);
+    if (freight > 0) parts.push(`${moneyExact(freight)} freight`);
+    el.innerHTML = `All-in cost: <strong>${moneyExact(total)}</strong>${parts.length ? ` <span class="lot-cost-parts">(${parts.join(' · ')})</span>` : ''}`;
+  }
+
+  function setLotStatus(text) {
+    const el = $('lot-status');
+    if (el) el.textContent = text || '';
+  }
+
+  async function runLotAnalysis() {
+    const manifest = ($('lot-manifest')?.value || '').trim();
+    if (!manifest && !lotImageBase64) {
+      setLotStatus('Paste the manifest, or drop a photo of it, first.');
+      $('lot-manifest')?.focus();
+      return;
+    }
+
+    const buttons = ['lot-analyze-btn', 'lot-run-btn'].map(id => $(id)).filter(Boolean);
+    buttons.forEach(b => { b.disabled = true; b.textContent = 'Analyzing…'; });
+    setLotStatus('Reading the manifest and pricing every line against sold comps…');
+    $('lot-results').innerHTML = '<p class="opportunity-empty">Pricing each product against real sold listings. A long manifest takes a minute.</p>';
+
+    const body = {
+      manifestText: manifest,
+      imageBase64: lotImageBase64 || null,
+      mimeType: lotImageMime || 'image/jpeg',
+      askPrice: Math.max(0, lotNum('lot-ask')),
+      buyerPremiumPercent: Math.max(0, lotNum('lot-premium')),
+      freightCost: Math.max(0, lotNum('lot-freight')),
+      salesTaxPercent: Math.max(0, lotNum('lot-tax')),
+      conditionGrade: $('lot-grade')?.value || 'customer_returns',
+      sellableRatePercent: lotNum('lot-sellable', 0) || null,
+      conditionPriceFactorPercent: lotNum('lot-price-factor', 0) || null,
+      perUnitHandlingCost: Math.max(0, lotNum('lot-handling', 8)),
+      targetRoiPercent: Math.max(0, lotNum('lot-target-roi', 40)),
+      maxLines: parseInt($('lot-max-lines')?.value || '60', 10),
+    };
+
+    try {
+      const res = await guardedFetch('/api/lots/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The analysis failed.');
+      lotScan = data;
+      renderLot(data);
+    } catch (err) {
+      lotScan = null;
+      ['lot-verdict', 'lot-summary', 'lot-concentration'].forEach(id => $(id)?.classList.add('hidden'));
+      $('lot-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The analysis failed.')}</p>`;
+      setLotStatus('');
+    } finally {
+      buttons.forEach(b => { b.disabled = false; });
+      if ($('lot-analyze-btn')) $('lot-analyze-btn').textContent = '📦 Analyze This Lot';
+      if ($('lot-run-btn'))     $('lot-run-btn').textContent     = '📦 Analyze This Lot';
+    }
+  }
+
+  const LOT_VERDICTS = {
+    buy:       { label: '✅ BUY IT',        cls: 'lot-v-buy' },
+    buy_below: { label: '💰 BUY IT LOWER',  cls: 'lot-v-below' },
+    thin:      { label: '⚠️ THIN',          cls: 'lot-v-thin' },
+    skip:      { label: '⛔ SKIP',          cls: 'lot-v-skip' },
+    dead:      { label: '☠️ DEAD LOT',      cls: 'lot-v-skip' },
+    no_ask:    { label: '💵 ADD THE ASK',   cls: 'lot-v-thin' },
+    no_data:   { label: '❓ CAN’T CALL IT', cls: 'lot-v-nodata' },
+  };
+
+  function renderLot(data) {
+    const note = $('lot-source-note');
+    if (note) note.textContent = data.sourceNote || '';
+
+    const notes = [];
+    if (data.error) notes.push(data.error);
+    if (data.dataWarning) notes.push(data.dataWarning);
+    (data.warnings || []).forEach(w => notes.push(w));
+    const warn = $('lot-warning');
+    if (notes.length) { warn.textContent = notes.join(' '); warn.classList.remove('hidden'); }
+    else warn?.classList.add('hidden');
+
+    renderLotVerdict(data);
+    renderLotSummary(data);
+    renderLotConcentration(data);
+    renderLotRows(data);
+
+    setLotStatus(
+      `${data.linesExtracted} line${data.linesExtracted === 1 ? '' : 's'} read · ${data.linesPriced} priced · ` +
+      `${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} looked up` +
+      (data.linesExcluded ? ` · ${data.linesExcluded} held out of the totals` : '') +
+      (data.terapeakScrapesUsed ? ` · ${data.terapeakScrapesUsed} Terapeak check${data.terapeakScrapesUsed === 1 ? '' : 's'}` : ''));
+  }
+
+  function renderLotVerdict(data) {
+    const el = $('lot-verdict');
+    if (!el) return;
+    const v = LOT_VERDICTS[data.verdict] || LOT_VERDICTS.no_data;
+    const t = data.totals || {};
+
+    // The two prices worth walking into a negotiation with. Both are exact arithmetic on the
+    // manifest, not a rule of thumb — see LotAnalyzer.MaxAsk.
+    const chips = [];
+    if (data.maxBid != null)
+      chips.push(`<span class="lot-chip lot-chip-strong">Pay up to <strong>${moneyExact(data.maxBid)}</strong> for ${Number(data.targetRoiPercent).toFixed(0)}% ROI</span>`);
+    if (data.breakEvenAsk != null)
+      chips.push(`<span class="lot-chip">Break-even at <strong>${moneyExact(data.breakEvenAsk)}</strong></span>`);
+    if (t.totalCost > 0)
+      chips.push(`<span class="lot-chip">You'd pay <strong>${moneyExact(t.totalCost)}</strong> all-in</span>`);
+    chips.push(`<span class="lot-chip">${Number(data.coveragePercent || 0).toFixed(0)}% of the manifest's value priced</span>`);
+
+    el.className = `lot-verdict ${v.cls}`;
+    el.innerHTML = `
+      <div class="lot-verdict-head">
+        <span class="lot-verdict-badge">${v.label}</span>
+        <span class="lot-verdict-net">${t.netProfit != null && (t.totalCost > 0) ? moneyExact(t.netProfit) + ' net' : ''}</span>
+      </div>
+      <p class="lot-verdict-note">${esc(data.verdictNote || '')}</p>
+      <div class="lot-chips">${chips.join('')}</div>`;
+    el.classList.remove('hidden');
+  }
+
+  function renderLotSummary(data) {
+    const el = $('lot-summary');
+    if (!el) return;
+    const t = data.totals || {};
+    const a = data.assumptions || {};
+
+    const tiles = [
+      { label: 'Net profit on the lot', value: t.totalCost > 0 ? moneyExact(t.netProfit) : '—',
+        sub: t.roiPercent != null ? `${Number(t.roiPercent).toFixed(1)}% ROI · ${t.marginPercent != null ? Number(t.marginPercent).toFixed(0) + '% margin' : ''}` : 'Enter the ask price',
+        tone: t.totalCost > 0 ? (t.netProfit > 0 ? 'good' : 'bad') : '' },
+      { label: 'What it resells for', value: money(t.grossResale),
+        sub: `${Number(t.sellableUnits || 0).toFixed(0)} sellable of ${t.manifestUnits || 0} units on the manifest`, tone: '' },
+      { label: 'eBay fees + shipping', value: money((t.estimatedFees || 0) + (t.estimatedShipCost || 0)),
+        sub: `${money(t.estimatedFees)} fees · ${money(t.estimatedShipCost)} to ship every unit`, tone: 'warn' },
+      { label: 'Clears after selling costs', value: money(t.netRecovery),
+        sub: 'Before you pay for the lot', tone: '' },
+      { label: 'Cost per sellable unit', value: t.costPerSellableUnit > 0 ? moneyExact(t.costPerSellableUnit) : '—',
+        sub: 'What each usable item costs you', tone: '' },
+      { label: 'Manifest "retail value"', value: t.manifestRetailTotal > 0 ? money(t.manifestRetailTotal) : '—',
+        sub: t.resalePercentOfRetail != null
+          ? `Really worth ${Number(t.resalePercentOfRetail).toFixed(0)}% of that on eBay`
+          : 'No retail column on this manifest',
+        tone: t.resalePercentOfRetail != null && t.resalePercentOfRetail < 40 ? 'warn' : '' },
+      { label: 'Time to clear the lot', value: t.daysToSellSlowestLine != null ? `${t.daysToSellSlowestLine}d` : '—',
+        sub: t.medianDaysToSell != null ? `Typical line ${t.medianDaysToSell}d · slowest line sets the date` : 'No velocity data',
+        tone: t.daysToSellSlowestLine != null && t.daysToSellSlowestLine > 180 ? 'warn' : '' },
+      { label: 'Recovery assumed', value: `${Number(a.sellableRatePercent || 0).toFixed(0)}%`,
+        sub: `${esc(a.label || '')} · sells at ${Number(a.priceFactorPercent || 0).toFixed(0)}% of comps`, tone: '' },
+    ];
+
+    el.innerHTML = tiles.map(t2 => `
+      <div class="inv-tile ${t2.tone ? 'inv-tile-' + t2.tone : ''}">
+        <div class="inv-tile-label">${esc(t2.label)}</div>
+        <div class="inv-tile-value">${esc(t2.value)}</div>
+        <div class="inv-tile-sub">${t2.sub}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  function renderLotConcentration(data) {
+    const el = $('lot-concentration');
+    if (!el) return;
+    const c = data.concentration || {};
+    if (!c.linesForEightyPercent) { el.classList.add('hidden'); return; }
+
+    const key = (data.items || []).filter(i => i.carriesTheValue).slice(0, 6);
+    el.innerHTML = `
+      <div class="lot-conc-head">💎 ${c.linesForEightyPercent} line${c.linesForEightyPercent === 1 ? '' : 's'} carry 80% of this lot's value</div>
+      ${c.warning ? `<p class="lot-conc-warn">${esc(c.warning)}</p>` : ''}
+      <ol class="lot-conc-list">${key.map(i => `
+        <li><span class="lot-conc-name">${esc(i.description)}</span>
+            <span class="lot-conc-share">${Number(i.valueSharePercent).toFixed(1)}% · ${money(i.netRecovery)}</span></li>`).join('')}</ol>
+      <p class="lot-conc-foot">These are the items to physically check before you pay. Everything else on the manifest is padding by value.</p>`;
+    el.classList.remove('hidden');
+  }
+
+  const LOT_STATUS = {
+    priced:   { label: 'Priced',   cls: 'lot-s-priced' },
+    thin:     { label: 'Thin data', cls: 'lot-s-thin' },
+    excluded: { label: 'Held out', cls: 'lot-s-excluded' },
+    no_data:  { label: 'No comps', cls: 'lot-s-nodata' },
+  };
+
+  function renderLotRows(data) {
+    const el = $('lot-results');
+    const rows = data.items || [];
+    if (!rows.length) {
+      el.innerHTML = '<p class="opportunity-empty">No product lines could be read from that. Paste it as a table (description, quantity, retail), or drop a photo of the manifest.</p>';
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table lot-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="num">Qty</th>
+            <th class="num">Retail ea.</th>
+            <th class="num">Resale ea.</th>
+            <th class="num">Sellable</th>
+            <th class="num">Clears</th>
+            <th class="num">Cost share</th>
+            <th class="num">Net</th>
+            <th class="num">% of lot</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(lotRowHtml).join('')}</tbody>
+      </table>`;
+  }
+
+  function lotRowHtml(item) {
+    const s = LOT_STATUS[item.status] || LOT_STATUS.no_data;
+    const priced = item.status === 'priced' || item.status === 'thin';
+    // "Priced as" is only worth saying when the lookup ran on different words than the line's own —
+    // otherwise it implies a match that wasn't made against this exact wording.
+    const pricedAs = item.pricedAs && item.pricedAs !== item.description
+      ? `<div class="inv-sub">priced as “${esc(item.pricedAs)}”</div>` : '';
+
+    return `
+      <tr class="${item.carriesTheValue ? 'lot-row-key' : ''} ${priced ? '' : 'wo-row-muted'}">
+        <td class="inv-cell-title">
+          <div>${esc(item.description)}${item.carriesTheValue ? ' <span class="lot-key-flag">carries the value</span>' : ''}</div>
+          ${pricedAs}
+          ${item.condition ? `<div class="inv-sub">${esc(item.condition)}</div>` : ''}
+        </td>
+        <td class="num">${item.quantity}</td>
+        <td class="num">${item.unitRetail != null ? moneyExact(item.unitRetail) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${item.unitResale != null
+            ? `${moneyExact(item.unitResale)}${item.compUnitPrice != null && item.compUnitPrice !== item.unitResale
+                ? `<div class="inv-sub">comps ${moneyExact(item.compUnitPrice)}</div>` : ''}`
+            : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${priced ? Number(item.sellableUnits).toFixed(1) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${priced ? money(item.netRecovery) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${item.allocatedCost > 0 ? money(item.allocatedCost) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${item.allocatedCost > 0
+            ? `<span class="${item.netProfit > 0 ? 'inv-gap-good' : 'inv-gap-bad'}">${money(item.netProfit)}</span>${
+                item.roiPercent != null ? `<div class="inv-sub">${Number(item.roiPercent).toFixed(0)}% ROI</div>` : ''}`
+            : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${item.valueSharePercent > 0 ? Number(item.valueSharePercent).toFixed(1) + '%' : '<span class="inv-dash">—</span>'}</td>
+        <td class="inv-cell-verdict">
+          <span class="inv-verdict ${s.cls}">${s.label}</span>
+          <div class="inv-note">${esc(item.statusNote || '')}</div>
+          ${item.estimatedDaysToSell != null && priced
+            ? `<div class="inv-signals">~${item.estimatedDaysToSell}d to clear this line</div>` : ''}
+        </td>
+      </tr>`;
+  }
 
   function bindSupplierAnalyzer() {
     const dropZone  = $('opp-supplier-drop-zone');

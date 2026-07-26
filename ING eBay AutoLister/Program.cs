@@ -237,6 +237,11 @@ builder.Services.AddSingleton<JackpotHunter>();
 // break-even-checked one.
 builder.Services.AddSingleton<CostBasisStore>();
 builder.Services.AddSingleton<InventoryHealthAnalyzer>();
+// Liquidation lots — the same pricing stack pointed at a whole pallet at once. LotAnalyzer owns
+// only the part that is specific to buying in bulk: recovery by grade, per-unit fees across every
+// unit on the manifest, the ask allocated across the lines, the max bid solved exactly, and which
+// few lines actually carry the value. Orchestrated in AnalyzeLotAsync below.
+builder.Services.AddSingleton<LotAnalyzer>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -1696,6 +1701,50 @@ app.MapGet("/api/opportunities/roll-the-dice", async (
     }
 });
 
+// ── Liquidation lot / manifest analyzer ───────────────────────────────────────────────────────
+// A pallet, a wholesale lot or an estate lot is one decision with a lot of money on it: pay the
+// ask, or walk. Paste the manifest (or photograph it), give the ask price, and this prices every
+// line against real sold comps and answers it — with the max bid, and with the handful of lines
+// that actually carry the value called out, because those are the ones to inspect before paying.
+//
+// Read-only end to end: nothing is listed, published or sent anywhere.
+app.MapPost("/api/lots/analyze", async (
+    LotAnalysisRequest req, ClaudeService claude, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LotAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ManifestText) && string.IsNullOrWhiteSpace(req.ImageBase64))
+        return Results.BadRequest(new { error = "Paste a manifest or drop a photo of one." });
+
+    try
+    {
+        var result = await AnalyzeLotAsync(
+            req, claude, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+            feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+    catch (Exception ex)
+    {
+        // A lot analysis spans an extraction, the comps database and possibly Terapeak. Whatever
+        // breaks comes back as a sentence on the page, not a rejected fetch after a long wait.
+        log.Add("Error", "Lot analysis failed", ex.Message);
+        return Results.Ok(new LotAnalysisResult
+        {
+            Status = "error",
+            Error = $"The lot couldn't be analyzed: {ex.Message}",
+            Verdict = "no_data",
+            VerdictNote = "The analysis did not finish, so there is no verdict.",
+        });
+    }
+});
+
+// The grade table, so the UI renders the picker (and its recovery assumptions) from one source of
+// truth rather than a second copy hardcoded in HTML.
+app.MapGet("/api/lots/grades", () => Results.Ok(new { grades = LotAnalyzer.Grades }));
+
 // ── Inventory health ──────────────────────────────────────────────────────────────────────────
 // Everything else in this app looks forward at inventory the seller has not bought yet. This looks
 // backward at what they already own and are already paying to hold.
@@ -2940,6 +2989,232 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
         MarketValue = marketValue, AveragePrice = averagePrice, SoldSource = soldSource,
         ListingType = listingType, SellThroughPercent = sellThroughPercent, Items = opportunities
     };
+}
+
+// Liquidation lot analysis: read the manifest, price every line against real sold comps, then let
+// LotAnalyzer turn that plus the ask price into a buy/skip call.
+//
+// Reuses AnalyzeProductAsync for the pricing, so a unit out of a pallet is valued by exactly the
+// stack that values a dropship, a local flip or a live listing being repriced — there is no
+// second, friendlier pricing engine for the feature with the biggest number on it.
+//
+// Two things are rationed, because one click here fans out over a whole manifest:
+//   * comp lookups are per distinct PRODUCT, not per line — a manifest listing the same drill on
+//     six rows is one lookup, and it is keyed on Terapeak's own cache key so a cached scrape is
+//     shared too;
+//   * real Terapeak scrapes only happen in a second pass, only for the lines where the most money
+//     hangs on the answer, and only up to a hard budget. Pass 1 is cache-only.
+static async Task<LotAnalysisResult> AnalyzeLotAsync(
+    LotAnalysisRequest req, ClaudeService claude, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LotAnalyzer analyzer, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    const int TerapeakBudget = 5;
+
+    var result = new LotAnalysisResult
+    {
+        TargetRoiPercent = Math.Clamp(req.TargetRoiPercent, 0m, 500m),
+        TerapeakConnected = terapeak.IsConnected,
+    };
+
+    // ── Read the manifest ───────────────────────────────────────────────────────────────────────
+    // The deterministic parser goes first and wins whenever it can: a CSV has columns, columns can
+    // be read exactly, it costs nothing, and it cannot invent a line that was never on the pallet.
+    // Claude is the fallback for what that genuinely cannot do — a photo, or prose.
+    var parsed = ManifestParser.Parse(req.ManifestText);
+    var lines = parsed.Lines;
+    result.SourceFormat = parsed.Format;
+    result.SourceNote = parsed.Note;
+
+    var needsAi = !string.IsNullOrWhiteSpace(req.ImageBase64) || lines.Count < 2;
+    if (needsAi && req.UseAi)
+    {
+        try
+        {
+            var extracted = await claude.AnalyzeManifestAsync(req.ManifestText, req.ImageBase64, req.MimeType, ct);
+            if (extracted.Count > lines.Count)
+            {
+                lines = extracted;
+                result.SourceFormat = string.IsNullOrWhiteSpace(req.ImageBase64) ? "ai_text" : "ai_image";
+                result.SourceNote = $"Read {extracted.Count} line{(extracted.Count == 1 ? "" : "s")} from " +
+                    (string.IsNullOrWhiteSpace(req.ImageBase64) ? "the pasted description" : "the manifest image") + " with AI.";
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            // A failed extraction must not throw away a manifest the plain parser already read.
+            log.Add("Warning", "Manifest AI extraction failed", ex.Message);
+            if (lines.Count == 0)
+            {
+                result.Status = "no_lines";
+                result.Error = $"The manifest couldn't be read: {ex.Message}";
+                result.Verdict = "no_data";
+                result.VerdictNote = "Nothing could be read from what was pasted.";
+                return result;
+            }
+            result.Warnings.Add("AI extraction failed, so only the plain-text reading of the manifest was used.");
+        }
+    }
+
+    result.LinesExtracted = lines.Count;
+    if (lines.Count == 0)
+    {
+        result.Status = "no_lines";
+        result.Verdict = "no_data";
+        result.VerdictNote = "No product lines could be read. Paste the manifest as a table (description, quantity, retail), or drop a photo of it.";
+        return result;
+    }
+
+    // Highest claimed value first, so when the cap bites it takes the rows that matter least.
+    var maxLines = Math.Clamp(req.MaxLines <= 0 ? 60 : req.MaxLines, 1, 150);
+    var analyzing = lines
+        .OrderByDescending(l => (l.UnitRetail ?? 0m) * Math.Max(1, l.Quantity))
+        .ThenByDescending(l => l.Quantity)
+        .Take(maxLines).ToList();
+    result.LinesAnalyzed = analyzing.Count;
+    if (analyzing.Count < lines.Count)
+        result.Warnings.Add($"{lines.Count - analyzing.Count} of {lines.Count} manifest lines were left out of this analysis — the {analyzing.Count} highest-value lines were priced.");
+
+    // ── Group by product, so one drill on six rows is one comp lookup ───────────────────────────
+    var groups = new Dictionary<string, (string LookupTitle, List<ManifestLine> Lines)>(StringComparer.OrdinalIgnoreCase);
+    var keyOf = new Dictionary<ManifestLine, string>();
+    var packQtyOf = new Dictionary<ManifestLine, int>();
+
+    foreach (var line in analyzing)
+    {
+        var query = string.IsNullOrWhiteSpace(line.SearchQuery) ? line.Description : line.SearchQuery;
+        if (string.IsNullOrWhiteSpace(query)) continue;
+
+        var identity = normalizer.Normalize(query);
+        // Units the line's OWN wording implies per sale ("case of 12"). Sold comps are per single
+        // item, so a pack line has no like-for-like price and LotAnalyzer refuses to invent one.
+        packQtyOf[line] = Math.Max(1, identity.Quantity);
+
+        var key = TerapeakMarketService.BuildCacheKey(identity);
+        if (string.IsNullOrWhiteSpace(key)) key = query.Trim().ToLowerInvariant();
+        keyOf[line] = key;
+
+        if (!groups.TryGetValue(key, out var group)) group = (query, []);
+        group.Lines.Add(line);
+        // The fullest wording in the group does the lookup — the comp matcher can only work with
+        // the words it is given, and manifest rows for the same item vary wildly in detail.
+        if (query.Length > group.LookupTitle.Length) group = (query, group.Lines);
+        groups[key] = group;
+    }
+    result.ProductsPriced = groups.Count;
+
+    async Task<ResalePricing> PriceAsync(string lookupTitle, bool allowScrape)
+    {
+        var analysis = await AnalyzeProductAsync(
+            lookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: allowScrape,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        return ResalePricing.From(analysis, lookupTitle);
+    }
+
+    // ── Pass 1: sold-comps database plus whatever Terapeak already has cached. No scrapes. ──────
+    var pricing = new Dictionary<string, ResalePricing>(StringComparer.OrdinalIgnoreCase);
+    var cached = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (key, group) in groups)
+    {
+        cached[key] = await terapeakMarket.GetAsync(
+            normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+        pricing[key] = await PriceAsync(group.LookupTitle, allowScrape: false);
+    }
+
+    // ── Pass 2: spend the scrape budget where the most money hangs on the answer ────────────────
+    if (terapeak.IsConnected)
+    {
+        var targets = LocalArbitrageAnalyzer.SelectScrapeTargets(
+            groups.Select(g =>
+            {
+                var priced = pricing[g.Key];
+                var units = g.Value.Lines.Sum(l => Math.Max(1, l.Quantity));
+                var claimedValue = g.Value.Lines.Sum(l => (l.UnitRetail ?? 0m) * Math.Max(1, l.Quantity));
+                // Dollars in play on this product, so corroboration goes to the lines that can
+                // move the verdict — not to a $6 accessory that cannot.
+                decimal? atStake = priced.HasPrice
+                    ? (priced.QuickSale ?? priced.ExpectedSale ?? priced.Median)!.Value * units
+                    : null;
+                return (g.Key, PreliminaryProfit: atStake, HasTerapeak: cached[g.Key],
+                        LocalAsk: claimedValue > 0m ? claimedValue : units);
+            }), TerapeakBudget);
+
+        foreach (var key in targets)
+        {
+            pricing[key] = await PriceAsync(groups[key].LookupTitle, allowScrape: true);
+            result.TerapeakScrapesUsed++;
+        }
+    }
+
+    // ── The money ───────────────────────────────────────────────────────────────────────────────
+    var grade = LotAnalyzer.Assumptions(req.ConditionGrade, req.SellableRatePercent, req.ConditionPriceFactorPercent);
+    result.Assumptions = grade;
+
+    var handling = Math.Max(0m, req.PerUnitHandlingCost);
+    var rows = analyzing
+        .Where(l => keyOf.ContainsKey(l))
+        .Select(l => analyzer.BuildLine(l, pricing[keyOf[l]], grade, feeProfile, handling, packQtyOf[l]))
+        .ToList();
+
+    // Lines with no readable query at all still belong on the table — a manifest row the app
+    // could not even form a search for is one the buyer has to eyeball themselves.
+    foreach (var orphan in analyzing.Where(l => !keyOf.ContainsKey(l)))
+        rows.Add(new LotLineAnalysis
+        {
+            Description = orphan.Description, Quantity = Math.Max(1, orphan.Quantity),
+            UnitRetail = orphan.UnitRetail, RetailTotal = (orphan.UnitRetail ?? 0m) * Math.Max(1, orphan.Quantity),
+            Status = "no_data", StatusNote = "Nothing searchable in this line.",
+        });
+
+    var costs = LotAnalyzer.CostOf(req.AskPrice, req.BuyerPremiumPercent, req.SalesTaxPercent, req.FreightCost);
+    LotAnalyzer.AllocateCost(rows, costs.TotalCost);
+
+    var totals = LotAnalyzer.Summarize(rows, costs,
+        manifestUnits: analyzing.Sum(l => Math.Max(1, l.Quantity)),
+        manifestRetailTotal: analyzing.Sum(l => (l.UnitRetail ?? 0m) * Math.Max(1, l.Quantity)));
+
+    result.Concentration = LotAnalyzer.Concentrate(rows);
+    result.Items = LotAnalyzer.Rank(rows);
+    result.Totals = totals;
+    result.LinesPriced = rows.Count(r => r.Status is "priced" or "thin");
+    result.LinesExcluded = rows.Count(r => r.Status == "excluded");
+    result.CoveragePercent = LotAnalyzer.Coverage(rows);
+    result.BreakEvenAsk = LotAnalyzer.MaxAsk(totals.NetRecovery, req.BuyerPremiumPercent, req.SalesTaxPercent, req.FreightCost, 0m);
+    result.MaxBid = LotAnalyzer.MaxAsk(totals.NetRecovery, req.BuyerPremiumPercent, req.SalesTaxPercent, req.FreightCost, result.TargetRoiPercent);
+
+    var (verdict, note) = LotAnalyzer.Judge(totals, result.CoveragePercent, result.LinesPriced,
+        result.BreakEvenAsk, result.MaxBid, result.TargetRoiPercent);
+    result.Verdict = verdict;
+    result.VerdictNote = note;
+
+    if (result.LinesPriced == 0)
+    {
+        result.Status = "no_pricing";
+        var reachable = await SoldCompsReachableAsync(marketplace, ct);
+        result.DataWarning = (reachable, terapeak.IsConnected) switch
+        {
+            (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price a manifest.",
+            (true, _) => "The sold-comps database had no history for any line on this manifest. Connecting Terapeak would add a second source.",
+            (false, true) => "Terapeak is connected but returned no sold history for these lines.",
+        };
+    }
+
+    sw.Stop();
+    log.Add("Info", "Lot analysis",
+        $"Source: {result.SourceFormat}; Lines: {result.LinesExtracted} extracted / {result.LinesAnalyzed} analyzed / " +
+        $"{result.LinesPriced} priced / {result.LinesExcluded} excluded across {result.ProductsPriced} product(s); " +
+        $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Ask: {totals.TotalCost:C0} all-in; " +
+        $"Net recovery: {totals.NetRecovery:C0}; Net profit: {totals.NetProfit:C0}; Coverage: {result.CoveragePercent:0.#}%; " +
+        $"Verdict: {result.Verdict}; Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
 }
 
 // The single shared entry point for "analyze this one product" — used by both the Opportunity
