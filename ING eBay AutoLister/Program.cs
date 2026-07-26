@@ -222,6 +222,12 @@ builder.Services.AddSingleton<CrossListingExporter>();
 // Terapeak, then ranks by net profit after fees. Pure ranking/verdict logic plus ProfitCalculator;
 // the pricing lookups themselves are orchestrated in FindLocalArbitrageAsync below.
 builder.Services.AddSingleton<LocalArbitrageAnalyzer>();
+// Inventory health — the same pricing stack pointed at listings the seller ALREADY owns, to find
+// the ones whose price the market has drifted out from under. CostBasisStore holds the one number
+// eBay can never supply (what the seller paid), which is what turns a markdown suggestion into a
+// break-even-checked one.
+builder.Services.AddSingleton<CostBasisStore>();
+builder.Services.AddSingleton<InventoryHealthAnalyzer>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -1447,6 +1453,297 @@ app.MapGet("/api/facebook/arbitrage", async (
 
     return Results.Ok(result);
 });
+
+// ── Inventory health ──────────────────────────────────────────────────────────────────────────
+// Everything else in this app looks forward at inventory the seller has not bought yet. This looks
+// backward at what they already own and are already paying to hold.
+app.MapGet("/api/inventory/health", async (
+    int? maxItems, int? terapeakBudget, int? minDays,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    var result = await ScanInventoryHealthAsync(
+        // Same bounding as the arbitrage scan and for the same reason: one click fans out into a
+        // comp lookup per distinct product, so both axes are capped.
+        Math.Clamp(maxItems ?? 120, 1, 400), Math.Clamp(terapeakBudget ?? 5, 0, 15), Math.Max(0, minDays ?? 0),
+        ebay, costBasis, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+
+    return Results.Ok(result);
+});
+
+// Cost basis — the one number in the whole profit calculation that eBay cannot supply.
+app.MapGet("/api/inventory/cost-basis", (CostBasisStore store) => Results.Ok(store.GetAll()));
+
+app.MapPost("/api/inventory/cost-basis", (List<CostBasisEntry> entries, CostBasisStore store, ActionLog log) =>
+{
+    try
+    {
+        var saved = store.SaveMany(entries ?? []);
+        log.Add("Info", $"Cost basis saved for {saved} listing(s)", "");
+        return Results.Ok(new { saved });
+    }
+    catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapDelete("/api/inventory/cost-basis", (string? listingId, string? sku, CostBasisStore store) =>
+    Results.Ok(new { deleted = store.Delete(listingId, sku) }));
+
+// Applies recommended prices to LIVE eBay listings.
+//
+// Three separate brakes, because this is the only endpoint in the app that changes money on
+// listings that are already published and visible to buyers:
+//   1. It previews by default. `dryRun` has to be explicitly false.
+//   2. `confirmed` has to be true on top of that — the same posture /api/listing/update takes with
+//      ManualRevisionConfirmed.
+//   3. Every price is re-checked against the break-even the server recomputes, not the one the
+//      browser sent. A client that asks to sell at a loss is refused unless the seller explicitly
+//      opted into that, which is then recorded in the action log.
+app.MapPost("/api/inventory/reprice", async (
+    RepriceRequest req, EbayService ebay, CostBasisStore costBasis, FeeProfile feeProfile,
+    ProfitCalculator profitCalc, ActionLog log) =>
+{
+    var items = req?.Items ?? [];
+    var dryRun = req is null || req.DryRun || !req.Confirmed;
+    var result = new RepriceResult { DryRun = dryRun, Requested = items.Count };
+
+    if (items.Count == 0) return Results.Ok(result);
+    if (items.Count > 100)
+        return Results.BadRequest("Too many listings in one repricing request — 100 at a time is the limit.");
+
+    var allCosts = costBasis.GetAll();
+
+    foreach (var item in items)
+    {
+        var row = new RepriceItemResult
+        {
+            ListingId = item.ListingId, Title = item.Title,
+            OldPrice = item.CurrentPrice, NewPrice = item.NewPrice,
+            ChangePercent = item.CurrentPrice > 0
+                ? Math.Round((item.NewPrice - item.CurrentPrice) / item.CurrentPrice * 100m, 1) : 0m,
+        };
+        result.Items.Add(row);
+
+        if (string.IsNullOrWhiteSpace(item.ListingId))
+        {
+            row.Status = "skipped";
+            row.Message = "No eBay listing ID — this listing can't be revised.";
+            result.Skipped++;
+            continue;
+        }
+
+        if (item.NewPrice <= 0)
+        {
+            row.Status = "skipped";
+            row.Message = "A price of zero or less was requested.";
+            result.Skipped++;
+            continue;
+        }
+
+        // Recomputed here rather than trusted from the request: the floor is the whole safety
+        // property of this endpoint, and a value that arrived over HTTP is not one.
+        var cost = CostBasisStore.Find(allCosts, item.ListingId, item.Sku);
+        if (cost is not null && !(req?.AllowBelowBreakEven ?? false))
+        {
+            var breakEven = profitCalc.Calculate(
+                supplierUnitCost: cost.TotalUnitCost, quantity: 1, expectedSalePrice: item.NewPrice,
+                quickSalePrice: item.NewPrice, buyerPaidShipping: 0m, fees: feeProfile).BreakEvenSalePrice;
+
+            if (breakEven != decimal.MaxValue && item.NewPrice < breakEven)
+            {
+                row.Status = "skipped";
+                row.Message = $"${item.NewPrice:0.00} is below the ${breakEven:0.00} break-even on a ${cost.TotalUnitCost:0.00} cost basis.";
+                result.Skipped++;
+                continue;
+            }
+        }
+
+        if (dryRun)
+        {
+            row.Status = "preview";
+            row.Message = $"Would change ${item.CurrentPrice:0.00} → ${item.NewPrice:0.00}.";
+            continue;
+        }
+
+        try
+        {
+            await ebay.ReviseInventoryStatusAsync(item.ListingId, item.NewPrice, Math.Max(1, item.Quantity));
+            row.Status = "applied";
+            row.Message = $"Repriced ${item.CurrentPrice:0.00} → ${item.NewPrice:0.00}.";
+            result.Applied++;
+            log.Add("Info", "Listing repriced on eBay",
+                $"{item.ListingId} \"{item.Title}\": ${item.CurrentPrice:0.00} → ${item.NewPrice:0.00}" +
+                ((req?.AllowBelowBreakEven ?? false) ? " (break-even check overridden by the seller)" : ""));
+        }
+        catch (Exception ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Reprice failed", $"{item.ListingId}: {ex.Message}");
+        }
+    }
+
+    return Results.Ok(result);
+});
+
+// Pulls the seller's live eBay listings, prices each against the same sold-comps + Terapeak stack
+// every other screen uses, and works out what each should be priced at to actually sell.
+//
+// Rationed exactly like FindLocalArbitrageAsync, for the same reason — one click over a 300-listing
+// inventory would otherwise be 300 comp lookups:
+//   * comp lookups are per distinct PRODUCT, not per listing (three copies of the same drill are
+//     one lookup), grouped on the normalized signature Terapeak also caches on, and
+//   * pass 1 is cache-only, so anything Terapeak already knows is free; pass 2 spends the scrape
+//     budget on the listings where the most money hangs on getting the number right.
+static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
+    int maxItems, int terapeakBudget, int minDays,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var nowUtc = DateTime.UtcNow;
+    var result = new InventoryHealthResult { TerapeakConnected = terapeak.IsConnected };
+
+    List<EbayListingSummary> listings;
+    try
+    {
+        listings = await ebay.GetListingsAsync();
+    }
+    catch (Exception ex)
+    {
+        // eBay not connected, or the token expired. Reported, never silently retried — reconnecting
+        // is the seller's decision, made in Settings.
+        log.Add("Warning", "Inventory health scan could not read eBay listings", ex.Message);
+        return new InventoryHealthResult { Status = "ebay_unavailable", Error = ex.Message };
+    }
+
+    var active = listings
+        .Where(l => l.Status is "ACTIVE" or "PUBLISHED" || string.IsNullOrWhiteSpace(l.Status))
+        .Where(l => l.Price > 0 && !string.IsNullOrWhiteSpace(l.Title))
+        .ToList();
+    result.ActiveListings = active.Count;
+
+    if (minDays > 0)
+        active = active.Where(l => InventoryHealthAnalyzer.DaysListed(l.StartTimeUtc, nowUtc) >= minDays).ToList();
+
+    // Highest asking price first when the cap bites: if only part of the inventory can be scanned
+    // in one pass, the part holding the most money is the part worth scanning.
+    var scanned = active.OrderByDescending(l => l.Price * Math.Max(1, l.Quantity)).Take(maxItems).ToList();
+    result.ItemsAnalyzed = scanned.Count;
+    if (scanned.Count == 0) return result;
+
+    // One lookup per product signature, shared by every listing that resolves to it — and it is
+    // Terapeak's own cache key, so two differently-worded listings for the same item share both
+    // the group and any cached scrape.
+    var groups = new Dictionary<string, (string LookupTitle, List<EbayListingSummary> Listings)>(StringComparer.OrdinalIgnoreCase);
+    var keyOf = new Dictionary<string, string>(StringComparer.Ordinal);
+    // Units per sale, read off the title by the same normalizer the pricing stack uses. Sold comps
+    // are per-unit, so a "Lot of 20" listing has no like-for-like market price and the analyzer
+    // refuses to recommend one rather than comparing $3,000 against a single miner.
+    var lotQtyOf = new Dictionary<string, int>(StringComparer.Ordinal);
+    foreach (var listing in scanned)
+    {
+        var identity = normalizer.Normalize(listing.Title);
+        lotQtyOf[listing.ListingId] = Math.Max(1, identity.Quantity);
+        var key = TerapeakMarketService.BuildCacheKey(identity);
+        if (string.IsNullOrWhiteSpace(key)) key = listing.Title.Trim().ToLowerInvariant();
+        keyOf[listing.ListingId] = key;
+
+        if (!groups.TryGetValue(key, out var group)) group = (listing.Title, []);
+        group.Listings.Add(listing);
+        // The fullest title in the group does the lookup — the comp matcher can only work with the
+        // words it is given, and eBay titles for the same item vary wildly in detail.
+        if (listing.Title.Length > group.LookupTitle.Length) group = (listing.Title, group.Listings);
+        groups[key] = group;
+    }
+    result.ProductsPriced = groups.Count;
+
+    async Task<ResalePricing> PriceAsync(string lookupTitle, bool allowScrape)
+    {
+        var analysis = await AnalyzeProductAsync(
+            lookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: allowScrape,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        return ResalePricing.From(analysis, lookupTitle);
+    }
+
+    // ── Pass 1: sold-comps database plus whatever Terapeak already has cached. No scrapes. ──────
+    var pricing = new Dictionary<string, ResalePricing>(StringComparer.OrdinalIgnoreCase);
+    var cached = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (key, group) in groups)
+    {
+        cached[key] = await terapeakMarket.GetAsync(
+            normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+        pricing[key] = await PriceAsync(group.LookupTitle, allowScrape: false);
+    }
+
+    // ── Pass 2: spend the scrape budget where the most money hangs on the answer ────────────────
+    if (terapeak.IsConnected && terapeakBudget > 0)
+    {
+        var targets = InventoryHealthAnalyzer.SelectScrapeTargets(
+            groups.Select(g =>
+            {
+                var priced = pricing[g.Key];
+                var listedValue = g.Value.Listings.Sum(l => l.Price * Math.Max(1, l.Quantity));
+                // Dollars at stake, not percent wrong: a 40% gap on a $12 item is not worth a page
+                // load and a 16% gap on a $1,400 one is.
+                var atStake = priced.HasPrice
+                    ? g.Value.Listings.Sum(l => Math.Abs(l.Price - (priced.ExpectedSale ?? priced.Median)!.Value) * Math.Max(1, l.Quantity))
+                    : listedValue;
+                return (g.Key, DollarsAtStake: (decimal?)atStake, HasTerapeak: cached[g.Key], Unpriced: !priced.HasPrice);
+            }), terapeakBudget);
+
+        foreach (var key in targets)
+        {
+            pricing[key] = await PriceAsync(groups[key].LookupTitle, allowScrape: true);
+            result.TerapeakScrapesUsed++;
+        }
+    }
+
+    // ── Judge ───────────────────────────────────────────────────────────────────────────────────
+    var costs = costBasis.GetAll();
+    var rows = scanned
+        .Select(l => analyzer.Build(
+            l, pricing[keyOf[l.ListingId]], CostBasisStore.Find(costs, l.ListingId, l.Sku),
+            feeProfile, nowUtc, lotQtyOf[l.ListingId]))
+        .ToList();
+
+    result.Items = InventoryHealthAnalyzer.Rank(rows);
+    result.Summary = InventoryHealthAnalyzer.Summarize(result.Items);
+
+    if (result.Items.All(r => r.MarketPrice is null))
+    {
+        result.SoldCompsConfigured = await SoldCompsReachableAsync(marketplace, ct);
+        result.DataWarning = (result.SoldCompsConfigured, terapeak.IsConnected) switch
+        {
+            (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price your inventory.",
+            (true, _) => "The sold-comps database had no history for any of these listings. Connecting Terapeak would add a second source.",
+            (false, true) => "Terapeak is connected but returned no sold history for these listings.",
+        };
+    }
+    else
+    {
+        result.SoldCompsConfigured = result.Items.Any(r => r.SoldCompCount > 0);
+    }
+
+    sw.Stop();
+    log.Add("Info", "Inventory health scan",
+        $"Active: {result.ActiveListings}; Analyzed: {result.ItemsAnalyzed} across {result.ProductsPriced} product(s); " +
+        $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Stale (90d+): {result.Summary.StaleCount}; " +
+        $"Overpriced: {result.Summary.OverpricedCount}; Reprice candidates: {result.Summary.RepriceCandidates}; " +
+        $"Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
 
 // Local arbitrage: search local supply on every selected site, price every result against real
 // eBay sold data, rank by net profit after fees. Reuses AnalyzeProductAsync (and therefore the

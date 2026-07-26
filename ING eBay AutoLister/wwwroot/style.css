@@ -4746,3 +4746,279 @@ body.drawer-open {
   .pl-layout { grid-template-columns: minmax(0, 1fr); }
   .pl-folder-list { max-height: 260px; }
 }
+
+/* ── Inventory Health ─────────────────────────────────────────────────────
+   The portfolio view over the seller's own live listings. Colour here tracks
+   how much money is at stake, not how large a percentage is — a red tile means
+   capital is stuck, not that a number is big. */
+
+.inv-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 14px 0 10px;
+}
+
+/* The overlay body styles form controls full-width; these are toolbar selects
+   and have to stay narrow or they push the row onto three lines. */
+.inv-field-small { flex: 0 0 auto; min-width: 0; }
+.inv-field-small select { width: auto; min-width: 150px; }
+
+.inv-status {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.inv-warning {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--gold);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--gold-soft);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.inv-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.inv-tile {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--teal-700);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.inv-tile-good { border-left-color: var(--success); }
+.inv-tile-warn { border-left-color: var(--warning); }
+.inv-tile-bad  { border-left-color: var(--danger); }
+
+.inv-tile-label {
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.inv-tile-value {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.inv-tile-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.inv-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.inv-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.inv-selection-note {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.inv-results { overflow-x: auto; }
+
+.inv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.inv-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--line);
+  background: var(--card);
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.inv-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.inv-table th.num, .inv-table td.num { text-align: right; white-space: nowrap; }
+.inv-col-check { width: 30px; }
+
+/* Dead capital is the only row state loud enough to earn a background — it is
+   the one thing on this screen that is costing money every day it stays. */
+.inv-row-dead { background: rgba(194, 65, 59, .05); }
+
+.inv-cell-title { min-width: 260px; }
+
+.inv-title-row { display: flex; gap: 10px; align-items: flex-start; }
+
+.inv-thumb {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.inv-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.inv-dash { color: var(--muted); }
+
+.inv-gap-bad  { color: var(--danger);  font-weight: 700; }
+.inv-gap-good { color: var(--success); font-weight: 700; }
+.inv-gap-ok   { color: var(--muted); }
+
+.inv-cost-input, .inv-price-input {
+  width: 88px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: right;
+  background: var(--card);
+}
+
+.inv-cost-input:placeholder-shown { border-style: dashed; color: var(--muted); }
+.inv-price-input { font-weight: 700; border-color: var(--teal-700); }
+
+.inv-change { margin-top: 3px; font-size: 11px; font-weight: 600; }
+.inv-change.down { color: var(--danger); }
+.inv-change.up   { color: var(--success); }
+
+.inv-cell-verdict { max-width: 300px; }
+
+.inv-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inv-v-underwater { background: #f3e6f7; color: #6b2d7a; }
+.inv-v-dead       { background: #fbe6e5; color: var(--danger); }
+.inv-v-stale      { background: var(--gold-soft); color: var(--gold-dark); }
+.inv-v-over       { background: #fdf0e2; color: var(--warning); }
+.inv-v-under      { background: #e3f2ec; color: var(--success); }
+.inv-v-ok         { background: var(--soft); color: var(--muted); }
+.inv-v-nodata     { background: var(--soft); color: var(--muted); }
+
+.inv-note { margin-top: 4px; font-size: 11px; color: var(--ink); line-height: 1.4; }
+.inv-signals { margin-top: 3px; font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+
+.inv-footnote {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* Confirmation gate for the live-price write. .modal supplies no inner padding
+   of its own (its children own it), so this box lays out its own. */
+.inv-confirm-box { width: min(560px, 100%); padding: 22px; }
+.inv-confirm-sub { margin: 6px 0 14px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+.inv-confirm-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.inv-confirm-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.inv-confirm-row:last-child { border-bottom: 0; }
+
+.inv-confirm-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-confirm-prices { white-space: nowrap; color: var(--ink); }
+
+.inv-confirm-override {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 12px;
+  text-align: left;
+  color: var(--muted);
+}
+
+.inv-confirm-override input { flex: 0 0 auto; margin: 0; }
+
+.inv-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .inv-summary { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .inv-table { font-size: 12px; }
+  .inv-cell-title { min-width: 200px; }
+}
+
+/* A gap whose market comparison failed — shown as "n/a", never coloured as a
+   finding, because it is not one. */
+.inv-gap-void { color: var(--muted); font-style: italic; }
+
+/* A listing that has actually sold units — the one verdict that means "do nothing". */
+.inv-v-selling { background: #e3f2ec; color: var(--success); }

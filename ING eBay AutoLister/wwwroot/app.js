@@ -30,6 +30,7 @@
     bindSupplierAnalyzer();
     bindFacebookMarketplace();
     bindPhotoLibrary();
+    bindInventoryHealth();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -89,6 +90,7 @@
     if (page !== 'ai') $('new-listing-overlay')?.classList.add('hidden');
     if (page !== 'opportunity') $('opportunity-section')?.classList.add('hidden');
     if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
+    if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -113,6 +115,10 @@
       showPhotoLibrarySection();
       return;
     }
+    if (page === 'inventory') {
+      showInventorySection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -122,7 +128,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -898,6 +904,434 @@
   function closeOpportunitySection() {
     $('opportunity-section')?.classList.add('hidden');
     showDashboard();
+  }
+
+  // ── Inventory Health ─────────────────────────────────────────────────────
+  // The one screen in this app that looks at inventory the seller ALREADY owns: every live eBay
+  // listing priced against real sold comps, checked against what they paid, and given a price that
+  // both moves it and clears cost. See InventoryHealthAnalyzer.cs for the judgement rules and
+  // ScanInventoryHealthAsync in Program.cs for the orchestration.
+  let invScan     = null;   // the last InventoryHealthResult, kept so filtering never re-scans
+  let invSelected = new Set();   // listing IDs ticked for repricing
+  let invCosts    = new Map();   // listingId -> CostBasisEntry, so an edit re-renders without a refetch
+
+  function showInventorySection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('inventory-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'inventory'));
+    loadCostBasis();
+  }
+
+  function closeInventorySection() {
+    $('inventory-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindInventoryHealth() {
+    on('inv-scan-btn', 'click', runInventoryScan);
+    on('inv-close', 'click', closeInventorySection);
+    on('inv-home', 'click', closeInventorySection);
+    // Filtering is a pure view over the result already in hand — changing it must never re-run a
+    // scan that costs eBay calls and comp lookups.
+    on('inv-verdict-filter', 'change', renderInventoryRows);
+    on('inv-select-all', 'change', toggleSelectAllReprice);
+    on('inv-preview-btn', 'click', () => submitReprice(true));
+    on('inv-apply-btn', 'click', openRepriceConfirm);
+    on('inv-confirm-cancel', 'click', () => $('inv-confirm-overlay')?.classList.add('hidden'));
+    on('inv-confirm-go', 'click', () => {
+      $('inv-confirm-overlay')?.classList.add('hidden');
+      submitReprice(false);
+    });
+  }
+
+  async function loadCostBasis() {
+    try {
+      const entries = await fetch('/api/inventory/cost-basis').then(r => r.json());
+      invCosts = new Map((entries || []).map(e => [e.listingId || e.sku, e]));
+    } catch { /* cost basis is optional — a scan without it still works, it just can't check floors */ }
+  }
+
+  async function runInventoryScan() {
+    const btn = $('inv-scan-btn');
+    const minDays  = $('inv-min-days')?.value || '0';
+    const maxItems = $('inv-max-items')?.value || '120';
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    setInvStatus('Reading your live eBay listings…');
+    $('inv-results').innerHTML = '<p class="opportunity-empty">Pricing each listing against sold comps — this takes a moment on a large inventory.</p>';
+
+    try {
+      const res  = await fetch(`/api/inventory/health?minDays=${minDays}&maxItems=${maxItems}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      invScan = data;
+      invSelected.clear();
+      renderInventoryScan();
+    } catch (err) {
+      invScan = null;
+      $('inv-summary')?.classList.add('hidden');
+      $('inv-bulk-bar')?.classList.add('hidden');
+      $('inv-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setInvStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔎 Scan My Listings'; }
+    }
+  }
+
+  function renderInventoryScan() {
+    const warn = $('inv-warning');
+
+    if (invScan.status === 'ebay_unavailable') {
+      $('inv-summary')?.classList.add('hidden');
+      $('inv-bulk-bar')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('inv-results').innerHTML =
+        '<p class="opportunity-empty">Your eBay account isn\'t connected, or the token has expired. Reconnect it in Settings, then scan again.</p>';
+      setInvStatus('');
+      return;
+    }
+
+    if (invScan.dataWarning) {
+      warn.textContent = invScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    renderInventorySummary(invScan.summary || {});
+    renderInventoryRows();
+
+    const s = invScan.summary || {};
+    setInvStatus(
+      `${invScan.itemsAnalyzed} of ${invScan.activeListings} active listings, ` +
+      `${invScan.productsPriced} distinct product${invScan.productsPriced === 1 ? '' : 's'} priced` +
+      (invScan.terapeakScrapesUsed ? `, ${invScan.terapeakScrapesUsed} Terapeak lookup${invScan.terapeakScrapesUsed === 1 ? '' : 's'}` : '') +
+      (s.unknownAgeCount ? ` · ${s.unknownAgeCount} with no start date reported by eBay` : ''));
+  }
+
+  // The portfolio numbers. Deliberately leads with capital rather than with a count: "18 stale
+  // listings" is a statistic, "$6,240 sitting in listings older than 90 days" is a decision.
+  function renderInventorySummary(s) {
+    const el = $('inv-summary');
+    if (!el) return;
+
+    const tiles = [
+      { label: 'Capital tied up', value: money(s.totalCapitalTiedUp),
+        sub: s.withCostBasis === s.listingsAnalyzed
+          ? 'At what you paid'
+          : `${s.withCostBasis} of ${s.listingsAnalyzed} at cost; the rest at market value`, tone: '' },
+      { label: `Stuck ${90}+ days`, value: money(s.staleCapital),
+        sub: `${s.staleCount} listing${s.staleCount === 1 ? '' : 's'}${s.medianDaysListed != null ? ` · median age ${s.medianDaysListed}d` : ''}`,
+        tone: s.staleCount > 0 ? 'warn' : '' },
+      { label: 'Dead capital', value: money(s.deadCapital),
+        sub: `${s.deadCapitalCount} over 180 days, no watchers, above market`, tone: s.deadCapitalCount > 0 ? 'bad' : '' },
+      { label: 'Priced above market', value: money(s.totalAboveMarket),
+        sub: `${s.overpricedCount} listing${s.overpricedCount === 1 ? '' : 's'} 15%+ over comps`, tone: s.overpricedCount > 0 ? 'warn' : '' },
+      { label: 'Left on the table', value: money(s.moneyLeftOnTable),
+        sub: `${s.underpricedCount} listed below market — per sale`, tone: s.underpricedCount > 0 ? 'good' : '' },
+      { label: 'Ready to reprice', value: String(s.repriceCandidates || 0),
+        sub: s.projectedNetIfRepricedSells
+          ? `${money(s.projectedNetIfRepricedSells)} net if they then sell`
+          : 'Record cost basis to see net profit', tone: s.repriceCandidates > 0 ? 'good' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const INV_VERDICTS = {
+    underwater:   { label: '🌊 Underwater',   cls: 'inv-v-underwater' },
+    dead_capital: { label: '🪦 Dead capital', cls: 'inv-v-dead' },
+    stale:        { label: '🕸️ Stale',        cls: 'inv-v-stale' },
+    overpriced:   { label: '⬆️ Overpriced',   cls: 'inv-v-over' },
+    underpriced:  { label: '⬇️ Underpriced',  cls: 'inv-v-under' },
+    selling:      { label: '🔁 Selling',      cls: 'inv-v-selling' },
+    priced_right: { label: '✓ Priced right',  cls: 'inv-v-ok' },
+    fresh:        { label: '🌱 Fresh',        cls: 'inv-v-ok' },
+    no_data:      { label: '? No data',       cls: 'inv-v-nodata' },
+  };
+
+  function invFilterMatches(item, filter) {
+    switch (filter) {
+      case 'action':      return item.hasRecommendation;
+      case 'stale':       return item.verdict === 'stale' || item.verdict === 'dead_capital';
+      case 'selling':     return item.verdict === 'selling';
+      case 'overpriced':  return item.verdict === 'overpriced';
+      case 'underpriced': return item.verdict === 'underpriced';
+      case 'underwater':  return item.verdict === 'underwater';
+      case 'no_data':     return item.verdict === 'no_data';
+      default:            return true;
+    }
+  }
+
+  function renderInventoryRows() {
+    if (!invScan) return;
+    const filter = $('inv-verdict-filter')?.value || 'all';
+    const rows = (invScan.items || []).filter(i => invFilterMatches(i, filter));
+    const el = $('inv-results');
+
+    if (rows.length === 0) {
+      el.innerHTML = `<p class="opportunity-empty">${
+        (invScan.items || []).length === 0
+          ? 'No active listings came back from eBay for this filter.'
+          : 'Nothing in your inventory matches that filter — which is good news.'}</p>`;
+      $('inv-bulk-bar')?.classList.add('hidden');
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th class="inv-col-check"></th>
+            <th>Listing</th>
+            <th class="num">Age</th>
+            <th class="num">Your price</th>
+            <th class="num">Market</th>
+            <th class="num">Gap</th>
+            <th class="num">You paid</th>
+            <th class="num">Break-even</th>
+            <th class="num">Suggested</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(invRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.inv-check').forEach(cb => cb.addEventListener('change', onRepriceCheck));
+    el.querySelectorAll('.inv-cost-input').forEach(inp => {
+      inp.addEventListener('change', onCostBasisEdit);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+    });
+    el.querySelectorAll('.inv-price-input').forEach(inp => inp.addEventListener('change', onSuggestedOverride));
+
+    $('inv-bulk-bar')?.classList.remove('hidden');
+    refreshSelectionNote();
+  }
+
+  function invRowHtml(item) {
+    const v = INV_VERDICTS[item.verdict] || INV_VERDICTS.no_data;
+    const gap = item.priceGapPercent;
+    const gapCls = gap == null ? '' : gap >= 15 ? 'inv-gap-bad' : gap <= -10 ? 'inv-gap-good' : 'inv-gap-ok';
+    // Only markdowns are tickable. A raise is a per-item judgement call (see SuggestPrice), and a
+    // row with no recommendation has nothing to apply.
+    const selectable = item.hasRecommendation && !item.requiresReview && item.listingId;
+    const checked = invSelected.has(item.listingId) ? 'checked' : '';
+    const cost = item.costBasis;
+
+    const suggestedCell = item.suggestedPrice != null
+      ? `<input class="inv-price-input" type="number" step="0.01" min="0.01"
+                value="${Number(item.suggestedPrice).toFixed(2)}" data-id="${esc(item.listingId)}"
+                title="Edit to override the suggested price" />
+         <div class="inv-change ${item.suggestedChangePercent < 0 ? 'down' : 'up'}">${
+           item.suggestedChangePercent > 0 ? '+' : ''}${Number(item.suggestedChangePercent ?? 0).toFixed(1)}%${
+           item.requiresReview ? ' · review' : ''}${item.floorLimited ? ' · at floor' : ''}</div>`
+      : '<span class="inv-dash">—</span>';
+
+    return `
+      <tr class="${item.verdict === 'dead_capital' ? 'inv-row-dead' : ''}">
+        <td class="inv-col-check">${selectable
+          ? `<input class="inv-check" type="checkbox" data-id="${esc(item.listingId)}" ${checked} />`
+          : ''}</td>
+        <td class="inv-cell-title">
+          <div class="inv-title-row">
+            ${item.imageUrl ? `<img class="inv-thumb" src="${esc(item.imageUrl)}" alt="" loading="lazy" />` : ''}
+            <div>
+              ${item.url
+                ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title)}</a>`
+                : esc(item.title)}
+              <div class="inv-sub">${esc(item.sku || item.listingId)}${item.quantity > 1 ? ` · qty ${item.quantity}` : ''}${
+                item.watchCount ? ` · ${item.watchCount} 👁` : ''}${
+                item.pricedAs && item.pricedAs !== item.title ? ` · priced as "${esc(item.pricedAs)}"` : ''}</div>
+            </div>
+          </div>
+        </td>
+        <td class="num">${item.daysListed == null ? '<span class="inv-dash" title="eBay reported no start date">—</span>' : item.daysListed + 'd'}</td>
+        <td class="num">${moneyExact(item.listPrice)}</td>
+        <td class="num">${item.marketPrice != null
+            ? `${moneyExact(item.marketPrice)}<div class="inv-sub">${item.soldCompCount + item.terapeakCompCount} comps${
+                item.marketComparable === false ? ' · per unit' : ''}</div>`
+            : '<span class="inv-dash">—</span>'}</td>
+        <!-- A gap computed from a comparison that failed is not a fact about the listing, so it is
+             struck through rather than shown as a finding. -->
+        <td class="num ${item.marketComparable === false ? 'inv-gap-void' : gapCls}">${
+          gap == null ? '<span class="inv-dash">—</span>'
+          : item.marketComparable === false
+            ? `<span title="Not comparable — see the verdict column">n/a</span>`
+            : (gap > 0 ? '+' : '') + gap.toFixed(0) + '%'}</td>
+        <td class="num">
+          <input class="inv-cost-input" type="number" step="0.01" min="0" placeholder="cost"
+                 value="${cost != null ? Number(cost).toFixed(2) : ''}"
+                 data-id="${esc(item.listingId)}" data-sku="${esc(item.sku || '')}"
+                 title="What you paid for this unit, all in. Sets the break-even floor." />
+        </td>
+        <td class="num">${item.breakEvenPrice != null ? moneyExact(item.breakEvenPrice) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num inv-cell-suggested">${suggestedCell}</td>
+        <td class="inv-cell-verdict">
+          <span class="inv-verdict ${v.cls}">${v.label}</span>
+          <div class="inv-note">${esc(item.verdictNote)}</div>
+          ${(item.signals || []).length ? `<div class="inv-signals">${item.signals.map(s => esc(s)).join(' ')}</div>` : ''}
+        </td>
+      </tr>`;
+  }
+
+  function invItemById(listingId) {
+    return (invScan?.items || []).find(i => i.listingId === listingId) || null;
+  }
+
+  function onRepriceCheck(e) {
+    const id = e.target.dataset.id;
+    if (e.target.checked) invSelected.add(id); else invSelected.delete(id);
+    refreshSelectionNote();
+  }
+
+  function toggleSelectAllReprice(e) {
+    const filter = $('inv-verdict-filter')?.value || 'all';
+    const on = e.target.checked;
+    // Only what is actually on screen — a select-all that silently ticks rows behind a filter is
+    // how someone reprices a listing they never looked at.
+    (invScan?.items || [])
+      .filter(i => invFilterMatches(i, filter) && i.hasRecommendation && !i.requiresReview && i.listingId)
+      .forEach(i => { if (on) invSelected.add(i.listingId); else invSelected.delete(i.listingId); });
+    document.querySelectorAll('.inv-check').forEach(cb => { cb.checked = invSelected.has(cb.dataset.id); });
+    refreshSelectionNote();
+  }
+
+  function refreshSelectionNote() {
+    const picked = [...invSelected].map(invItemById).filter(Boolean);
+    const note = $('inv-selection-note');
+    if (note) {
+      note.textContent = picked.length === 0
+        ? 'Nothing selected.'
+        : `${picked.length} listing${picked.length === 1 ? '' : 's'} selected · average change ${
+            (picked.reduce((sum, i) => sum + (i.suggestedChangePercent || 0), 0) / picked.length).toFixed(1)}%`;
+    }
+    const disabled = picked.length === 0;
+    if ($('inv-preview-btn')) $('inv-preview-btn').disabled = disabled;
+    if ($('inv-apply-btn'))   $('inv-apply-btn').disabled   = disabled;
+  }
+
+  // An overridden price is the seller's call, so it replaces the suggestion on the row it came
+  // from rather than being validated away here — the server re-checks it against the break-even
+  // either way, which is the check that actually matters.
+  function onSuggestedOverride(e) {
+    const item = invItemById(e.target.dataset.id);
+    if (!item) return;
+    const value = parseFloat(e.target.value);
+    if (!isFinite(value) || value <= 0) {
+      e.target.value = Number(item.suggestedPrice ?? item.listPrice).toFixed(2);
+      return;
+    }
+    item.suggestedPrice = value;
+    item.suggestedChangePercent = item.listPrice > 0
+      ? Math.round((value - item.listPrice) / item.listPrice * 1000) / 10 : 0;
+    const changeEl = e.target.parentElement?.querySelector('.inv-change');
+    if (changeEl) {
+      changeEl.textContent = `${item.suggestedChangePercent > 0 ? '+' : ''}${item.suggestedChangePercent.toFixed(1)}% · edited`;
+      changeEl.className = `inv-change ${item.suggestedChangePercent < 0 ? 'down' : 'up'}`;
+    }
+    refreshSelectionNote();
+  }
+
+  async function onCostBasisEdit(e) {
+    const listingId = e.target.dataset.id;
+    const sku = e.target.dataset.sku || '';
+    const raw = e.target.value.trim();
+
+    try {
+      if (raw === '') {
+        await fetch(`/api/inventory/cost-basis?listingId=${encodeURIComponent(listingId)}&sku=${encodeURIComponent(sku)}`,
+          { method: 'DELETE' });
+        invCosts.delete(listingId);
+      } else {
+        const unitCost = parseFloat(raw);
+        if (!isFinite(unitCost) || unitCost < 0) return;
+        const entry = { listingId, sku, unitCost, inboundShipping: 0, note: '' };
+        const res = await fetch('/api/inventory/cost-basis', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([entry]),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        invCosts.set(listingId, entry);
+      }
+      // A cost basis changes the break-even, which changes the floor, which can change the
+      // recommendation — so the row is re-derived by the server rather than patched here.
+      setInvStatus('Cost saved — re-scan to recalculate break-even and suggested prices.');
+    } catch (err) {
+      setInvStatus(`Could not save that cost: ${err.message || err}`);
+    }
+  }
+
+  function openRepriceConfirm() {
+    const picked = [...invSelected].map(invItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    $('inv-confirm-list').innerHTML = picked.map(i => `
+      <div class="inv-confirm-row">
+        <span class="inv-confirm-title">${esc(i.title)}</span>
+        <span class="inv-confirm-prices">${moneyExact(i.listPrice)} → <strong>${moneyExact(i.suggestedPrice)}</strong></span>
+      </div>`).join('');
+    const loss = $('inv-allow-loss');
+    if (loss) loss.checked = false;
+    $('inv-confirm-overlay')?.classList.remove('hidden');
+  }
+
+  async function submitReprice(dryRun) {
+    const picked = [...invSelected].map(invItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    const body = {
+      items: picked.map(i => ({
+        listingId: i.listingId, sku: i.sku, title: i.title,
+        newPrice: i.suggestedPrice, currentPrice: i.listPrice,
+        quantity: i.quantity, breakEvenPrice: i.breakEvenPrice,
+      })),
+      dryRun,
+      confirmed: !dryRun,
+      allowBelowBreakEven: !dryRun && !!$('inv-allow-loss')?.checked,
+    };
+
+    setInvStatus(dryRun ? 'Previewing…' : 'Repricing on eBay…');
+    try {
+      const res  = await fetch('/api/inventory/reprice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'Repricing failed.');
+      renderRepriceOutcome(data);
+      if (!dryRun && data.applied > 0) {
+        addActivity(`${data.applied} listing${data.applied === 1 ? '' : 's'} repriced on eBay`,
+          'Prices updated from the Inventory Health scan.');
+        // The scan is now stale for those rows by definition, so re-run it rather than leaving
+        // the table showing prices that are no longer live.
+        await runInventoryScan();
+      }
+    } catch (err) {
+      setInvStatus(`Repricing failed: ${err.message || err}`);
+    }
+  }
+
+  function renderRepriceOutcome(data) {
+    const parts = [];
+    if (data.dryRun) parts.push(`Preview only — nothing sent to eBay. ${data.items.length} change${data.items.length === 1 ? '' : 's'} ready.`);
+    else parts.push(`${data.applied} applied`);
+    if (data.skipped) parts.push(`${data.skipped} skipped`);
+    if (data.failed)  parts.push(`${data.failed} failed`);
+
+    const problems = (data.items || []).filter(i => i.status === 'skipped' || i.status === 'failed');
+    setInvStatus(parts.join(' · ') + (problems.length
+      ? ' — ' + problems.map(p => `${p.title}: ${p.message}`).join('; ')
+      : ''));
+  }
+
+  function setInvStatus(text) {
+    const el = $('inv-status');
+    if (el) el.textContent = text || '';
   }
 
   // ── Representative Photo Library ─────────────────────────────────────────

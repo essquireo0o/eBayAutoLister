@@ -338,6 +338,13 @@ public class EbayListingSummary
     public string ThumbnailUrl { get; set; } = "";
     public int WatchCount { get; set; }
     public string ListingUrl { get; set; } = "";
+    // How long this listing has been live, and how it has performed while it was. Only the
+    // Trading API reports these; the Inventory API has no equivalent, which is why the merge in
+    // GetListingsAsync is field-level rather than whole-object. Age is the single strongest
+    // signal of stuck capital, so a null here is reported as "age unknown" rather than as 0 days.
+    public DateTime? StartTimeUtc { get; set; }
+    public int QuantitySold { get; set; }
+    public int HitCount { get; set; }
     public PostListingRequest Data { get; set; } = new();
 }
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=27" />
+  <link rel="stylesheet" href="style.css?v=28" />
 </head>
 <body>
   <div class="app-shell">
@@ -25,6 +25,7 @@
         <button class="nav-item" type="button" data-page="logs"><span class="nav-icon">🔍</span>Logs</button>
         <button class="nav-item" type="button" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
         <button class="nav-item" type="button" data-page="opportunity"><span class="nav-icon">🔍</span>Opportunity Finder</button>
+        <button class="nav-item" type="button" data-page="inventory"><span class="nav-icon">💸</span>Inventory Health</button>
         <button class="nav-item" type="button" data-page="photos"><span class="nav-icon">📸</span>Photo Library</button>
         <button class="nav-item nav-license" id="nav-license-btn" type="button" data-page="license"><span class="nav-icon">🔑</span>License<span id="nav-license-dot" class="nav-license-dot dot-off"></span></button>
       </nav>
@@ -1046,6 +1047,114 @@
         </div>
       </section>
 
+      <!-- ── Inventory Health (full-page overlay, like Opportunity Finder) ──
+           Every other screen in this app looks forward at inventory the seller hasn't bought yet.
+           This one looks backward at what they already own: each live listing priced against the
+           same sold-comps + Terapeak stack, checked against what they paid, and given a price that
+           both moves it and clears cost. Backed by /api/inventory/health. -->
+      <section id="inventory-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="inv-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <div>
+              <div class="eyebrow">Inventory Health</div>
+              <h2>💸 Find the Money Stuck in Your Listings</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="inv-scan-btn" class="btn btn-primary" type="button">🔎 Scan My Listings</button>
+            <button id="inv-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <p class="opp-hint">
+            Pulls your live eBay listings, prices each one against real sold comps, and finds the ones the
+            market has drifted out from under. Every suggested price is checked against your break-even —
+            nothing is ever recommended below cost, and <strong>nothing reaches eBay until you confirm it.</strong>
+          </p>
+
+          <div class="inv-controls">
+            <div class="opp-field inv-field-small">
+              <label for="inv-min-days">Only listings older than</label>
+              <select id="inv-min-days">
+                <option value="0" selected>Any age</option>
+                <option value="30">30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+                <option value="180">180 days</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="inv-max-items">Scan up to</label>
+              <select id="inv-max-items">
+                <option value="50">50 listings</option>
+                <option value="120" selected>120 listings</option>
+                <option value="250">250 listings</option>
+                <option value="400">400 listings</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="inv-verdict-filter">Show</label>
+              <select id="inv-verdict-filter">
+                <option value="all" selected>Everything</option>
+                <option value="action">Only listings with a recommendation</option>
+                <option value="stale">Stale &amp; dead capital</option>
+                <option value="selling">Already selling</option>
+                <option value="overpriced">Overpriced</option>
+                <option value="underpriced">Underpriced</option>
+                <option value="underwater">Underwater</option>
+                <option value="no_data">Couldn't be priced</option>
+              </select>
+            </div>
+            <span id="inv-status" class="inv-status"></span>
+          </div>
+
+          <div id="inv-warning" class="inv-warning hidden"></div>
+
+          <!-- Portfolio view: the numbers eBay Seller Hub never puts on one screen. -->
+          <div id="inv-summary" class="inv-summary hidden"></div>
+
+          <div id="inv-bulk-bar" class="inv-bulk-bar hidden">
+            <label class="inv-select-all">
+              <input id="inv-select-all" type="checkbox" />
+              Select all recommended markdowns
+            </label>
+            <span id="inv-selection-note" class="inv-selection-note">Nothing selected.</span>
+            <button id="inv-preview-btn" class="btn btn-secondary small" type="button" disabled>Preview changes</button>
+            <button id="inv-apply-btn" class="btn btn-primary small" type="button" disabled>Apply to eBay…</button>
+          </div>
+
+          <div id="inv-results" class="inv-results">
+            <p class="opportunity-empty">Click <strong>Scan My Listings</strong> to see what your live inventory is doing.</p>
+          </div>
+
+          <p class="inv-footnote">
+            Market prices are estimates from sold comparables, not guarantees. Break-even uses the cost basis you
+            record here plus the fee assumptions in the profit model — eBay publishes no per-account fee API.
+            Storage costs, your time, and returns are not modelled.
+          </p>
+        </div>
+      </section>
+
+      <!-- Confirmation gate for the only action in this app that changes live, buyer-visible
+           prices. Deliberately a typed confirmation, not a one-click bulk button. -->
+      <div id="inv-confirm-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box">
+          <h3>Apply these prices to your live eBay listings?</h3>
+          <p class="inv-confirm-sub">This changes what buyers see right now. It cannot be undone in one click — you would have to reprice back.</p>
+          <div id="inv-confirm-list" class="inv-confirm-list"></div>
+          <label class="inv-confirm-override">
+            <input id="inv-allow-loss" type="checkbox" />
+            Allow prices below my break-even (clearing stock at a deliberate loss)
+          </label>
+          <div class="inv-confirm-actions">
+            <button id="inv-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="inv-confirm-go" class="btn btn-primary" type="button">Yes — reprice on eBay</button>
+          </div>
+        </div>
+      </div>
+
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
           <div>
@@ -1831,6 +1940,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

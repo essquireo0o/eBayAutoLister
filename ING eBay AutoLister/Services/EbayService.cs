@@ -685,12 +685,30 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             log.Add("Warning", "Inventory API failed (non-fatal)", ex.Message);
         }
 
-        // Merge: Trading API is the base (has all listings); Inventory API overrides when both have the same listing ID
+        // Merge: Trading API is the base (has all listings); the Inventory API's richer structured
+        // product data wins where both describe the same listing.
+        //
+        // Field-level, not whole-object. The Inventory API has no concept of a watch count, a view
+        // item URL, a category name or a start time, so replacing the Trading entry outright used
+        // to blank all four on every API-created listing. Those are exactly the fields the
+        // inventory-health scan runs on, so the Trading values are carried across explicitly.
         var merged = new Dictionary<string, EbayListingSummary>(StringComparer.OrdinalIgnoreCase);
         foreach (var l in tradingListings)
             if (!string.IsNullOrEmpty(l.ListingId)) merged[l.ListingId] = l;
         foreach (var l in inventoryListings)
-            if (!string.IsNullOrEmpty(l.ListingId)) merged[l.ListingId] = l;
+        {
+            if (string.IsNullOrEmpty(l.ListingId)) continue;
+            if (merged.TryGetValue(l.ListingId, out var fromTrading))
+            {
+                l.WatchCount   = fromTrading.WatchCount;
+                l.ListingUrl   = fromTrading.ListingUrl;
+                l.StartTimeUtc = fromTrading.StartTimeUtc;
+                l.QuantitySold = fromTrading.QuantitySold;
+                l.HitCount     = fromTrading.HitCount;
+                if (string.IsNullOrWhiteSpace(l.Category)) l.Category = fromTrading.Category;
+            }
+            merged[l.ListingId] = l;
+        }
 
         var result = merged.Values.OrderByDescending(l => l.WatchCount).ThenBy(l => l.Title).ToList();
         log.Add("Info", $"Import complete: {result.Count} listing(s)",
@@ -799,6 +817,22 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                 int watchCount = 0;
                 int.TryParse(Xstr(item, "WatchCount"), out watchCount);
 
+                // How long it has been sitting, and what it did while it sat. GetMyeBaySelling
+                // always returns StartTime; HitCount is only present on some accounts/call
+                // versions, so it is read opportunistically and never depended on.
+                DateTime? startTimeUtc = null;
+                var startTimeText = item.Descendants(EbayNs + "StartTime").FirstOrDefault()?.Value;
+                if (DateTime.TryParse(startTimeText, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var parsedStart))
+                    startTimeUtc = parsedStart;
+
+                int quantitySold = 0;
+                int.TryParse(item.Descendants(EbayNs + "QuantitySold").FirstOrDefault()?.Value, out quantitySold);
+
+                int hitCount = 0;
+                int.TryParse(item.Descendants(EbayNs + "HitCount").FirstOrDefault()?.Value, out hitCount);
+
                 var lastModified = item.Descendants(EbayNs + "TimeLeft").FirstOrDefault()?.Value ?? "";
 
                 results.Add(new EbayListingSummary
@@ -816,6 +850,9 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                     ThumbnailUrl = thumbnail,
                     WatchCount   = watchCount,
                     ListingUrl   = listingUrl,
+                    StartTimeUtc = startTimeUtc,
+                    QuantitySold = quantitySold,
+                    HitCount     = hitCount,
                     LastUpdated  = "",
                     Data         = new PostListingRequest
                     {

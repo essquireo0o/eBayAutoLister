@@ -691,3 +691,176 @@ listed on Craigslist *and* Facebook is one sold-comp lookup, not two.
 **Not verified:** the Facebook half of a mixed-source ranking against a live Facebook session, and
 profit numbers against a populated comps database — both need credentials this session can't use.
 The Craigslist half was exercised end-to-end against the real site.
+
+---
+
+## 13. Inventory Health — repricing the money already stuck in live listings (autonomous session, 2026-07-26)
+
+A whole-app audit was run first: home → AI research → pricing → listing editor → publish → post-sale.
+Every screen in the app points **forward** at inventory the seller has not bought yet — research it
+(§Market Research), source it (§10–12), price it, list it, cross-list it (§9). Past the Publish
+button there was **nothing**. `EbayService.GetListingsAsync()` fetched the seller's live listings and
+the app only ever used them to populate cards, and `ReviseInventoryStatusAsync` — the ability to
+change a live price — existed and nothing called it.
+
+That gap is where a working reseller's money actually is. A seller with 200 live listings has a large
+fraction of their capital in items that stopped selling months ago at a price the market has since
+drifted below, and **nothing in eBay Seller Hub ever tells them so.**
+
+`GET /api/inventory/health` → the new **💸 Inventory Health** page.
+
+### Why this and not something else
+
+| Candidate | Why not |
+|---|---|
+| Order / P&L dashboard | Reporting. Tells the seller what already happened; changes no decision. |
+| More sourcing sources | §10–12 already cover the inbound side; a fourth site is incremental. |
+| **Aged-inventory repricing** | **Acts on capital already spent, on the one axis the seller controls today.** |
+
+It is also the widest competitive gap. Vendoo, List Perfectly and Crosslist are cross-listing tools —
+they move listings between sites and never price them against sold data. ZIK researches products the
+seller does not own yet. eBay's own **Markdown Manager takes a blanket percentage off with no market
+data, no cost basis and no floor** — it will happily discount an item straight through a loss. This
+app already owned every piece needed to do it properly (`MarketPriceEstimator`, the hosted comps DB,
+Terapeak, `ProfitCalculator`, `FeeProfile`); what was missing was the join.
+
+### The money
+
+Three distinct leaks, each reported as a dollar figure:
+
+1. **Capital that has stopped moving.** Every listing over 90 days is counted at the truest basis
+   available — what was paid where known, market value otherwise — so the headline reads
+   "$185,664 sitting in listings older than 90 days", not "11 stale listings". A statistic is not a
+   decision; a number with a dollar sign is.
+2. **Prices the market has drifted below.** Each listing gets a suggested price from an age-laddered
+   discount to *today's* market, floored at break-even, applied to eBay in one confirmed action.
+3. **The quiet half nobody looks for: underpricing.** Listings sitting *below* market are reported
+   with what they give away per sale. A markdown tool that only ever cuts prices misses this entirely.
+
+### Cost basis — the number eBay cannot supply
+
+`CostBasisStore` (new SQLite table in the app's own database) holds what the seller paid per unit,
+plus inbound freight as a separate field, because sellers know those as two numbers and asking them
+to pre-add is how the figure ends up blank or wrong.
+
+Keyed on listing ID **with SKU as a secondary key**, because neither is reliable alone: listings
+created on the eBay website often have no SKU, and an ended-and-relisted item gets a **new listing ID
+while keeping its SKU**. A save supplying both collapses rows that had matched separately, so a
+relist never silently loses the cost the seller already entered.
+
+Without it the feature still works — it just says so, on the rows it is recommending a price for,
+rather than pretending the floor was checked.
+
+### What the analyzer refuses to do
+
+The judgement rules are the product. Most of them exist to **not** make a confident recommendation:
+
+| Rule | Why |
+|---|---|
+| Never below break-even | `ProfitCalculator.BreakEvenSalePrice` — the same fee model as every other profit path. A markdown through cost is the one failure mode that turns a repricing tool into a loss-making one. |
+| Break-even above market → **no price at all** | `underwater`. There is no profitable price; saying so *is* the answer. A suggestion here would be a suggested loss. |
+| Max **35%** cut per revision | A tool that answers a 90-day-old listing with "minus 60%" is a panic button. Deep cuts are reached over successive scans, with the seller seeing each step. |
+| Max **25%** raise per revision | Same reasoning inverted. |
+| Under a 2% / $1 change → nothing | A one-cent revision churns the listing and changes no buyer's mind. |
+| Under 3 sold comps → nothing | The same evidence bar the local-arbitrage verdicts use. |
+| Fresh listings (<30 days) are not marked down | A listing that has not had a fair run at its price does not need a discount — **unless** it is 25%+ over market, which is mispricing rather than newness. |
+| Fresh listings *are* checked for **underpricing** | The grace period exists to avoid cutting early; it has no bearing on a listing priced too low. That is the one case where waiting costs money — once it sells, the difference is gone. |
+| Raises are never bulk-applied | `RequiresReview`. A raise makes a stronger claim than a markdown and is a per-item judgement. |
+| Below market and unsold 90+ days → **no raise** | That is evidence the comp match is wrong for this item (different condition, missing parts, weaker photos), not evidence the price is too low. |
+| 3+ watchers at a fair price → **hold** | Watchers are the only free demand signal eBay gives. The item is close; a markdown there gives away margin the seller did not have to spend. |
+| 5+ watchers on an aged listing → **meet market, don't undercut it** | An audience that size says price is the only remaining blocker. |
+| Charm pricing (`.99`) | Rounds **down**, so it errs cheap on a markdown and conservative on a raise, and never crosses the floor to get there. |
+
+### Three defects the real-inventory run caught
+
+The scan was pointed at the connected account's **87 live listings** rather than reasoned about in
+the abstract. Each of these produced a confident, expensive, wrong answer, and each is now a test:
+
+1. **Multi-unit lots priced against per-unit comps.** "Lot of 20 — Antminer S19" at $3,000 matched a
+   $35 single-unit comp: an 8,471% gap and a recommended 35% cut. Lot quantity is now read off the
+   title by the existing `ProductNormalizer`, and a lot listing gets **no recommendation** — the comps
+   are per unit and the ask is for twenty of them. Scaling by N would be worse, since lots trade at a
+   discount to N× the single-unit price.
+2. **Comp-match failures read as mispricing.** A gap past **±300%** is not a seller listing at four
+   times the going rate by accident; it is the matcher having found something else. Those rows now
+   report a matching failure and recommend nothing, and their fictional gaps are kept out of the
+   headline "priced above market" total.
+3. **A proven seller marked for a 27.6% cut.** The worst one. A listing 138 days old and 38% "above
+   market" — that had **sold 44 units** and had **64 watchers**. The ladder wanted $105 off each of
+   the 80 remaining: **$8,400 of margin off a listing that was demonstrably working.** A listing that
+   has sold units has settled the question the comps were only estimating, so `QuantitySold > 0` now
+   suppresses markdowns entirely, and age stops meaning "stuck" on a multi-quantity listing (it means
+   how long the *listing* has been up, not how long the *stock* has sat). Verdict `🔁 Selling` —
+   "leave it alone" — and those listings no longer count towards stale capital, which is why that
+   figure fell from $260,218 to $185,664 on the same inventory.
+
+Sales rate is reported per month but labelled a **lifetime average**: eBay returns a cumulative sold
+count with no dates, so it cannot distinguish a steady seller from one that sold out fast and stopped.
+
+### Live-price writes: three independent brakes
+
+`POST /api/inventory/reprice` is the only endpoint in the app that changes prices on listings buyers
+can already see.
+
+1. **Previews by default.** `dryRun` must be explicitly false.
+2. **`confirmed` must also be true** — the same posture `/api/listing/update` takes with
+   `ManualRevisionConfirmed`. Either flag alone yields a preview.
+3. **The floor is recomputed server-side**, never trusted from the request body, and a price below it
+   is refused. A seller who has decided to clear stock at a loss can opt in per batch, and that
+   override is recorded in the action log.
+
+Plus a 100-listing batch cap, and a typed confirmation dialog listing every price change rather than
+a one-click bulk button.
+
+### A pre-existing bug fixed on the way
+
+`GetListingsAsync` merged the Inventory API over the Trading API **whole-object**. The Inventory API
+has no concept of a watch count, view-item URL, category name or start time, so every API-created
+listing had all four silently blanked. The merge is now field-level. Those are precisely the fields
+this feature runs on.
+
+### Rationing
+
+Identical posture to `FindLocalArbitrageAsync`, because one click over a 300-listing inventory would
+otherwise be 300 comp lookups: lookups are **per distinct product** (grouped on the signature Terapeak
+also caches on), pass 1 is **cache-only**, and pass 2 spends a capped scrape budget ordered by
+**dollars at stake, not percent wrong** — a 40% gap on a $12 item is not worth a page load and a 16%
+gap on a $1,400 one is. When the item cap bites, the highest-value listings are scanned first.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/InventoryHealthModels.cs` | **New** — `InventoryHealthItem`, `InventoryHealthSummary`, `InventoryHealthResult`, and the reprice request/result types |
+| `Services/InventoryHealthAnalyzer.cs` | **New** — `Build` (the money, via `ProfitCalculator`) plus the pure `SuggestPrice` / `Judge` / `Charm` / `DaysListed` / `Summarize` / `Rank` / `SelectScrapeTargets` |
+| `Services/CostBasisStore.cs` | **New** — per-listing cost basis, dual-keyed on listing ID and SKU |
+| `Services/EbayService.cs` | Captures `StartTime` / `QuantitySold` / `HitCount`; **field-level merge fix** |
+| `Models/ListingData.cs` | `StartTimeUtc`, `QuantitySold`, `HitCount` on `EbayListingSummary` |
+| `Program.cs` | DI + `GET /api/inventory/health`, `POST /api/inventory/reprice`, `GET`/`POST`/`DELETE /api/inventory/cost-basis`, and `ScanInventoryHealthAsync` |
+| `wwwroot/index.html` | Nav entry, `#inventory-section` overlay, summary tiles, ranked table, confirmation dialog. `app.js?v=33`, `style.css?v=28` |
+| `wwwroot/app.js` | `bindInventoryHealth`, `runInventoryScan`, `renderInventorySummary`, `renderInventoryRows`, `invRowHtml`, selection/override/cost-basis handlers, `openRepriceConfirm`, `submitReprice` |
+| `wwwroot/style.css` | `.inv-*` — tiles, table, verdict badges, confirmation dialog |
+| `ING eBay AutoLister.Tests/InventoryHealthAnalyzerTests.cs` | **New** — 53 tests |
+| `ING eBay AutoLister.Tests/CostBasisStoreTests.cs` | **New** — 11 tests |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **342 passed**, 0 failed, 0 skipped (278 pre-existing + 64 new) |
+| Live scan, real account (dev ports 9371–9375) | **87 active listings** read; ages parsed (median 199d); 48 distinct products priced from the hosted comps DB; lots and bad matches correctly refused; two proven sellers correctly left alone |
+| Reprice safety gates (live endpoint, dry runs only) | Default → preview; `dryRun:false` + `confirmed:false` → **still preview**; $850 against a recomputed $922.65 break-even → **skipped**; 101 items → **HTTP 400** |
+| Real browser (Playwright, live data) | Page renders; tiles, 50 rows, verdict badges, `n/a` gaps on uncomparable rows; filtering re-renders with **0 refetches**; cost-basis entry persists and produces a real break-even; price override recalculates; preview reports "nothing sent to eBay"; confirmation dialog lists each change with the loss override defaulting off; empty-filter state |
+| Confirmed live write | **Never executed.** The browser test asserts zero requests carrying `confirmed: true`. |
+| Browser console errors | **None** |
+
+**Not verified:** an actual applied price change against live eBay — that is a real, buyer-visible,
+hard-to-reverse write on the seller's own account and is theirs to make. The `ReviseInventoryStatus`
+call it delegates to is the one already used elsewhere in the app. Test cost-basis rows created during
+verification were deleted afterwards.
+
+**Known limitations, stated in the UI rather than hidden:** storage cost, the seller's time and return
+risk are not modelled; fee rates are eBay's published ones rather than account-specific, since no
+marketplace exposes a per-account fee API; and listings whose age eBay does not report are counted
+separately rather than assumed new.
