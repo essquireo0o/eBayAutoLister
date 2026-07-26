@@ -20,22 +20,20 @@ public sealed class ProfitCalculator
         var totalRevenue = expectedSalePrice + buyerPaidShipping;
         var ebayFees = Math.Round(totalRevenue * (fees.EbayFinalValueFeePercent / 100m) + fees.EbayFinalValueFeeFixed, 2);
         var promotedFees = Math.Round(totalRevenue * (fees.PromotedListingRatePercent / 100m), 2);
-        // Payment-processing fees fold into "other costs" — FeeProfile.PaymentProcessingPercent
-        // defaults to 0 (eBay's final value fee is normally all-inclusive), so this is inert
-        // unless a caller configures it, and ProfitBreakdown doesn't need a dedicated field for it.
+        // Payment processing is reported on its own line rather than folded into "other costs":
+        // sellers outside eBay's all-inclusive final value fee (and every cross-listed marketplace)
+        // pay it separately, and a fee the seller can't see is a fee they can't price around.
         var paymentFees = Math.Round(totalRevenue * (fees.PaymentProcessingPercent / 100m), 2);
         var returnReserve = Math.Round(totalRevenue * (fees.ReturnReservePercent / 100m), 2);
         var testingReserve = Math.Round(totalRevenue * (fees.TestingReservePercent / 100m), 2);
-        var otherWithPayment = Math.Round(other + paymentFees, 2);
 
-        var netProfitPerUnit = totalRevenue - supplierUnitCost - ebayFees - promotedFees
+        var netProfitPerUnit = totalRevenue - supplierUnitCost - ebayFees - promotedFees - paymentFees
             - actualShipping - fees.DefaultPackagingCost - fees.DefaultLaborCost
-            - returnReserve - testingReserve - otherWithPayment;
+            - returnReserve - testingReserve - other;
 
         var breakEven = BreakEvenPrice(
-            supplierUnitCost, actualShipping, fees.DefaultPackagingCost, fees.DefaultLaborCost, otherWithPayment,
-            buyerPaidShipping, fees.EbayFinalValueFeePercent, fees.EbayFinalValueFeeFixed,
-            fees.PromotedListingRatePercent, fees.ReturnReservePercent, fees.TestingReservePercent);
+            supplierUnitCost, actualShipping, fees.DefaultPackagingCost, fees.DefaultLaborCost, other,
+            buyerPaidShipping, fees.EbayFinalValueFeeFixed, fees.RevenueFeeFraction);
 
         return new ProfitBreakdown
         {
@@ -51,7 +49,8 @@ public sealed class ProfitCalculator
             LaborCost = fees.DefaultLaborCost,
             ReturnReserve = returnReserve,
             TestingReserve = testingReserve,
-            OtherCosts = otherWithPayment,
+            PaymentProcessingFees = paymentFees,
+            OtherCosts = other,
             NetProfitPerUnit = Math.Round(netProfitPerUnit, 2),
             TotalPotentialProfit = Math.Round(netProfitPerUnit * quantity, 2),
             RoiPercent = supplierUnitCost > 0 ? Math.Round(netProfitPerUnit / supplierUnitCost * 100m, 1) : null,
@@ -65,12 +64,15 @@ public sealed class ProfitCalculator
     // NetProfit formula, not a numeric search:
     //   P*(1 - totalFeePct) = fixedCosts - shipping*(1 - totalFeePct)
     //   P = fixedCosts / (1 - totalFeePct) - shipping
+    //
+    // totalFeeFraction comes from FeeProfile.RevenueFeeFraction so payment processing is scaled
+    // with the sale here too. It used to be passed in as a fixed cost, which understated the
+    // break-even for any seller who configured it — harmless while the rate defaulted to 0 and
+    // nothing could set it, wrong the moment the Fees & Costs screen could.
     private static decimal BreakEvenPrice(
         decimal supplierUnitCost, decimal actualShipping, decimal packaging, decimal labor, decimal other,
-        decimal buyerPaidShipping, decimal feePercent, decimal feeFixed, decimal promotedPercent,
-        decimal returnPercent, decimal testingPercent)
+        decimal buyerPaidShipping, decimal feeFixed, decimal totalFeeFraction)
     {
-        var totalFeeFraction = (feePercent + promotedPercent + returnPercent + testingPercent) / 100m;
         if (totalFeeFraction >= 1m) return decimal.MaxValue; // fees alone exceed revenue — no price breaks even
 
         var fixedCosts = supplierUnitCost + feeFixed + actualShipping + packaging + labor + other;

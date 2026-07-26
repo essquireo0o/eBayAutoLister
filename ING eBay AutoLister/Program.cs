@@ -218,6 +218,13 @@ builder.Services.AddSingleton<MarketPriceEstimator>();
 builder.Services.AddSingleton<SellThroughCalculator>();
 builder.Services.AddSingleton<FeeProfile>();
 builder.Services.AddSingleton<ProfitCalculator>();
+// The seller's real fee/cost assumptions, persisted, and read into the FeeProfile singleton at
+// startup (see the FeeProfileStore.Apply call after the app is built). Every screen that costs an
+// item shares that one instance, so saving the Fees & Costs form re-prices the whole app at once.
+builder.Services.AddSingleton<FeeProfileStore>();
+// All-in net proceeds, break-even and the minimum offer to accept — the one calculation behind
+// every price the app shows, on the sourcing screens and in the listing editor alike.
+builder.Services.AddSingleton<NetProceedsCalculator>();
 builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
 builder.Services.AddSingleton<CrossListingFeeProfile>();
@@ -289,6 +296,21 @@ app.UseCors();
 
 // Record install date on first run
 app.Services.GetRequiredService<CredentialsStore>().EnsureInstallDate();
+
+// Load the seller's saved fee/cost assumptions into the FeeProfile singleton before anything is
+// priced. Without this every net-profit figure in the app silently reverts to the hardcoded
+// defaults — eBay's cut and nothing else — on each restart.
+try
+{
+    app.Services.GetRequiredService<FeeProfileStore>().Apply(app.Services.GetRequiredService<FeeProfile>());
+}
+catch (Exception ex)
+{
+    // A first run creates the table; a corrupted one falls back to the built-in defaults rather
+    // than refusing to start. The defaults are conservative, not wrong — just incomplete.
+    app.Services.GetRequiredService<ActionLog>()
+        .Add("Warning", "Fee settings not loaded", $"Using default fee assumptions — {ex.Message}");
+}
 
 // Marketplace database startup check — confirms the local sold-history lookup is usable, and
 // adds any of its (non-destructive) indexes that are still missing. Never fatal: Opportunity
@@ -1040,7 +1062,64 @@ app.MapPost("/api/quick-fill", async (QuickFillRequest req, ClaudeService claude
     });
 });
 
-app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace, ActionLog log) =>
+// ── Fees, take-home and the floor ─────────────────────────────────
+// The seller's real cost of doing business, and the one calculation every price in the app is run
+// through. These two endpoints are what turn the fee assumptions from a hardcoded constant into
+// something the seller owns: what they save here re-prices the listing editor, market research,
+// local arbitrage, lot analysis, inventory health and watcher offers at the same moment, because
+// they all hold the same FeeProfile singleton.
+app.MapGet("/api/fees/profile", (FeeProfile fees) => Results.Ok(FeeProfileStore.ToView(fees)));
+
+app.MapPost("/api/fees/profile", (FeeProfileView body, FeeProfileStore store, FeeProfile fees, ActionLog log) =>
+{
+    if (body is null) return Results.BadRequest(new { error = "No fee settings supplied." });
+
+    var stored = store.SaveAndApply(FeeProfileStore.FromView(body), fees);
+    log.Add("Info", "Fee settings saved",
+        $"{stored.RevenueFeeFraction * 100m:0.##}% of each sale, ${stored.DefaultShippingCost:0.00} shipping, "
+      + $"${stored.DefaultPackagingCost:0.00} packaging, ${stored.DefaultLaborCost:0.00} handling; "
+      + $"floor ${stored.MinimumNetProfit:0.00} / {stored.MinimumMarginPercent:0.##}%.");
+
+    // The sanitized profile, not the submitted one — a rate the form let through but the math
+    // could not is corrected here, and the form needs to show the corrected number.
+    return Results.Ok(FeeProfileStore.ToView(stored));
+});
+
+// Net proceeds at one or more candidate prices, plus the two floors. Takes a list because a
+// pricing panel shows several prices at once — the seller's ask, the comps median, a suggestion —
+// and each one needs the same treatment.
+app.MapPost("/api/pricing/net-quote", (NetQuoteRequest req, NetProceedsCalculator net, FeeProfile fees) =>
+{
+    if (req is null) return Results.BadRequest(new { error = "No pricing request supplied." });
+
+    // Capped so a malformed client cannot turn one request into an unbounded amount of work.
+    var prices = (req.Prices ?? []).Where(p => p >= 0m).Distinct().Take(12).ToList();
+
+    var quotes = prices
+        .Select(p => net.Quote(p, req.UnitCost, fees, req.BuyerPaidShipping, req.Quantity,
+                               req.ShippingCost, req.OtherCosts))
+        .ToList();
+
+    // The floors do not depend on the asking price, so they are computed once from a reference
+    // quote rather than read off whichever price happened to be first in the list.
+    var reference = net.Quote(0m, req.UnitCost, fees, req.BuyerPaidShipping, req.Quantity,
+                              req.ShippingCost, req.OtherCosts);
+    var hasCost = req.UnitCost is > 0m;
+
+    return Results.Ok(new NetQuoteResponse
+    {
+        Quotes = quotes,
+        BreakEvenPrice = hasCost ? reference.BreakEvenPrice : null,
+        MinimumOfferPrice = hasCost ? reference.MinimumOfferPrice : null,
+        MinimumOfferBasis = reference.MinimumOfferBasis,
+        HasCostBasis = hasCost,
+        Fees = FeeProfileStore.ToView(fees),
+    });
+});
+
+app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, decimal? buyerShipping,
+    EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace,
+    NetProceedsCalculator net, FeeProfile fees, ActionLog log) =>
 {
     if (string.IsNullOrWhiteSpace(q))
         return Results.BadRequest(new { error = "Query is required." });
@@ -1052,6 +1131,35 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
     var terapeakUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60" +
                        "&keywords=" + Uri.EscapeDataString(q);
     var fallbackUrl = "https://www.ebay.com/sch/i.html?_nkw=" + Uri.EscapeDataString(q) + "&LH_Sold=1&LH_Complete=1&_sop=13";
+
+    // What the comps are actually worth after fees. A median is a gross number, and a seller who
+    // prices at the median and subtracts nothing is the exact seller this feature exists for, so
+    // every sold-comps answer now carries the take-home at the median, at the average and at
+    // whatever price the caller is currently considering — plus the two floors.
+    object? PricingFor(decimal median, decimal average)
+    {
+        var shipping = Math.Max(0m, buyerShipping ?? 0m);
+        var candidates = new List<(string Key, decimal Price)>();
+        if (ask is > 0m) candidates.Add(("ask", ask.Value));
+        if (median > 0m) candidates.Add(("median", median));
+        if (average > 0m) candidates.Add(("average", average));
+        if (candidates.Count == 0) return null;
+
+        var quotes = candidates.ToDictionary(
+            c => c.Key,
+            c => net.Quote(c.Price, cost, fees, shipping, quantity: 1));
+
+        var reference = quotes.Values.First();
+        return new
+        {
+            quotes,
+            hasCostBasis = cost is > 0m,
+            breakEvenPrice = cost is > 0m ? reference.BreakEvenPrice : (decimal?)null,
+            minimumOfferPrice = cost is > 0m ? reference.MinimumOfferPrice : (decimal?)null,
+            minimumOfferBasis = reference.MinimumOfferBasis,
+            fees = FeeProfileStore.ToView(fees),
+        };
+    }
 
     // Blend the local Marketplace.db sold history into the reported average at 40% weight
     // (Terapeak/Insights carries the other 60%). The local comps are NOT surfaced in the
@@ -1090,7 +1198,7 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
                 if (parsed is not null)
                 {
                     var average = await BlendLocalAverageAsync(parsed.Average);
-                    return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, Average = average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak" });
+                    return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, Average = average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak", pricing = PricingFor(parsed.Median, average) });
                 }
             }
             else if (scrape.Status == "session_expired")
@@ -1118,7 +1226,7 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
         if (result.Count > 0)
         {
             var average = await BlendLocalAverageAsync(result.Average);
-            return Results.Ok(new { result.Query, result.Items, result.Count, Average = average, result.Median, result.Min, result.Max, terapeakUrl, fallbackUrl, source = "marketplace_insights" });
+            return Results.Ok(new { result.Query, result.Items, result.Count, Average = average, result.Median, result.Min, result.Max, terapeakUrl, fallbackUrl, source = "marketplace_insights", pricing = PricingFor(result.Median, average) });
         }
     }
     catch (Exception ex)
@@ -1134,6 +1242,9 @@ app.MapGet("/api/sold-comps", async (string q, EbayService ebay, TerapeakService
     {
         query = q, items = Array.Empty<object>(), count = 0, average = 0, median = 0, min = 0, max = 0,
         terapeakUrl, fallbackUrl, source = "none", dataNote,
+        // No comps, but the seller's own price still has fees on it. The take-home panel stays
+        // useful on the one path where the market data is missing entirely.
+        pricing = PricingFor(0m, 0m),
     });
 });
 
@@ -1893,7 +2004,10 @@ app.MapGet("/api/offers/watchers", async (
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     InventoryHealthAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
 {
-    var floorProfit = Math.Max(0m, minProfit ?? 0m);
+    // With no explicit ask, the floor is the one the seller already set in Fees & Costs rather
+    // than zero — a seller who has said "never under $10 profit" should not have to say it again
+    // on the screen that is actively handing out discounts.
+    var floorProfit = Math.Max(0m, minProfit ?? feeProfile.MinimumNetProfit);
     var watchers = Math.Clamp(minWatchers ?? 1, 0, 500);
 
     // The board is the inventory-health scan seen from a different angle, so it reuses that scan
@@ -1989,7 +2103,8 @@ app.MapPost("/api/offers/send", async (
         return Results.BadRequest("Too many listings in one send — 50 at a time is the limit.");
 
     var message = WatcherOfferAdvisor.CleanMessage(req?.Message);
-    var minProfit = Math.Max(0m, req?.MinNetProfit ?? 0m);
+    // Same default as the board that produced these rows — see /api/offers/watchers.
+    var minProfit = Math.Max(0m, req?.MinNetProfit ?? feeProfile.MinimumNetProfit);
     var allCosts = costBasis.GetAll();
 
     foreach (var item in items)

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=37" />
+  <link rel="stylesheet" href="style.css?v=38" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -589,6 +589,32 @@
                     <div class="field" id="nl-best-offer-decline" style="display:none">
                       <label>Auto-Decline Price (USD)</label>
                       <input id="nl-auto-decline" type="number" step="0.01" min="0" />
+                    </div>
+
+                    <!-- All-in take-home. Everything here comes from /api/pricing/net-quote, which
+                         is the same NetProceedsCalculator that costs local arbitrage, lots and
+                         inventory health — so the net shown while writing a listing is the net the
+                         sourcing screens promised. -->
+                    <div class="field full-width th-panel" id="nl-th-panel">
+                      <div class="th-head">
+                        <span class="th-title">Your take-home on this sale</span>
+                        <button type="button" class="th-fees-btn" data-th-fees>Fees &amp; costs</button>
+                      </div>
+                      <div class="th-inputs">
+                        <label class="th-input">
+                          <span>What you paid</span>
+                          <input id="nl-unit-cost" type="number" step="0.01" min="0" placeholder="0.00" />
+                        </label>
+                        <label class="th-input">
+                          <span>Your shipping label</span>
+                          <input id="nl-ship-cost" type="number" step="0.01" min="0" placeholder="default" />
+                        </label>
+                        <label class="th-input">
+                          <span>Buyer pays shipping</span>
+                          <input id="nl-buyer-shipping" type="number" step="0.01" min="0" placeholder="0.00" />
+                        </label>
+                      </div>
+                      <div class="th-body" id="nl-th-body"></div>
                     </div>
                   </div>
                 </details>
@@ -1733,6 +1759,80 @@
 
         <!-- Listing Defaults — pre-filled into every new listing -->
         <div class="setup-section imggen-settings-card">
+          <!-- Fees &amp; Costs — the numbers behind every net-profit figure in the app. Saving here
+               re-prices the listing editor, market research, local arbitrage, lot analysis,
+               inventory health and watcher offers at once (they share one FeeProfile). -->
+          <h3 id="fees-costs">Fees &amp; Costs</h3>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+            Every "net profit" and "break-even" the app shows is computed from these. Leaving shipping,
+            packaging and handling at zero is what makes a listing look more profitable than it is —
+            put your real numbers in once and every screen tells you the truth.
+          </p>
+          <div class="form-grid">
+            <div class="field">
+              <label>eBay Final Value Fee (%)</label>
+              <input id="pg-fee-fvf" type="number" step="0.01" min="0" max="90" value="13.25" />
+              <small style="color:var(--muted);font-size:11px">Varies by category and store level — check a recent payout.</small>
+            </div>
+            <div class="field">
+              <label>Per-Order Fee (USD)</label>
+              <input id="pg-fee-fixed" type="number" step="0.01" min="0" value="0.40" />
+            </div>
+            <div class="field">
+              <label>Promoted Listings Ad Rate (%)</label>
+              <input id="pg-fee-promoted" type="number" step="0.01" min="0" max="90" value="0" />
+              <small style="color:var(--muted);font-size:11px">0 if you don't run Promoted Listings.</small>
+            </div>
+            <div class="field">
+              <label>Payment Processing (%)</label>
+              <input id="pg-fee-payment" type="number" step="0.01" min="0" max="90" value="0" />
+              <small style="color:var(--muted);font-size:11px">0 on eBay's all-inclusive fee; set it for other marketplaces.</small>
+            </div>
+            <div class="field">
+              <label>Typical Shipping Label (USD)</label>
+              <input id="pg-fee-shipping" type="number" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Packaging per Order (USD)</label>
+              <input id="pg-fee-packaging" type="number" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Your Handling Time (USD)</label>
+              <input id="pg-fee-labor" type="number" step="0.01" min="0" value="0" />
+              <small style="color:var(--muted);font-size:11px">What your time is worth to pick, pack and ship one order.</small>
+            </div>
+            <div class="field">
+              <label>Returns Reserve (%)</label>
+              <input id="pg-fee-returns" type="number" step="0.01" min="0" max="90" value="0" />
+              <small style="color:var(--muted);font-size:11px">Share of sales that come back. 2–5% is typical.</small>
+            </div>
+            <div class="field">
+              <label>Testing / Failure Reserve (%)</label>
+              <input id="pg-fee-testing" type="number" step="0.01" min="0" max="90" value="0" />
+            </div>
+            <div class="field full-width">
+              <div class="fees-floor-head">Your floor — the lowest offer you'll accept</div>
+              <p style="font-size:12px;color:var(--muted);margin:2px 0 10px">
+                Break-even stops you selling at a loss. This stops you selling for nothing. Whichever
+                of the two is higher becomes the minimum offer shown on every listing, the floor the
+                repricer won't cut through, and the limit on offers sent to watchers.
+              </p>
+            </div>
+            <div class="field">
+              <label>Minimum Net Profit per Sale (USD)</label>
+              <input id="pg-fee-min-profit" type="number" step="0.01" min="0" value="0" />
+            </div>
+            <div class="field">
+              <label>Minimum Margin (%)</label>
+              <input id="pg-fee-min-margin" type="number" step="0.01" min="0" max="95" value="0" />
+            </div>
+          </div>
+          <div class="fees-summary" id="pg-fees-summary"></div>
+          <div class="imggen-test-row" style="margin-top:14px">
+            <button id="pg-fees-save" class="btn btn-primary" type="button">Save Fees &amp; Costs</button>
+            <span id="pg-fees-msg" class="sd-test-msg"></span>
+          </div>
+
           <h3>Listing Defaults</h3>
           <p style="font-size:13px;color:var(--muted);margin-bottom:14px">These values are pre-filled into every new listing. You can still change them per-listing in the modal.</p>
           <div class="form-grid">
@@ -2017,6 +2117,31 @@
               <div class="field" id="best-offer-decline" style="display:none">
                 <label>Auto-Decline Price (USD)</label>
                 <input id="f-auto-decline" type="number" step="0.01" min="0" />
+              </div>
+
+              <!-- Same panel as the new-listing form, same endpoint, same numbers. On a live
+                   listing the cost you enter here is saved to the shared cost-basis store, so
+                   Inventory Health and Watcher Offers can price this item too. -->
+              <div class="field full-width th-panel" id="f-th-panel">
+                <div class="th-head">
+                  <span class="th-title">Your take-home on this sale</span>
+                  <button type="button" class="th-fees-btn" data-th-fees>Fees &amp; costs</button>
+                </div>
+                <div class="th-inputs">
+                  <label class="th-input">
+                    <span>What you paid</span>
+                    <input id="f-unit-cost" type="number" step="0.01" min="0" placeholder="0.00" />
+                  </label>
+                  <label class="th-input">
+                    <span>Your shipping label</span>
+                    <input id="f-ship-cost" type="number" step="0.01" min="0" placeholder="default" />
+                  </label>
+                  <label class="th-input">
+                    <span>Buyer pays shipping</span>
+                    <input id="f-buyer-shipping" type="number" step="0.01" min="0" placeholder="0.00" />
+                  </label>
+                </div>
+                <div class="th-body" id="f-th-body"></div>
               </div>
             </div>
           </details>
@@ -2433,6 +2558,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=44"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>

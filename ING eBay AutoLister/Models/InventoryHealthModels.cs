@@ -60,6 +60,12 @@ public sealed class InventoryHealthItem
 
     // ── The recommendation ───────────────────────────────────────────────────────────────────
     public decimal? BreakEvenPrice { get; set; }
+    // The lowest price worth saying yes to on this item — break-even raised by whatever profit or
+    // margin floor the seller set in Fees & Costs. This is the number to negotiate a Best Offer
+    // against, and the floor the markdown ladder is not allowed through.
+    public decimal? MinimumOfferPrice { get; set; }
+    public string MinimumOfferBasis { get; set; } = "break_even";
+    public decimal? NetProfitAtMinimumOffer { get; set; }
     public decimal? SuggestedPrice { get; set; }
     public decimal? SuggestedChangePercent { get; set; }
     public decimal? NetProfitAtListPrice { get; set; }

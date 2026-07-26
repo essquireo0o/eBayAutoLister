@@ -368,6 +368,9 @@
     initEditDrawer();
     bindMarketResearch();
     bindCrossListing();
+    bindTakeHome('nl');
+    bindTakeHome('f');
+    loadFeeProfile();
     bindAutosave();
     restoreListingViewMode();
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
@@ -1853,7 +1856,7 @@
             <th class="num">Market</th>
             <th class="num">Gap</th>
             <th class="num">You paid</th>
-            <th class="num">Break-even</th>
+            <th class="num" title="Break-even is where the sale stops losing money. Your floor is the lowest offer worth taking — set it in Settings → Fees &amp; Costs.">Break-even<div class="inv-th-sub">&amp; your floor</div></th>
             <th class="num">Suggested</th>
             <th>Verdict</th>
           </tr>
@@ -1928,7 +1931,15 @@
                  data-id="${esc(item.listingId)}" data-sku="${esc(item.sku || '')}"
                  title="What you paid for this unit, all in. Sets the break-even floor." />
         </td>
-        <td class="num">${item.breakEvenPrice != null ? moneyExact(item.breakEvenPrice) : '<span class="inv-dash">—</span>'}</td>
+        <!-- Break-even alone answers "am I losing money"; the floor answers "is this worth doing".
+             A Best Offer arrives against the second number, so it belongs next to the first. -->
+        <td class="num">${item.breakEvenPrice != null
+            ? `${moneyExact(item.breakEvenPrice)}${item.minimumOfferPrice != null
+                 && item.minimumOfferPrice > item.breakEvenPrice
+                 ? `<div class="inv-sub inv-floor" title="Lowest offer worth accepting — ${
+                      esc(invFloorBasis(item))}">floor ${moneyExact(item.minimumOfferPrice)}</div>`
+                 : ''}`
+            : '<span class="inv-dash">—</span>'}</td>
         <td class="num inv-cell-suggested">${suggestedCell}</td>
         <td class="inv-cell-verdict">
           <span class="inv-verdict ${v.cls}">${v.label}</span>
@@ -1936,6 +1947,13 @@
           ${(item.signals || []).length ? `<div class="inv-signals">${item.signals.map(s => esc(s)).join(' ')}</div>` : ''}
         </td>
       </tr>`;
+  }
+
+  function invFloorBasis(item) {
+    if (item.minimumOfferBasis === 'margin_target') return 'your minimum margin, from Fees & Costs';
+    if (item.minimumOfferBasis === 'profit_target')
+      return `keeps ${moneyExact(item.netProfitAtMinimumOffer ?? 0)} of profit, from Fees & Costs`;
+    return 'break-even — set a minimum profit in Fees & Costs to raise it';
   }
 
   function invItemById(listingId) {
@@ -3951,6 +3969,75 @@
     } catch {}
   }
 
+  // ── Fees & Costs (Settings) ────────────────────────────────────────────────
+  // These eleven numbers are the difference between a net profit figure and a guess. They live on
+  // the server in one FeeProfile, so saving them re-prices every screen at once — no re-scan, no
+  // restart.
+  const FEE_FIELDS = {
+    'pg-fee-fvf':        'ebayFinalValueFeePercent',
+    'pg-fee-fixed':      'ebayFinalValueFeeFixed',
+    'pg-fee-promoted':   'promotedListingRatePercent',
+    'pg-fee-payment':    'paymentProcessingPercent',
+    'pg-fee-shipping':   'defaultShippingCost',
+    'pg-fee-packaging':  'defaultPackagingCost',
+    'pg-fee-labor':      'defaultLaborCost',
+    'pg-fee-returns':    'returnReservePercent',
+    'pg-fee-testing':    'testingReservePercent',
+    'pg-fee-min-profit': 'minimumNetProfit',
+    'pg-fee-min-margin': 'minimumMarginPercent',
+  };
+
+  async function loadFeeProfile() {
+    if (!$('pg-fee-fvf')) return;
+    try {
+      const fees = await fetch('/api/fees/profile').then(r => r.json());
+      Object.entries(FEE_FIELDS).forEach(([id, key]) => setVal(id, String(fees[key] ?? 0)));
+      renderFeeSummary(fees);
+    } catch { /* the form keeps its defaults, which are the server's defaults too */ }
+  }
+
+  async function saveFeeProfile() {
+    const msg = $('pg-fees-msg');
+    if (msg) { msg.textContent = 'Saving…'; msg.className = 'sd-test-msg'; }
+    try {
+      const body = {};
+      Object.entries(FEE_FIELDS).forEach(([id, key]) => { body[key] = parseFloat($(id)?.value) || 0; });
+
+      const { res, body: saved } = await safePost('/api/fees/profile', body);
+      if (!res.ok) throw new Error(saved?.error || 'Save failed.');
+
+      // Echo back what was stored, not what was typed — the server clamps rates the math can't
+      // survive, and the form must show the number actually in force.
+      Object.entries(FEE_FIELDS).forEach(([id, key]) => setVal(id, String(saved[key] ?? 0)));
+      renderFeeSummary(saved);
+      if (msg) { msg.textContent = 'Saved — every price in the app now uses these.'; msg.className = 'sd-test-msg ok'; }
+      addActivity('Fees & costs saved', `${Number(saved.revenueFeePercent).toFixed(2)}% of each sale plus fixed costs`);
+
+      // Anything currently open is now quoting stale numbers.
+      ['nl', 'f'].forEach(p => { if ($(`${p}-th-panel`)) scheduleTakeHome(p); });
+    } catch (err) {
+      if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+    }
+  }
+
+  function renderFeeSummary(fees) {
+    const el = $('pg-fees-summary');
+    if (!el) return;
+    const fixed = (Number(fees.defaultShippingCost) || 0) + (Number(fees.defaultPackagingCost) || 0)
+                + (Number(fees.defaultLaborCost) || 0) + (Number(fees.ebayFinalValueFeeFixed) || 0);
+    const floor = Number(fees.minimumNetProfit) || 0;
+    const margin = Number(fees.minimumMarginPercent) || 0;
+    el.innerHTML =
+      `<strong>${Number(fees.revenueFeePercent || 0).toFixed(2)}%</strong> of every sale, plus
+       <strong>${moneyExact(fixed)}</strong> per order. On a ${moneyExact(100)} sale that is
+       <strong>${moneyExact((Number(fees.revenueFeePercent) || 0) + fixed)}</strong> gone before
+       you count what the item cost. ` +
+      (floor > 0 || margin > 0
+        ? `You won't be shown an offer worth less than ${floor > 0 ? moneyExact(floor) : ''}${
+             floor > 0 && margin > 0 ? ' or ' : ''}${margin > 0 ? margin.toFixed(1) + '% margin' : ''}.`
+        : `No profit floor set — the app will only stop you at break-even.`);
+  }
+
   async function saveListingDefaults() {
     const msg = $('pg-defaults-msg');
     if (msg) { msg.textContent = 'Saving…'; msg.className = 'sd-test-msg'; }
@@ -4795,6 +4882,187 @@
     return !!(listing.offerId || (listing.listingId && listing.sku));
   }
 
+  // ── Take-home: all-in net, break-even and the offer floor ──────────────────
+  // The listing editor used to show a price and nothing else, so a seller could type $120 and bank
+  // $91 without ever seeing the $29. This panel puts the real number next to the price field in
+  // both editors, and it is not a second opinion: every figure comes from /api/pricing/net-quote,
+  // which runs the same NetProceedsCalculator that costs local arbitrage, lot analysis, inventory
+  // health and watcher offers. One calculation, one answer, every screen.
+
+  const TAKE_HOME_DEBOUNCE_MS = 350;
+  const takeHomeTimers = {};     // prefix -> debounce handle
+  const takeHomeState  = {};     // prefix -> last response, so the floor buttons have something to apply
+  let   costBasisCache = null;   // /api/inventory/cost-basis, fetched once per drawer session
+
+  const thNum = id => { const v = parseFloat($(id)?.value); return Number.isFinite(v) && v >= 0 ? v : 0; };
+
+  function bindTakeHome(prefix) {
+    if (!$(`${prefix}-th-panel`)) return;
+
+    // Anything that moves the money re-costs the sale. Quantity is included because the panel
+    // reports the total across the run as well as the per-unit profit.
+    ['price', 'quantity', 'unit-cost', 'ship-cost', 'buyer-shipping']
+      .forEach(field => on(`${prefix}-${field}`, 'input', () => scheduleTakeHome(prefix)));
+
+    // A cost typed against a live listing is the same cost Inventory Health and Watcher Offers
+    // need, so it is written through to the shared store. On blur rather than per keystroke.
+    if (prefix === 'f') on('f-unit-cost', 'change', () => saveCostBasisFromDrawer(drawerListing));
+
+    $(`${prefix}-th-panel`)?.addEventListener('click', e => {
+      if (e.target.closest('[data-th-fees]')) { handleNav('settings'); $('fees-costs')?.scrollIntoView({ behavior: 'smooth' }); return; }
+
+      // Turning the floor into eBay's own auto-decline rule is the point of computing it: below
+      // this price the seller never has to see the offer, let alone be tempted by it.
+      const declineBtn = e.target.closest('[data-th-decline]');
+      if (declineBtn) {
+        const floor = Number(declineBtn.dataset.floor);
+        if (!Number.isFinite(floor) || floor <= 0) return;
+        if ($(`${prefix}-best-offer`) && !$(`${prefix}-best-offer`).checked) {
+          $(`${prefix}-best-offer`).checked = true;
+          $(`${prefix}-best-offer`).dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        set(`${prefix}-auto-decline`, floor.toFixed(2));
+        $(`${prefix}-auto-decline`)?.dispatchEvent(new Event('input', { bubbles: true }));
+        addActivity('Auto-decline set to your floor', moneyExact(floor));
+      }
+    });
+
+    renderTakeHome(prefix, null);
+  }
+
+  function scheduleTakeHome(prefix) {
+    clearTimeout(takeHomeTimers[prefix]);
+    takeHomeTimers[prefix] = setTimeout(() => refreshTakeHome(prefix), TAKE_HOME_DEBOUNCE_MS);
+  }
+
+  async function refreshTakeHome(prefix) {
+    const panel = $(`${prefix}-th-panel`);
+    if (!panel) return;
+
+    const price = thNum(`${prefix}-price`);
+    const cost  = thNum(`${prefix}-unit-cost`);
+    const ship  = $(`${prefix}-ship-cost`)?.value.trim();
+
+    try {
+      const { res, body } = await safePost('/api/pricing/net-quote', {
+        prices: [price],
+        unitCost: cost > 0 ? cost : null,
+        buyerPaidShipping: thNum(`${prefix}-buyer-shipping`),
+        quantity: Math.max(1, parseInt($(`${prefix}-quantity`)?.value, 10) || 1),
+        shippingCost: ship ? (parseFloat(ship) || 0) : null,
+      });
+      if (!res.ok) throw new Error(body?.error || 'Could not price this sale.');
+      takeHomeState[prefix] = body;
+      renderTakeHome(prefix, body);
+    } catch (err) {
+      // A pricing panel that silently shows nothing is worse than one that says it is stale:
+      // the seller would read the blank space as "no fees on this sale".
+      $(`${prefix}-th-body`).innerHTML =
+        `<div class="th-verdict th-error"><strong class="th-headline">Take-home unavailable</strong>
+         <span class="th-note">${esc(err?.message || 'The fee calculation could not be reached.')}
+         Your price is unchanged — but it has not been checked against your costs.</span></div>`;
+    }
+  }
+
+  function renderTakeHome(prefix, data) {
+    const body = $(`${prefix}-th-body`);
+    if (!body) return;
+
+    const q = data?.quotes?.[0];
+    if (!q) {
+      body.innerHTML = `<div class="th-verdict th-idle"><strong class="th-headline">Enter a price</strong>
+        <span class="th-note">Type an asking price and what you paid, and this shows exactly what
+        reaches your bank after eBay's cut, shipping and every other fee.</span></div>`;
+      return;
+    }
+
+    const qty = Number(q.quantity) || 1;
+    const floors = q.hasCostBasis ? `
+      <div class="th-floors">
+        <div class="th-floor">
+          <span>Break even at</span><strong>${moneyExact(q.breakEvenPrice)}</strong>
+          <em>Sell for less and this listing costs you money.</em>
+        </div>
+        <div class="th-floor th-floor-min">
+          <span>Never accept less than</span><strong>${moneyExact(q.minimumOfferPrice)}</strong>
+          <em>${esc(floorBasisText(q))}</em>
+          <button type="button" class="th-floor-btn" data-th-decline data-floor="${q.minimumOfferPrice}">
+            Use as auto-decline
+          </button>
+        </div>
+      </div>` : '';
+
+    const lines = (q.lines || []).map(l => `
+      <div class="th-line${Number(l.amount) > 0 ? '' : ' th-line-zero'}" title="${esc(l.detail)}">
+        <span>${esc(l.label)}</span><span>−${moneyExact(l.amount)}</span>
+      </div>`).join('');
+
+    body.innerHTML = `
+      <div class="th-verdict th-${esc(q.verdict)}">
+        <strong class="th-headline">${esc(q.headline)}</strong>
+        <span class="th-note">${esc(q.note)}</span>
+      </div>
+      ${floors}
+      ${qty > 1 && q.hasCostBasis
+        ? `<div class="th-total">${moneyExact(q.totalNetProfit)} across all ${qty} units</div>` : ''}
+      <details class="th-lines">
+        <summary>Where ${moneyExact(q.totalDeductions)} of a ${moneyExact(q.grossRevenue)} sale goes
+          (${Number(q.feeLoadPercent).toFixed(1)}%)</summary>
+        <div class="th-line th-line-gross"><span>Sale price + buyer shipping</span><span>${moneyExact(q.grossRevenue)}</span></div>
+        ${lines}
+        <div class="th-line th-line-total"><span>Lands in your account</span><span>${moneyExact(q.netProceeds)}</span></div>
+        ${q.hasCostBasis
+          ? `<div class="th-line th-line-cost"><span>What you paid</span><span>−${moneyExact(q.unitCost)}</span></div>
+             <div class="th-line th-line-net"><span>Net profit${q.marginPercent != null
+                ? ` · ${Number(q.marginPercent).toFixed(1)}% margin` : ''}${q.roiPercent != null
+                ? ` · ${Number(q.roiPercent).toFixed(0)}% ROI` : ''}</span><span>${moneyExact(q.netProfit)}</span></div>`
+          : ''}
+      </details>`;
+  }
+
+  function floorBasisText(q) {
+    if (q.minimumOfferBasis === 'margin_target')
+      return `Your ${Number(q.minimumMarginPercent).toFixed(1)}% minimum margin. Set it in Fees & Costs.`;
+    if (q.minimumOfferBasis === 'profit_target')
+      return `Keeps the ${moneyExact(q.minimumNetProfit)} per sale you said you won't go under.`;
+    return 'Your floor is break-even — set a minimum profit in Fees & Costs to raise it.';
+  }
+
+  // The cost the seller types in the drawer is the same cost Inventory Health and Watcher Offers
+  // need, so it is written to the shared cost-basis store rather than living in the form. Entering
+  // it once in the place they are already looking at the price is the whole reason those screens
+  // ever have a break-even to work with.
+  async function loadCostBasisInto(prefix, listing) {
+    if (!$(`${prefix}-unit-cost`)) return;
+    set(`${prefix}-unit-cost`, '');
+
+    const listingId = listing?.listingId || '';
+    const sku = listing?.sku || '';
+    if (!listingId && !sku) return scheduleTakeHome(prefix);
+
+    try {
+      costBasisCache ??= await fetch('/api/inventory/cost-basis').then(r => r.json());
+      const match = (costBasisCache || []).find(e =>
+        (listingId && e.listingId === listingId) || (sku && e.sku && e.sku === sku));
+      if (match) set(`${prefix}-unit-cost`, Number(match.unitCost + match.inboundShipping).toFixed(2));
+    } catch { /* no saved cost — the panel just asks for one */ }
+
+    scheduleTakeHome(prefix);
+  }
+
+  async function saveCostBasisFromDrawer(listing) {
+    const cost = thNum('f-unit-cost');
+    const listingId = listing?.listingId || '';
+    const sku = listing?.sku || '';
+    if (cost <= 0 || (!listingId && !sku)) return;
+
+    try {
+      await safePost('/api/inventory/cost-basis',
+        [{ listingId, sku, unitCost: cost, inboundShipping: 0, note: 'Entered in the listing editor' }]);
+      costBasisCache = null;   // next drawer open re-reads it
+    } catch { /* saving the cost is a convenience; never block the listing save on it */ }
+  }
+
   // ── Market Research (inside the Edit Listing drawer) ───────────────────────
   // Reuses the existing /api/sold-comps endpoint, which already layers Terapeak
   // (when the seller's session is connected) over Marketplace Insights and falls
@@ -4894,7 +5162,17 @@
     $('btn-mr-sold')?.setAttribute('disabled', 'disabled');
 
     try {
-      const res = await fetch('/api/sold-comps?q=' + encodeURIComponent(q));
+      // Cost and current ask ride along so the answer comes back already costed — a median is a
+      // gross number, and the seller pricing off it needs to see what is left of it.
+      const params = new URLSearchParams({ q });
+      const cost = thNum('f-unit-cost');
+      const ask  = thNum('f-price');
+      if (cost > 0) params.set('cost', String(cost));
+      if (ask  > 0) params.set('ask',  String(ask));
+      const buyerShipping = thNum('f-buyer-shipping');
+      if (buyerShipping > 0) params.set('buyerShipping', String(buyerShipping));
+
+      const res = await fetch('/api/sold-comps?' + params.toString());
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
       lastResearch = data;
@@ -4935,9 +5213,20 @@
 
     const reco = recommendedPrice();
     setText('mr-reco-price', reco == null ? '—' : money(reco));
-    setText('mr-reco-note',
-      count < 3 ? `Low confidence — only ${count} comparable sale${count === 1 ? '' : 's'}.`
-                : `Based on the median of ${count} sold listings.`);
+
+    // The recommendation is a gross price; what matters is what survives it. The server already
+    // costed the median against the seller's fee profile, so say the net here rather than leaving
+    // "Recommended Price $120" to be read as $120 of income.
+    const confidence = count < 3
+      ? `Low confidence — only ${count} comparable sale${count === 1 ? '' : 's'}.`
+      : `Based on the median of ${count} sold listings.`;
+    const netAtMedian = d.pricing?.quotes?.median;
+    setText('mr-reco-note', netAtMedian
+      ? `${confidence} ${netAtMedian.hasCostBasis
+          ? `Sell at this and you keep ${moneyExact(netAtMedian.netProfit)} after fees`
+            + `${d.pricing.minimumOfferPrice ? `; don't accept under ${moneyExact(d.pricing.minimumOfferPrice)}` : ''}.`
+          : `${moneyExact(netAtMedian.netProceeds)} of it reaches your account after fees and shipping.`}`
+      : confidence);
 
     // Flag comps far from the median so a skewed sample is visible rather than silent.
     const median = Number(d.median) || 0;
@@ -5207,6 +5496,7 @@
 
   let drawerReturnFocusEl = null;   // element that had focus before opening
   let drawerScrollY       = 0;      // page scroll to restore on close
+  let drawerListing       = null;   // listing being edited, so its cost basis can be written back
   let drawerBaseline      = '';     // serialised form state at open, for dirty check
 
   function initEditDrawer() {
@@ -5305,6 +5595,10 @@
     document.body.classList.add('drawer-open');
 
     $('edit-drawer-body').scrollTop = 0;
+    // Pull the cost the seller already recorded for this listing (Inventory Health, or a previous
+    // visit here) so the take-home panel opens with a real break-even instead of asking again.
+    drawerListing = listing || null;
+    loadCostBasisInto('f', listing);
     markDrawerClean();               // baseline AFTER the form has been filled
     setTimeout(() => drawer.focus(), 30);
   }
@@ -6427,7 +6721,16 @@
     terapeak.classList.add('hidden');
 
     try {
-      const res  = await fetch(`/api/sold-comps?q=${encodeURIComponent(itemName)}`);
+      // Same costing ride-along as the Market Research panel — see runSoldResearch.
+      const params = new URLSearchParams({ q: itemName });
+      const nlCost = thNum('nl-unit-cost');
+      const nlAsk  = thNum('nl-price');
+      if (nlCost > 0) params.set('cost', String(nlCost));
+      if (nlAsk  > 0) params.set('ask',  String(nlAsk));
+      const nlBuyerShipping = thNum('nl-buyer-shipping');
+      if (nlBuyerShipping > 0) params.set('buyerShipping', String(nlBuyerShipping));
+
+      const res  = await fetch(`/api/sold-comps?${params.toString()}`);
       const data = await res.json().catch(() => ({}));
       strip.classList.remove('loading');
 
@@ -6440,7 +6743,16 @@
       }
 
       $('nl-sold-comps-connect')?.classList.add('hidden');   // real data — drop the connect prompt
-      summary.textContent = `Recently sold — "${itemName}"`;
+      // Four gross stats and no net is how a seller talks themselves into the median. Say what the
+      // median is actually worth, right where they read it.
+      const atMedian = data.pricing?.quotes?.median;
+      summary.textContent = atMedian
+        ? `Recently sold — "${itemName}" · list at the ${moneyExact(data.median)} median and you `
+          + (atMedian.hasCostBasis
+              ? `keep ${moneyExact(atMedian.netProfit)} after fees`
+                + (data.pricing.minimumOfferPrice ? `, floor ${moneyExact(data.pricing.minimumOfferPrice)}` : '')
+              : `bank ${moneyExact(atMedian.netProceeds)} after fees`)
+        : `Recently sold — "${itemName}"`;
       $('nl-sold-comps-stat-avg').textContent    = `$${data.average.toFixed(2)}`;
       $('nl-sold-comps-stat-median').textContent = `$${data.median.toFixed(2)}`;
       $('nl-sold-comps-stat-min').textContent     = `$${data.min.toFixed(2)}`;
@@ -6911,6 +7223,7 @@
     // while the seller is looking at it, rather than after a failed publish.
     nlRdOverride = false;
     nlRunReadiness(true);
+    scheduleTakeHome('nl');   // and what the AI's suggested price is actually worth
   }
 
   function buildNlPayload() {
@@ -8404,6 +8717,7 @@
       loadComfyModels(endpoint, 'pg-imggen-model', 'pg-imggen-msg');
     });
     on('pg-defaults-save', 'click', saveListingDefaults);
+    on('pg-fees-save', 'click', saveFeeProfile);
   }
 
   // ── Image Generator Setup Modal ──────────────────────────────
@@ -8755,6 +9069,7 @@
 
     updateCharCount('f-title', 'title-count', 80);
     updateCharCount('f-subtitle', 'subtitle-count', 55);
+    scheduleTakeHome('f');   // a new price means a new take-home
   }
 
   function toggleBestOfferFields(show) {

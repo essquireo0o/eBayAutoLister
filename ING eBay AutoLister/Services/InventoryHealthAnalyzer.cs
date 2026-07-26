@@ -168,11 +168,18 @@ public sealed class InventoryHealthAnalyzer(ProfitCalculator profitCalc)
             // The lowest price at which this item still breaks even after every fee. This is the
             // hard floor the markdown ladder is not allowed through.
             item.BreakEvenPrice = atList.BreakEvenSalePrice == decimal.MaxValue ? null : atList.BreakEvenSalePrice;
+            // The break-even says the sale stops losing money; the seller's floor policy says it
+            // starts being worth making. The markdown ladder is bounded by the second, so a
+            // repricing run cannot walk an item down to a technically-profitable $0.40.
+            var (floor, basis) = NetProceedsCalculator.MinimumOffer(item.BreakEvenPrice, fees, shipping);
+            item.MinimumOfferPrice = floor;
+            item.MinimumOfferBasis = basis;
+            item.NetProfitAtMinimumOffer = NetProceedsCalculator.NetProfitAt(floor ?? 0m, item.BreakEvenPrice, fees);
         }
 
         var suggestion = SuggestPrice(
             listPrice: listing.Price, market: market, quickSale: resale.QuickSale,
-            floorPrice: item.BreakEvenPrice, daysListed: item.DaysListed, watchCount: listing.WatchCount,
+            floorPrice: item.MinimumOfferPrice ?? item.BreakEvenPrice, daysListed: item.DaysListed, watchCount: listing.WatchCount,
             compCount: resale.SoldCompCount + resale.TerapeakCompCount, confidenceScore: resale.ConfidenceScore,
             marketComparable: item.MarketComparable, quantitySold: listing.QuantitySold);
 

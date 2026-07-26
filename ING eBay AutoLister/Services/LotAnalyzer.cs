@@ -182,9 +182,8 @@ public sealed class LotAnalyzer(ProfitCalculator profitCalc)
 
         var units = row.SellableUnits;
         row.GrossResale = Math.Round((unitResale + buyerShipping) * units, 2);
-        row.EstimatedFees = Math.Round((profit.EbayFees + profit.PromotedListingFees + profit.OtherCosts
-                                        + profit.ReturnReserve + profit.TestingReserve) * units, 2);
-        row.EstimatedShipCost = Math.Round((profit.ActualShippingCost + profit.PackagingCost + profit.LaborCost) * units, 2);
+        row.EstimatedFees = Math.Round(profit.MarketplaceFeeTotal * units, 2);
+        row.EstimatedShipCost = Math.Round(profit.FulfilmentCostTotal * units, 2);
         row.NetRecovery = Math.Round(profit.NetProfitPerUnit * units, 2);
 
         // How long this line ties the money up: not how long one unit takes to sell, but how

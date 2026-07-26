@@ -120,6 +120,8 @@ public class ProfitBreakdown
     public decimal BuyerPaidShipping { get; set; }
     public decimal EbayFees { get; set; }
     public decimal PromotedListingFees { get; set; }
+    // Reported separately from OtherCosts, which it used to be folded into — see ProfitCalculator.
+    public decimal PaymentProcessingFees { get; set; }
     public decimal ActualShippingCost { get; set; }
     public decimal PackagingCost { get; set; }
     public decimal LaborCost { get; set; }
@@ -131,6 +133,18 @@ public class ProfitBreakdown
     public decimal? RoiPercent { get; set; }
     public decimal? MarginPercent { get; set; }
     public decimal BreakEvenSalePrice { get; set; }
+
+    /// <summary>
+    /// Everything taken out of the sale that is neither cost of goods nor fulfilment — the total
+    /// the seller never sees on the price tag. One property rather than a sum re-typed at each
+    /// call site, because the call sites did not agree: the local-arbitrage row was leaving the
+    /// return and testing reserves out of the "fees" it displayed.
+    /// </summary>
+    public decimal MarketplaceFeeTotal => Math.Round(
+        EbayFees + PromotedListingFees + PaymentProcessingFees + ReturnReserve + TestingReserve + OtherCosts, 2);
+
+    /// <summary>What it costs to get the item to the buyer, once it sells.</summary>
+    public decimal FulfilmentCostTotal => Math.Round(ActualShippingCost + PackagingCost + LaborCost, 2);
 }
 
 // ── Scoring (see Services/OpportunityScoringService.cs and ConfidenceScoringService.cs) ─────

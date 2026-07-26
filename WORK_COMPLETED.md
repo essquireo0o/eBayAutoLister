@@ -2002,3 +2002,144 @@ overlays.
   supplier — labelled as such on screen, and editable.
 * Not modelled: the buyer's time, storage, or units arriving different from the manifest. Said
   plainly in the panel footnote rather than buried in a fabricated cost column.
+
+---
+
+## 22. All-in net, break-even and the offer floor — on every price the app shows (autonomous session, 2026-07-26)
+
+### The money problem
+
+The app had a correct profit calculator and almost never showed it to the person setting the price.
+
+`ProfitCalculator` was wired into the *sourcing* screens — local arbitrage, Roll the Dice, the lot
+analyzer, inventory health, watcher offers. The screens where a price is actually decided showed
+gross numbers and nothing else:
+
+* **The listing editor** — both of them — had a "Buy It Now Price" box and no fees anywhere near it.
+* **Market Research** recommended a median with the words "Recommended Price" over it.
+* **The sold-comps strip** showed Average / Median / Low / High and no net.
+
+So the app could say **$120** three different ways and the seller could bank **$84** without ever
+seeing the $36. That is the exact failure mode this task names: sellers lose money to fees they were
+never shown.
+
+Worse, the fees themselves were fiction. `FeeProfile` was a hardcoded object with **shipping,
+packaging, handling, promoted rate and return reserve all sitting at zero**, and no way to change
+any of them. Every "net profit" the whole app printed — including the sourcing screens that *did*
+use it — was net of eBay's cut and nothing else. On a $120 sale with a $9 label, $1.25 of packaging,
+$3 of handling and a 2% ad rate, that is **$15.65 the old numbers said the seller kept**.
+
+### What was built
+
+**One calculation, shown everywhere, from numbers the seller owns.**
+
+1. **`Services/FeeProfileStore.cs` (new)** — the seller's real fees and costs, persisted in the app's
+   own SQLite database next to the cost basis they are combined with, and loaded into the
+   `FeeProfile` singleton at startup. Stored one value per row, so a profile written by an older
+   build simply lacks the newer keys rather than failing to deserialise. Because every analyzer
+   holds that one instance, **saving the form re-prices the entire app at once** — no re-scan, no
+   restart.
+
+2. **`Services/NetProceedsCalculator.cs` (new)** — turns an asking price into the three numbers a
+   seller needs, in the order they need them:
+   * **Net profit** — what this sale is worth, itemised down to every deduction.
+   * **Break-even** — the price below which making the sale costs money.
+   * **Minimum offer to accept** — the lowest number to say yes to in a negotiation.
+
+   It does not re-derive fee math. Break-even comes from `ProfitCalculator`; the floors come from
+   the identity that falls out of it, `Net(P) = (P - breakEven) x KeepFraction`, which is also what
+   `WatcherOfferAdvisor` negotiates with — so the floor in the editor and the floor on the watchers
+   screen **cannot drift apart**. `WatcherOfferAdvisor.ProfitFloorPrice`/`NetProfitAt` now delegate
+   to it rather than keeping a second copy.
+
+3. **The floor policy** — `FeeProfile` gained `MinimumNetProfit` and `MinimumMarginPercent`.
+   Break-even answers *"am I losing money"*; these answer *"is this worth doing"*. Whichever binds
+   harder becomes the minimum offer, and it now bounds the inventory-health markdown ladder and the
+   watcher-offer depth as well, so a repricing run cannot walk an item down to a
+   technically-profitable $0.40. Both default to 0, which reproduces the previous behaviour exactly.
+
+### Two real bugs fixed on the way
+
+* **Payment processing was modelled as a fixed cost inside the break-even.** `ProfitCalculator`
+  charged it as a percentage of revenue when computing net profit but folded it into *fixed* costs
+  when solving for break-even — so any seller who billed processing separately got a break-even, and
+  therefore an offer floor, that was **too low**. Harmless while the rate defaulted to 0 and nothing
+  could set it; wrong the moment the Fees & Costs screen existed. `WatcherOfferAdvisor`'s own fee
+  fraction had the same omission. Both now use `FeeProfile.RevenueFeeFraction`. Covered by a test
+  that asserts net profit is still zero *at* the new break-even.
+* **The local-arbitrage row under-reported its own fees**, summing eBay + promoted + other while
+  leaving the return and testing reserves out of the displayed "fees" figure (net profit was right;
+  the breakdown was not). Both call sites now use one `ProfitBreakdown.MarketplaceFeeTotal` property
+  instead of a sum re-typed per screen. `PaymentProcessingFees` is also its own field now rather than
+  hidden inside `OtherCosts` — a fee the seller cannot see is a fee they cannot price around.
+
+### What the seller sees
+
+* **A take-home panel under the price field in both editors**, live as they type. The verdict carries
+  the colour, so a price below break-even is rendered as a warning and never in the same style as a
+  profitable one: *"You lose $6.20 on this sale — you need $65.63 just to break even."* Below it, two
+  floors, and a **"Use as auto-decline"** button that turns the computed floor into eBay's own
+  auto-decline rule — the point of computing a floor is never having to see the offers beneath it.
+  A collapsible breakdown shows where every dollar of the gap went, **including the $0.00 lines**: a
+  missing row reads as "handled", a zero row reads as "a knob you have not turned".
+* **Cost entered in the editor is written to the shared cost-basis store**, so Inventory Health and
+  Watcher Offers gain a break-even for that listing — entered once, in the place the seller is
+  already looking at the price.
+* **Market Research and the sold-comps strip now say what the median is worth**: *"list at the
+  $120.00 median and you keep $44.45 after fees, floor $83.98."*
+* **Inventory Health** shows the floor beneath the break-even in the same cell, labelled with which
+  rule set it.
+* **Settings → Fees & Costs** — eleven fields and a plain-English summary of what they cost per sale.
+  Rates that would make the math unsolvable are clamped server-side and the corrected value is echoed
+  back into the form, so the number on screen is always the number in force.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/NetQuoteModels.cs` | **New** — `NetQuote`, `NetQuoteLine`, `NetQuoteRequest`, `NetQuoteResponse`, `FeeProfileView` |
+| `Services/NetProceedsCalculator.cs` | **New** — `Quote`, `MinimumOffer`, `ProfitFloorPrice`, `MarginFloorPrice`, `NetProfitAt`, `Describe` |
+| `Services/FeeProfileStore.cs` | **New** — SQLite persistence, `Apply`/`SaveAndApply` into the live singleton, `ToView`/`FromView` |
+| `Services/FeeProfile.cs` | `MinimumNetProfit`, `MinimumMarginPercent`, `RevenueFeeFraction`, `KeepFraction`, `Clone`, `CopyFrom`, `Sanitize` |
+| `Services/ProfitCalculator.cs` | Payment processing charged as a revenue percentage in break-even; `PaymentProcessingFees` reported separately |
+| `Services/WatcherOfferAdvisor.cs` | Floor math delegated to `NetProceedsCalculator` — one implementation |
+| `Services/InventoryHealthAnalyzer.cs` | `MinimumOfferPrice`/`Basis`/`NetProfitAtMinimumOffer`; the markdown ladder is bounded by the floor, not bare break-even |
+| `Services/LocalArbitrageAnalyzer.cs`, `Services/LotAnalyzer.cs` | Use `MarketplaceFeeTotal`/`FulfilmentCostTotal` |
+| `Models/MarketAnalysisModels.cs` | `ProfitBreakdown.PaymentProcessingFees`, `MarketplaceFeeTotal`, `FulfilmentCostTotal` |
+| `Models/InventoryHealthModels.cs` | The three minimum-offer fields |
+| `Program.cs` | DI + startup `Apply`; `GET`/`POST /api/fees/profile`, `POST /api/pricing/net-quote`; `pricing` block on all three `/api/sold-comps` paths; watcher floors default to the seller's policy |
+| `wwwroot/index.html` | Take-home panel in both editors, the Fees & Costs settings section. `app.js?v=45`, `style.css?v=38` |
+| `wwwroot/app.js` | `bindTakeHome`/`refreshTakeHome`/`renderTakeHome`, cost-basis read/write from the drawer, fee settings load/save, net on Market Research + the sold-comps strip, the Inventory Health floor cell |
+| `wwwroot/style.css` | `.th-*` take-home panel, `.fees-summary`, `.inv-floor` |
+| `ING eBay AutoLister.Tests/NetProceedsCalculatorTests.cs` | **New** — 17 cases |
+| `ING eBay AutoLister.Tests/FeeProfileStoreTests.cs` | **New** — 8 cases |
+
+### Verified
+
+* `dotnet build` — **0 errors** (2 pre-existing `NU1903` warnings). `dotnet test` — **770 passed,
+  0 failed** (744 before; +26 new). `node --check app.js` clean.
+* **Live against the running app** (dev port 9451). Saved a realistic profile (13.25% + $0.40, 2% ads,
+  $9 label, $1.25 packaging, $3 handling, 3% returns, $15 minimum profit) and priced a $120 sale on a
+  $40 item: **$35.55 of deductions (29.6% of gross), $84.45 landing, $44.45 net, break-even $65.63,
+  floor $83.98** — and the floor nets **exactly $15.00**, confirming the "buying back $15 of profit
+  costs more than $15 of price" algebra end to end. `GET`/`POST /api/fees/profile` round-tripped,
+  clamped a 1325% typo back to a solvable profile, and `/api/sold-comps?cost=&ask=` returned the
+  costed `pricing` block on the links-only path as well as the data paths.
+* The test profile written during live verification was **reset to defaults afterwards**, so no
+  surprise fee assumptions were left in the local database.
+* **Read-only end to end.** Nothing was listed, published, priced on eBay or sent anywhere.
+
+### Not verified / known limits
+
+* **Not exercised in a real browser this session.** The panel, the settings form and the sold-comps
+  net line were verified through the API and by JS syntax check, not by clicking them. The endpoints
+  they call are proven; the wiring between input and endpoint is not.
+* **The fee rates are still the seller's estimate, not their account.** eBay exposes no API for a
+  seller's actual negotiated final value fee, so the profile starts at the typical 13.25% + $0.40 and
+  the screen tells the seller to check a recent payout. A wrong rate in gives a wrong net out — but
+  it is now *visible* and *editable*, which it was not before.
+* **One fee profile, not one per category.** eBay's final value fee varies by category, and this
+  models a single blended rate. Per-category rates are the obvious next step and would slot into
+  `FeeProfileStore` without touching anything downstream.
+* **Shipping cost is a default, overridable per listing, not calculated.** The app does not rate-shop
+  a label; the seller supplies the typical cost and can override it in the take-home panel.

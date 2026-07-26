@@ -7056,3 +7056,193 @@ td.skeleton-cell { padding: 0 !important; }
 @media (max-width: 1000px) {
   .lot-input-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Take-home panel ──────────────────────────────────────────────────────
+   Sits directly under the price field in both editors. Deliberately the
+   heaviest thing in the Pricing panel: the asking price is an input, but the
+   take-home is the answer, and the old form gave the input all the weight. */
+.th-panel {
+  margin-top: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+
+.th-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+.th-title {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.th-fees-btn {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.th-fees-btn:hover { border-color: var(--line-strong); color: var(--ink); }
+
+.th-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+.th-input { display: flex; flex-direction: column; gap: 3px; }
+.th-input > span { font-size: var(--fs-xs); color: var(--muted); }
+.th-input > input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The verdict carries the colour, so a price that loses money can never be
+   rendered in the same style as one that makes money. */
+.th-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+.th-headline { font-size: var(--fs-lg); font-weight: 700; color: var(--ink); }
+.th-note { font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
+
+.th-profitable    { border-left-color: var(--success); background: var(--success-soft); }
+.th-profitable .th-headline { color: var(--success); }
+.th-thin          { border-left-color: var(--warning); background: var(--warning-soft); }
+.th-thin .th-headline { color: var(--warning); }
+.th-below_floor   { border-left-color: var(--warning); background: var(--warning-soft); }
+.th-below_floor .th-headline { color: var(--warning); }
+.th-loss          { border-left-color: var(--danger); background: var(--danger-soft); }
+.th-loss .th-headline { color: var(--danger); }
+.th-error         { border-left-color: var(--danger); }
+.th-error .th-headline { color: var(--danger); }
+.th-no_cost_basis { border-left-color: var(--info); background: var(--info-soft); }
+.th-no_cost_basis .th-headline { color: var(--info); }
+.th-idle, .th-no_price { border-left-color: var(--line-strong); }
+.th-idle .th-headline, .th-no_price .th-headline { color: var(--muted); }
+
+.th-floors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.th-floor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+.th-floor > span { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+.th-floor > strong { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; color: var(--ink); }
+.th-floor > em { font-size: var(--fs-xs); color: var(--muted); font-style: normal; line-height: 1.45; }
+
+/* The floor is the actionable one of the two — it is what a Best Offer gets
+   judged against, so it gets the gold edge and the button. */
+.th-floor-min { border-color: var(--gold-light); background: var(--gold-soft); }
+.th-floor-min > strong { color: var(--gold-dark); }
+
+.th-floor-btn {
+  align-self: flex-start;
+  margin-top: var(--s1);
+  border: 1px solid var(--gold-light);
+  background: var(--card);
+  color: var(--gold-dark);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.th-floor-btn:hover { background: var(--gold-soft); }
+
+.th-total {
+  margin-top: var(--s2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.th-lines { margin-top: var(--s2); }
+.th-lines > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  padding: var(--s1) 0;
+}
+.th-lines > summary:hover { color: var(--ink); }
+
+.th-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: 3px 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* A fee the seller has not configured still gets a row — a missing line reads
+   as "handled", a $0.00 line reads as "a knob you haven't turned". */
+.th-line-zero { color: var(--muted); opacity: .6; }
+.th-line-gross { font-weight: 700; color: var(--ink); border-bottom: 1px solid var(--line-soft); padding-bottom: var(--s2); margin-bottom: var(--s1); }
+.th-line-total { font-weight: 700; color: var(--ink); border-top: 1px solid var(--line-soft); padding-top: var(--s2); margin-top: var(--s1); }
+.th-line-cost { color: var(--ink-2); }
+.th-line-net { font-weight: 800; color: var(--ink); border-top: 1px solid var(--line); padding-top: var(--s2); margin-top: var(--s1); }
+
+/* Fees & Costs settings summary — restates the numbers as a sentence, because
+   eleven form fields do not add up to a feeling about what they cost. */
+.fees-floor-head {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: var(--s2);
+}
+
+.fees-summary {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--info-line);
+  border-radius: var(--r-sm);
+  background: var(--info-soft);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.fees-summary strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* Inventory Health: the floor under the break-even in the same cell. */
+.inv-th-sub { font-size: var(--fs-2xs); font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.inv-floor { color: var(--gold-dark); font-weight: 700; }
+
+@media (max-width: 900px) {
+  .th-inputs, .th-floors { grid-template-columns: 1fr; }
+}

@@ -159,8 +159,8 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             buyerPaidShipping: resale.AvgCompShipping, fees: fees,
             actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
 
-        row.EstimatedFees = Math.Round(profit.EbayFees + profit.PromotedListingFees + profit.OtherCosts, 2);
-        row.EstimatedShipCost = Math.Round(profit.ActualShippingCost + profit.PackagingCost + profit.LaborCost, 2);
+        row.EstimatedFees = profit.MarketplaceFeeTotal;
+        row.EstimatedShipCost = profit.FulfilmentCostTotal;
         row.NetProfit = profit.NetProfitPerUnit;
         row.RoiPercent = profit.RoiPercent;
         row.MarginPercent = profit.MarginPercent;

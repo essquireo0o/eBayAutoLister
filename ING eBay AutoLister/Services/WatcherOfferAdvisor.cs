@@ -67,32 +67,18 @@ public static class WatcherOfferAdvisor
     /// after every fee, given the break-even.
     /// </summary>
     /// <remarks>
-    /// Net profit is not a dollar-for-dollar function of price: eBay's cut scales with the sale,
-    /// so buying back $10 of profit costs more than $10 of price. Net(P) = (P - breakEven) x
-    /// (1 - feeFraction) falls straight out of the break-even algebra in ProfitCalculator, so the
-    /// price that yields a target profit is breakEven + target / (1 - feeFraction).
+    /// Delegates to <see cref="NetProceedsCalculator"/>, which is where this math now lives so the
+    /// floor quoted here and the floor the listing editor shows are the same calculation. It used
+    /// to have its own fee fraction, which — like ProfitCalculator's break-even — left payment
+    /// processing out, so a seller who billed processing separately negotiated against a floor
+    /// that was slightly too low.
     /// </remarks>
-    public static decimal? ProfitFloorPrice(decimal? breakEvenPrice, decimal minNetProfit, FeeProfile fees)
-    {
-        if (breakEvenPrice is not decimal breakEven) return null;
-        if (minNetProfit <= 0m) return Math.Round(breakEven, 2);
-
-        var keep = 1m - FeeFraction(fees);
-        // Fees alone swallow the sale — no price yields the target, so the floor is left at the
-        // break-even rather than becoming an infinite number that silently blocks everything.
-        if (keep <= 0m) return Math.Round(breakEven, 2);
-        return Math.Round(breakEven + minNetProfit / keep, 2);
-    }
+    public static decimal? ProfitFloorPrice(decimal? breakEvenPrice, decimal minNetProfit, FeeProfile fees) =>
+        NetProceedsCalculator.ProfitFloorPrice(breakEvenPrice, minNetProfit, fees);
 
     /// <summary>Take-home on a sale at <paramref name="price"/>, or null with no break-even.</summary>
     public static decimal? NetProfitAt(decimal price, decimal? breakEvenPrice, FeeProfile fees) =>
-        breakEvenPrice is decimal breakEven
-            ? Math.Round((price - breakEven) * (1m - FeeFraction(fees)), 2)
-            : null;
-
-    private static decimal FeeFraction(FeeProfile fees) =>
-        (fees.EbayFinalValueFeePercent + fees.PromotedListingRatePercent
-         + fees.ReturnReservePercent + fees.TestingReservePercent) / 100m;
+        NetProceedsCalculator.NetProfitAt(price, breakEvenPrice, fees);
 
     /// <summary>
     /// The binding floor for an offer, and what set it. The quick-sale price counts as a floor in
