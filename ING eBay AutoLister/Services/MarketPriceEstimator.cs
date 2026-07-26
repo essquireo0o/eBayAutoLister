@@ -82,7 +82,8 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
     // Keep only comps whose title contains one of the target's distinctive model/part tokens
     // (a token with a digit, or length >= 4). General across categories; a no-op when the target
     // has no usable identifier, and it never zeroes out the estimate (falls back if < 3 survive).
-    private static List<MarketplaceComparableResult> ApplyIdentityGuard(
+    // Pure/testable: takes only the target identity and the comps, not the estimate.
+    public static List<MarketplaceComparableResult> ApplyIdentityGuard(
         NormalizedProduct target, List<MarketplaceComparableResult> comps)
     {
         var tokens = new[] { target.Model, target.PartNumber }

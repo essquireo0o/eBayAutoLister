@@ -1,9 +1,13 @@
+using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
 
 namespace ING_eBay_AutoLister.Tests;
 
 public class MarketPriceEstimatorTests
 {
+    private static MarketplaceComparableResult Comp(string itemId, string title, decimal price) =>
+        new() { ItemId = itemId, Title = title, SoldPrice = price, TotalPrice = price, MatchScore = 60 };
+
     // ── Weight resolution ────────────────────────────────────────────────────────
 
     [Fact]
@@ -118,5 +122,120 @@ public class MarketPriceEstimatorTests
         var (disagree, _) = MarketPriceEstimator.DetectDisagreement(localMedian: 0m, terapeakMedian: 160m);
 
         Assert.False(disagree);
+    }
+
+    // ── Identity guard ───────────────────────────────────────────────────────────
+    // The failure this guards against: a cheap part gets priced off comps for a different,
+    // far pricier product from the same brand, because the two only share a brand token.
+
+    [Fact]
+    public void ApplyIdentityGuard_PriceyCompsSharingOnlyTheBrand_AreDroppedFromThePricingSet()
+    {
+        var target = new NormalizedProduct { Brand = "FANUC", Model = "GP50" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "FANUC GP50 Fuse 5A for CNC Drive - Genuine", 74.00m),
+            Comp("2", "FANUC GP50 Fuse Lot Tested Working", 68.00m),
+            Comp("3", "Genuine FANUC GP50 5A Fuse New Old Stock", 82.00m),
+            Comp("4", "FANUC A06B-6079-H206 Servo Drive Amplifier Tested", 1050.00m),
+            Comp("5", "FANUC A06B-6079-H206 Servo Amplifier Module", 995.00m),
+            Comp("6", "FANUC Servo Drive Unit Fully Tested Working", 1200.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(3, kept.Count);
+        Assert.All(kept, c => Assert.Contains("GP50", c.Title));
+        // The $1050 drives would have dragged the median from ~$74 to ~$500+.
+        Assert.True(kept.Max(c => c.SoldPrice) < 100m);
+    }
+
+    [Fact]
+    public void ApplyIdentityGuard_PartNumberPunctuatedDifferentlyInTitles_StillMatches()
+    {
+        // Target part number is hyphenated; the comp titles space it out. Both sides are
+        // normalized to letters/digits before comparison, so they still line up.
+        var target = new NormalizedProduct { Brand = "Bitmain", PartNumber = "APW7-12-1800" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "Bitmain APW7 12 1800 PSU Power Supply", 65.00m),
+            Comp("2", "New Bitmain APW7-12-1800 Antminer PSU", 70.00m),
+            Comp("3", "Bitmain (APW7) 12 1800 Power Supply Unit", 62.00m),
+            Comp("4", "Bitmain Antminer S19j Pro 104TH Bitcoin Miner", 950.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(3, kept.Count);
+        Assert.DoesNotContain(kept, c => c.ItemId == "4");
+    }
+
+    [Fact]
+    public void ApplyIdentityGuard_TooFewCompsSurvive_FallsBackToTheUnfilteredSet()
+    {
+        // Only two comps carry the identifier — not enough to price off, so rather than return a
+        // two-comp estimate the guard steps aside and hands back everything it was given.
+        var target = new NormalizedProduct { Brand = "FANUC", Model = "GP50" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "FANUC GP50 Fuse 5A for CNC Drive", 74.00m),
+            Comp("2", "FANUC GP50 Fuse Lot Tested Working", 68.00m),
+            Comp("3", "FANUC A06B-6079-H206 Servo Drive Amplifier", 1050.00m),
+            Comp("4", "FANUC Servo Drive Unit Fully Tested Working", 1200.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(4, kept.Count);
+    }
+
+    [Fact]
+    public void ApplyIdentityGuard_TargetHasNoModelOrPartNumber_IsANoOp()
+    {
+        var target = new NormalizedProduct { Brand = "FANUC", Category = "Industrial Automation" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "FANUC GP50 Fuse 5A for CNC Drive", 74.00m),
+            Comp("2", "FANUC A06B-6079-H206 Servo Drive Amplifier", 1050.00m),
+            Comp("3", "FANUC Servo Drive Unit Fully Tested Working", 1200.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(3, kept.Count);
+    }
+
+    [Fact]
+    public void ApplyIdentityGuard_ModelIsOnlyGenericShortWords_IsANoOp()
+    {
+        // "Pro" is too short and carries no digit — filtering on a word like that would throw away
+        // good comps for no identity signal, so the guard declines to act.
+        var target = new NormalizedProduct { Brand = "Apple", Model = "Pro" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "Apple MacBook Air M2 13-inch", 700.00m),
+            Comp("2", "Apple iPad Pro 11-inch 128GB", 450.00m),
+            Comp("3", "Apple Watch Series 8 45mm", 220.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(3, kept.Count);
+    }
+
+    [Fact]
+    public void ApplyIdentityGuard_EveryCompCarriesTheIdentifier_KeepsThemAll()
+    {
+        var target = new NormalizedProduct { Brand = "Bitmain", Model = "S19j Pro" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "Bitmain Antminer S19j Pro 104TH Bitcoin Miner", 950.00m),
+            Comp("2", "Antminer S19J Pro 100TH Tested Working", 900.00m),
+            Comp("3", "Bitmain Antminer S19j Pro 96TH ASIC Miner", 880.00m),
+        };
+
+        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+
+        Assert.Equal(3, kept.Count);
     }
 }
