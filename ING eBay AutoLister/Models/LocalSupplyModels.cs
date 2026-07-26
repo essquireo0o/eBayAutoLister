@@ -69,6 +69,12 @@ public class LocalSupplySearchResult
     public decimal? Max { get; set; }
 
     public string? Error { get; set; }
+
+    // Whether searching this source again in a minute is likely to work. A rate-limit, a block
+    // page and a timeout are all "come back shortly"; a bad zip code or a 404 is not. The UI puts
+    // a Retry button on the source's chip only when this is true — offering one for a failure that
+    // will repeat identically is worse than offering none.
+    public bool Retryable { get; set; }
 }
 
 // What one source contributed to a multi-source search: everything except the listings
@@ -82,11 +88,12 @@ public class LocalSupplySourceOutcome
     public string SearchUrl { get; set; } = "";
     public string ScopeLabel { get; set; } = "";
     public string? Error { get; set; }
+    public bool Retryable { get; set; }
 
     public static LocalSupplySourceOutcome From(LocalSupplySearchResult r) => new()
     {
         Id = r.SourceId, Label = r.SourceLabel, Status = r.Status, Count = r.Count,
-        SearchUrl = r.SearchUrl, ScopeLabel = r.ScopeLabel, Error = r.Error,
+        SearchUrl = r.SearchUrl, ScopeLabel = r.ScopeLabel, Error = r.Error, Retryable = r.Retryable,
     };
 }
 

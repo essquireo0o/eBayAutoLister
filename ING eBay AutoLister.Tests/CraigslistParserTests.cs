@@ -369,6 +369,59 @@ public class CraigslistParserTests
         Assert.Equal("https://lasvegas.craigslist.org/ele/d/x", CraigslistParser.PostIdOf("https://lasvegas.craigslist.org/ele/d/x"));
     }
 
+    // ── Blocked responses ──────────────────────────────────────────────────────
+    // Craigslist refuses an address it doesn't like with a 200 and a block page, not with a status
+    // code. Taking that at face value parses to zero listings and reports an empty local market —
+    // the worst failure this feature has, because it looks like an answer.
+
+    [Fact]
+    public void DetectBlock_CraigslistsOwnBlockPage_IsRecognised()
+    {
+        var body = "<html><head><title>craigslist</title></head><body>" +
+                   "<h1>Blocked</h1><p>This IP has been automatically blocked.</p></body></html>";
+
+        Assert.Contains("blocking this connection", CraigslistParser.DetectBlock(body));
+    }
+
+    [Fact]
+    public void DetectBlock_InterstitialInFrontOfTheSite_IsRecognised()
+    {
+        Assert.NotNull(CraigslistParser.DetectBlock("<html><title>Attention Required! | Cloudflare</title></html>"));
+        Assert.NotNull(CraigslistParser.DetectBlock("<html>Checking your browser before accessing craigslist.org</html>"));
+        Assert.NotNull(CraigslistParser.DetectBlock("<html>Please complete the security check to continue</html>"));
+    }
+
+    [Fact]
+    public void DetectBlock_EmptyResponse_IsAFailureNotAnEmptyMarket() =>
+        Assert.NotNull(CraigslistParser.DetectBlock("   "));
+
+    [Fact]
+    public void DetectBlock_RealResultsPage_PassesThrough()
+    {
+        var body = """
+            <html><body><ol class="cl-static-search-results">
+              <li class="cl-static-search-result" title="Bitmain Antminer S19j Pro">
+                <a href="https://lasvegas.craigslist.org/ele/d/antminer/7712345678.html">
+                  <div class="title">Bitmain Antminer S19j Pro</div>
+                  <div class="price">$2,500</div>
+                </a>
+              </li>
+            </ol></body></html>
+            """;
+
+        Assert.Null(CraigslistParser.DetectBlock(body));
+    }
+
+    // A seller's own wording is not a block page. Only the top of the document is scanned, so an
+    // ad deep in a real results list saying "verify you are a human" can't fail the whole search.
+    [Fact]
+    public void DetectBlock_PostFurtherDownThePageUsingBlockedWording_IsNotABlock()
+    {
+        var page = new string(' ', 5000) + "<div class=\"title\">Verify you are a human doormat, $20</div>";
+
+        Assert.Null(CraigslistParser.DetectBlock(page));
+    }
+
     [Fact]
     public void RelativeAge_ReadsAsSomethingASellerWouldSay()
     {

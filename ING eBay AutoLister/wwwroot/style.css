@@ -4347,6 +4347,26 @@ textarea {
 .local-source-chip-off { background: #fdf6ec; }
 .local-source-chip-err { display: block; color: #a05a00; margin-top: 2px; }
 
+/* A chip that describes a fixable state carries the button that fixes it — Connect for a source
+   that needs a login, Retry for one that's blocked. Sized down to sit inside the chip's line
+   rather than setting the chip's height. */
+.local-chip-btn {
+  font-size: 10px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  vertical-align: baseline;
+  line-height: 1.6;
+}
+/* The panel's status line doubles as the "that didn't work" state, so its retry sits inline with
+   the sentence explaining what didn't. */
+.local-retry-btn,
+.local-sources-retry {
+  font-size: 11px;
+  padding: 2px 9px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+
 /* Which site to go and buy on — carried on every card and every ranked row. */
 .local-badge {
   display: inline-block;

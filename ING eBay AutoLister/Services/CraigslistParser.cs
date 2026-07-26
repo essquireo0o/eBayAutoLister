@@ -237,6 +237,49 @@ public static class CraigslistParser
         };
     }
 
+    // ── Blocked / empty responses ─────────────────────────────────────────────
+
+    // Only the top of the document is scanned. A block page says so in its first screenful; a real
+    // results page is hundreds of kilobytes of posts, and somebody's ad for a door lock genuinely
+    // does say "access denied" — searching the whole body would report a healthy search as blocked.
+    private const int BlockScanChars = 4000;
+
+    // Craigslist's own wording first, then the interstitials a network in front of it serves.
+    // Each is specific enough that a post title can't trip it inside the scanned window.
+    private static readonly string[] BlockPhrases =
+    [
+        "ip has been automatically blocked",
+        "this ip has been blocked",
+        "blocked</h1>",
+        "error: blocked",
+        "attention required",                     // Cloudflare interstitial
+        "checking your browser before accessing",
+        "verify you are a human",
+        "please complete the security check",
+        "enable javascript and cookies to continue",
+        "too many requests",
+    ];
+
+    /// <summary>
+    /// Craigslist refuses an address it doesn't like with a 200 and a block page, not with a
+    /// status code — so an unchecked "success" parses to zero listings and is reported as an empty
+    /// local market. That's the worst possible failure for this feature: it looks like an answer.
+    ///
+    /// Returns the message to show the seller, or null when the body looks like a real page.
+    /// </summary>
+    public static string? DetectBlock(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return "Craigslist sent back an empty page — wait a moment and search again.";
+
+        var head = body.Length > BlockScanChars ? body[..BlockScanChars] : body;
+
+        return BlockPhrases.Any(p => head.Contains(p, StringComparison.OrdinalIgnoreCase))
+            ? "Craigslist is blocking this connection right now — wait a minute and search again, " +
+              "or open the search on craigslist.org directly."
+            : null;
+    }
+
     // ── Small pure helpers ────────────────────────────────────────────────────
 
     /// <summary>

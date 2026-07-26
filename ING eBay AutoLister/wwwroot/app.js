@@ -350,12 +350,19 @@
   async function loadLocalSources() {
     const picker = $('local-source-picker');
     if (!picker) return;
-    try {
-      localSources = await fetch('/api/local/sources').then(r => r.json());
-    } catch (err) {
-      picker.textContent = `Couldn't load local sources: ${err.message}`;
+
+    // The picker is the panel's front door — with nothing to tick there is nothing to search, so
+    // a failure here offers the retry rather than leaving a sentence and a dead panel.
+    const { data, error } = await localFetchJson('/api/local/sources', 20000);
+    // An empty list means the server couldn't describe its sources — same dead panel as a failed
+    // request, so it gets the same treatment rather than a picker with nothing in it.
+    if (!Array.isArray(data) || !data.length) {
+      picker.innerHTML = `${esc(`Couldn't load the list of places to search. ${error || ''}`.trim())} ` +
+        '<button type="button" class="btn btn-secondary small local-sources-retry">Try again</button>';
+      picker.querySelector('.local-sources-retry')?.addEventListener('click', loadLocalSources);
       return;
     }
+    localSources = data;
 
     // A remembered choice wins; on a first run the default is everything that can answer right
     // now, which on a fresh install is Craigslist alone.
@@ -441,67 +448,142 @@
     return ids.map(id => localSources.find(s => s.id === id)?.label || id).join(' + ');
   }
 
+  // ── Never dead-ending the panel ──────────────────────────────────────────
+  // The server guarantees a 200 with a valid body for every local search, however badly a site
+  // behaves (see LocalSupplyGuard). This is the other half of that promise: the cases the server
+  // can't reach — the app not running, the connection dropping mid-scan, a proxy returning HTML,
+  // a response that never arrives — all have to end as a sentence on screen with a way forward.
+  // `fetch(...).then(r => r.json())` ends every one of them as an unhandled rejection instead,
+  // which is what left this panel showing a spinner and "Failed to fetch".
+  //
+  // Client-side ceilings, generous enough not to cut a real scan short: the point is that a
+  // request which will never come back stops looking like one that is still working.
+  const LOCAL_SEARCH_TIMEOUT_MS = 4 * 60 * 1000;      // Craigslist is seconds; Facebook loads a real page
+  const LOCAL_ARBITRAGE_TIMEOUT_MS = 8 * 60 * 1000;   // + a sold-comp lookup per distinct product
+
+  // The last search the seller ran, so a Try again button can repeat it without them retyping.
+  let lastLocalRun = null;
+
+  // Always resolves to { data, error } — never throws, never rejects.
+  async function localFetchJson(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      const text = await res.text();
+
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      // A readable body wins even on a non-OK status: it carries the per-source detail, and
+      // showing that beats showing the status code it arrived with.
+      if (data && typeof data === 'object') return { data, error: null };
+
+      if (!res.ok) {
+        return { data: null, error: `The app answered HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}.` };
+      }
+      return { data: null, error: 'The app sent back a response this page couldn\'t read.' };
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        return {
+          data: null,
+          error: `No answer after ${Math.round(timeoutMs / 60000)} minutes, so the search was stopped. ` +
+                 'Try again, or untick Facebook — Craigslist alone answers in seconds.',
+        };
+      }
+      return { data: null, error: `Couldn't reach the app (${err.message}). Check it's still running, then try again.` };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // The panel's one status line. Takes plain text — everything shown here can contain a message
+  // from a site or an exception, so it is escaped rather than trusted — plus an optional Try again
+  // button wired to whichever search was last run.
+  function setLocalStatus(message, retry) {
+    const el = $('fb-status');
+    if (!el) return;
+    if (!message) { el.innerHTML = ''; return; }
+
+    el.innerHTML = esc(message) +
+      (retry && lastLocalRun ? ' <button type="button" class="btn btn-secondary small local-retry-btn">Try again</button>' : '');
+    el.querySelector('.local-retry-btn')?.addEventListener('click', () => lastLocalRun && lastLocalRun());
+  }
+
   async function runLocalSearch() {
     const { query, zip, radius, sources, qs } = localSearchParams();
-    const statusEl = $('fb-status');
     const btn = $('fb-search-btn');
 
-    if (!query) {
-      if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
-      return;
-    }
-    if (!sources.length) {
-      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
-      return;
-    }
+    lastLocalRun = runLocalSearch;
+
+    if (!query) return setLocalStatus('Enter what you want to look for locally.');
+    if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
     if (btn) btn.disabled = true;
     // Honest about the cost, which differs per source: Craigslist is one HTTPS request, Facebook
     // is a real browser loading a page and scrolling a grid.
-    if (statusEl) {
-      statusEl.textContent = `Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}` +
-        `${sources.includes('facebook') ? ' — Facebook opens a real page, so give it up to a minute…' : '…'}`;
-    }
+    setLocalStatus(`Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}` +
+      `${sources.includes('facebook') ? ' — Facebook opens a real page, so give it up to a minute…' : '…'}`);
 
-    try {
-      const data = await fetch(`/api/local/search?${qs}`).then(r => r.json());
-      renderLocalResults(data);
-    } catch (err) {
-      if (statusEl) statusEl.textContent = `Local search failed: ${err.message}`;
-    } finally {
-      if (btn) btn.disabled = false;
+    const { data, error } = await localFetchJson(`/api/local/search?${qs}`, LOCAL_SEARCH_TIMEOUT_MS);
+    if (btn) btn.disabled = false;
+
+    if (!data) {
+      setLocalStatus(`Local search didn't complete. ${error}`, true);
+      return;
     }
+    renderLocalResults(data);
   }
 
   // Everything that isn't a usable result set, handled the same way for both the plain list and
   // the arbitrage ranking. With several sources these statuses only appear when NONE of them
   // answered — one disconnected site never blanks results another site returned.
   // Returns true when it handled (and therefore ended) the render.
-  function handleLocalNonResult(data, statusEl) {
+  function handleLocalNonResult(data) {
     if (data.status === 'no_sources') {
-      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
+      setLocalStatus('Tick at least one place to search.');
       return true;
     }
     if (data.status === 'not_connected') {
-      if (statusEl) statusEl.textContent = 'Connect your Facebook account above, or tick Craigslist — it needs no login.';
+      setLocalStatus(data.error || 'Connect your Facebook account above, or tick Craigslist — it needs no login.');
       loadFacebookStatus();
       return true;
     }
     if (data.status === 'session_expired') {
-      if (statusEl) statusEl.textContent = 'Your saved Facebook session expired — click Connect Facebook to log in again.';
+      setLocalStatus(data.error || 'Your saved Facebook session expired — click Connect Facebook to log in again.');
       loadFacebookStatus();
       return true;
     }
     if (data.status !== 'ok') {
-      if (statusEl) statusEl.textContent = data.error || 'The local search didn\'t come back with anything usable.';
+      // Retryable is a per-source judgement, so the whole-search button is offered whenever any
+      // site said "come back shortly" — a blocked Craigslist is the common case here.
+      const retryable = (data.sources || []).some(s => s.retryable);
+      setLocalStatus(data.error || 'The local search didn\'t come back with anything usable.', retryable);
       return true;
     }
     return false;
   }
 
+  // One site answering while another doesn't is the normal case, not a failure — but a bare count
+  // silently presents one site's results as the whole local market. This says which is which.
+  function partialLocalNote(sources) {
+    const answered = (sources || []).filter(s => s.status === 'ok');
+    const missing = (sources || []).filter(s => s.status !== 'ok');
+    if (!answered.length || !missing.length) return '';
+
+    const why = missing.map(s =>
+      s.status === 'not_connected' ? `${s.label} needs connecting`
+      : s.status === 'session_expired' ? `${s.label}'s session expired`
+      : s.retryable ? `${s.label} is blocked right now`
+      : `${s.label} couldn't be searched`).join(', ');
+
+    return `Showing ${answered.map(s => s.label).join(' + ')} only — ${why}.`;
+  }
+
   // What each site contributed, including the ones that couldn't answer and why — with several
-  // sources in one table, "24 results" alone hides that a site failed silently.
+  // sources in one table, "24 results" alone hides that a site failed silently. Each chip that
+  // describes a fixable state carries the button that fixes it, so the seller never has to work
+  // out from a sentence which of three things to click.
   function renderSourceOutcomes(sources) {
     const el = $('local-source-status');
     if (!el) return;
@@ -509,37 +591,52 @@
 
     el.innerHTML = sources.map(s => {
       const ok = s.status === 'ok';
-      const detail = ok
-        ? `${s.count} listing${s.count === 1 ? '' : 's'}${s.scopeLabel ? ` · ${esc(s.scopeLabel)}` : ''}`
-        : s.status === 'not_connected' ? 'not connected'
+      const detail = ok && s.count
+        ? `${s.count} result${s.count === 1 ? '' : 's'}${s.scopeLabel ? ` · ${esc(s.scopeLabel)}` : ''}`
+        : ok ? 'no results'
+        : s.status === 'not_connected' ? 'connect required'
         : s.status === 'session_expired' ? 'session expired'
-        : 'no results';
+        : s.retryable ? 'blocked — retry'
+        : 'unavailable';
+      // Connect is offered only for the source whose connect flow this page actually has. A future
+      // session-based source gets its own button here, not Facebook's.
+      const action = (s.status === 'not_connected' || s.status === 'session_expired') && s.id === 'facebook'
+        ? '<button type="button" class="btn btn-secondary small local-chip-btn local-chip-connect">Connect</button>'
+        : (!ok && s.retryable)
+        ? '<button type="button" class="btn btn-secondary small local-chip-btn local-chip-retry">Retry</button>'
+        : '';
       const link = s.searchUrl
         ? ` <a class="link-ext" href="${esc(s.searchUrl)}" target="_blank" rel="noopener">open ↗</a>` : '';
       return `<span class="local-source-chip${ok ? '' : ' local-source-chip-off'}">
-                <strong>${esc(s.label)}</strong> ${detail}${link}
+                <strong>${esc(s.label)}</strong> ${detail}${link} ${action}
                 ${s.error ? `<span class="local-source-chip-err">${esc(s.error)}</span>` : ''}
               </span>`;
     }).join('');
+
+    el.querySelectorAll('.local-chip-connect').forEach(b => b.addEventListener('click', facebookConnect));
+    el.querySelectorAll('.local-chip-retry').forEach(b =>
+      b.addEventListener('click', () => lastLocalRun && lastLocalRun()));
   }
 
   function renderLocalResults(data) {
-    const statusEl = $('fb-status');
     const results = $('fb-results');
     const list = $('fb-list');
     const summary = $('fb-summary');
     if (!list || !results) return;
 
     renderSourceOutcomes(data.sources);
-    if (handleLocalNonResult(data, statusEl)) return;
+    if (handleLocalNonResult(data)) return;
     if (!data.count) {
-      if (statusEl) statusEl.textContent = data.error
+      setLocalStatus(data.error
         ? `No local listings found — ${data.error}`
-        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`;
+        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`,
+        (data.sources || []).some(s => s.retryable));
       return;
     }
 
-    if (statusEl) statusEl.textContent = '';
+    // Blank unless part of the search is missing, in which case the count above it needs the
+    // caveat more than the panel needs a clean status line.
+    setLocalStatus(partialLocalNote(data.sources));
     // Radius is echoed from the response, not the form: Facebook snaps it to one of its own
     // dropdown values, so this reports what was actually searched. Per-site links live in the
     // source chips above, since each site has its own results URL.
@@ -633,60 +730,54 @@
 
   async function runLocalArbitrage() {
     const { query, zip, radius, sources, qs } = localSearchParams();
-    const statusEl = $('fb-status');
     const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
 
-    if (!query) {
-      if (statusEl) statusEl.textContent = 'Enter what you want to look for locally.';
-      return;
-    }
-    if (!sources.length) {
-      if (statusEl) statusEl.textContent = 'Tick at least one place to search.';
-      return;
-    }
+    lastLocalRun = runLocalArbitrage;
+
+    if (!query) return setLocalStatus('Enter what you want to look for locally.');
+    if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
     $('fb-arb-results')?.classList.add('hidden');
     buttons.forEach(b => { b.disabled = true; });
     // Honest about the cost: every selected site is searched, then one sold-comp lookup per
     // distinct product, then up to five Terapeak lookups. Minutes, not seconds.
-    if (statusEl) {
-      statusEl.textContent = `Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}, ` +
-        'then pricing every result against eBay sold data — this can take a couple of minutes…';
-    }
+    setLocalStatus(`Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}, ` +
+      'then pricing every result against eBay sold data — this can take a couple of minutes…');
 
-    try {
-      const data = await fetch(`/api/local/arbitrage?${qs}`).then(r => r.json());
-      renderArbitrage(data);
-    } catch (err) {
-      if (statusEl) statusEl.textContent = `Local arbitrage scan failed: ${err.message}`;
-    } finally {
-      buttons.forEach(b => { b.disabled = false; });
+    const { data, error } = await localFetchJson(`/api/local/arbitrage?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
+    buttons.forEach(b => { b.disabled = false; });
+
+    if (!data) {
+      setLocalStatus(`The local scan didn't complete. ${error}`, true);
+      return;
     }
+    renderArbitrage(data);
   }
 
   function renderArbitrage(data) {
-    const statusEl = $('fb-status');
     const wrap = $('fb-arb-results');
     if (!wrap) return;
 
     renderSourceOutcomes(data.sources);
-    if (handleLocalNonResult(data, statusEl)) return;
+    if (handleLocalNonResult(data)) return;
     if (!data.localListingsFound) {
-      if (statusEl) {
-        statusEl.textContent = data.error
-          ? `No local listings found — ${data.error}`
-          : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`;
-      }
+      setLocalStatus(data.error
+        ? `No local listings found — ${data.error}`
+        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`,
+        (data.sources || []).some(s => s.retryable));
       return;
     }
     if (!data.count) {
-      if (statusEl) statusEl.textContent = `Found ${data.localListingsFound} local listing(s), but none had a price to work from.`;
+      // The sites answered and the listings are real — what's missing is the pricing half, and
+      // dataWarning is where the server says why (no comps source, or a pricing pass that broke).
+      setLocalStatus(`Found ${data.localListingsFound} local listing(s), but none could be priced. ` +
+        (data.dataWarning || data.error || 'None of them had a price to work from.'), true);
       return;
     }
 
     arbitrageData = data;
-    if (statusEl) statusEl.textContent = '';
+    setLocalStatus(partialLocalNote(data.sources));
 
     // Which sites are actually in this ranking — a mixed table has to say so, and a site that
     // returned nothing shouldn't be implied to have been searched fruitfully.

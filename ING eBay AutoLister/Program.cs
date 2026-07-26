@@ -1346,11 +1346,18 @@ app.MapPost("/api/facebook/disconnect", (FacebookMarketplaceService facebook) =>
 // what was actually searched rather than what was asked for.
 app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, FacebookMarketplaceService facebook, CancellationToken ct) =>
 {
-    var result = await facebook.SearchAsync(q ?? "", zip ?? "", radius ?? 40, ct);
+    // Through the guard like every other local search: a disconnected account is answered without
+    // launching a browser, and a browser that hangs or throws still leaves this endpoint returning
+    // a result the page can render. See LocalSupplyGuard.
+    var radiusMiles = radius ?? 40;
+    var result = await LocalSupplyGuard.RunAsync(
+        facebook, token => facebook.SearchAsync(q ?? "", zip ?? "", radiusMiles, token),
+        q ?? "", zip ?? "", radiusMiles, ct: ct);
+
     return Results.Ok(new
     {
         result.Status, result.Query, result.ZipCode, result.RadiusMiles, result.SearchUrl,
-        result.Items, result.Count, result.Min, result.Median, result.Max, result.Error,
+        result.Items, result.Count, result.Min, result.Median, result.Max, result.Error, result.Retryable,
         supportedRadii = FacebookMarketplaceSelectors.SupportedRadiiMiles,
     });
 });
@@ -1365,11 +1372,16 @@ app.MapGet("/api/facebook/search", async (string q, string? zip, int? radius, Fa
 // boundary knows their own board better than a zip-prefix table does.
 app.MapGet("/api/craigslist/search", async (string q, string? zip, int? radius, string? site, CraigslistService craigslist, CancellationToken ct) =>
 {
-    var result = await craigslist.SearchAsync(q ?? "", zip ?? "", radius ?? 40, site, ct);
+    var radiusMiles = radius ?? 40;
+    var result = await LocalSupplyGuard.RunAsync(
+        craigslist, token => craigslist.SearchAsync(q ?? "", zip ?? "", radiusMiles, site, token),
+        q ?? "", zip ?? "", radiusMiles, ct: ct);
+
     return Results.Ok(new
     {
         result.Status, result.Query, result.ZipCode, result.RadiusMiles, result.SearchUrl,
         result.ScopeLabel, result.Items, result.Count, result.Min, result.Median, result.Max, result.Error,
+        result.Retryable,
         resolvedSite = CraigslistSites.Resolve(zip, site)?.Id ?? "",
     });
 });
@@ -1380,35 +1392,83 @@ app.MapGet("/api/craigslist/sites", () => Results.Ok(
 // ── Pluggable local supply ────────────────────────────────────────────────────
 // Which sites can be searched right now, for the source picker. A source that needs connecting
 // is still listed, with the reason — hiding it would just make the feature look absent.
-app.MapGet("/api/local/sources", (LocalSupplySources sources) => Results.Ok(sources.Describe()));
+app.MapGet("/api/local/sources", (LocalSupplySources sources, ActionLog log) =>
+{
+    // The source picker is the panel's front door: if this dead-ends there is nothing to tick and
+    // therefore no way to search at all. Describe() reads each source's availability, which for a
+    // session-based one is a file probe — cheap, but not something to let take the page down.
+    try { return Results.Ok(sources.Describe()); }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Local sources unavailable", ex.Message);
+        return Results.Ok(new List<LocalSupplySourceInfo>());
+    }
+});
 
 // One local search across every selected site, merged into a single list. `sources` is a
 // comma-separated list of ids (craigslist,facebook); omitted means everything available now.
+//
+// This always answers 200 with a valid body — including when every source failed. The frontend
+// renders per-source status and whatever results did arrive off that body; a 500 with an HTML
+// error page would reach it as a rejected fetch instead, with no results and nothing to say.
 app.MapGet("/api/local/search", async (
     string q, string? zip, int? radius, string? sources, string? craigslistSite,
-    LocalSupplySources registry, CancellationToken ct) =>
+    LocalSupplySources registry, ActionLog log, CancellationToken ct) =>
 {
-    var picked = registry.Resolve(sources);
     var radiusMiles = radius ?? 40;
     var results = new List<LocalSupplySearchResult>();
 
-    // Sequential, not parallel: one of these sites is searched by driving a real browser, and
-    // running that alongside anything else is how a slow search becomes a stuck one.
-    foreach (var source in picked)
-        results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, ct));
+    try
+    {
+        var picked = registry.Resolve(sources);
 
-    return Results.Ok(LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles));
+        // Sequential, not parallel: one of these sites is searched by driving a real browser, and
+        // running that alongside anything else is how a slow search becomes a stuck one.
+        foreach (var source in picked)
+            results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, ct));
+
+        return Results.Ok(LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles));
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;   // the browser hung up; there is no one left to answer
+    }
+    catch (Exception ex)
+    {
+        // Everything per-source is already guarded (LocalSupplyGuard), so reaching here means the
+        // registry or the merge itself broke. Even then the sources that did answer are returned.
+        log.Add("Error", "Local search failed", ex.Message);
+        return Results.Ok(FailedLocalSearch(results, q ?? "", zip ?? "", radiusMiles,
+            $"The local search couldn't be completed: {ex.Message}"));
+    }
 });
+
+// Whatever the search managed before it broke, in the shape the UI already renders — partial
+// results beat a bare error, and a site that answered has already done its work.
+static LocalSupplyMultiResult FailedLocalSearch(
+    List<LocalSupplySearchResult> partial, string q, string zip, int radius, string error)
+{
+    var merged = LocalSupplyMerger.Merge(partial, q, zip, radius);
+    merged.Error = merged.Error ?? error;
+    if (merged.Status != "ok") { merged.Status = "error"; merged.Error = error; }
+    return merged;
+}
 
 // The one site-specific knob in the local-sourcing feature, kept at the HTTP edge rather than
 // pushed into ILocalSupplySource: craigslist is organised by metro, so a seller on a boundary
 // sometimes has to name their own board (see CraigslistSites). Every other source ignores it, and
 // nothing below this line knows the parameter exists.
+//
+// LocalSupplyGuard is what makes the loop above safe to write as a plain foreach: it bounds each
+// source in time and turns any failure into a result, so one site can never fail the search.
 static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
     ILocalSupplySource source, string q, string zip, int radius, string? craigslistSite, CancellationToken ct) =>
-    source is CraigslistService craigslist && !string.IsNullOrWhiteSpace(craigslistSite)
-        ? craigslist.SearchAsync(q, zip, radius, craigslistSite, ct)
-        : source.SearchAsync(q, zip, radius, ct);
+    LocalSupplyGuard.RunAsync(
+        source,
+        token => source is CraigslistService craigslist && !string.IsNullOrWhiteSpace(craigslistSite)
+            ? craigslist.SearchAsync(q, zip, radius, craigslistSite, token)
+            : source.SearchAsync(q, zip, radius, token),
+        q, zip, radius, ct: ct);
 
 // The local-arbitrage ranking: the same zip/radius/keyword search as above, across every selected
 // site, but every result is priced against real eBay sold data and ranked by what's left after
@@ -1423,16 +1483,37 @@ app.MapGet("/api/local/arbitrage", async (
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
 {
-    var result = await FindLocalArbitrageAsync(
-        q ?? "", zip ?? "", radius ?? 40,
-        // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
-        // too, so an unbounded request would turn one click into hundreds of lookups.
-        Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
-        registry.Resolve(sources), craigslistSite, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
-        profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+    try
+    {
+        var result = await FindLocalArbitrageAsync(
+            q ?? "", zip ?? "", radius ?? 40,
+            // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
+            // too, so an unbounded request would turn one click into hundreds of lookups.
+            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+            registry.Resolve(sources), craigslistSite, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
+            profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
 
-    return Results.Ok(result);
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        // The scan is a long pipeline over several external systems, and this is the click a
+        // seller waits minutes for. Whatever broke, it comes back as a rendered sentence rather
+        // than a rejected fetch after a two-minute wait.
+        log.Add("Error", "Local arbitrage scan failed", ex.Message);
+        return Results.Ok(FailedArbitrage(q ?? "", zip ?? "", radius ?? 40,
+            $"The local scan couldn't be completed: {ex.Message}"));
+    }
 });
+
+static LocalArbitrageResult FailedArbitrage(string q, string zip, int radius, string error) => new()
+{
+    Status = "error", Query = q, ZipCode = zip, RadiusMiles = radius, Error = error,
+};
 
 // The original Facebook-only route, kept working: it predates the source picker, and silently
 // changing what an existing URL searches would be worse than one line of aliasing.
@@ -1444,14 +1525,27 @@ app.MapGet("/api/facebook/arbitrage", async (
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
 {
-    var result = await FindLocalArbitrageAsync(
-        q ?? "", zip ?? "", radius ?? 40,
-        Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
-        registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null, marketplace, normalizer, matcher,
-        priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
-        terapeak, analyzer, log, ct);
+    try
+    {
+        var result = await FindLocalArbitrageAsync(
+            q ?? "", zip ?? "", radius ?? 40,
+            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+            registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null, marketplace, normalizer, matcher,
+            priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
+            terapeak, analyzer, log, ct);
 
-    return Results.Ok(result);
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Local arbitrage scan failed", ex.Message);
+        return Results.Ok(FailedArbitrage(q ?? "", zip ?? "", radius ?? 40,
+            $"The local scan couldn't be completed: {ex.Message}"));
+    }
 });
 
 // ── Inventory health ──────────────────────────────────────────────────────────────────────────
@@ -1797,90 +1891,111 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     // several sources this only happens when NONE of them answered — see RollUpStatus.
     if (search.Status != "ok" || search.Count == 0) return result;
 
-    // A listing with no parseable price has no cost basis, so there is no profit to compute for
-    // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
-    // out across sources rather than applied to one flat cheapest-first list, which would spend
-    // the whole budget on whichever site returned the most rows.
-    var priceable = LocalSupplyMerger.TakeBalanced(
-        search.Items.Where(i => i.Price is > 0 || i.IsFree), maxItems);
-    result.ItemsAnalyzed = priceable.Count;
-
-    // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
-    // differently-worded tiles for the same product share both the group and the cached scrape.
-    var groups = LocalArbitrageAnalyzer.GroupByProduct(
-        priceable, l => TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
-    result.ProductsPriced = groups.Count;
-
-    async Task<ResalePricing> PriceAsync(LocalArbitrageGroup group, bool allowScrape)
+    // The search is done and its results are already on the result object. Everything below is the
+    // pricing half — sold-comps lookups, Terapeak, the profit maths — and it reaches across two
+    // more external systems. If any of that breaks, the seller still gets the local listings that
+    // were found and a sentence saying pricing is what failed, rather than a dead scan.
+    try
     {
-        var analysis = await AnalyzeProductAsync(
-            group.LookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
-            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
-            allowRealTerapeakScrape: allowScrape,
-            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
-            opportunityScorer, confidenceScorer, log, ct);
-        return ResalePricing.From(analysis, group.LookupTitle);
-    }
+        // A listing with no parseable price has no cost basis, so there is no profit to compute for
+        // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
+        // out across sources rather than applied to one flat cheapest-first list, which would spend
+        // the whole budget on whichever site returned the most rows.
+        var priceable = LocalSupplyMerger.TakeBalanced(
+            search.Items.Where(i => i.Price is > 0 || i.IsFree), maxItems);
+        result.ItemsAnalyzed = priceable.Count;
 
-    // ── Pass 1: sold-comps database + whatever Terapeak already has cached. No scrapes. ─────────
-    var pricing = new Dictionary<string, ResalePricing>();
-    var cached = new Dictionary<string, bool>();
-    foreach (var group in groups)
-    {
-        // Same cache-only pre-check the Opportunity Finder uses: a product Terapeak already knows
-        // must not consume the scrape budget, and this costs one SQLite read, never a page load.
-        cached[group.Key] = await terapeakMarket.GetAsync(
-            normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
-        pricing[group.Key] = await PriceAsync(group, allowScrape: false);
-    }
+        // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
+        // differently-worded tiles for the same product share both the group and the cached scrape.
+        var groups = LocalArbitrageAnalyzer.GroupByProduct(
+            priceable, l => TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
+        result.ProductsPriced = groups.Count;
 
-    // ── Pass 2: spend the scrape budget on the products where it changes a decision ─────────────
-    if (terapeak.IsConnected && terapeakBudget > 0)
-    {
-        var byKey = groups.ToDictionary(g => g.Key);
-        var targets = LocalArbitrageAnalyzer.SelectScrapeTargets(
-            groups.Select(g =>
-            {
-                // The group's best buy is what decides whether the group is worth a scrape;
-                // a free listing is the cheapest there is, not a missing price.
-                var cheapest = g.Listings.OrderBy(l => l.IsFree ? 0m : l.Price ?? decimal.MaxValue).First();
-                var preliminary = pricing[g.Key].HasPrice
-                    ? analyzer.Build(cheapest, pricing[g.Key], feeProfile).NetProfit
-                    : null;
-                return (g.Key, PreliminaryProfit: preliminary, HasTerapeak: cached[g.Key], LocalAsk: g.LowestAsk);
-            }), terapeakBudget);
-
-        foreach (var key in targets)
+        async Task<ResalePricing> PriceAsync(LocalArbitrageGroup group, bool allowScrape)
         {
-            pricing[key] = await PriceAsync(byKey[key], allowScrape: true);
-            result.TerapeakScrapesUsed++;
+            var analysis = await AnalyzeProductAsync(
+                group.LookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+                activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+                allowRealTerapeakScrape: allowScrape,
+                normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+                opportunityScorer, confidenceScorer, log, ct);
+            return ResalePricing.From(analysis, group.LookupTitle);
+        }
+
+        // ── Pass 1: sold-comps database + whatever Terapeak already has cached. No scrapes. ─────────
+        var pricing = new Dictionary<string, ResalePricing>();
+        var cached = new Dictionary<string, bool>();
+        foreach (var group in groups)
+        {
+            // Same cache-only pre-check the Opportunity Finder uses: a product Terapeak already knows
+            // must not consume the scrape budget, and this costs one SQLite read, never a page load.
+            cached[group.Key] = await terapeakMarket.GetAsync(
+                normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+            pricing[group.Key] = await PriceAsync(group, allowScrape: false);
+        }
+
+        // ── Pass 2: spend the scrape budget on the products where it changes a decision ─────────────
+        if (terapeak.IsConnected && terapeakBudget > 0)
+        {
+            var byKey = groups.ToDictionary(g => g.Key);
+            var targets = LocalArbitrageAnalyzer.SelectScrapeTargets(
+                groups.Select(g =>
+                {
+                    // The group's best buy is what decides whether the group is worth a scrape;
+                    // a free listing is the cheapest there is, not a missing price.
+                    var cheapest = g.Listings.OrderBy(l => l.IsFree ? 0m : l.Price ?? decimal.MaxValue).First();
+                    var preliminary = pricing[g.Key].HasPrice
+                        ? analyzer.Build(cheapest, pricing[g.Key], feeProfile).NetProfit
+                        : null;
+                    return (g.Key, PreliminaryProfit: preliminary, HasTerapeak: cached[g.Key], LocalAsk: g.LowestAsk);
+                }), terapeakBudget);
+
+            foreach (var key in targets)
+            {
+                pricing[key] = await PriceAsync(byKey[key], allowScrape: true);
+                result.TerapeakScrapesUsed++;
+            }
+        }
+
+        // ── Rank ────────────────────────────────────────────────────────────────────────────────────
+        var rows = groups
+            .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile)))
+            .ToList();
+
+        result.Items = LocalArbitrageAnalyzer.Rank(rows);
+        result.GoldmineCount = result.Items.Count(r => r.Verdict == "goldmine");
+        // What the whole board is worth if every profitable listing on it were bought and flipped —
+        // an upper bound on the search, not a forecast.
+        result.TotalPotentialProfit = Math.Round(result.Items.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
+
+        if (result.Items.All(r => r.EbayExpectedSale is null))
+        {
+            result.SoldCompsConfigured = await SoldCompsReachableAsync(marketplace, ct);
+            result.DataWarning = (result.SoldCompsConfigured, terapeak.IsConnected) switch
+            {
+                (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these locally.",
+                (true, _) => "The sold-comps database had no history for any of these titles. Connecting Terapeak would add a second source.",
+                (false, true) => "Terapeak is connected but returned no sold history for these titles.",
+            };
+        }
+        else
+        {
+            result.SoldCompsConfigured = result.Items.Any(r => r.SoldCompCount > 0);
         }
     }
-
-    // ── Rank ────────────────────────────────────────────────────────────────────────────────────
-    var rows = groups
-        .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile)))
-        .ToList();
-
-    result.Items = LocalArbitrageAnalyzer.Rank(rows);
-    result.GoldmineCount = result.Items.Count(r => r.Verdict == "goldmine");
-    // What the whole board is worth if every profitable listing on it were bought and flipped —
-    // an upper bound on the search, not a forecast.
-    result.TotalPotentialProfit = Math.Round(result.Items.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
-
-    if (result.Items.All(r => r.EbayExpectedSale is null))
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
     {
-        result.SoldCompsConfigured = await SoldCompsReachableAsync(marketplace, ct);
-        result.DataWarning = (result.SoldCompsConfigured, terapeak.IsConnected) switch
-        {
-            (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these locally.",
-            (true, _) => "The sold-comps database had no history for any of these titles. Connecting Terapeak would add a second source.",
-            (false, true) => "Terapeak is connected but returned no sold history for these titles.",
-        };
+        throw;
     }
-    else
+    catch (Exception ex)
     {
-        result.SoldCompsConfigured = result.Items.Any(r => r.SoldCompCount > 0);
+        log.Add("Error", "Local arbitrage pricing failed",
+            $"\"{q}\": found {result.LocalListingsFound} local listing(s) but couldn't price them — {ex.Message}");
+        // Status stays "ok": the sites answered, and their per-source counts are real. What failed
+        // was the resale half, and saying that is more useful than reporting the whole scan dead.
+        result.DataWarning =
+            $"Found {result.LocalListingsFound} local listing(s), but pricing them against eBay sold data failed: {ex.Message}";
+        return result;
     }
 
     sw.Stop();

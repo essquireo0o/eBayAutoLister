@@ -27,11 +27,18 @@ namespace ING_eBay_AutoLister.Services;
 ///     crawling, no paging, no following into post pages, nothing stored.
 ///   • Craigslist's own <c>postal</c> + <c>search_distance</c> parameters do the radius filtering
 ///     server-side, so a search asks for exactly what it needs rather than filtering a wider pull.
-///   • A 403 or a rate-limit is reported as what it is. Retrying past it is how an IP gets blocked.
+///   • A 403, a rate-limit or a block page is reported as what it is, once. Retrying past it is
+///     how an IP gets blocked, so the result says "retryable" and the seller chooses.
 /// </summary>
 public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog log) : ILocalSupplySource
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
+    // One HTTP call. Craigslist answers a search in about a second; anything near this is a
+    // connection that isn't going to complete.
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+
+    // The whole search — the results page plus the RSS fallback. Bounded separately so two slow
+    // requests can't add up to twice the wait a single one is allowed.
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(35);
 
     public string Id => CraigslistParser.SourceId;
     public string Label => CraigslistParser.SourceLabel;
@@ -65,30 +72,33 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
 
         var http = httpFactory.CreateClient();
         http.Timeout = RequestTimeout;
-        // Craigslist serves the search page to anything that asks politely — the honest identifier
-        // below was checked against the live site and gets the same 200 a browser string does, so
-        // there's no reason to pretend to be Chrome.
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("ING-AutoLister/1.0 (local sourcing; contact via inglisting.com)");
-        http.DefaultRequestHeaders.Accept.ParseAdd("text/html, application/xhtml+xml, application/rss+xml, application/xml;q=0.9");
+        ApplyBrowserHeaders(http);
+
+        // The search's own budget, so the results page and the fallback feed together can't hold
+        // the caller longer than SearchTimeout however slow either one is. The caller's token is
+        // linked in, and the two are told apart below — a seller who navigated away and a
+        // craigslist that stopped answering deserve different handling.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(SearchTimeout);
 
         var listings = new List<LocalSupplyListing>();
 
         var searchUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, rss: false);
-        var (html, transportError) = await GetAsync(http, searchUrl, ct);
+        var (html, transportError, retryable) = await GetAsync(http, searchUrl, budget.Token, ct);
         if (html is not null) listings.AddRange(CraigslistParser.ParseStaticHtml(html));
 
         // A failed request is not an empty market, and the feed is served by the same host that
         // just refused us — so the fallback is only worth trying when the page itself came back
         // fine and simply had no results in it (or markup that moved).
         if (transportError is not null)
-            return Fail(query, zip, radius, transportError, site);
+            return Fail(query, zip, radius, transportError, site, retryable);
 
         if (listings.Count == 0)
         {
             var rssUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius);
             // A 403 here is craigslist's normal answer on its current search stack, not a fault
             // worth reporting on top of an empty result — hence the discarded error.
-            var (feed, _) = await GetAsync(http, rssUrl, ct);
+            var (feed, _, _) = await GetAsync(http, rssUrl, budget.Token, ct);
             if (feed is not null) listings.AddRange(CraigslistParser.ParseRss(feed));
         }
 
@@ -106,37 +116,89 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
         return result;
     }
 
-    private static async Task<(string? Body, string? Error)> GetAsync(HttpClient http, string url, CancellationToken ct)
+    /// <summary>
+    /// Craigslist decides what to serve partly on how the request looks, and a request with no
+    /// browser headers is the shape it refuses first — a bare client draws a 403 on searches a
+    /// browser gets a 200 for. So the request carries what it actually is: a person's browser
+    /// fetching one search page they asked for, at their pace, from their own machine.
+    ///
+    /// No Accept-Encoding. This client isn't configured to decompress, and advertising gzip would
+    /// hand the parser a binary blob that reads as zero results — a silent wrong answer, which is
+    /// worse than a loud failure.
+    /// </summary>
+    private static void ApplyBrowserHeaders(HttpClient http)
+    {
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
+        http.DefaultRequestHeaders.Accept.ParseAdd(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,application/rss+xml;q=0.9,*/*;q=0.8");
+        http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+        // TryAddWithoutValidation because these aren't in HttpClient's known-header table; a plain
+        // Add would throw on the "?1" values.
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Site", "none");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-User", "?1");
+    }
+
+    /// <summary>
+    /// One request, and every way it can go wrong turned into a sentence. Nothing here throws:
+    /// a craigslist that refuses, stalls or answers with a block page has to arrive at the UI as a
+    /// message beside whatever the other sources found, never as a failed response.
+    ///
+    /// <paramref name="budget"/> is the search's own deadline; <paramref name="caller"/> is the
+    /// request's. Only the caller's cancellation propagates — the browser is gone, so there is
+    /// nothing left to report to.
+    /// </summary>
+    private static async Task<(string? Body, string? Error, bool Retryable)> GetAsync(
+        HttpClient http, string url, CancellationToken budget, CancellationToken caller)
     {
         try
         {
-            using var response = await http.GetAsync(url, ct);
+            using var response = await http.GetAsync(url, budget);
             if (!response.IsSuccessStatusCode)
             {
-                // 403/429 means craigslist is rate-limiting this IP. Backing off is the correct
-                // and only response; retrying in a loop is how an address ends up blocked.
-                return (null, (int)response.StatusCode switch
+                // 403/429 means craigslist is rate-limiting or blocking this IP. Backing off is the
+                // correct and only response; retrying in a loop is how an address ends up blocked.
+                return (int)response.StatusCode switch
                 {
-                    403 or 429 => "Craigslist is rate-limiting this connection right now — wait a minute and search again.",
-                    404 => "That craigslist site or search URL doesn't exist — try picking the site by hand.",
-                    _ => $"Craigslist returned HTTP {(int)response.StatusCode}.",
-                });
+                    403 or 429 => (null, "Craigslist is rate-limiting this connection right now — wait a minute and search again.", true),
+                    404 => (null, "That craigslist site or search URL doesn't exist — try picking the site by hand.", false),
+                    >= 500 => (null, $"Craigslist is having trouble at its end (HTTP {(int)response.StatusCode}) — try again shortly.", true),
+                    _ => (null, $"Craigslist returned HTTP {(int)response.StatusCode}.", false),
+                };
             }
 
-            return (await response.Content.ReadAsStringAsync(ct), null);
+            var body = await response.Content.ReadAsStringAsync(budget);
+
+            // A 200 is not the same as an answer: craigslist serves its block page and the
+            // interstitials in front of it with a success status, and both parse to zero listings.
+            var blocked = CraigslistParser.DetectBlock(body);
+            return blocked is not null ? (null, blocked, true) : (body, null, false);
         }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (caller.IsCancellationRequested)
         {
-            return (null, "Craigslist didn't respond in time.");
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, "Craigslist didn't respond in time — try again in a moment.", true);
         }
         catch (HttpRequestException ex)
         {
-            return (null, $"Couldn't reach craigslist: {ex.Message}");
+            return (null, $"Couldn't reach craigslist: {ex.Message}", true);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately total. Whatever this was — a DNS layer, a proxy, a TLS failure — it is
+            // one site failing, and the search's other sources still have results to show.
+            return (null, $"Craigslist couldn't be searched: {ex.Message}", true);
         }
     }
 
     private static LocalSupplySearchResult Fail(
-        string query, string? zip, int radius, string error, CraigslistSite? site = null) => new()
+        string query, string? zip, int radius, string error, CraigslistSite? site = null, bool retryable = false) => new()
     {
         SourceId = CraigslistParser.SourceId,
         SourceLabel = CraigslistParser.SourceLabel,
@@ -149,5 +211,6 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
         SearchUrl = site is null ? "" : CraigslistParser.BuildSearchUrl(site.Id, query, zip ?? "", radius, rss: false),
         ScopeLabel = site is null ? "" : $"{site.Label} craigslist ({site.State})",
         Error = error,
+        Retryable = retryable,
     };
 }

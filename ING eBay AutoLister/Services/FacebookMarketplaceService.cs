@@ -125,8 +125,12 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
     {
         var snappedRadius = FacebookMarketplaceParser.NearestSupportedRadius(radiusMiles);
 
+        // Said in words, not just in a status: this is the one local-sourcing failure the seller
+        // fixes in a single click, and "not_connected" with an empty message renders as a bare
+        // chip that explains nothing.
         if (!IsConnected)
-            return Fail("not_connected", query, zip, snappedRadius);
+            return Fail("not_connected", query, zip, snappedRadius,
+                "Connect Facebook first — it needs a one-time login to your own account. Craigslist needs no login.");
 
         if (string.IsNullOrWhiteSpace(query))
             return Fail("error", query, zip, snappedRadius, "Enter something to search for.");
@@ -143,13 +147,19 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
             // this is a slower scrape than Terapeak's single page read.
             run = await NodeRuntime.RunAsync(script, TimeSpan.FromSeconds(120), "fbmarket_search");
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            return Fail("error", query, zip, snappedRadius, $"Couldn't launch the browser: {ex.Message}");
+            return Fail("error", query, zip, snappedRadius, $"Couldn't launch the browser: {ex.Message}", retryable: true);
         }
 
         if (run.TimedOut)
-            return Fail("error", query, zip, snappedRadius, "The Marketplace search timed out.");
+            return Fail("error", query, zip, snappedRadius,
+                "The Marketplace search timed out — Facebook loads a real page, so a busy machine can miss the window. Try again.",
+                retryable: true);
 
         if (string.IsNullOrWhiteSpace(run.StdOut))
             return Fail("error", query, zip, snappedRadius,
@@ -176,7 +186,8 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
             // all of which need the person, not the app.
             Disconnect();
             log.Add("Warning", "Facebook session expired", "Reconnect in Settings to search Marketplace again.");
-            return Fail("session_expired", query, zip, snappedRadius);
+            return Fail("session_expired", query, zip, snappedRadius,
+                "Your saved Facebook session expired — reconnect to search Marketplace again.");
         }
 
         var cards = payload.Cards ?? [];
@@ -196,7 +207,8 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
         return result;
     }
 
-    private static LocalSupplySearchResult Fail(string status, string query, string? zip, int radius, string? error = null) => new()
+    private static LocalSupplySearchResult Fail(
+        string status, string query, string? zip, int radius, string? error = null, bool retryable = false) => new()
     {
         SourceId    = FacebookMarketplaceParser.SourceId,
         SourceLabel = FacebookMarketplaceParser.SourceLabel,
@@ -206,6 +218,7 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
         RadiusMiles = radius,
         SearchUrl   = FacebookMarketplaceSelectors.BuildSearchUrl(string.IsNullOrWhiteSpace(query) ? " " : query, radius),
         Error       = error,
+        Retryable   = retryable,
     };
 
     private sealed class ScrapePayload

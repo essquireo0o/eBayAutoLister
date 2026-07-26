@@ -983,3 +983,135 @@ than reasoned about. That found things no amount of reading the CSS would have:
 driven to completion — both need a live analysis run or a live write. Their shared chrome (modals,
 buttons, fields, panels) is covered by the token pass; their own layouts were not individually
 re-checked.
+
+---
+
+## 15. Local Deals that can't dead-end (autonomous session, 2026-07-26)
+
+The Local Deals panel had one failure mode that made the whole feature look broken rather than
+merely unlucky: a scan could end at `Failed to fetch`. No results, no reason, no way forward — and
+the seller had usually waited a minute or two to get there.
+
+The cause was a chain of unguarded links, and every one of them is a link this feature genuinely
+has to cross:
+
+* `CraigslistService` identified itself honestly (`ING-AutoLister/1.0 …`), which is the request
+  shape craigslist refuses first. And craigslist refuses with a **200 and a block page**, not a
+  status code — so the block parsed to zero listings and was reported as *an empty local market*.
+  A wrong answer that looks like an answer, which is the worst kind this app can give.
+* A source that threw anything outside `HttpRequestException` — a DNS failure, a TLS error, a
+  `NullReferenceException` in a parser — escaped to the HTTP edge, where ASP.NET answered 500 with
+  an HTML body. `fetch(...).then(r => r.json())` rejects on that, and every call in the panel was
+  written exactly that way.
+* A disconnected Facebook still launched the headless browser and spent its full budget to
+  discover what `IsAvailable` already knew.
+* Nothing bounded a source in wall-clock time, so a Node child process that hung held the response
+  open until the browser gave up on its own — with nothing to show for the wait.
+
+This session made a dead end structurally impossible, on both sides of the wire, and left the
+happy path exactly as it was.
+
+### `LocalSupplyGuard` — one choke point, and a result in every case
+
+Every source is now searched through `Services/LocalSupplyGuard.cs`, which returns a
+`LocalSupplySearchResult` in all circumstances and never throws:
+
+| Source behaviour | What comes back |
+|---|---|
+| Needs a login it doesn't have | `not_connected` **before any work starts**, with the sentence and the reason |
+| Throws — sync, async, or wrapped in an `AggregateException` | `error` naming the site, carrying the innermost message |
+| Hangs, ignoring its cancellation token | `error` after the budget, enforced by `Task.WhenAny` on the clock |
+| Returns null, a blank status, or an unknown one | normalised to `error`; missing labels/query/radius filled in |
+| Returns `ok` with no listings | left alone — an empty local market is a real answer |
+
+Budgets are per kind of source: 45s for a public one (an HTTP call), 3 minutes for a session-based
+one (a real browser loading a page and scrolling a grid). One timeout for both would either cut
+Facebook off or let Craigslist stall.
+
+The single exception that still propagates is the caller's own cancellation. The browser has hung
+up; there is nothing left to render for, and pricing results nobody will see is work for nobody.
+
+### Craigslist: asking the way a browser asks, and noticing when it's refused
+
+* **Browser headers** — a real Chrome `User-Agent`, `Accept`, `Accept-Language`,
+  `Upgrade-Insecure-Requests` and the `Sec-Fetch-*` set. Deliberately **no `Accept-Encoding`**:
+  this client isn't configured to decompress, and advertising gzip would hand the parser a binary
+  blob that reads as zero results — the silent wrong answer again.
+* **`CraigslistParser.DetectBlock`** reads the body, not just the status. It recognises craigslist's
+  own block page and the interstitials served in front of it, and only scans the first 4,000
+  characters — a real results page is hundreds of kilobytes, and somebody's ad genuinely does say
+  "verify you are a human".
+* **Two timeouts**: 15s per request, 35s for the whole search, so the results page plus the RSS
+  fallback can't add up to twice what one request is allowed.
+* **Every status distinguished**: 403/429 → rate-limited, 5xx → craigslist's end, 404 → wrong site.
+  A new `Retryable` flag separates "come back in a minute" from "this will fail identically", and
+  only the former gets a Retry button.
+
+### The endpoints always answer 200 with a valid body
+
+`/api/local/search`, `/api/local/arbitrage`, `/api/facebook/arbitrage`, `/api/craigslist/search`,
+`/api/facebook/search` and `/api/local/sources` each return a renderable JSON body no matter what
+fails inside them — including partial results from the sources that did answer.
+
+`FindLocalArbitrageAsync` gained a second guard around its **pricing half** specifically. The
+search and the sold-comp pricing are separate halves of that endpoint, and when pricing breaks the
+seller still gets the local listings that were found plus a sentence saying pricing is what failed
+— the status stays `ok`, because the sites really did answer.
+
+### Frontend: partial results, per-source status, and never a raw rejection
+
+`localFetchJson` replaces every `fetch(...).then(r => r.json())` in the panel. It always resolves to
+`{ data, error }` — it handles non-OK responses, unparseable bodies, a dropped connection, and its
+own `AbortController` ceiling (4 min for a search, 8 for a scan), so a request that will never come
+back stops looking like one that's still working.
+
+Per-source chips now read as status rather than as counts, and each chip that describes a fixable
+state carries the button that fixes it:
+
+| State | Chip | Action |
+|---|---|---|
+| Answered | `Craigslist 58 results · Las Vegas craigslist (NV)` | open ↗ |
+| Answered, nothing found | `Craigslist no results` | — |
+| Needs a login | `Facebook Marketplace connect required` | **Connect** |
+| Session gone | `Facebook Marketplace session expired` | **Connect** |
+| Blocked / timed out | `Craigslist blocked — retry` | **Retry** |
+| Failed for good | `Craigslist unavailable` | — |
+
+And `partialLocalNote` says out loud what a bare count hides: *"Showing Craigslist only — Facebook
+Marketplace needs connecting."* The ranked table underneath is the full Craigslist ranking; one
+site being unavailable no longer costs the seller the other site's results.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/LocalSupplyGuard.cs` | **New.** Per-source timeout, total exception containment, not-connected short-circuit, result normalisation |
+| `Services/CraigslistService.cs` | Browser headers, per-request + per-search timeouts, block-page handling, status-specific messages, `Retryable` |
+| `Services/CraigslistParser.cs` | **New** `DetectBlock` — block pages and interstitials served with a 200 |
+| `Services/FacebookMarketplaceService.cs` | Real messages on `not_connected` / `session_expired`, `Retryable` on timeouts and launch failures |
+| `Models/LocalSupplyModels.cs` | `Retryable` on `LocalSupplySearchResult` and `LocalSupplySourceOutcome` |
+| `Program.cs` | All six local endpoints wrapped; `SearchLocalSourceAsync` routed through the guard; arbitrage pricing guarded separately so a pricing failure still returns the listings |
+| `wwwroot/app.js` | `localFetchJson`, `setLocalStatus`, `partialLocalNote`; chips rebuilt with Connect/Retry; source picker gets its own retry. `?v=35` |
+| `wwwroot/style.css` | `.local-chip-btn`, `.local-retry-btn`, `.local-sources-retry`. `?v=30` |
+| Tests | **New** `LocalSupplyGuardTests` (13 cases); 5 `DetectBlock` cases added to `CraigslistParserTests` |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **360 passed**, 0 failed, 0 skipped (was 342; +18 new) |
+| `node --check app.js` | Clean |
+| Live `/api/local/search`, Facebook only (disconnected) | 200 in **0s** — was a full browser launch — `not_connected` + "Connect Facebook Marketplace first." |
+| Live `/api/local/search`, Craigslist only | 200 in 1s, **58 real listings** off the live site with the new headers |
+| Live `/api/local/search`, both sources | 200, **58 Craigslist listings returned alongside** Facebook's connect-required state |
+| Live `/api/local/arbitrage`, both sources | 200 in 5s: 58 found, 24 products priced, **30 ranked rows**, Facebook reported not connected |
+| Edge cases: empty query, junk zip, unknown source name | All 200 with a valid body and an actionable message; none reached an exception |
+| Real browser (Playwright, dev port 9397) | Status line *"Showing Craigslist only — Facebook Marketplace needs connecting."*, both chips correct, **Connect** button present, 30 rows rendered, **no console errors** |
+| The original bug, observed live | With the server stopped mid-scan the panel rendered *"The local scan didn't complete. Couldn't reach the app (Failed to fetch). Check it's still running, then try again."* **+ a Try again button** — instead of dead-ending |
+
+**Not verified:** the blocked-Craigslist path was exercised only through `DetectBlock`'s unit tests
+and the 403/429 branches — craigslist did not actually block this machine during the session, so
+the end-to-end "blocked — retry" chip was not seen against the live site. The Facebook search path
+past the connect gate is also unverified here: no account is connected on this machine, which is
+exactly the state the new short-circuit answers.
