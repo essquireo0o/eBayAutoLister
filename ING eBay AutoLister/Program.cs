@@ -3014,6 +3014,113 @@ app.MapGet("/api/ebay/category-suggestions", async (string q, EbayService ebay, 
     }
 });
 
+// ── Listing readiness: what eBay requires, before the seller presses Publish ──────────────────
+//
+// eBay does not tell a seller what a category requires until the publish fails. The Taxonomy API
+// knows up front, and these two endpoints are the app finally asking it.
+//
+// Both always answer 200 with a renderable body. A readiness check that fails is a readiness
+// check that gets in the way of listing, and the point of it is the opposite.
+
+// The raw aspect list for a category — used by the UI to render the Item Specifics fields.
+app.MapGet("/api/ebay/category-aspects", async (string? categoryId, EbayService ebay, CredentialsStore store, ActionLog log) =>
+{
+    var result = new CategoryAspectsResult { CategoryId = categoryId ?? "" };
+
+    if (string.IsNullOrWhiteSpace(categoryId))
+    {
+        result.Status  = "no_category";
+        result.Message = "Pick a category first — required Item Specifics are set per category.";
+        return Results.Ok(result);
+    }
+
+    if (string.IsNullOrWhiteSpace(store.GetUserToken()))
+    {
+        result.Status  = "not_connected";
+        result.Message = "Connect eBay to see which Item Specifics this category requires.";
+        return Results.Ok(result);
+    }
+
+    try
+    {
+        result.Aspects = await ebay.GetCategoryAspectsAsync(categoryId);
+        if (result.Aspects.Count == 0)
+            result.Message = "eBay lists no required Item Specifics for this category.";
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Category aspects lookup failed", ex.Message);
+        result.Status  = "error";
+        result.Message = "Couldn't reach eBay for this category's Item Specifics: " + ex.Message;
+        return Results.Ok(result);
+    }
+});
+
+// Score the whole draft. The aspect lookup is one part of it, so a listing is still scored on
+// title, photos, identifiers and description when eBay can't be reached — and says which half
+// it couldn't check rather than implying everything passed.
+app.MapPost("/api/listing/readiness", async (
+    ReadinessRequest req, EbayService ebay, CredentialsStore store,
+    ProductIdentityExtractor identity, ActionLog log) =>
+{
+    var aspectStatus  = "ok";
+    var aspectMessage = "";
+    List<CategoryAspect> aspects = [];
+
+    if (req.SkipAspects)
+    {
+        aspectStatus  = "skipped";
+        aspectMessage = "Item Specifics not checked on this pass.";
+    }
+    else if (string.IsNullOrWhiteSpace(req.CategoryId))
+    {
+        aspectStatus  = "no_category";
+        aspectMessage = "Pick a category to check what eBay requires here.";
+    }
+    else if (string.IsNullOrWhiteSpace(store.GetUserToken()))
+    {
+        aspectStatus  = "not_connected";
+        aspectMessage = "Connect eBay to check this category's required Item Specifics.";
+    }
+    else
+    {
+        try
+        {
+            aspects = await ebay.GetCategoryAspectsAsync(req.CategoryId);
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Readiness: aspect lookup failed", ex.Message);
+            aspectStatus  = "error";
+            aspectMessage = "eBay didn't answer the Item Specifics check: " + ex.Message;
+        }
+    }
+
+    // The identity extractor is the same parser the sold-comps pipeline reads titles with, so a
+    // listing and its comparables are interpreted by one set of rules rather than two.
+    ProductIdentity? parsed = null;
+    try { parsed = identity.Extract(req.Title); }
+    catch (Exception ex) { log.Add("Warning", "Readiness: title parse failed", ex.Message); }
+
+    var facts = new AspectMatcher.ListingFacts(
+        Title:           req.Title ?? "",
+        DescriptionText: AspectMatcher.StripHtml(req.Description),
+        Brand:           req.Brand ?? "",
+        Mpn:             req.Mpn ?? "",
+        Upc:             req.Upc ?? "",
+        Ean:             req.Ean ?? "",
+        Isbn:            req.Isbn ?? "",
+        Condition:       req.Condition ?? "",
+        Identity:        parsed);
+
+    var (fields, custom) = AspectMatcher.Evaluate(
+        aspects, req.ItemSpecifics ?? [], facts);
+
+    var result = ListingReadinessAnalyzer.Analyze(req, fields, aspectStatus, aspectMessage, custom);
+    return Results.Ok(result);
+});
+
 app.MapPost("/api/ebay/upload-picture", async (RemoveBgRequest req, EbayService ebay, ActionLog log) =>
 {
     if (string.IsNullOrWhiteSpace(req.ImageBase64))

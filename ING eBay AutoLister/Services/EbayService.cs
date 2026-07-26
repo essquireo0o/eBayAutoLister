@@ -2030,6 +2030,165 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         return results;
     }
 
+    // ── Item Aspects (what the category actually requires) ────────────────────
+    //
+    // The one eBay call that turns "publish and find out" into "know before you press it".
+    // get_item_aspects_for_category returns, per category, which Item Specifics are required,
+    // which are the ones buyers filter on, and — the part that makes autofill possible — the
+    // exact list of values eBay will accept for each.
+    //
+    // Cached in memory: a category's aspect definitions change on the order of months, and a
+    // seller listing a dozen items in one category would otherwise repeat the same call a dozen
+    // times. Entries expire after 12 hours so a mid-session eBay change still lands the same day.
+
+    private readonly Dictionary<string, (DateTime FetchedUtc, List<CategoryAspect> Aspects)> _aspectCache = new();
+    private static readonly TimeSpan AspectCacheTtl = TimeSpan.FromHours(12);
+    private readonly SemaphoreSlim _aspectLock = new(1, 1);
+
+    public async Task<List<CategoryAspect>> GetCategoryAspectsAsync(string categoryId)
+    {
+        categoryId = (categoryId ?? "").Trim();
+        if (string.IsNullOrEmpty(categoryId)) return [];
+
+        await _aspectLock.WaitAsync();
+        try
+        {
+            if (_aspectCache.TryGetValue(categoryId, out var hit) &&
+                DateTime.UtcNow - hit.FetchedUtc < AspectCacheTtl)
+                return hit.Aspects;
+        }
+        finally { _aspectLock.Release(); }
+
+        var token  = await GetOrRefreshTokenAsync();
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        if (_categoryTreeId == null)
+        {
+            var treeRes  = await client.GetStringAsync($"{BaseUrl}/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US");
+            using var td = JsonDocument.Parse(treeRes);
+            _categoryTreeId = td.RootElement.TryGetProperty("categoryTreeId", out var v) ? v.GetString() ?? "0" : "0";
+        }
+
+        var url = $"{BaseUrl}/commerce/taxonomy/v1/category_tree/{_categoryTreeId}" +
+                  $"/get_item_aspects_for_category?category_id={Uri.EscapeDataString(categoryId)}";
+
+        var res  = await client.GetAsync(url);
+        var body = await res.Content.ReadAsStringAsync();
+        if (!res.IsSuccessStatusCode)
+        {
+            log.Add("Warning", $"Category aspects HTTP {(int)res.StatusCode}",
+                $"Category {categoryId}: {body[..Math.Min(300, body.Length)]}");
+            throw new InvalidOperationException(DescribeAspectFailure(body, (int)res.StatusCode, categoryId));
+        }
+
+        var aspects = ParseAspects(body);
+
+        await _aspectLock.WaitAsync();
+        try { _aspectCache[categoryId] = (DateTime.UtcNow, aspects); }
+        finally { _aspectLock.Release(); }
+
+        log.Add("Info", "Category aspects loaded",
+            $"Category {categoryId}: {aspects.Count} aspects, {aspects.Count(a => a.Required)} required");
+        return aspects;
+    }
+
+    // Turn eBay's error body into something the seller can act on.
+    //
+    // The one that actually happens: picking a parent category out of the Browse tree returns
+    // errorId 62009, "must be a leaf category" — and eBay refuses the *publish* for the same
+    // reason, so this is a real listing blocker showing up early rather than a lookup nicety.
+    // Reporting it as "HTTP 400" would waste that.
+    public static string DescribeAspectFailure(string body, int statusCode, string categoryId)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("errors", out var errs) &&
+                errs.ValueKind == JsonValueKind.Array && errs.GetArrayLength() > 0)
+            {
+                var first = errs[0];
+                var msg = Str(first, "message");
+                var id  = first.TryGetProperty("errorId", out var e) && e.ValueKind == JsonValueKind.Number
+                    ? e.GetInt32() : 0;
+
+                if (id == 62009 || msg.Contains("leaf", StringComparison.OrdinalIgnoreCase))
+                    return $"Category {categoryId} is a parent category. eBay only lists items in the " +
+                           "most specific category, so pick one further down the tree — that also " +
+                           "decides which Item Specifics are required.";
+
+                if (!string.IsNullOrWhiteSpace(msg)) return "eBay: " + msg;
+            }
+        }
+        catch (JsonException) { /* fall through to the status-code message */ }
+
+        return statusCode == 401 || statusCode == 403
+            ? "eBay rejected the request for this category's Item Specifics — the connection may need renewing."
+            : $"eBay returned HTTP {statusCode} for category {categoryId}'s Item Specifics.";
+    }
+
+    // Separated from the HTTP call so the response shape is testable without a token.
+    public static List<CategoryAspect> ParseAspects(string json)
+    {
+        var results = new List<CategoryAspect>();
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("aspects", out var arr) ||
+            arr.ValueKind != JsonValueKind.Array) return results;
+
+        foreach (var a in arr.EnumerateArray())
+        {
+            var name = Str(a, "localizedAspectName");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var aspect = new CategoryAspect { Name = name };
+
+            if (a.TryGetProperty("aspectConstraint", out var c))
+            {
+                aspect.Required      = c.TryGetProperty("aspectRequired", out var r) &&
+                                       r.ValueKind == JsonValueKind.True;
+                aspect.Recommended   = string.Equals(Str(c, "aspectUsage"), "RECOMMENDED",
+                                                     StringComparison.OrdinalIgnoreCase);
+                aspect.SelectionOnly = string.Equals(Str(c, "aspectMode"), "SELECTION_ONLY",
+                                                     StringComparison.OrdinalIgnoreCase);
+                aspect.MultiSelect   = Str(c, "itemToAspectCardinality")
+                                          .Contains("MULTI", StringComparison.OrdinalIgnoreCase);
+
+                if (c.TryGetProperty("aspectMaxLength", out var ml) &&
+                    ml.ValueKind == JsonValueKind.Number)
+                    aspect.MaxLength = ml.GetInt32();
+
+                // Only a SELECTION_ONLY list is authoritative. For a FREE_TEXT aspect eBay ships
+                // the popular values as *suggestions*, and treating that sample as the whole set
+                // would have the app rejecting a seller's perfectly valid value — inventing a
+                // problem eBay doesn't have.
+                aspect.ValuesAreComplete = aspect.SelectionOnly;
+            }
+
+            if (a.TryGetProperty("aspectValues", out var vals) && vals.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var v in vals.EnumerateArray())
+                {
+                    var lv = Str(v, "localizedValue");
+                    if (!string.IsNullOrWhiteSpace(lv)) aspect.Values.Add(lv);
+                }
+            }
+
+            // SELECTION_ONLY with no published values is not something the app can validate
+            // against, so treat it as free text rather than rejecting everything.
+            if (aspect.Values.Count == 0) aspect.SelectionOnly = false;
+
+            results.Add(aspect);
+        }
+
+        // Required first, then the ones buyers filter on, then the rest — the order the seller
+        // should work through them, decided once here rather than in the UI.
+        return results
+            .OrderByDescending(a => a.Required)
+            .ThenByDescending(a => a.Recommended)
+            .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     // ── Merchant Inventory Location ──────────────────────────────────────────
 
     private const string DefaultLocationKey = "INGMainLocation";

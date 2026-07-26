@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=30" />
+  <link rel="stylesheet" href="style.css?v=33" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -557,10 +557,35 @@
                   </div>
                 </details>
 
-                <details class="form-panel">
-                  <summary>Item Specifics</summary>
-                  <div id="nl-specifics-list"></div>
-                  <button type="button" id="nl-btn-add-specific" class="btn btn-ghost small">Add Row</button>
+                <!-- Item Specifics, driven by what eBay actually requires for the chosen
+                     category (Taxonomy API) rather than by blank name/value rows. -->
+                <details class="form-panel" id="nl-aspects-panel" open>
+                  <summary>
+                    Item Specifics
+                    <span class="asp-summary-badge" id="nl-aspects-badge" hidden></span>
+                  </summary>
+
+                  <div class="asp-head">
+                    <div class="asp-status" id="nl-aspects-status">Pick a category and eBay's required Item Specifics appear here.</div>
+                    <div class="asp-head-actions">
+                      <button type="button" id="nl-aspects-autofill" class="btn btn-primary small" hidden>Fill from my listing</button>
+                      <button type="button" id="nl-aspects-refresh" class="btn btn-ghost small">Recheck</button>
+                    </div>
+                  </div>
+
+                  <div id="nl-aspects-required" class="asp-group"></div>
+                  <div id="nl-aspects-recommended" class="asp-group"></div>
+
+                  <details id="nl-aspects-optional-wrap" class="asp-optional" hidden>
+                    <summary>Optional specifics <span id="nl-aspects-optional-count" class="asp-count"></span></summary>
+                    <div id="nl-aspects-optional" class="asp-group"></div>
+                  </details>
+
+                  <div class="asp-custom">
+                    <p class="asp-custom-label">Your own specifics <span class="asp-custom-hint">— eBay accepts extras beyond its own list</span></p>
+                    <div id="nl-specifics-list"></div>
+                    <button type="button" id="nl-btn-add-specific" class="btn btn-ghost small">Add Row</button>
+                  </div>
                 </details>
 
                 <details class="form-panel">
@@ -677,12 +702,30 @@
           </div><!-- /.new-listing-body -->
 
           <div class="new-listing-footer">
-            <div id="nl-result-msg" class="nl-result-msg"></div>
-            <div class="nl-footer-actions">
-              <span class="powered-by">Powered by ING Mining™</span>
-              <button id="nl-btn-cancel" class="btn btn-ghost" type="button">Cancel</button>
-              <button id="nl-btn-save-local" class="btn btn-secondary btn-large" type="button">Save Draft</button>
-              <button id="nl-btn-publish" class="btn btn-primary btn-large" type="button">Publish to eBay</button>
+
+            <!-- Listing readiness: what eBay requires and what costs sales, checked here
+                 instead of by a failed publish. -->
+            <div id="nl-readiness" class="rd-bar" hidden>
+              <button type="button" id="nl-rd-toggle" class="rd-toggle" aria-expanded="false" aria-controls="nl-rd-list">
+                <span class="rd-score" id="nl-rd-score">–</span>
+                <span class="rd-text">
+                  <span class="rd-grade" id="nl-rd-grade">Checking…</span>
+                  <span class="rd-headline" id="nl-rd-headline"></span>
+                </span>
+                <span class="rd-counts" id="nl-rd-counts"></span>
+                <span class="rd-chevron" aria-hidden="true">▾</span>
+              </button>
+              <div id="nl-rd-list" class="rd-list" hidden></div>
+            </div>
+
+            <div class="nl-footer-row">
+              <div id="nl-result-msg" class="nl-result-msg"></div>
+              <div class="nl-footer-actions">
+                <span class="powered-by">Powered by ING Mining™</span>
+                <button id="nl-btn-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                <button id="nl-btn-save-local" class="btn btn-secondary btn-large" type="button">Save Draft</button>
+                <button id="nl-btn-publish" class="btn btn-primary btn-large" type="button">Publish to eBay</button>
+              </div>
             </div>
           </div>
 
@@ -2002,6 +2045,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=39"></script>
 </body>
 </html>

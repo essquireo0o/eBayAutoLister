@@ -1184,3 +1184,171 @@ live — this machine has the key saved, and that state is what the bug was abou
 behaviour is unchanged by this fix: `checkSetupOnLoad` passes an explicit `false`, which
 still marks the step pending. Step 3 (OpenAI) has no key saved here, so its preserved-state
 branch was only observed staying correctly *un*-ticked.
+
+---
+
+## 16. Listing Readiness — what eBay requires, before you press Publish (autonomous session, 2026-07-26)
+
+The core workflow is item → live listing, and it had one dominant piece of friction: **eBay does
+not tell a seller what a category requires until after the publish fails.**
+
+The app's Publish button checked two things — a title, and a price above zero — and handed the rest
+to eBay, which answers minutes later with `The item specific Model is missing`. The only handling
+for that was reactive: `nlHighlightMissingSpecifics` parsed the *failure text* and highlighted a row
+after the fact. Meanwhile the Item Specifics panel was a stack of blank name/value rows, so a
+seller filling it in was guessing at both halves of every pair.
+
+The Taxonomy API has known the answer the whole time. Nothing in the app was asking it.
+
+`POST /api/listing/readiness` and `GET /api/ebay/category-aspects` → the **Item Specifics** panel and
+the readiness bar above Publish.
+
+### Why this makes the seller money
+
+1. **It removes the failed-publish round trip.** A rejected publish costs the listing, the wait and
+   the re-read of a raw API error. Every required aspect is now a labelled field with a red
+   Required pill, on screen while the listing is being written.
+2. **It fills them in, from the seller's own words.** eBay publishes the *legal values* per aspect.
+   The seller has already written a title and a description. So most answers are already in the
+   listing and can be found rather than typed. On a real iPhone draft, one click filled **Brand,
+   Model, Storage Capacity, Lock Status and Network** — five specifics, none typed.
+3. **The empty ones are the quiet leak.** eBay's search filters *run on* Item Specifics. A blank
+   "Storage Capacity" doesn't look bad — it removes the listing from every buyer who filtered by
+   storage, which is most of them. Those are reported as warnings with that sentence attached,
+   because a checklist without the "why" gets clicked past.
+4. **It scores the rest of the listing too** — title length, photo count, product identifiers,
+   description — with each finding naming what it costs.
+
+Vendoo, List Perfectly and Crosslist move listings between sites and never check a category's
+requirements. eBay's own Seller Hub only tells you after you fail.
+
+### Blockers and warnings are not the same thing, and never blur
+
+| | Meaning | Behaviour |
+|---|---|---|
+| **Blocker** | eBay's rule. The listing cannot go live. | Stops Publish **once**, lists every one, offers **Publish anyway** |
+| **Warning** | The app's opinion about what sells. | Never stops anything |
+
+The override matters: the app can be wrong about a category, and it is the seller's account. Drafts
+skip the gate entirely — an unfinished draft is the point of a draft.
+
+### Matching: the part that has to refuse
+
+`AspectMatcher` is pure and has three jobs, separated because each is independently wrong-able.
+
+**Names.** "GPU Model" and eBay's "Chipset/GPU Model" are the same field; treating them as different
+publishes a listing with a required specific "missing" while the value sits right there. Exact match
+first, then an alias table, then token overlap ≥ 0.6 — and every step after the first insists the
+answer is *unique*:
+
+- An alias only fires when it lands on **exactly one** aspect the category actually has. "Capacity"
+  means Storage Capacity in one category and Battery Capacity in another; where both exist, no call
+  is made.
+- **"Compatible Brand" is not "Brand"** (Jaccard 0.5, below the bar). A phone case whose compatible
+  brand is Apple is not an Apple-branded product — the most damaging near-miss in the feature.
+
+**Values.** On a `SELECTION_ONLY` aspect eBay rejects anything outside its published list, so
+"bitmain" → `Bitmain`, "wall-mount" → `Wall Mount`, "N/A" → `Does Not Apply` are lookups, not
+guesses. On a `FREE_TEXT` aspect eBay's values are *popular suggestions*, not the whole set, so a
+seller's real value is accepted — rejecting it would be the app inventing a problem eBay doesn't have.
+
+**Inference.** Where eBay named the legal values, look for one of them in the seller's own text.
+Two matches mean two different things, and the difference decides everything:
+
+- *Refinement* — "S19" and "S19 Pro" both hit on "Antminer S19 Pro". Longest wins; taking the
+  shorter lists a $2,000 machine as a $700 one.
+- *Ambiguity* — "Red" and "Blue" both hit on "Red and Blue pair". Neither refines the other, so the
+  answer is **null**. Picking the longer string would be deciding a colour on its spelling.
+
+Matching is whole-token, or "Red" matches "Prepared". Descriptions are stripped of HTML first, or
+"Table" matches `<table>`.
+
+### What it refuses to answer at all
+
+- **Country of Origin / Country of Manufacture.** Guessing it from a brand puts a false legal claim
+  on a live listing. Left blank however required it is.
+- **A required MPN/UPC with no number** is offered as the literal `Does Not Apply` — eBay's own
+  answer, which passes where blank fails.
+- **A `SELECTION_ONLY` aspect whose list doesn't contain the seller's value** gets no suggestion,
+  because offering it back produces a publish failure.
+- **Low-confidence suggestions are never auto-applied.** They sit on the field as an offer with
+  their source stated ("found in your title", "from the Brand field"). A one-click button that
+  writes something uncertain into a live listing makes the seller's data worse.
+- **Nothing is ever written without the seller applying it**, and an existing value is never
+  overwritten — except one eBay would reject outright, where keeping it means a failed publish.
+
+### Three defects the real-inventory runs caught
+
+Driven against the connected account and live eBay categories, not reasoned about:
+
+1. **A junk Model, offered at medium confidence.** `ProductIdentityExtractor.Model` is "whatever
+   words are left after every known field is claimed", which on a real title reads
+   **"S19 Pro ASIC with PSU"** — leftover prose. `Fill from my listing` would have written that into
+   a listing. Identity-derived values are now refused above 30 characters or 3 words.
+2. **The readiness bar broke the modal footer.** `.new-listing-footer` was one flex row of
+   `[message | buttons]`; adding the bar as a third item made a very tall row that overlapped the
+   scrollable form above it and **swallowed clicks on the bottom of the form**. The row now lives in
+   `.nl-footer-row` inside a column, and the footer is capped at `52vh`.
+3. **The blocker gate froze.** It snapshots the blockers at the moment Publish is pressed, so after
+   the autofill cut them 5 → 2 it still read "5 things need fixing", directly under a bar saying
+   otherwise. It now tracks each readiness pass, and clears itself when the last blocker goes.
+
+Plus: a non-leaf category returns eBay's `errorId 62009`, which was surfacing as "HTTP 400". eBay
+refuses the *publish* for the same reason, so it is now reported as the real blocker it is —
+"Category 175673 is a parent category… pick one further down the tree."
+
+### Rationing and degradation
+
+- Aspects are **cached 12 hours per category** — a seller listing a dozen items in one category
+  would otherwise repeat the same call a dozen times.
+- Readiness is **debounced 600ms** while typing, with a sequence guard so a stale response can never
+  overwrite a newer one. A category change re-checks immediately, since it changes which specifics
+  exist at all.
+- **eBay not connected, an error, or no category yet** — the rest of the listing is still scored and
+  the headline says which half wasn't checked ("Nothing here blocks a publish — but eBay's required
+  specifics weren't checked"). Reporting "ready" on an unchecked listing is this feature's most
+  dangerous failure, and it is a test.
+- A readiness request that fails leaves publishing entirely alone: "Couldn't reach the app for the
+  pre-publish check — publishing still works."
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/ListingReadinessModels.cs` | **New** — `CategoryAspect`, `AspectField`, `AspectState`, `ReadinessFix`, `FixSeverity`, `ListingReadinessResult`, `ReadinessRequest` |
+| `Services/AspectMatcher.cs` | **New** — name matching, value canonicalisation, inference, `Evaluate`, `AutoFillable`, `StripHtml`. Pure |
+| `Services/ListingReadinessAnalyzer.cs` | **New** — score, grade, headline, ordered fix list, `AspectFieldId`. Pure |
+| `Services/EbayService.cs` | `GetCategoryAspectsAsync` (Taxonomy `get_item_aspects_for_category`, 12h cache), `ParseAspects`, `DescribeAspectFailure` |
+| `Program.cs` | `GET /api/ebay/category-aspects`, `POST /api/listing/readiness` |
+| `wwwroot/index.html` | Item Specifics panel rebuilt (status, autofill, required/recommended/optional groups, custom rows); readiness bar in the footer; `.nl-footer-row`. `app.js?v=39`, `style.css?v=33` |
+| `wwwroot/app.js` | `initListingReadiness`, `nlRunReadiness`, `nlRenderAspects`, `nlAspectRow`, `nlAutofillAspects`, `nlRenderReadiness`, `nlFocusField`, `nlBlockersStopPublish`, `nlRenderBlockerGate`, `nlSyncBlockerGate`, `nlCollectAspectValues`, `nlAspectFieldId`; `nlCollectSpecifics` merges aspect fields; `bindCategorySearch` announces its hidden input |
+| `wwwroot/style.css` | `.asp-*`, `.rd-*`, footer split into a column |
+| `ING eBay AutoLister.Tests/AspectMatcherTests.cs` | **New** — 40 tests |
+| `ING eBay AutoLister.Tests/ListingReadinessAnalyzerTests.cs` | **New** — 24 tests |
+| `ING eBay AutoLister.Tests/CategoryAspectParsingTests.cs` | **New** — 10 tests |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **445 passed**, 0 failed, 0 skipped (was 360; +85 new) |
+| `node --check app.js` | Clean |
+| Live eBay, category 179171 (Miners) | 10 real aspects parsed; required/recommended/optional, `SELECTION_ONLY` and `MULTI` flags all read correctly |
+| Live eBay, category 9355 (Cell Phones) | 31 aspects, **4 genuinely required**; a draft with `Manufacturer`/`Colour` matched them onto eBay's `Brand`/`Color`, and the two real gaps came back as blockers |
+| Live inference, real draft | Bitcoin, SHA-256, ASIC and Bitmain all found in the seller's own title against eBay's value lists |
+| Non-leaf category (175673) | Reported as a parent category with what to do, not as HTTP 400 |
+| Real browser (Playwright, live account, dev ports 9401–9404) | Bar scores a blank form (`0 · Won't publish · 4 things will stop this publishing`); category pick loads 31 aspects into 4/18/9 rows with the `4 required missing` badge; 29-row fix list; **Go to it** focuses the right field; Publish gate lists all 5 blockers with **Publish anyway**; **Fill 5 from my listing** wrote `Brand=Apple, Model=Apple iPhone 13 Pro, Storage Capacity=256GB, Lock Status=Factory Unlocked, Network=Unlocked`; gate tracked 5 → 2 → cleared; score 0 → 36 → 60 |
+| Browser console errors | **None**, across every step |
+| Anything published to eBay | **Nothing.** No publish was executed; the gate was exercised, never passed through to a live write |
+
+**Not verified:** the not-connected degradation path was not exercised live — this machine has eBay
+connected, which is the state the feature is *for*. Its behaviour is covered by unit test
+(`A_listing_that_was_not_checked_against_eBay_does_not_claim_it_was`) and by the same
+`store.GetUserToken()` check every other endpoint uses. Also unverified end-to-end: that a listing
+scoring "Ready to publish" then actually publishes — that is a real, buyer-visible write on the
+seller's own account and is theirs to make.
+
+**Known limitation, stated in the UI rather than hidden:** the aspect check is only as current as
+eBay's Taxonomy API, cached 12 hours. A category whose requirements change inside that window is
+checked against the previous set — **Recheck** forces a fresh look.

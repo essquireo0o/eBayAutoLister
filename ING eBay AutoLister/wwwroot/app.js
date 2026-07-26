@@ -4336,6 +4336,8 @@
     on('nl-ai-modify-go', 'click', nlAiModify);
     on('nl-ai-modify-input', 'keydown', e => { if (e.key === 'Enter') nlAiModify(); });
 
+    initListingReadiness();
+
     on('nl-btn-publish', 'click', () => nlSubmit('publish'));
 
     on('nl-btn-draft', 'click', () => nlSubmit('draft'));
@@ -4366,6 +4368,7 @@
     $('new-listing-overlay')?.classList.remove('hidden');
     $('new-listing-overlay')?.focus();
     nlRefreshSoldCompsConnect();   // show/hide the Connect-to-Terapeak prompt in the bar
+    nlRunReadiness(true);          // score the blank form so the bar is there from the start
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'ai'));
     if (cachedPolicies) {
       fillNlPolicySelects();
@@ -4465,6 +4468,7 @@
     nlToggleBestOffer(false);
     if ($('nl-duration-wrap')) $('nl-duration-wrap').style.display = 'none';
     if ($('nl-specifics-list')) $('nl-specifics-list').innerHTML = '';
+    nlResetReadiness();
     nlClearAllPhotoSlots();
     // Reset description to the text tab (default)
     document.querySelectorAll('.desc-tab').forEach(t => t.classList.toggle('active', t.dataset.descTab === 'text'));
@@ -4514,6 +4518,13 @@
     let activeIdx = -1;
     let currentSuggestions = [];
 
+    // The hidden input is written directly rather than typed into, so it never fires `change`
+    // on its own. Announcing it lets anything that depends on the category react — the
+    // readiness check needs to, since the category is what decides which Item Specifics exist.
+    function announce() {
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     function showSelected(name, id) {
       input.value = '';
       input.placeholder = 'Search to change category…';
@@ -4522,6 +4533,7 @@
       if (badge)  badge.textContent  = 'ID: ' + id;
       if (selected) selected.hidden = false;
       closeDropdown();
+      announce();
     }
 
     function clearSelection() {
@@ -4530,6 +4542,7 @@
       input.placeholder = 'Type to search eBay categories…';
       if (selected) selected.hidden = true;
       input.focus();
+      announce();
     }
 
     function closeDropdown() {
@@ -5380,6 +5393,11 @@
     nlUpdateCharCount('nl-subtitle', 'nl-subtitle-count', 55);
     nlSyncDescPreview();
     nlUpdateDescCount();
+
+    // The listing has just been written by AI — this is the moment to say what eBay still needs,
+    // while the seller is looking at it, rather than after a failed publish.
+    nlRdOverride = false;
+    nlRunReadiness(true);
   }
 
   function buildNlPayload() {
@@ -5427,11 +5445,458 @@
 
   function nlCollectSpecifics() {
     const out = {};
+    // Free-text rows first, so a value that has been matched onto one of eBay's own aspects
+    // wins over a stale row the seller typed under a different name for the same field.
     document.querySelectorAll('#nl-specifics-list .specific-row').forEach(row => {
       const [k, v] = row.querySelectorAll('input');
       if (k?.value.trim()) out[k.value.trim()] = v?.value.trim() || '';
     });
+    Object.assign(out, nlCollectAspectValues());
     return out;
+  }
+
+  // ── Listing Readiness ────────────────────────────────────────────
+  //
+  // eBay does not say what a category requires until a publish fails. This asks it up front
+  // (POST /api/listing/readiness → Taxonomy get_item_aspects_for_category) and turns the answer
+  // into fields, so the seller fills in a labelled "Chipset/GPU Model" dropdown instead of
+  // guessing at a blank name/value row and finding out minutes later.
+  //
+  // Everything here is advisory. The seller's own values are never overwritten, suggestions are
+  // applied only when clicked, and a blocker warns rather than locks — the app's opinion of a
+  // listing is not eBay's, and it is the seller's account.
+
+  let nlRdState    = null;   // last result from the server
+  let nlRdTimer    = null;   // debounce handle
+  let nlRdSeq      = 0;      // race guard: only the newest response may render
+  let nlRdOverride = false;  // seller chose to publish past the blockers
+
+  // Must match ListingReadinessAnalyzer.AspectFieldId — the fix list on one side generates
+  // these, the fields on the other side carry them, and a mismatch silently breaks "Fix".
+  function nlAspectFieldId(name) {
+    let slug = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    while (slug.includes('--')) slug = slug.replace(/--/g, '-');
+    return 'nl-aspect-' + slug.replace(/^-+/, '').replace(/-+$/, '');
+  }
+
+  function nlCollectAspectValues() {
+    const out = {};
+    document.querySelectorAll('#nl-aspects-panel [data-aspect-name]').forEach(el => {
+      const name = el.dataset.aspectName;
+      const val  = (el.value || '').trim();
+      if (name && val) out[name] = val;
+    });
+    return out;
+  }
+
+  function initListingReadiness() {
+    on('nl-rd-toggle', 'click', () => {
+      const list = $('nl-rd-list');
+      const btn  = $('nl-rd-toggle');
+      if (!list || !btn) return;
+      const open = list.hidden;
+      list.hidden = !open;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.classList.toggle('is-open', open);
+    });
+    on('nl-aspects-refresh', 'click', () => nlRunReadiness(true));
+    on('nl-aspects-autofill', 'click', nlAutofillAspects);
+
+    // Re-check as the listing is written. Debounced, because these fire per keystroke.
+    ['nl-title', 'nl-price', 'nl-brand', 'nl-mpn', 'nl-upc', 'nl-ean', 'nl-isbn',
+     'nl-desc-text', 'nl-description', 'nl-condition-desc', 'nl-location-zip', 'nl-weight-lbs']
+      .forEach(id => on(id, 'input', () => nlRunReadiness()));
+    ['nl-condition', 'nl-best-offer'].forEach(id => on(id, 'change', () => nlRunReadiness()));
+
+    // The category picker writes the hidden input directly, so it announces itself (see
+    // bindCategorySearch). A category change is the one edit that changes which specifics
+    // exist at all, so it re-checks immediately rather than on the debounce.
+    on('nl-category-id', 'change', () => nlRunReadiness(true));
+  }
+
+  function nlResetReadiness() {
+    nlRdState = null;
+    nlRdOverride = false;
+    if (nlRdTimer) { clearTimeout(nlRdTimer); nlRdTimer = null; }
+    ['nl-aspects-required', 'nl-aspects-recommended', 'nl-aspects-optional']
+      .forEach(id => { const el = $(id); if (el) el.innerHTML = ''; });
+    const optWrap = $('nl-aspects-optional-wrap'); if (optWrap) optWrap.hidden = true;
+    const badge = $('nl-aspects-badge'); if (badge) badge.hidden = true;
+    const bar = $('nl-readiness'); if (bar) bar.hidden = true;
+    const fill = $('nl-aspects-autofill'); if (fill) fill.hidden = true;
+    const status = $('nl-aspects-status');
+    if (status) {
+      status.textContent = 'Pick a category and eBay’s required Item Specifics appear here.';
+      status.className = 'asp-status';
+    }
+  }
+
+  async function nlRunReadiness(immediate = false) {
+    if (nlRdTimer) { clearTimeout(nlRdTimer); nlRdTimer = null; }
+    if (!immediate) {
+      nlRdTimer = setTimeout(() => nlRunReadiness(true), 600);
+      return;
+    }
+
+    const overlay = $('new-listing-overlay');
+    if (!overlay || overlay.classList.contains('hidden')) return;
+
+    const seq = ++nlRdSeq;
+    const bar = $('nl-readiness');
+    if (bar) bar.hidden = false;
+
+    let payload;
+    try { payload = buildNlPayload(); }
+    catch { return; }
+
+    // While the plain-text tab is open, the HTML field is only synced on a tab switch, so the
+    // payload's description lags behind what the seller is actually typing. The server strips
+    // markup for this check anyway, so the live text is the truer input.
+    const textTabActive = document.querySelector('.desc-tab[data-desc-tab="text"]')?.classList.contains('active');
+    if (textTabActive) {
+      const plain = $('nl-desc-text')?.value || '';
+      if (plain.trim()) payload.description = plain;
+    }
+
+    let data;
+    try {
+      const res = await fetch('/api/listing/readiness', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      data = await res.json();
+    } catch (err) {
+      // A readiness check that fails must never be in the way of listing.
+      if (seq !== nlRdSeq) return;
+      const grade = $('nl-rd-grade'), headline = $('nl-rd-headline');
+      if (grade)    grade.textContent = 'Check unavailable';
+      if (headline) headline.textContent = 'Couldn’t reach the app for the pre-publish check — publishing still works.';
+      return;
+    }
+
+    if (seq !== nlRdSeq) return;   // a newer edit already asked; this answer is stale
+    nlRdState = data;
+    nlRenderAspects(data);
+    nlRenderReadiness(data);
+  }
+
+  // ── Rendering: the Item Specifics eBay actually asks for ─────────
+
+  function nlRenderAspects(r) {
+    const status = $('nl-aspects-status');
+    const badge  = $('nl-aspects-badge');
+    const fill   = $('nl-aspects-autofill');
+
+    const groups = {
+      required:    $('nl-aspects-required'),
+      recommended: $('nl-aspects-recommended'),
+      optional:    $('nl-aspects-optional'),
+    };
+    Object.values(groups).forEach(el => { if (el) el.innerHTML = ''; });
+
+    const aspects = r.aspects || [];
+
+    if (r.aspectStatus !== 'ok') {
+      if (status) {
+        status.textContent = r.aspectMessage || 'eBay’s Item Specifics couldn’t be checked.';
+        status.className = 'asp-status ' + (r.aspectStatus === 'no_category' ? 'is-hint' : 'is-warn');
+      }
+      if (badge) badge.hidden = true;
+      if (fill)  fill.hidden = true;
+      const optWrap = $('nl-aspects-optional-wrap'); if (optWrap) optWrap.hidden = true;
+      return;
+    }
+
+    if (aspects.length === 0) {
+      if (status) {
+        status.textContent = r.aspectMessage || 'eBay lists no Item Specifics for this category.';
+        status.className = 'asp-status is-hint';
+      }
+      if (badge) badge.hidden = true;
+      if (fill)  fill.hidden = true;
+      return;
+    }
+
+    const missingRequired = aspects.filter(a => a.state === 'missing_required' || a.state === 'invalid_value').length;
+    const missingRec      = aspects.filter(a => a.state === 'missing_recommended').length;
+    const filled          = aspects.filter(a => a.state === 'filled').length;
+
+    if (status) {
+      status.textContent = missingRequired > 0
+        ? `${missingRequired} required by eBay still to fill — ${filled} of ${aspects.length} done.`
+        : missingRec > 0
+          ? `All required specifics done. ${missingRec} more that buyers filter searches by.`
+          : `All ${aspects.length} of eBay’s specifics for this category are filled.`;
+      status.className = 'asp-status ' + (missingRequired > 0 ? 'is-blocker' : missingRec > 0 ? 'is-warn' : 'is-ok');
+    }
+
+    if (badge) {
+      if (missingRequired > 0) {
+        badge.textContent = missingRequired + ' required missing';
+        badge.className = 'asp-summary-badge is-blocker';
+        badge.hidden = false;
+      } else if (missingRec > 0) {
+        badge.textContent = missingRec + ' recommended empty';
+        badge.className = 'asp-summary-badge is-warn';
+        badge.hidden = false;
+      } else {
+        badge.textContent = 'complete';
+        badge.className = 'asp-summary-badge is-ok';
+        badge.hidden = false;
+      }
+      // Force the panel open the moment eBay says something is missing — a required specific
+      // hidden inside a collapsed section is a required specific nobody fills.
+      if (missingRequired > 0) $('nl-aspects-panel')?.setAttribute('open', '');
+    }
+
+    const fillable = r.autoFillableCount || 0;
+    if (fill) {
+      fill.hidden = fillable === 0;
+      fill.textContent = `Fill ${fillable} from my listing`;
+    }
+
+    aspects.forEach(a => {
+      const bucket = a.required ? 'required' : a.recommended ? 'recommended' : 'optional';
+      groups[bucket]?.appendChild(nlAspectRow(a, bucket));
+    });
+
+    const optCount = aspects.filter(a => !a.required && !a.recommended).length;
+    const optWrap  = $('nl-aspects-optional-wrap');
+    const optLabel = $('nl-aspects-optional-count');
+    if (optWrap)  optWrap.hidden = optCount === 0;
+    if (optLabel) optLabel.textContent = optCount ? `(${optCount})` : '';
+
+    // A value the seller typed under their own name for an eBay field now lives in that field.
+    // Leaving the original row behind would send the same fact twice under two names.
+    const claimed = new Set((r.customAspectNames || []).map(n => n.toLowerCase()));
+    document.querySelectorAll('#nl-specifics-list .specific-row').forEach(row => {
+      const key = row.querySelector('input')?.value.trim();
+      if (key && !claimed.has(key.toLowerCase())) row.remove();
+    });
+  }
+
+  function nlAspectRow(a, bucket) {
+    const wrap = document.createElement('div');
+    wrap.className = 'asp-row is-' + bucket + (a.state === 'missing_required' || a.state === 'invalid_value' ? ' is-blocker' : '');
+
+    const id = nlAspectFieldId(a.name);
+    const pill = a.required
+      ? '<span class="asp-pill is-required">Required</span>'
+      : a.recommended ? '<span class="asp-pill is-rec">Buyers filter by this</span>' : '';
+
+    const renamed = a.matchedFromKey
+      ? `<span class="asp-renamed" title="You typed this as &quot;${esc(a.matchedFromKey)}&quot;">was “${esc(a.matchedFromKey)}”</span>`
+      : '';
+
+    // A fixed list gets a dropdown — typing anything else into a SELECTION_ONLY aspect is a
+    // publish failure, so the control shouldn't allow it. Everything else is free text with
+    // eBay's popular values offered as completions rather than imposed.
+    let control;
+    if (a.selectionOnly && !a.multiSelect && (a.values || []).length) {
+      const opts = ['<option value="">— choose —</option>']
+        .concat((a.values || []).map(v =>
+          `<option value="${esc(v)}"${v === a.value ? ' selected' : ''}>${esc(v)}</option>`));
+      control = `<select id="${id}" data-aspect-name="${esc(a.name)}" class="asp-control">${opts.join('')}</select>`;
+    } else {
+      const listId = id + '-list';
+      const datalist = (a.values || []).length
+        ? `<datalist id="${listId}">${(a.values || []).slice(0, 200).map(v => `<option value="${esc(v)}"></option>`).join('')}</datalist>`
+        : '';
+      const hint = a.multiSelect ? ' placeholder="Separate several with |"' : '';
+      const max  = a.maxLength > 0 ? ` maxlength="${a.maxLength}"` : '';
+      control = `<input id="${id}" type="text" data-aspect-name="${esc(a.name)}" class="asp-control"
+                   value="${esc(a.value || '')}"${(a.values || []).length ? ` list="${listId}"` : ''}${hint}${max} />${datalist}`;
+    }
+
+    const note = a.note ? `<span class="asp-note">${esc(a.note)}</span>` : '';
+
+    wrap.innerHTML = `
+      <label class="asp-label" for="${id}">${esc(a.name)} ${pill} ${renamed}</label>
+      ${control}
+      <div class="asp-under">${note}</div>`;
+
+    // The suggestion. Rendered as an offer with its source stated, never written silently —
+    // an Item Specific the seller didn't choose is a claim about the item made on their behalf.
+    if (a.suggestedValue && a.suggestedValue !== a.value) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'asp-suggest' + (a.suggestionConfidence === 'low' ? ' is-low' : '');
+      btn.innerHTML = `Use “${esc(a.suggestedValue)}” <span class="asp-suggest-src">${esc(a.suggestionSource || '')}</span>`;
+      btn.addEventListener('click', () => {
+        const el = $(id);
+        if (el) { el.value = a.suggestedValue; el.classList.add('asp-just-filled'); }
+        nlRunReadiness();
+      });
+      wrap.querySelector('.asp-under')?.appendChild(btn);
+    }
+
+    wrap.querySelector('.asp-control')?.addEventListener('change', () => nlRunReadiness());
+    return wrap;
+  }
+
+  function nlAutofillAspects() {
+    const r = nlRdState;
+    if (!r || !(r.aspects || []).length) return;
+    let applied = 0;
+    (r.aspects || []).forEach(a => {
+      if (!a.suggestedValue) return;
+      if (a.suggestionConfidence !== 'high' && a.suggestionConfidence !== 'medium') return;
+      // Never overwrite something the seller supplied — unless eBay would reject it outright.
+      if (a.value && a.state !== 'invalid_value') return;
+      const el = $(nlAspectFieldId(a.name));
+      if (!el) return;
+      el.value = a.suggestedValue;
+      el.classList.add('asp-just-filled');
+      applied++;
+    });
+    if (applied) {
+      addActivity('Item Specifics filled', applied + ' filled from the listing’s own title, description and identifier fields');
+      nlRunReadiness(true);
+    }
+  }
+
+  // ── Rendering: the readiness bar and its fix list ────────────────
+
+  function nlRenderReadiness(r) {
+    const bar = $('nl-readiness');
+    if (!bar) return;
+    bar.hidden = false;
+
+    const blockers = r.blockerCount || 0;
+    const tone = blockers > 0 ? 'is-blocker' : r.score >= 90 ? 'is-ok' : r.score >= 70 ? 'is-good' : 'is-warn';
+    bar.className = 'rd-bar ' + tone;
+
+    const scoreEl = $('nl-rd-score');
+    if (scoreEl) scoreEl.textContent = r.score;
+    const gradeEl = $('nl-rd-grade');
+    if (gradeEl) gradeEl.textContent = r.grade || '';
+    const headEl = $('nl-rd-headline');
+    if (headEl) headEl.textContent = r.headline || '';
+
+    const counts = $('nl-rd-counts');
+    if (counts) {
+      const parts = [];
+      if (blockers) parts.push(blockers + ' blocking');
+      if (r.warningCount) parts.push(r.warningCount + ' costing sales');
+      counts.textContent = parts.join(' · ');
+    }
+
+    nlSyncBlockerGate(r);
+
+    const list = $('nl-rd-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const fixes = r.fixes || [];
+    if (!fixes.length) {
+      list.innerHTML = '<p class="rd-empty">Nothing left to fix. This is as complete as the app knows how to check.</p>';
+      return;
+    }
+
+    fixes.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'rd-fix is-' + f.severity;
+      row.innerHTML = `
+        <span class="rd-dot" aria-hidden="true"></span>
+        <div class="rd-fix-text">
+          <span class="rd-fix-label">${esc(f.label)}</span>
+          <span class="rd-fix-why">${esc(f.why)}</span>
+        </div>`;
+      if (f.fieldId) {
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'btn btn-ghost small rd-fix-go';
+        go.textContent = 'Go to it';
+        go.addEventListener('click', () => nlFocusField(f.fieldId));
+        row.appendChild(go);
+      }
+      list.appendChild(row);
+    });
+  }
+
+  // Jump to the field a fix belongs to, opening whatever collapsed panel it lives in — a
+  // "Go to it" that scrolls to a closed <details> has sent the seller nowhere.
+  function nlFocusField(fieldId) {
+    const el = $(fieldId);
+    if (!el) return;
+    let node = el.parentElement;
+    while (node) {
+      if (node.tagName === 'DETAILS') node.open = true;
+      node = node.parentElement;
+    }
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+    // Some targets aren't form controls — "Add at least one photo" points at the photo grid,
+    // which is a div and silently ignores .focus(). A borrowed tabindex makes the jump land
+    // somewhere for a keyboard user too, and is removed again so it stays out of the tab order.
+    const borrowTabIndex = !el.hasAttribute('tabindex') &&
+      !/^(INPUT|SELECT|TEXTAREA|BUTTON|A)$/.test(el.tagName);
+    if (borrowTabIndex) el.setAttribute('tabindex', '-1');
+    if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+    if (borrowTabIndex) el.addEventListener('blur', () => el.removeAttribute('tabindex'), { once: true });
+
+    el.classList.add('asp-just-filled');
+    setTimeout(() => el.classList.remove('asp-just-filled'), 1600);
+  }
+
+  // ── The pre-publish gate ─────────────────────────────────────────
+  //
+  // Returns true when the publish should go ahead. A blocker is eBay's rule, not the app's
+  // guess, so this is worth stopping for — but it stops once, explains, and offers the override,
+  // because the app can be wrong about a category and the account is the seller's.
+  function nlBlockersStopPublish() {
+    const r = nlRdState;
+    if (!r || nlRdOverride) return false;
+    const blockers = (r.fixes || []).filter(f => f.severity === 'blocker');
+    if (!blockers.length) return false;
+
+    nlRenderBlockerGate(blockers);
+
+    // Open the fix list so the reasons are one click away, not two.
+    const rdList = $('nl-rd-list');
+    if (rdList && rdList.hidden) $('nl-rd-toggle')?.click();
+    return true;
+  }
+
+  function nlRenderBlockerGate(blockers) {
+    const el = $('nl-result-msg');
+    if (!el) return;
+    const list = blockers.map(f => `<li>${esc(f.label)}</li>`).join('');
+    el.className = 'nl-result-msg error';
+    el.dataset.rdGate = '1';   // marks this message as ours, so it can be kept current
+    el.innerHTML =
+      `<strong>eBay would reject this publish.</strong> ${blockers.length === 1 ? 'One thing needs fixing' : blockers.length + ' things need fixing'} first:` +
+      `<ul class="rd-block-list">${list}</ul>` +
+      '<button type="button" class="btn btn-primary small" id="nl-rd-fix-first">Take me to the first one</button> ' +
+      '<button type="button" class="btn btn-ghost small" id="nl-rd-publish-anyway">Publish anyway</button>';
+    $('nl-rd-fix-first')?.addEventListener('click', () => {
+      const target = blockers.find(f => f.fieldId);
+      if (target) nlFocusField(target.fieldId);
+    });
+    $('nl-rd-publish-anyway')?.addEventListener('click', () => {
+      nlRdOverride = true;
+      addActivity('Publishing past the readiness check', blockers.map(f => f.label).join('; '));
+      nlSubmit('publish');
+    });
+  }
+
+  // The gate is a snapshot of the blockers at the moment Publish was pressed. Fixing one of
+  // them leaves it on screen still naming it, directly under a bar that now says otherwise —
+  // two contradictory answers, and the stale one is the louder. So it tracks, or it goes.
+  function nlSyncBlockerGate(r) {
+    const el = $('nl-result-msg');
+    if (!el || el.dataset.rdGate !== '1') return;
+
+    const blockers = (r.fixes || []).filter(f => f.severity === 'blocker');
+    if (!blockers.length) {
+      delete el.dataset.rdGate;
+      el.className = 'nl-result-msg';
+      el.innerHTML = '';
+      return;
+    }
+    nlRenderBlockerGate(blockers);
   }
 
   function nlAddSpecificRow(key, value) {
@@ -5533,6 +5998,7 @@
     slot.dataset.url = url;
     slot.classList.add('has-image');
     $('nl-photo-grid')?.closest('details')?.setAttribute('open', '');
+    nlRunReadiness();   // photo count is one of the things the readiness bar scores
   }
 
   function clearPhotoSlot(index) {
@@ -5546,6 +6012,7 @@
     if (fi) fi.value = '';
     delete slot.dataset.url;
     slot.classList.remove('has-image');
+    nlRunReadiness();
   }
 
   function nlClearAllPhotoSlots() {
@@ -5854,6 +6321,7 @@
   function nlSetResult(type, text) {
     const el = $('nl-result-msg');
     if (!el) return;
+    delete el.dataset.rdGate;   // a publish result is not the readiness gate; stop tracking it
     el.className = 'nl-result-msg' + (type ? ` ${type}` : '');
     // Use innerHTML with line breaks to show multi-line error details
     el.innerHTML = esc(text).replace(/\n/g, '<br>');
@@ -6069,6 +6537,10 @@
       nlSetResult('error', 'Price must be greater than zero.');
       return;
     }
+
+    // Catch what eBay would reject before spending the round trip on it. Drafts are exempt:
+    // an unfinished draft is the point of a draft.
+    if (mode === 'publish' && nlBlockersStopPublish()) return;
 
     const publishBtn = $('nl-btn-publish');
     const draftBtn = $('nl-btn-draft');
