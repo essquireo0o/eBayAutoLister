@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace ING_eBay_AutoLister.Services;
@@ -15,14 +14,9 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "terapeak-session.json");
     private volatile bool _loginInProgress;
 
-    // Windows blocks a background process from stealing focus by default — without this, the
-    // login browser can open behind the app window/taskbar with no visible indication it
-    // appeared at all. AllowSetForegroundWindow(ASFW_ANY) grants ANY process a one-time pass to
-    // call SetForegroundWindow before the next user input event, which is exactly what the
-    // freshly-spawned Chrome window needs to do to raise itself.
-    [DllImport("user32.dll")]
-    private static extern bool AllowSetForegroundWindow(int dwProcessId);
-    private const int ASFW_ANY = -1;
+    // Windows blocks a background process from stealing focus by default — without a foreground
+    // grant the login browser can open behind the app window with no visible indication it
+    // appeared at all. See LoginWindowFocus for that grant and the rest of the raise story.
 
     // node.exe resolution, the Playwright package directory and the run-a-throwaway-script
     // plumbing all live in NodeRuntime now — FacebookMarketplaceService needs the identical
@@ -43,7 +37,7 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         LastLoginError = null;
         _loginInProgress = true;
         _ = Task.Run(RunLoginProcessAsync);
-        return (true, "A browser window just opened — log into eBay there. It closes itself once you're in.");
+        return (true, "A browser window just opened — log into eBay there. If you don't see it, Alt+Tab or check the taskbar for it. It closes itself once you're in.");
     }
 
     private async Task RunLoginProcessAsync()
@@ -60,25 +54,18 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             "  const ctx = await browser.newContext({ viewport: null });\n" +
             "  await ctx.addInitScript(() => { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); });\n" +
             "  const page = await ctx.newPage();\n" +
-            // raise(): bring the actual Chrome OS window to the foreground, not just the tab.
-            // page.bringToFront() only focuses the tab within Chrome; it does NOT lift the window
-            // above the user's other windows, so a CAPTCHA can sit behind this app unseen. The
-            // CDP minimize->normal cycle forces Windows to re-raise and refocus the real window.
-            "  let cdp = null;\n" +
-            "  async function raise() {\n" +
-            "    try {\n" +
-            "      await page.bringToFront().catch(() => {});\n" +
-            "      if (!cdp) cdp = await ctx.newCDPSession(page);\n" +
-            "      const { windowId } = await cdp.send('Browser.getWindowForTarget');\n" +
-            "      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });\n" +
-            "      await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });\n" +
-            "    } catch (_) {}\n" +
-            "  }\n" +
-            "  await raise();\n" +
+            // raise()/raiseBurst(): bring the actual Chrome OS window to the foreground, not just
+            // the tab. page.bringToFront() only focuses the tab within Chrome; it does NOT lift
+            // the window above the user's other windows, so a CAPTCHA can sit behind this app
+            // unseen. Shared with FacebookMarketplaceService — see NodeRuntime.RaiseToFrontJs for
+            // why it's a repeated burst over the first few seconds rather than a single call.
+            NodeRuntime.RaiseToFrontJs + "\n" +
+            // Not awaited: the burst keeps lifting the window while the page loads underneath it,
+            // which is exactly when the window loses the focus race and ends up buried.
+            "  raiseBurst().catch(() => {});\n" +
             "  try {\n" +
             "    await page.goto('https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD', { waitUntil: 'domcontentloaded', timeout: 30000 });\n" +
             "  } catch (_) {}\n" +
-            "  await raise();\n" +
             "  const deadline = Date.now() + 6 * 60 * 1000;\n" +
             "  let sinceFocus = 0;\n" +
             "  while (Date.now() < deadline) {\n" +
@@ -92,11 +79,12 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             // the challenge never seen. AllowSetForegroundWindow only grants one "pass" up front,
             // but bringToFront() is Playwright's own in-browser focus call and keeps working
             // regardless — that's why it's the thing re-run here, not a second native win32 call.
-            // Gentle tab-focus only during the wait — NOT the minimize/normal cycle, which
+            // Gentle tab-focus only during the wait — NOT the hard minimize/normal cycle, which
             // would visibly refresh the window every few seconds and interrupt the user mid-
-            // CAPTCHA. The one-time raise() on load already brought the window to the front.
+            // CAPTCHA. The startup burst already brought the window to the front, while nobody
+            // was typing yet.
             "    sinceFocus++;\n" +
-            "    if (sinceFocus >= 8) { sinceFocus = 0; await page.bringToFront().catch(() => {}); }\n" +
+            "    if (sinceFocus >= 8) { sinceFocus = 0; await raise(false); }\n" +
             "  }\n" +
             "  if (browser.isConnected() && page.url().includes('/sh/research')) {\n" +
             "    await page.waitForTimeout(1500);\n" +
@@ -115,7 +103,11 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             // itself above whatever the user is currently looking at, instead of opening
             // silently behind it. Only needed here — ScrapeAsync's browser is headless.
             var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(7), "terapeak_login",
-                beforeStart: () => { try { AllowSetForegroundWindow(ASFW_ANY); } catch { } });
+                beforeStart: () =>
+                {
+                    LoginWindowFocus.Grant();
+                    LoginWindowFocus.PinNewBrowserWindowBriefly();
+                });
 
             if (run.TimedOut)
             {

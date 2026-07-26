@@ -1352,3 +1352,73 @@ seller's own account and is theirs to make.
 **Known limitation, stated in the UI rather than hidden:** the aspect check is only as current as
 eBay's Taxonomy API, cached 12 hours. A category whose requirements change inside that window is
 checked against the previous set — **Recheck** forces a fresh look.
+
+---
+
+## 17. The login window that was never hidden — it was just behind you (autonomous session, 2026-07-26)
+
+**The bug, precisely:** clicking Connect for Terapeak or Facebook Marketplace worked. node ran,
+Playwright launched Chrome, the login page loaded, `loginInProgress` stayed true. And the seller saw
+a status that said "connecting" and nothing else, because the window had opened **behind the app**.
+Nothing was broken. The window was buried, and the feature read as dead.
+
+### Why one raise wasn't enough
+
+The old code raised the window once at launch and once after navigation. Both attempts land in the
+first second of Chrome's life — the exact window in which Chrome is still doing its own startup
+placement, the app's own window can take focus back, and Windows' focus-stealing rules are at their
+least cooperative. Losing that race once is enough to bury the window for the whole six-minute wait.
+
+Three cooperating nudges now, none of them alone sufficient:
+
+| Layer | What it does |
+|---|---|
+| `LoginWindowFocus.Grant()` | The existing `AllowSetForegroundWindow(ASFW_ANY)` grant — **kept**. Without it the spawned Chrome may not legally raise itself at all |
+| `LoginWindowFocus.PinNewBrowserWindowBriefly()` | **New.** Watches for the Chrome process started after the click, pins its window topmost + foreground, releases it after 5s |
+| `NodeRuntime.RaiseToFrontJs` | The in-browser side: hard `minimize`→`normal` CDP cycles at 0/400/1200/2400/4000ms, `bringToFront()` every 250ms in between, then **stop** |
+
+### The part that is deliberately restrained
+
+All three are short-lived by design, and that is the whole trade-off. A window that keeps forcing
+itself forward eats the keystrokes of the password it is asking for and interrupts a CAPTCHA mid-
+attempt. So the attention-grabbing is a **startup behaviour only** — it happens in the first ~5
+seconds, before anyone is typing. The 6-minute wait loops that follow were left as they were: a bare
+`raise(false)` (tab focus, no window movement) roughly every 8 seconds, which does not disturb typing.
+The topmost pin also always releases in a `finally`, so a login window can never end up permanently
+stuck above the user's own windows.
+
+The pin only ever touches Chrome processes whose `StartTime` is later than the Connect click — the
+seller's own existing Chrome windows are left alone.
+
+### And it says where to look
+
+Raising a window is best-effort on Windows, so the status text no longer pretends it's guaranteed.
+Both banners and both service messages now name the fallback: *"Don't see it? Alt+Tab, or check the
+taskbar for the login window."* That sentence is the difference between a seller waiting on a status
+they think is stuck and a seller finding the window that is already open.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/LoginWindowFocus.cs` | **New** — `Grant`, `PinNewBrowserWindowBriefly`, new-Chrome-window detection, always-released topmost pin |
+| `Services/NodeRuntime.cs` | **New** `RaiseToFrontJs` — `raise(hard)` / `raiseBurst()`, shared verbatim by both login scripts (was duplicated, and drifting) |
+| `Services/TerapeakService.cs` | Embeds the shared snippet, fires `raiseBurst()` alongside the page load, uses `LoginWindowFocus` for the grant + pin; own `DllImport` removed; Alt+Tab hint in `StartLogin` |
+| `Services/FacebookMarketplaceService.cs` | Same, via a `%%RAISE%%` placeholder in `LoginScript` |
+| `wwwroot/app.js` | Alt+Tab / taskbar hint in the Terapeak banner, the Facebook banner and the sold-comps Connect prompt |
+| `wwwroot/index.html` | `app.js?v=40` |
+| `ING eBay AutoLister.Tests/NodeRuntimeRaiseScriptTests.cs` | **New** — 4 tests: both helpers defined, the hard cycle is the minimize/normal one, the burst is bounded to a few seconds, every scheduled hard raise lands inside it |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **451 passed**, 0 failed, 0 skipped (was 445; +6) |
+| `node --check` on the rendered Facebook login script and on the shared raise snippet | Clean — run through a temporary test that renders the real embedded scripts, then removed so the suite does not require Node installed |
+
+**Not verified live:** the window actually coming to the front. That needs a real Terapeak/Facebook
+login on a machine with someone watching the screen, and it is inherently timing-dependent — the
+whole reason for three layers is that no single one is reliable. What is verified is that the shipped
+JavaScript parses, that the burst is bounded (a test fails if anyone extends it into the typing
+window), and that the topmost pin is released on every path.

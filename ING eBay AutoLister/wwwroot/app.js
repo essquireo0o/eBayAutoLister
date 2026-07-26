@@ -180,7 +180,9 @@
   function paintTerapeakBanner(statusEl, connectBtn, disconnectBtn, data) {
     if (!statusEl) return;
     if (data.loginInProgress) {
-      statusEl.textContent = 'Connecting to Terapeak — a browser window should appear, log into eBay there.';
+      // The window is genuinely open whenever this shows; the common failure is that it opened
+      // behind everything, so say where to look instead of leaving "connecting…" to look stuck.
+      statusEl.textContent = 'Connecting to Terapeak — log into eBay in the browser window that opened. Don\'t see it? Alt+Tab, or check the taskbar for the login window.';
       connectBtn?.classList.remove('hidden');
       if (connectBtn) connectBtn.disabled = true;
       disconnectBtn?.classList.add('hidden');
@@ -254,7 +256,7 @@
   function paintFacebookBanner(statusEl, connectBtn, disconnectBtn, data) {
     if (!statusEl) return;
     if (data.loginInProgress) {
-      statusEl.textContent = 'Connecting — a browser window should appear, log into Facebook there.';
+      statusEl.textContent = 'Connecting — log into Facebook in the browser window that opened. Don\'t see it? Alt+Tab, or check the taskbar for the login window.';
       connectBtn?.classList.remove('hidden');
       if (connectBtn) connectBtn.disabled = true;
       disconnectBtn?.classList.add('hidden');
@@ -4923,7 +4925,7 @@
     if (msg) msg.textContent = 'Opening the eBay login window…';
     try {
       const data = await fetch('/api/terapeak/connect', { method: 'POST' }).then(r => r.json());
-      if (msg) msg.textContent = data.message || 'Log in to eBay in the window that opened, then come back here.';
+      if (msg) msg.textContent = data.message || 'Log in to eBay in the window that opened (Alt+Tab if you don\'t see it), then come back here.';
       const poll = setInterval(async () => {
         const s = await fetch('/api/terapeak/status').then(r => r.json()).catch(() => null);
         if (s && !s.loginInProgress) {

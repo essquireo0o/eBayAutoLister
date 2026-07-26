@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using ING_eBay_AutoLister.Models;
 
@@ -33,12 +32,6 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
     private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "facebook-session.json");
     private volatile bool _loginInProgress;
 
-    // Same reason as TerapeakService: without a one-time foreground grant, the login window
-    // Windows spawns for a background process can open behind the app with no sign it appeared.
-    [DllImport("user32.dll")]
-    private static extern bool AllowSetForegroundWindow(int dwProcessId);
-    private const int ASFW_ANY = -1;
-
     public bool IsConnected => File.Exists(_sessionPath);
     public bool IsLoginInProgress => _loginInProgress;
     public string? LastLoginError { get; private set; }
@@ -62,7 +55,7 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
         LastLoginError = null;
         _loginInProgress = true;
         _ = Task.Run(RunLoginProcessAsync);
-        return (true, "A browser window just opened — log into Facebook there. It closes itself once you're in.");
+        return (true, "A browser window just opened — log into Facebook there. If you don't see it, Alt+Tab or check the taskbar for it. It closes itself once you're in.");
     }
 
     private async Task RunLoginProcessAsync()
@@ -70,12 +63,17 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
         var script = LoginScript
             .Replace("%%PW%%", NodeRuntime.JsPath(NodeRuntime.PlaywrightDir))
             .Replace("%%SESSION%%", NodeRuntime.JsPath(_sessionPath))
+            .Replace("%%RAISE%%", NodeRuntime.RaiseToFrontJs)
             .Replace("%%LANDING%%", FacebookMarketplaceSelectors.LoginLandingUrl);
 
         try
         {
             var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(7), "fbmarket_login",
-                beforeStart: () => { try { AllowSetForegroundWindow(ASFW_ANY); } catch { } });
+                beforeStart: () =>
+                {
+                    LoginWindowFocus.Grant();
+                    LoginWindowFocus.PinNewBrowserWindowBriefly();
+                });
 
             if (run.TimedOut)
             {
@@ -247,20 +245,13 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
 
           // Lift the actual OS window, not just the tab — bringToFront() alone can leave a
           // security check sitting invisibly behind this app's own window.
-          let cdp = null;
-          async function raise() {
-            try {
-              await page.bringToFront().catch(() => {});
-              if (!cdp) cdp = await ctx.newCDPSession(page);
-              const { windowId } = await cdp.send('Browser.getWindowForTarget');
-              await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
-              await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
-            } catch (_) {}
-          }
+        %%RAISE%%
 
-          await raise();
+          // Not awaited: the burst keeps lifting the window for its first few seconds while the
+          // login page loads underneath it, which is exactly when the window loses the focus
+          // race and ends up buried.
+          raiseBurst().catch(() => {});
           try { await page.goto('%%LANDING%%', { waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (_) {}
-          await raise();
 
           // c_user is Facebook's own signed-in marker. Waiting on the cookie rather than a URL
           // avoids saving a half-finished session mid-2FA, when the URL already looks fine.
@@ -278,10 +269,11 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log) 
             if (!browser.isConnected()) break;
             if (await signedIn()) { ok = true; break; }
             await page.waitForTimeout(1000).catch(() => {});
-            // Gentle tab focus only — the minimize/normal cycle here would visibly flash the
-            // window every few seconds and interrupt someone mid-login.
+            // Gentle tab focus only — the hard raise here would visibly flash the window every
+            // few seconds and interrupt someone mid-login. The burst above already did the
+            // attention-grabbing, once, while nobody was typing yet.
             sinceFocus++;
-            if (sinceFocus >= 8) { sinceFocus = 0; await page.bringToFront().catch(() => {}); }
+            if (sinceFocus >= 8) { sinceFocus = 0; await raise(false); }
           }
 
           if (ok && browser.isConnected()) {
