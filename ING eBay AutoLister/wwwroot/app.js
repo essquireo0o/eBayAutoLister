@@ -28,6 +28,7 @@
     bindPgImggen();
     bindOpportunitySearch();
     bindSupplierAnalyzer();
+    bindPhotoLibrary();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -85,6 +86,7 @@
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === page));
     if (page !== 'ai') $('new-listing-overlay')?.classList.add('hidden');
     if (page !== 'opportunity') $('opportunity-section')?.classList.add('hidden');
+    if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -105,6 +107,10 @@
       showOpportunitySection();
       return;
     }
+    if (page === 'photos') {
+      showPhotoLibrarySection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -114,7 +120,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -321,6 +327,232 @@
   function closeOpportunitySection() {
     $('opportunity-section')?.classList.add('hidden');
     showDashboard();
+  }
+
+  // ── Representative Photo Library ─────────────────────────────────────────
+  // Manages photos/<model>/ — the seller's own shots of each used model, taken once and reused
+  // (with disclosure) on every identical unit they list. See PhotoLibrary.cs for the server side.
+  let plFolders  = [];   // [{ modelKey, imageCount, photos: [url] }] as returned by the API
+  let plSelected = '';   // modelKey of the folder currently shown on the right
+
+  function showPhotoLibrarySection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('photo-library-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'photos'));
+    setPlUploadMsg('');
+    loadPhotoLibrary();
+  }
+
+  function closePhotoLibrarySection() {
+    $('photo-library-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindPhotoLibrary() {
+    const dropZone  = $('pl-drop-zone');
+    const fileInput = $('pl-file-input');
+
+    dropZone?.addEventListener('click', e => {
+      if (e.target !== fileInput) fileInput?.click();
+    });
+    dropZone?.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    dropZone?.addEventListener('dragleave', e => {
+      if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over');
+    });
+    dropZone?.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      plUploadFiles(e.dataTransfer.files);
+    });
+    fileInput?.addEventListener('change', () => {
+      plUploadFiles(fileInput.files);
+      fileInput.value = '';
+    });
+    // The zone is contenteditable purely so it can receive a paste — never let it be typed into.
+    dropZone?.addEventListener('beforeinput', e => e.preventDefault());
+    dropZone?.addEventListener('paste', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = [...(e.clipboardData?.items || [])]
+        .filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+        .map(i => i.getAsFile())
+        .filter(Boolean);
+      if (files.length) plUploadFiles(files);
+    });
+
+    on('pl-create-btn', 'click', createPhotoFolder);
+    on('pl-new-model', 'keydown', e => { if (e.key === 'Enter') createPhotoFolder(); });
+    on('pl-refresh', 'click', () => loadPhotoLibrary());
+    on('pl-close', 'click', closePhotoLibrarySection);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !$('photo-library-section')?.classList.contains('hidden')) closePhotoLibrarySection();
+    });
+  }
+
+  async function loadPhotoLibrary() {
+    const list = $('pl-folder-list');
+    try {
+      plFolders = await fetch('/api/photos/library').then(r => r.json());
+    } catch (err) {
+      if (list) list.innerHTML = `<p class="opportunity-empty">Could not load the photo library: ${esc(err.message)}</p>`;
+      return;
+    }
+    // Keep the seller on the folder they were working in; fall back to the first one.
+    if (!plFolders.some(f => f.modelKey === plSelected)) plSelected = plFolders[0]?.modelKey || '';
+    renderPhotoFolders();
+    renderPhotoFolderDetail();
+  }
+
+  function renderPhotoFolders() {
+    const list = $('pl-folder-list');
+    if (!list) return;
+    if (!plFolders.length) {
+      list.innerHTML = '<p class="opportunity-empty">No model folders yet — create one above.</p>';
+      return;
+    }
+    list.innerHTML = plFolders.map(f => `
+      <button class="pl-folder${f.modelKey === plSelected ? ' active' : ''}" type="button" data-model="${esc(f.modelKey)}">
+        <span class="pl-folder-name">${esc(f.modelKey)}</span>
+        <span class="pl-folder-count${f.imageCount ? '' : ' empty'}">${f.imageCount}</span>
+      </button>`).join('');
+    list.querySelectorAll('.pl-folder').forEach(btn => btn.addEventListener('click', () => {
+      plSelected = btn.dataset.model;
+      setPlUploadMsg('');
+      renderPhotoFolders();
+      renderPhotoFolderDetail();
+    }));
+  }
+
+  function renderPhotoFolderDetail() {
+    const folder = plFolders.find(f => f.modelKey === plSelected);
+    const title  = $('pl-detail-title');
+    const grid   = $('pl-photo-grid');
+
+    $('pl-drop-zone')?.classList.toggle('hidden', !folder);
+    if (title) title.textContent = folder ? folder.modelKey : 'Select a model';
+    if (!grid) return;
+
+    if (!folder) {
+      grid.innerHTML = '<p class="opportunity-empty">Pick a model on the left, or create a new one above.</p>';
+      return;
+    }
+    const photos = folder.photos || [];
+    grid.innerHTML = photos.length
+      ? photos.map(url => `
+        <figure class="pl-photo">
+          <img src="${esc(url)}" alt="${esc(folder.modelKey)} representative photo" loading="lazy" data-view="${esc(url)}" />
+          <figcaption class="pl-photo-actions">
+            <span class="pl-photo-name">${esc(url.split('/').pop())}</span>
+            <button class="btn btn-ghost small pl-photo-delete" type="button" data-delete="${esc(url)}">Delete</button>
+          </figcaption>
+        </figure>`).join('')
+      : '<p class="opportunity-empty">No photos yet — drop your real photos of this model above.</p>';
+
+    grid.querySelectorAll('[data-view]').forEach(img => img.addEventListener('click', () => showLightbox(img.dataset.view)));
+    grid.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', () => deleteLibraryPhoto(btn.dataset.delete)));
+  }
+
+  function setPlUploadMsg(text, kind = '') {
+    const el = $('pl-upload-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `sd-test-msg${kind ? ' ' + kind : ''}`;
+  }
+
+  async function createPhotoFolder() {
+    const input = $('pl-new-model');
+    const msg   = $('pl-create-msg');
+    const name  = input?.value.trim();
+    if (!name) {
+      if (msg) { msg.textContent = 'Enter a model name first.'; msg.className = 'sd-test-msg error'; }
+      return;
+    }
+    try {
+      const res  = await fetch('/api/photos/library/create', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelKey: name })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Could not create the folder');
+      // The server sanitizes the name, so select whatever key it actually created.
+      plSelected = body.modelKey;
+      if (input) input.value = '';
+      if (msg) { msg.textContent = `Created ${body.modelKey}`; msg.className = 'sd-test-msg ok'; }
+      addActivity('Photo library folder created', body.modelKey);
+      await loadPhotoLibrary();
+    } catch (err) {
+      if (msg) { msg.textContent = err.message; msg.className = 'sd-test-msg error'; }
+    }
+  }
+
+  // /api/photos/remove-bg writes the cutout to /generated-photos and hands back a URL, but the
+  // library upload takes base64 — so pull the cleaned bytes back before saving them to the model.
+  async function plRemoveBackground(imageBase64, mimeType) {
+    const res  = await fetch('/api/photos/remove-bg', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64, mimeType })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Background removal failed');
+    const blob = await fetch(body.url).then(r => r.blob());
+    return { imageBase64: await blobToBase64(blob), mimeType: blob.type || 'image/png' };
+  }
+
+  async function plUploadFiles(fileList) {
+    const images = [...(fileList || [])].filter(f => (f.type || '').startsWith('image/'));
+    if (!images.length) return;
+    if (!plSelected) { setPlUploadMsg('Pick or create a model folder first.', 'error'); return; }
+
+    const model    = plSelected;
+    const removeBg = !!$('pl-remove-bg')?.checked;
+    let saved = 0;
+    const failures = [];
+
+    for (const [i, file] of images.entries()) {
+      const label = file.name || 'Pasted photo';
+      setPlUploadMsg(`Saving ${i + 1} of ${images.length}${removeBg ? ' — removing background, this takes a few seconds…' : '…'}`);
+      try {
+        let payload = { imageBase64: await blobToBase64(file), mimeType: file.type || 'image/jpeg' };
+        if (removeBg) payload = await plRemoveBackground(payload.imageBase64, payload.mimeType);
+
+        const res  = await fetch('/api/photos/library/upload', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelKey: model, ...payload })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Upload failed');
+        saved++;
+      } catch (err) {
+        failures.push(`${label}: ${err.message}`);
+      }
+    }
+
+    if (saved) addActivity('Representative photos added', `${saved} photo(s) saved to ${model}`);
+    await loadPhotoLibrary();
+    setPlUploadMsg(
+      failures.length ? `Saved ${saved} of ${images.length}. ${failures.join(' · ')}` : `Saved ${saved} photo(s) to ${model}.`,
+      failures.length ? 'error' : 'ok');
+  }
+
+  async function deleteLibraryPhoto(url) {
+    const fileName = url.split('/').pop();
+    if (!confirm(`Remove ${fileName} from ${plSelected}?\n\nFuture listings of this model stop using it; already-published listings keep their copy.`)) return;
+    try {
+      const res  = await fetch('/api/photos/library/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelKey: plSelected, fileName })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Delete failed');
+      addActivity('Representative photo deleted', `${plSelected}/${fileName}`);
+      await loadPhotoLibrary();
+    } catch (err) {
+      setPlUploadMsg(`Could not delete ${fileName}: ${err.message}`, 'error');
+    }
   }
 
   function formatEndsIn(iso) {
@@ -866,6 +1098,7 @@
   function bindHomeButtons() {
     on('nl-home',  'click', goHome);
     on('opp-home', 'click', goHome);
+    on('pl-home',  'click', goHome);
   }
 
   async function activateLicensePage() {

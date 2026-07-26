@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=22" />
+  <link rel="stylesheet" href="style.css?v=23" />
 </head>
 <body>
   <div class="app-shell">
@@ -25,6 +25,7 @@
         <button class="nav-item" type="button" data-page="logs"><span class="nav-icon">🔍</span>Logs</button>
         <button class="nav-item" type="button" data-page="settings"><span class="nav-icon">⚙️</span>Settings</button>
         <button class="nav-item" type="button" data-page="opportunity"><span class="nav-icon">🔍</span>Opportunity Finder</button>
+        <button class="nav-item" type="button" data-page="photos"><span class="nav-icon">📸</span>Photo Library</button>
         <button class="nav-item nav-license" id="nav-license-btn" type="button" data-page="license"><span class="nav-icon">🔑</span>License<span id="nav-license-dot" class="nav-license-dot dot-off"></span></button>
       </nav>
       <div class="sidebar-footer">
@@ -867,6 +868,64 @@
         </div>
       </section>
 
+      <!-- ── Representative Photo Library (full-page overlay, like Opportunity Finder) ── -->
+      <section id="photo-library-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="pl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home">🏠</button>
+            <div>
+              <div class="eyebrow">Photo Library</div>
+              <h2>📸 Your Real Stock Photos, by Model</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="pl-refresh" class="btn btn-secondary small" type="button">Refresh</button>
+            <button id="pl-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <p class="opp-hint">Shoot each used model once. Every used listing that matches a model reuses these photos — with the representative-photo disclosure — instead of a per-unit shoot.</p>
+
+          <div class="pl-create-row">
+            <input id="pl-new-model" type="text" placeholder="New model folder — e.g. Antminer_S21_200TH" autocomplete="off" />
+            <button id="pl-create-btn" class="btn btn-primary" type="button">+ New Model</button>
+            <span id="pl-create-msg" class="sd-test-msg"></span>
+          </div>
+
+          <div class="pl-layout">
+            <aside class="pl-folders">
+              <div class="pl-folders-head">Models</div>
+              <div id="pl-folder-list" class="pl-folder-list">
+                <p class="opportunity-empty">Loading models…</p>
+              </div>
+            </aside>
+
+            <div class="pl-detail">
+              <div class="pl-detail-head">
+                <h3 id="pl-detail-title">Select a model</h3>
+                <label class="pl-rembg-toggle" title="Runs each photo through background removal before it is saved to the library">
+                  <input id="pl-remove-bg" type="checkbox" />
+                  Remove background on upload
+                </label>
+              </div>
+
+              <div id="pl-drop-zone" class="nl-drop-zone hidden" tabindex="0" contenteditable="true" spellcheck="false">
+                <div class="nl-drop-icon">📷</div>
+                <p class="nl-drop-title">Drop or paste your photos of this model here</p>
+                <p class="nl-drop-sub">or <span class="link">click to browse</span> &nbsp;·&nbsp; JPG, PNG, WEBP</p>
+                <p class="nl-drop-hint">Several at once is fine — they all land in this model's folder</p>
+                <input id="pl-file-input" type="file" accept="image/*" multiple hidden />
+              </div>
+
+              <div id="pl-upload-msg" class="sd-test-msg"></div>
+
+              <div id="pl-photo-grid" class="pl-photo-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
           <div>
@@ -1605,6 +1664,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>

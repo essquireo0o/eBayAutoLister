@@ -2066,6 +2066,18 @@ app.MapPost("/api/photos/library/upload", async (LibraryUploadRequest req, Photo
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
+// Drop a single photo from a model's library — the seller culling a bad shot from the set that
+// every future unit of this model reuses. Already-published listings keep their uploaded copies.
+app.MapPost("/api/photos/library/delete", (LibraryDeleteRequest req, PhotoLibrary photos, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ModelKey) || string.IsNullOrWhiteSpace(req.FileName))
+        return Results.BadRequest(new { error = "ModelKey and FileName are required" });
+    if (!photos.DeletePhoto(req.ModelKey, req.FileName))
+        return Results.NotFound(new { error = "Photo not found" });
+    log.Add("Info", "Representative photo deleted", $"{req.ModelKey}/{req.FileName}");
+    return Results.Ok(new { deleted = true });
+});
+
 // For a used listing: return the matching model's representative photos + the disclosure line to
 // append to the description. matched=false means no library set yet for this model (prompt to add).
 app.MapGet("/api/photos/library/for-listing", (string? model, string? title, PhotoLibrary photos) =>

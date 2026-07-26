@@ -73,6 +73,22 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
         return $"/photos/{key}/{name}";
     }
 
+    // Delete one photo from a model's folder (a bad shot the seller wants out of the rotation).
+    // Both parts are sanitized to bare names, so nothing outside the model's own folder is reachable.
+    // Returns false when the file isn't a library image that exists.
+    public bool DeletePhoto(string modelKey, string fileName)
+    {
+        var key  = Sanitize(modelKey);
+        var name = Sanitize(fileName);
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(name)) return false;
+        if (!ImageExtensions.Contains(Path.GetExtension(name))) return false;
+
+        var path = Path.Combine(RootPath, key, name);
+        if (!File.Exists(path)) return false;
+        File.Delete(path);
+        return true;
+    }
+
     // Given a listing's model and/or title, return the representative photos from the best-matching
     // model folder that actually HAS photos. Null when nothing matches — the UI then prompts the
     // seller to add photos for this model once, after which every future unit reuses them.
@@ -139,3 +155,4 @@ public sealed record RepresentativeMatch(string ModelKey, IReadOnlyList<string> 
 
 public sealed record LibraryUploadRequest(string ModelKey, string ImageBase64, string? MimeType);
 public sealed record LibraryCreateRequest(string ModelKey);
+public sealed record LibraryDeleteRequest(string ModelKey, string FileName);
