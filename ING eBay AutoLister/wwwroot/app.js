@@ -3344,27 +3344,10 @@
   // photo; USED items must show the seller's REAL unit — so pull from the representative-photo
   // library for the model, or prompt the seller to add a real photo. Never a stock image on used.
   async function nlApplyResearchPhotos(data, absUrls, nameHint) {
-    const cond = (data.condition || $('nl-condition')?.value || '').toUpperCase();
-    const isUsed = cond.startsWith('USED') || cond === 'FOR_PARTS' || /\bused\b/i.test(nameHint || data.title || '');
-
-    if (isUsed) {
-      try {
-        const q = new URLSearchParams({ model: data.model || '', title: data.title || nameHint || '' });
-        const lib = await fetch('/api/photos/library/for-listing?' + q).then(r => r.json()).catch(() => ({}));
-        if (lib && lib.matched && (lib.photos || []).length) {
-          const urls = lib.photos.map(u => u.startsWith('/') ? window.location.origin + u : u);
-          const previewImg = $('nl-preview-img');
-          if (previewImg) previewImg.src = urls[0];
-          $('nl-drop-zone')?.classList.add('hidden');
-          $('nl-preview-wrap')?.classList.remove('hidden');
-          urls.forEach((u, i) => setPhotoSlotUrl(i, u));
-          if (lib.disclosure) nlAppendDisclosure(lib.disclosure);
-          addActivity('Used item — pulled your library photos', `${urls.length} real photo(s) for ${lib.modelKey}`);
-          return;
-        }
-      } catch (e) { /* non-fatal */ }
+    if (nlIsUsedListing(data, nameHint)) {
       // No library set for this model yet — refuse the stock image, prompt for a real photo.
-      nlPromptUsedPhoto();
+      const applied = await nlApplyUsedLibraryPhotos(data, nameHint);
+      if (!applied) nlPromptUsedPhoto();
       return;
     }
 
@@ -3379,6 +3362,34 @@
     } else {
       addActivity('No photos found online', 'Drop or paste a photo manually, or try a more specific item name');
     }
+  }
+
+  // A listing is treated as USED — stock photos not allowed — when the AI (or the form) says so,
+  // or when the item name itself says "used".
+  function nlIsUsedListing(data, nameHint) {
+    const cond = (data.condition || $('nl-condition')?.value || '').toUpperCase();
+    return cond.startsWith('USED') || cond === 'FOR_PARTS' || /\bused\b/i.test(nameHint || data.title || '');
+  }
+
+  // Pull the seller's representative photos for this model out of the photo library. Returns true
+  // when real photos were applied (preview + slots + disclosure), false when no library exists yet.
+  async function nlApplyUsedLibraryPhotos(data, nameHint) {
+    try {
+      const q = new URLSearchParams({ model: data.model || '', title: data.title || nameHint || '' });
+      const lib = await fetch('/api/photos/library/for-listing?' + q).then(r => r.json()).catch(() => ({}));
+      if (lib && lib.matched && (lib.photos || []).length) {
+        const urls = lib.photos.map(u => u.startsWith('/') ? window.location.origin + u : u);
+        const previewImg = $('nl-preview-img');
+        if (previewImg) previewImg.src = urls[0];
+        $('nl-drop-zone')?.classList.add('hidden');
+        $('nl-preview-wrap')?.classList.remove('hidden');
+        urls.forEach((u, i) => setPhotoSlotUrl(i, u));
+        if (lib.disclosure) nlAppendDisclosure(lib.disclosure);
+        addActivity('Used item — pulled your library photos', `${urls.length} real photo(s) for ${lib.modelKey}`);
+        return true;
+      }
+    } catch (e) { /* non-fatal */ }
+    return false;
   }
 
   // Used item with no library photos: clear any stock image, reveal + highlight the drop zone so
@@ -3428,6 +3439,11 @@
       nlClearAllPhotoSlots();
 
       const isProductPhoto = (data.imageType || '') === 'product_photo';
+      // Condition-aware, same gate as the Auto-Fill path: images scraped off a screenshot are
+      // stock/online photos. NEW items may use one; USED items must show the seller's REAL unit,
+      // so pull from the photo library or prompt for a real photo. An uploaded product photo IS
+      // the seller's own unit, so it stays allowed either way.
+      const usedNeedsRealPhoto = !isProductPhoto && nlIsUsedListing(data);
       let firstPhotoUrl = null;
 
       if (isProductPhoto && nlImageBase64) {
@@ -3439,6 +3455,9 @@
           });
           if (res.ok) { const { url } = await res.json(); firstPhotoUrl = url; nlAddPhotoRow(url); }
         } catch (e) { /* non-fatal */ }
+      } else if (usedNeedsRealPhoto) {
+        const applied = await nlApplyUsedLibraryPhotos(data);
+        if (!applied) nlPromptUsedPhoto();
       } else if ((data.imageUrls || []).length > 0) {
         // Only use the first product image — one clean photo is all we need
         const firstUrl = (data.imageUrls || []).find(u => u && (u.startsWith('http') || u.startsWith('/')));
@@ -3464,9 +3483,13 @@
       $('nl-ai-done')?.classList.remove('hidden');
       addActivity('AI analysis complete', data.title || 'Form filled — review before publishing.');
 
-      // Auto remove background — use first fetched photo, or fall back to the uploaded image directly
-      if (firstPhotoUrl) nlAutoRemoveBg(firstPhotoUrl);
-      else if (nlImageBase64) nlAutoRemoveBgFromBase64(nlImageBase64, nlMimeType || 'image/jpeg');
+      // Auto remove background — use first fetched photo, or fall back to the uploaded image
+      // directly. Skipped on the used-item path: library photos are already curated, and the
+      // uploaded screenshot must never end up as the listing photo.
+      if (!usedNeedsRealPhoto) {
+        if (firstPhotoUrl) nlAutoRemoveBg(firstPhotoUrl);
+        else if (nlImageBase64) nlAutoRemoveBgFromBase64(nlImageBase64, nlMimeType || 'image/jpeg');
+      }
     } catch (err) {
       $('nl-ai-status')?.classList.add('hidden');
       $('nl-ai-error')?.classList.remove('hidden');
