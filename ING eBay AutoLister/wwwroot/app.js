@@ -364,6 +364,7 @@
     bindWatcherOffers();
     bindLotAnalyzer();
     bindPromoted();
+    bindTrendRadar();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -458,6 +459,7 @@
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
+    if (page !== 'trends') $('trends-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -498,6 +500,10 @@
       showPromotedSection();
       return;
     }
+    if (page === 'trends') {
+      showTrendsSection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -507,7 +513,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2504,6 +2510,365 @@
   function setWoStatus(text) {
     const el = $('wo-status');
     if (el) el.textContent = text || '';
+  }
+
+  // ── Rising-Demand / Price-Trend Radar ─────────────────────────────────────
+  // Every other screen in this app prices the present tense. This one reads the sold-comps database
+  // as a time series and answers "what is on its way up?" — because a sourcer's cheapest margin is
+  // buying at last month's price. Everything below comes from /api/trends/radar, which measures the
+  // trend itself and then prices the survivors through the same pipeline the rest of the app uses.
+  //
+  // Two things this UI must never do, both of which would turn it into a horoscope:
+  //   * show a trend without showing how much of it was actually measured (the corpus banner, the
+  //     sold counts and the tentative badge are all load-bearing, not decoration), and
+  //   * let the projected price sit anywhere near the "max to pay" column. What to pay comes from
+  //     today's price; the climb is reported separately, as upside.
+  let trendScan = null;
+
+  function showTrendsSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('trends-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'trends'));
+  }
+
+  function closeTrendsSection() {
+    $('trends-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindTrendRadar() {
+    on('tr-scan-btn', 'click', () => runTrendScan({ nextSeed: false }));
+    on('tr-scan-again', 'click', () => runTrendScan({ nextSeed: true }));
+    on('tr-close', 'click', closeTrendsSection);
+    on('tr-home', 'click', closeTrendsSection);
+    // Direction is a pure view over the scan in hand when we already have everything; it only
+    // re-runs when the previous scan was narrowed server-side and the seller now wants it all.
+    on('tr-direction', 'change', () => {
+      if (!trendScan) return;
+      // A scan that already fetched everything can be re-filtered in the browser. Widening one that
+      // was narrowed server-side has to go back — but on the SAME seed, so the seller gets the same
+      // categories with more of them shown, not a different scan wearing the same question.
+      if (trendScan.direction === 'all') renderTrendRows();
+      else runTrendScan({ seed: trendScan.seed });
+    });
+  }
+
+  function setTrendStatus(text) {
+    const el = $('tr-status');
+    if (el) el.textContent = text || '';
+  }
+
+  async function runTrendScan({ nextSeed = false, seed = null } = {}) {
+    const btn = $('tr-scan-btn');
+    const again = $('tr-scan-again');
+    const windowDays = $('tr-window')?.value || '45';
+    const niches = $('tr-niches')?.value || '5';
+    const direction = $('tr-direction')?.value || 'rising';
+    // "Scan different categories" is the seed advancing — the same rotation Roll the Dice uses, so
+    // a second scan digs categories the first one never touched instead of repeating itself.
+    const useSeed = nextSeed ? trendScan?.nextSeed : seed;
+    const seedArg = useSeed != null ? `&seed=${useSeed}` : '';
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    if (again) again.disabled = true;
+    setTrendStatus('Reading sold history across several categories…');
+    $('tr-results').innerHTML = '<p class="opportunity-empty">Sweeping sold comps, splitting each product\'s sales into two windows, then pricing only the ones that moved. This takes a moment.</p>';
+
+    try {
+      const res = await fetch(`/api/trends/radar?window=${windowDays}&niches=${niches}&direction=${direction}${seedArg}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      trendScan = data;
+      renderTrendScan();
+    } catch (err) {
+      trendScan = null;
+      $('tr-summary')?.classList.add('hidden');
+      $('tr-corpus')?.classList.add('hidden');
+      $('tr-warning')?.classList.add('hidden');
+      $('tr-more-bar')?.classList.add('hidden');
+      $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setTrendStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📈 Find What\'s Climbing'; }
+      if (again) again.disabled = false;
+    }
+  }
+
+  function renderTrendScan() {
+    if (trendScan.status === 'error') {
+      $('tr-summary')?.classList.add('hidden');
+      $('tr-corpus')?.classList.add('hidden');
+      $('tr-more-bar')?.classList.add('hidden');
+      $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(trendScan.error || 'The scan failed.')}</p>`;
+      setTrendStatus('');
+      return;
+    }
+
+    renderTrendCorpus();
+
+    const warn = $('tr-warning');
+    if (trendScan.dataWarning && trendScan.status === 'ok') {
+      warn.textContent = trendScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    // A refused scan has no rows and no summary — the banner above IS the answer, and padding it
+    // out with zeroed tiles would read as "we looked and found nothing" rather than "we couldn't look".
+    if (trendScan.status !== 'ok') {
+      $('tr-summary')?.classList.add('hidden');
+      $('tr-results').innerHTML = '<p class="opportunity-empty">Nothing can be read as a trend until the sold-comps data above is sorted out.</p>';
+      renderTrendMoreBar();
+      setTrendStatus('');
+      return;
+    }
+
+    renderTrendSummary();
+    renderTrendRows();
+    renderTrendMoreBar();
+
+    const w = trendScan.windowDays;
+    setTrendStatus(
+      `${trendScan.compsScanned.toLocaleString()} sold comps · ${trendScan.productsMeasured} product${trendScan.productsMeasured === 1 ? '' : 's'} measured · ` +
+      `${trendScan.productsRising} climbing · last ${w} days vs the ${w} before`);
+  }
+
+  // The scan reporting on its own data. This is the banner that stops the feature lying: if the
+  // comps database stopped being updated, every product looks like demand collapsed, and that
+  // reads as market news unless it is said plainly and first.
+  function renderTrendCorpus() {
+    const el = $('tr-corpus');
+    const c = trendScan.corpus || {};
+    if (!el) return;
+
+    if (!c.isReadable) {
+      el.innerHTML = `<strong>This scan can't be read as a trend.</strong> ${esc(trendScan.dataWarning || c.note || '')}`;
+      el.classList.remove('hidden');
+      return;
+    }
+
+    // Only worth the space when the database's own volume moved enough to distort every product's
+    // velocity — otherwise it's noise about noise.
+    if (c.note) {
+      el.innerHTML = `<strong>Baseline:</strong> ${esc(c.note)}`;
+      el.classList.remove('hidden');
+      return;
+    }
+
+    el.classList.add('hidden');
+  }
+
+  function renderTrendSummary() {
+    const el = $('tr-summary');
+    if (!el) return;
+
+    const c = trendScan.corpus || {};
+    const rows = trendScan.rows || [];
+    const buys = rows.filter(r => r.verdict === 'buy_now');
+    const topClimb = rows.reduce((best, r) => {
+      const pct = Number(r.trend?.priceChangePercent);
+      return Number.isFinite(pct) && pct > best ? pct : best;
+    }, 0);
+
+    const tiles = [
+      { label: 'Worth buying now', value: String(trendScan.buyNowCount || 0),
+        sub: buys.length ? `Climbing, and the money already works at today's price` : 'Nothing cleared both bars this scan',
+        tone: trendScan.buyNowCount > 0 ? 'good' : '' },
+      { label: 'What the climb is worth', value: money(trendScan.totalTrendHeadroom),
+        sub: 'Extra per unit across those buys, if the move holds one more window',
+        tone: trendScan.totalTrendHeadroom > 0 ? 'good' : '' },
+      { label: 'Biggest move', value: topClimb > 0 ? `+${topClimb.toFixed(1)}%` : '—',
+        sub: topClimb > 0 ? `Median sold price, last ${trendScan.windowDays} days vs the ${trendScan.windowDays} before` : 'No product on this board is climbing',
+        tone: topClimb >= 15 ? 'good' : '' },
+      { label: 'Products climbing', value: `${trendScan.productsRising} of ${trendScan.productsMeasured}`,
+        sub: 'Measured across the categories this scan swept' },
+      { label: 'Evidence behind it', value: `${(c.datedComps || 0).toLocaleString()} dated sales`,
+        sub: `${c.datedCoveragePercent || 0}% of the comps scanned carry a sale date`,
+        tone: (c.datedCoveragePercent || 0) < 60 ? 'warn' : '' },
+      { label: 'Freshest sale', value: c.newestCompAgeDays == null ? '—' : `${c.newestCompAgeDays}d ago`,
+        sub: 'How current the comps database is — everything above rests on this',
+        tone: (c.newestCompAgeDays ?? 99) > 14 ? 'warn' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  function renderTrendMoreBar() {
+    const bar = $('tr-more-bar');
+    const note = $('tr-more-note');
+    if (!bar || !note) return;
+
+    const names = (trendScan.niches || []).map(n => n.label).join(', ');
+    note.textContent = names
+      ? `Swept ${names}. ${trendScan.rollsToCoverEverything} scan${trendScan.rollsToCoverEverything === 1 ? '' : 's'} covers all ${trendScan.nichesInUniverse} categories.`
+      : 'Scan again to sweep different categories.';
+    bar.classList.remove('hidden');
+  }
+
+  const TREND_VERDICTS = {
+    buy_now:      { label: '🔥 Buy now',      cls: 'tr-v-buy' },
+    get_in_early: { label: '🌱 Get in early', cls: 'tr-v-early' },
+    watch:        { label: '👀 Watch',        cls: 'tr-v-watch' },
+    thin:         { label: '⚠️ Thin data',    cls: 'tr-v-thin' },
+    pass:         { label: '✕ Pass',          cls: 'tr-v-pass' },
+  };
+
+  const TREND_SIGNALS = {
+    rising_demand:   { label: 'Rising demand',   cls: 'tr-s-up' },
+    price_climbing:  { label: 'Price climbing',  cls: 'tr-s-up' },
+    demand_building: { label: 'Volume building', cls: 'tr-s-early' },
+    supply_squeeze:  { label: 'Supply squeeze',  cls: 'tr-s-squeeze' },
+    steady:          { label: 'Flat',            cls: 'tr-s-flat' },
+    cooling:         { label: 'Cooling',         cls: 'tr-s-down' },
+    unreadable:      { label: 'Not readable',    cls: 'tr-s-flat' },
+  };
+
+  function renderTrendRows() {
+    if (!trendScan) return;
+    const showAll = ($('tr-direction')?.value || 'rising') === 'all';
+    const rows = (trendScan.rows || []).filter(r => showAll || r.trend?.isRising);
+    const el = $('tr-results');
+
+    if (rows.length === 0) {
+      el.innerHTML = `<p class="opportunity-empty">${esc(
+        trendScan.dataWarning ||
+        'Nothing in these categories is climbing right now. That is a real answer — scan again to sweep different ones.')}</p>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table tr-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Trend</th>
+            <th class="num">Sold price</th>
+            <th class="num">Sales</th>
+            <th class="num">Max to pay today</th>
+            <th class="num">Buy under</th>
+            <th class="num">Upside if it holds</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(trendRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.tr-hunt-btn').forEach(btn =>
+      btn.addEventListener('click', () => huntTrendProduct(btn.dataset.query)));
+  }
+
+  function trendRowHtml(row) {
+    const t = row.trend || {};
+    const v = TREND_VERDICTS[row.verdict] || TREND_VERDICTS.watch;
+    const s = TREND_SIGNALS[t.signal] || TREND_SIGNALS.unreadable;
+    const pct = Number(t.priceChangePercent);
+    const pctText = Number.isFinite(pct) ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%` : '—';
+    const rel = Number(t.relativeVelocityChangePercent);
+
+    // "Tentative" is shown, never hidden — it is the difference between a measurement and a guess,
+    // and the seller is about to spend money on which one this is.
+    const tentative = t.reliability === 'tentative'
+      ? '<span class="tr-tentative" title="Measured, but on thin or noisy evidence — see the note below.">tentative</span>' : '';
+
+    const projected = t.projectedPrice != null
+      ? `<div class="tr-sub">${money(t.projectedPrice)} if it holds</div>` : '';
+
+    return `
+      <tr class="tr-row ${row.verdict === 'buy_now' ? 'tr-row-buy' : ''}">
+        <td class="tr-product">
+          <div class="tr-name">${esc(row.product)}</div>
+          <div class="tr-sub">${esc(row.nicheLabel)} · ${esc(row.resaleSource)} · ${row.soldCompCount + row.terapeakCompCount} comps · ${esc(row.confidenceLevel)}</div>
+          <div class="tr-note">${esc(row.verdictNote)}</div>
+          <div class="tr-note tr-note-quiet">${esc(t.note || '')}</div>
+        </td>
+        <td class="tr-trend">
+          <span class="tr-signal ${s.cls}">${esc(s.label)}</span>${tentative}
+          ${trendSparkline(t)}
+          <div class="tr-sub">${esc(pctText)} median${t.slopePerMonth ? ` · ${Number(t.slopePerMonth) > 0 ? '+' : ''}${money(t.slopePerMonth)}/mo trend` : ''}</div>
+        </td>
+        <td class="num">
+          <div class="tr-strong">${money(row.ebayExpectedSale ?? row.ebayMedian)}</div>
+          ${projected}
+        </td>
+        <td class="num">
+          <div>${t.prior?.soldCount ?? 0} → ${t.recent?.soldCount ?? 0}</div>
+          <div class="tr-sub">${Number.isFinite(rel) ? `${rel > 0 ? '+' : ''}${rel.toFixed(0)}% vs scan` : 'no baseline'}</div>
+        </td>
+        <td class="num"><div class="tr-strong">${money(row.maxBuyToday)}</div><div class="tr-sub">break-even today</div></td>
+        <td class="num">${row.targetBuyPrice > 0
+          ? `<div class="tr-strong">${money(row.targetBuyPrice)}</div><div class="tr-sub">${money(row.profitAtTarget)} net · ${Number(row.marginAtTargetPercent).toFixed(0)}%</div>`
+          : '<span class="tr-sub">no price clears the bar</span>'}</td>
+        <td class="num">${row.trendHeadroom > 0
+          ? `<div class="tr-strong tr-up">+${money(row.trendHeadroom)}</div><div class="tr-sub">per unit</div>`
+          : '<span class="tr-sub">—</span>'}</td>
+        <td>
+          <span class="tr-verdict ${v.cls}">${esc(v.label)}</span>
+          <button class="btn btn-secondary small tr-hunt-btn" type="button" data-query="${esc(row.searchQuery)}">Find one</button>
+        </td>
+      </tr>`;
+  }
+
+  // Weekly medians, oldest left. Weeks with no sale are gaps in the line rather than points on it —
+  // joining straight through them would draw a steady seller out of an intermittent one.
+  function trendSparkline(trend) {
+    const points = Array.isArray(trend?.series) ? trend.series : [];
+    const priced = points.filter(p => p.soldCount > 0 && p.medianPrice > 0);
+    if (priced.length < 2) return '<div class="tr-spark-empty">not enough weeks to draw</div>';
+
+    const w = 108, h = 28, pad = 2;
+    const values = priced.map(p => Number(p.medianPrice));
+    const min = Math.min(...values), max = Math.max(...values);
+    const span = max - min || 1;
+    const step = points.length > 1 ? (w - pad * 2) / (points.length - 1) : 0;
+
+    const xy = p => {
+      const i = points.indexOf(p);
+      const x = pad + i * step;
+      const y = h - pad - ((Number(p.medianPrice) - min) / span) * (h - pad * 2);
+      return [x.toFixed(1), y.toFixed(1)];
+    };
+
+    // One polyline per unbroken run of weeks that had sales.
+    const runs = [];
+    let run = [];
+    points.forEach(p => {
+      if (p.soldCount > 0 && p.medianPrice > 0) run.push(p);
+      else { if (run.length) runs.push(run); run = []; }
+    });
+    if (run.length) runs.push(run);
+
+    const lines = runs.filter(r => r.length > 1)
+      .map(r => `<polyline points="${r.map(p => xy(p).join(',')).join(' ')}" />`).join('');
+    const dots = priced.map(p => { const [x, y] = xy(p); return `<circle cx="${x}" cy="${y}" r="1.6" />`; }).join('');
+    // Coloured from the server's signal, not re-derived from first-vs-last here — the picture has
+    // to agree with the badge sitting beside it. A supply squeeze drawn in "rising green" because
+    // its newest week happened to be high is the picture arguing with the sentence.
+    const tone = (TREND_SIGNALS[trend.signal] || TREND_SIGNALS.unreadable).cls.replace('tr-s-', 'tr-spark-');
+
+    return `<svg class="tr-spark ${tone}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img"
+      aria-label="Weekly median sold price, ${money(min)} to ${money(max)}">${lines}${dots}</svg>`;
+  }
+
+  // Hands the product straight to Local Deals — the radar says WHAT to buy, that screen finds WHERE.
+  // The keyword is the same short query the server built, so the two screens search the same thing.
+  function huntTrendProduct(query) {
+    if (!query) return;
+    closeTrendsSection();
+    showOpportunitySection();
+    const box = $('fb-query-input');
+    if (box) {
+      box.value = query;
+      box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      box.focus();
+    }
   }
 
   // ── Promoted Listings: the ad rate that keeps the most money ──────────────

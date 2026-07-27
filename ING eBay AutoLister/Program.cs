@@ -1816,6 +1816,51 @@ app.MapGet("/api/opportunities/roll-the-dice", async (
     }
 });
 
+// ── Rising-Demand / Price-Trend Radar ─────────────────────────────────────────────────────────
+// Every other pricing screen answers "what is this worth?" in the present tense. This one reads the
+// sold-comps database as a time series and answers "what is on its way up?" — the products whose
+// recent sold prices AND sale velocity are both rising, ranked by what getting in ahead of the move
+// is worth per unit. Read-only: it prices nothing live and lists nothing.
+app.MapGet("/api/trends/radar", async (
+    int? seed, int? niches, int? probes, int? window, int? maxProducts, int? terapeakBudget, string? direction,
+    IMarketplaceRepository marketplace, ProductNormalizer normalizer, ComparableMatcher matcher,
+    MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
+    FeeProfile feeProfile, OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    TerapeakMarketService terapeakMarket, TerapeakService terapeak, JackpotHunter hunter, EbayService ebay,
+    ActionLog log, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await ScanPriceTrendsAsync(
+            seed ?? CategorySweep.RandomSeed(),
+            // Each of these bounds a fan-out: niches x probes comps queries, then one real pricing
+            // lookup per product kept. A scan has to stay a click someone waits a minute for.
+            Math.Clamp(niches ?? 5, 1, 10), Math.Clamp(probes ?? 2, 1, 3),
+            PriceTrendAnalyzer.ClampWindow(window ?? PriceTrendAnalyzer.DefaultWindowDays),
+            Math.Clamp(maxProducts ?? 12, 1, 25), Math.Clamp(terapeakBudget ?? 3, 0, 10),
+            string.Equals(direction, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "rising",
+            marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, terapeakMarket, terapeak, hunter, ebay, log, ct);
+
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        // A scan spans the comps database, Terapeak and eBay. Whatever breaks, it comes back as a
+        // sentence on the board rather than a rejected fetch after a long wait.
+        log.Add("Error", "Price-trend radar failed", ex.Message);
+        return Results.Ok(new TrendRadarResult
+        {
+            Status = "error", Seed = seed ?? 0, NextSeed = CategorySweep.NextSeed(seed ?? 0),
+            Error = $"The scan couldn't be completed: {ex.Message}",
+        });
+    }
+});
+
 // ── Liquidation lot / manifest analyzer ───────────────────────────────────────────────────────
 // A pallet, a wholesale lot or an estate lot is one decision with a lot of money on it: pay the
 // ask, or walk. Paste the manifest (or photograph it), give the ask price, and this prices every
@@ -3001,6 +3046,342 @@ static async Task<JackpotResult> RollTheDiceAsync(
         $"Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;
+}
+
+// The Rising-Demand / Price-Trend Radar. Same sweep Roll the Dice uses, read along a different
+// axis: instead of "which of these carries a margin right now", it asks "which of these is worth
+// MORE than it was, and selling more often than it was".
+//
+// Four phases, cheapest first, and the order matters — the whole point is that the trend read is
+// free (it's arithmetic over comps already fetched) and the expensive pricing lookup is only spent
+// on products that already showed a rise:
+//   1. SWEEP    — a window of categories mined out of the sold-comps database. One query per probe.
+//   2. BASELINE — the scan reads its own data first: how fresh it is, and how its own volume moved
+//                 between the two windows. Both are refusals waiting to happen (see
+//                 PriceTrendAnalyzer.BuildCorpus), and both are the difference between a trend
+//                 radar and a random-number generator.
+//   3. MEASURE  — every screened product's dated comps split into two windows and compared. Free.
+//   4. PRICE    — only what is actually rising gets a real per-product lookup through
+//                 AnalyzeProductAsync, so the resale price, the confidence score and the fee model
+//                 are the ones the rest of the app already stands behind.
+static async Task<TrendRadarResult> ScanPriceTrendsAsync(
+    int seed, int nicheCount, int probesPerNiche, int windowDays, int maxProducts, int terapeakBudget,
+    string direction,
+    IMarketplaceRepository marketplace, ProductNormalizer normalizer, ComparableMatcher matcher,
+    MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
+    FeeProfile feeProfile, OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    TerapeakMarketService terapeakMarket, TerapeakService terapeak, JackpotHunter hunter, EbayService ebay,
+    ActionLog log, CancellationToken ct)
+{
+    // Same ceiling both repositories fetch anyway, so this costs nothing extra on the wire. A trend
+    // needs MORE history than a price does — two windows of it — so starving the haul here would
+    // turn every product into "not enough dated sales to compare".
+    const int compsPerProbe = 500;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var nowUtc = DateTime.UtcNow;
+
+    var result = new TrendRadarResult
+    {
+        Seed = seed, NextSeed = CategorySweep.NextSeed(seed),
+        RollsToCoverEverything = CategorySweep.RollsToCoverEverything(nicheCount),
+        NichesInUniverse = CategorySweep.Universe.Count,
+        WindowDays = windowDays, Direction = direction,
+        TerapeakConnected = terapeak.IsConnected,
+    };
+
+    // ── 1: sweep, keeping the ROWS this time, not just the summary ──────────────────────────────
+    // Deduped globally by item id: the same sale coming back under two probes would otherwise count
+    // twice in that product's velocity AND twice in the scan-wide baseline it's measured against.
+    var seenComps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var compsByKey = new Dictionary<string, List<MarketplaceComparableResult>>(StringComparer.OrdinalIgnoreCase);
+    var allComps = new List<MarketplaceComparableResult>();
+    var candidates = new Dictionary<string, JackpotCandidate>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var niche in CategorySweep.Select(seed, nicheCount))
+    {
+        var probes = CategorySweep.ProbesFor(niche, seed, probesPerNiche);
+        var outcome = new TrendNicheOutcome { Id = niche.Id, Label = niche.Label, Probes = probes };
+
+        foreach (var probe in probes)
+        {
+            IReadOnlyList<MarketplaceComparableResult> rows;
+            try
+            {
+                rows = await marketplace.SearchByKeywordAsync(probe, filters: null, limit: compsPerProbe, ct: ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // One category failing to read is not the scan failing — the others still answer.
+                outcome.Note = $"Sold-comps lookup failed: {ex.Message}";
+                log.Add("Warning", "Price-trend comps lookup failed", $"\"{probe}\": {ex.Message}");
+                continue;
+            }
+
+            var fresh = new List<MarketplaceComparableResult>(rows.Count);
+            foreach (var row in rows)
+            {
+                var id = string.IsNullOrWhiteSpace(row.ItemId)
+                    ? $"{row.Title}|{row.SoldPrice}|{row.SoldDate:yyyy-MM-dd}"
+                    : row.ItemId;
+                if (!seenComps.Add(id)) continue;
+                fresh.Add(row);
+            }
+
+            outcome.CompsScanned += fresh.Count;
+            result.CompsScanned += fresh.Count;
+            allComps.AddRange(fresh);
+
+            // Grouped on JackpotHunter's own product signature, so a product is the same product
+            // here as it is on the Roll the Dice board — one definition of "a product", not two.
+            foreach (var comp in fresh)
+            {
+                if (string.IsNullOrWhiteSpace(comp.Title) || comp.SoldPrice <= 0) continue;
+                var (key, _) = JackpotHunter.ProductSignature(comp.Title);
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                if (!compsByKey.TryGetValue(key, out var bucket)) compsByKey[key] = bucket = [];
+                bucket.Add(comp);
+            }
+
+            foreach (var candidate in JackpotHunter.Cluster(fresh, niche.Id, niche.Label, probe, nowUtc))
+            {
+                // The same screen the sweep board uses: accessories, multi-unit lots, broken-item
+                // comps, sub-fee prices and clusters too wide to be one product are dropped here.
+                // A "price rise" measured across a cluster that isn't one product is a mix shift.
+                var (keep, _) = JackpotHunter.Screen(candidate, normalizer.Normalize(candidate.LookupTitle));
+                if (!keep) { outcome.ProductsScreenedOut++; continue; }
+
+                outcome.ProductsFound++;
+                if (!candidates.TryGetValue(candidate.Key, out var existing) || candidate.Score > existing.Score)
+                    candidates[candidate.Key] = candidate;
+            }
+        }
+
+        outcome.Note ??= outcome.CompsScanned == 0
+            ? "No sold history for this category in the comps database."
+            : outcome.ProductsFound == 0
+                ? $"{outcome.ProductsScreenedOut} product(s) seen, none with enough evidence to measure."
+                : null;
+        result.Niches.Add(outcome);
+    }
+
+    result.ProductsConsidered = candidates.Count;
+
+    // ── 2: the baseline, before a single product is judged ──────────────────────────────────────
+    result.Corpus = PriceTrendAnalyzer.BuildCorpus(allComps, nowUtc, windowDays);
+
+    if (!result.Corpus.IsReadable)
+    {
+        // Refusing the whole scan is the honest answer here. A comps database that stopped being
+        // updated makes every product on earth look like demand collapsed, and a database with no
+        // dates makes every product look flat — neither is a fact about any market.
+        result.Status = result.CompsScanned == 0 ? "no_comps" : "stale_data";
+        result.SoldCompsConfigured = result.CompsScanned > 0 || await SoldCompsReachableAsync(marketplace, ct);
+        result.DataWarning = result.Corpus.Note ?? (result.SoldCompsConfigured
+            ? "The sold-comps database answered but has no dated history for these categories — scan again to sweep different ones."
+            : "No eBay sold-price source is available — configure the sold-comps database in Settings so a scan has real sold dates to read.");
+        sw.Stop();
+        log.Add("Warning", "Price-trend radar refused",
+            $"Seed {seed}; Comps: {result.CompsScanned}; Dated: {result.Corpus.DatedComps}; " +
+            $"Newest: {result.Corpus.NewestCompAgeDays?.ToString() ?? "n/a"} days; {result.Corpus.Note}");
+        return result;
+    }
+
+    // ── 3: measure every screened product — free, so everything gets measured ───────────────────
+    var measured = new List<(JackpotCandidate Candidate, PriceTrendReading Trend)>();
+    foreach (var candidate in candidates.Values)
+    {
+        if (!compsByKey.TryGetValue(candidate.Key, out var comps)) continue;
+        var trend = PriceTrendAnalyzer.Measure(comps, nowUtc, windowDays, result.Corpus);
+        result.ProductsMeasured++;
+        if (trend.IsRising) result.ProductsRising++;
+        if (direction == "rising" && !trend.IsRising) continue;
+        measured.Add((candidate, trend));
+    }
+
+    // Biggest dollar move first, confirmed readings ahead of tentative ones — a cap that bites has
+    // to cut the weakest evidence, not the alphabetically unlucky.
+    var shortlist = measured
+        .OrderBy(m => m.Trend.Reliability == "confirmed" ? 0 : 1)
+        .ThenByDescending(m => Math.Abs(m.Trend.PriceChangeAmount ?? 0m) * m.Trend.Recent.SoldCount)
+        .ThenByDescending(m => m.Trend.PriceChangePercent ?? 0m)
+        .Take(maxProducts)
+        .ToList();
+
+    // ── 4: price only what moved ────────────────────────────────────────────────────────────────
+    // Priced on the product's short keyword, not the raw comp title it came from — a sold title
+    // carries a seller's punctuation and shouting, and narrows a comp lookup to nothing.
+    async Task<ResalePricing> PriceAsync(JackpotCandidate candidate, bool allowScrape)
+    {
+        var analysis = await AnalyzeProductAsync(
+            JackpotHunter.ShoppingQuery(candidate.LookupTitle),
+            supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null,
+            ebayForCompetitionFallback: ebay,
+            allowRealTerapeakScrape: allowScrape,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        return ResalePricing.From(analysis, candidate.LookupTitle);
+    }
+
+    var pricing = new Dictionary<string, ResalePricing>(StringComparer.OrdinalIgnoreCase);
+    var terapeakCached = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (candidate, _) in shortlist)
+    {
+        // Cache-only pre-check, same as every other scan: a product Terapeak already knows about
+        // must not consume the scrape budget, and this costs one SQLite read, never a page load.
+        terapeakCached[candidate.Key] = await terapeakMarket.GetAsync(
+            normalizer.Normalize(candidate.LookupTitle), candidate.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+        pricing[candidate.Key] = await PriceAsync(candidate, allowScrape: false);
+    }
+    result.ProductsPriced = shortlist.Count;
+
+    if (terapeak.IsConnected && terapeakBudget > 0)
+    {
+        var byKey = shortlist.ToDictionary(m => m.Candidate.Key, m => m.Candidate, StringComparer.OrdinalIgnoreCase);
+        var targets = LocalArbitrageAnalyzer.SelectScrapeTargets(
+            shortlist.Select(m => (
+                m.Candidate.Key,
+                PreliminaryProfit: pricing[m.Candidate.Key].HasPrice
+                    ? hunter.BreakEvenBuyPrice(pricing[m.Candidate.Key], feeProfile) : (decimal?)null,
+                HasTerapeak: terapeakCached[m.Candidate.Key],
+                LocalAsk: m.Candidate.MedianSold)), terapeakBudget);
+
+        foreach (var key in targets)
+        {
+            pricing[key] = await PriceAsync(byKey[key], allowScrape: true);
+            result.TerapeakScrapesUsed++;
+        }
+    }
+
+    // ── The board ───────────────────────────────────────────────────────────────────────────────
+    var board = new List<TrendRadarRow>();
+    foreach (var (candidate, trend) in shortlist)
+    {
+        var resale = pricing[candidate.Key];
+
+        // The same two gates the sweep board uses, and both drop the product rather than hedging:
+        // too little sold history to price at all, or the sweep's own cluster median disagreeing
+        // with the per-product estimate — which means one of them matched a different product.
+        if (!JackpotHunter.HasEnoughHistoryToShow(resale) ||
+            !JackpotHunter.EstimateAgreesWithSweep(candidate.MedianSold, resale))
+        {
+            result.ProductsDropped++;
+            log.Add("Info", "Price-trend product dropped",
+                $"\"{candidate.LookupTitle}\": {resale.SoldCompCount + resale.TerapeakCompCount} sold comp(s), " +
+                $"sweep median {candidate.MedianSold:C} vs estimate {(resale.ExpectedSale ?? resale.Median):C}.");
+            continue;
+        }
+
+        board.Add(BuildTrendRow(candidate, trend, resale, hunter, feeProfile));
+    }
+
+    result.Rows = PriceTrendAnalyzer.Rank(board);
+    result.BuyNowCount = result.Rows.Count(r => r.Verdict == "buy_now");
+    // What getting ahead of the move is worth per unit, added across the rows worth buying. An
+    // upper bound if every one of them were bought and the climb held — not a forecast, and it
+    // deliberately ignores tentative readings.
+    result.TotalTrendHeadroom = Math.Round(
+        result.Rows.Where(r => r.Verdict is "buy_now" or "get_in_early" && r.Trend.Reliability == "confirmed")
+            .Sum(r => r.TrendHeadroom), 2);
+    result.SoldCompsConfigured = result.Rows.Any(r => r.SoldCompCount > 0) || result.CompsScanned > 0;
+
+    foreach (var outcome in result.Niches)
+        outcome.RisingFound = result.Rows.Count(r => r.NicheId == outcome.Id);
+
+    if (result.Rows.Count == 0)
+    {
+        result.DataWarning = result.ProductsMeasured == 0
+            ? "Nothing in these categories had enough dated sold history to read a trend from. Scan again — the sweep moves on to different categories each time."
+            : result.ProductsRising == 0
+                ? $"{result.ProductsMeasured} product(s) measured and none of them are climbing. That's a real answer — nothing here is worth buying ahead of. Scan again to sweep different categories."
+                : "Products were rising, but none of them cleared the evidence bar once priced. Scan again to sweep different categories.";
+    }
+
+    sw.Stop();
+    log.Add("Info", "Price-trend radar",
+        $"Seed {seed}; Window: {windowDays}d; Categories: {string.Join(" + ", result.Niches.Select(n => n.Id))}; " +
+        $"Comps: {result.CompsScanned} ({result.Corpus.DatedComps} dated, newest {result.Corpus.NewestCompAgeDays?.ToString() ?? "n/a"}d); " +
+        $"Considered: {result.ProductsConsidered}; Measured: {result.ProductsMeasured}; Rising: {result.ProductsRising}; " +
+        $"Priced: {result.ProductsPriced}; Dropped: {result.ProductsDropped}; Rows: {result.Rows.Count} " +
+        $"(buy now: {result.BuyNowCount}); Trend headroom: {result.TotalTrendHeadroom:C}; " +
+        $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
+
+// One radar row: the product, what its price is doing, and what that is worth in money.
+//
+// The load-bearing rule is which price each number is computed from. MaxBuyToday, TargetBuyPrice
+// and ProfitAtTarget all come from TODAY's sold price — the trend never makes a buy affordable.
+// Only MaxBuyIfTrendHolds uses the projection, and the gap between the two is reported as upside
+// on a buy that already works on its own.
+static TrendRadarRow BuildTrendRow(
+    JackpotCandidate candidate, PriceTrendReading trend, ResalePricing resale,
+    JackpotHunter hunter, FeeProfile fees)
+{
+    var row = new TrendRadarRow
+    {
+        Product = candidate.LookupTitle,
+        PricedAs = resale.LookupTitle,
+        NicheId = candidate.NicheId, NicheLabel = candidate.NicheLabel, Probe = candidate.Probe,
+        ImageUrl = candidate.ImageUrl,
+        SearchQuery = JackpotHunter.ShoppingQuery(candidate.LookupTitle),
+        Trend = trend,
+        EbayExpectedSale = resale.ExpectedSale,
+        EbayMedian = resale.Median,
+        EbayQuickSale = resale.QuickSale,
+        ResaleSource = LocalArbitrageAnalyzer.SourceLabel(resale.SoldCompCount, resale.TerapeakCompCount),
+        SoldCompCount = resale.SoldCompCount,
+        TerapeakCompCount = resale.TerapeakCompCount,
+        ConfidenceScore = resale.ConfidenceScore,
+        ConfidenceLevel = resale.ConfidenceLevel,
+        LiquidityScore = resale.LiquidityScore,
+        LiquidityLevel = resale.LiquidityLevel,
+        DaysToCash = resale.EstimatedDaysToSell,
+        EstimatedMonthlySales = resale.EstimatedMonthlySales,
+        DisagreementMessage = resale.DisagreementMessage,
+    };
+
+    var breakEvenToday = hunter.BreakEvenBuyPrice(resale, fees);
+    row.MaxBuyToday = Math.Round(breakEvenToday, 2);
+    row.TargetBuyPrice = JackpotHunter.TargetBuyPrice(breakEvenToday);
+    row.ProfitAtTarget = Math.Round(Math.Max(0m, breakEvenToday - row.TargetBuyPrice), 2);
+
+    var expectedToday = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median ?? 0m;
+    row.MarginAtTargetPercent = expectedToday > 0
+        ? Math.Round(row.ProfitAtTarget / expectedToday * 100m, 1)
+        : 0m;
+
+    // The same break-even, recomputed against the estimator's price scaled by the trend. Same fee
+    // model, same shipping — the only thing that changed is the sale price it clears.
+    var multiplier = PriceTrendAnalyzer.TrendMultiplier(trend);
+    if (multiplier > 1m && expectedToday > 0)
+    {
+        var atTrend = new ResalePricing
+        {
+            LookupTitle = resale.LookupTitle,
+            ExpectedSale = Math.Round(expectedToday * multiplier, 2),
+            Median = resale.Median is > 0 ? Math.Round(resale.Median!.Value * multiplier, 2) : resale.Median,
+            QuickSale = resale.QuickSale is > 0 ? Math.Round(resale.QuickSale!.Value * multiplier, 2) : resale.QuickSale,
+            AvgCompShipping = resale.AvgCompShipping,
+        };
+        row.MaxBuyIfTrendHolds = Math.Round(hunter.BreakEvenBuyPrice(atTrend, fees), 2);
+    }
+    else
+    {
+        row.MaxBuyIfTrendHolds = row.MaxBuyToday;
+    }
+
+    row.TrendHeadroom = Math.Round(Math.Max(0m, row.MaxBuyIfTrendHolds - row.MaxBuyToday), 2);
+
+    var (verdict, note) = PriceTrendAnalyzer.JudgeRow(
+        trend, resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore, resale.ConfidenceLevel,
+        row.MaxBuyToday, row.TargetBuyPrice, row.TrendHeadroom);
+    row.Verdict = verdict;
+    row.VerdictNote = note;
+    return row;
 }
 
 // Only called when nothing could be priced — the hosted path's probe is a real HTTP request, so

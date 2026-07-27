@@ -2289,3 +2289,151 @@ so the ad fee is the only thing this varies.
   would do better.
 * **Nothing sets a rate on eBay.** Applying a rate is a Seller Hub action, said plainly in the
   footnote and on the apply button.
+
+---
+
+## 24. Rising-Demand / Price-Trend Radar — buying at last month's price (autonomous session, 2026-07-26)
+
+Every pricing screen in this app answers **"what is this worth?"** — a snapshot, in the present
+tense. A sourcer's money is made one tense earlier: buying the thing whose price is on its way up,
+before the price gets there. The sold-comps database already held the evidence — every row carries a
+sold price **and a sold date** — and nothing had ever read it as a time series.
+
+`GET /api/trends/radar` → the new **📈 Rising Now** page ("Buy Now — Prices Climbing").
+
+### Why this makes the seller money
+
+Getting ahead of a price move is the cheapest margin a reseller ever gets: the same unit, bought at
+last month's price and sold at next month's, with no extra work, no extra listing and no negotiation.
+On the representative RTX 3080 row the radar renders, the sold median moved $500 → $600 in 45 days
+while sales went 8 → 14. That is **$52 per unit of extra break-even headroom** on a buy that already
+cleared 75% ROI at today's price — and the whole point is that the seller only knows to buy it
+*because* the trend was measured.
+
+Nothing else in the app, and nothing in Vendoo / List Perfectly / ZIK / eBay Seller Hub, answers
+"which of these is worth **more** than it was?" Terapeak charts one product you already thought of;
+this sweeps categories and ranks what moved.
+
+### The measurement
+
+Two windows back to back (30/45/60/90 days, seller's choice), per product cluster:
+
+| Signal | Meaning |
+|---|---|
+| 🔥 **Rising demand** | Price up ≥8% **and** velocity up ≥20% — selling for more AND more often |
+| 🌱 **Volume building** | Velocity up, price hasn't followed yet — the early half of a move |
+| **Supply squeeze** | Price up, volume **down** — scarcity, not demand. Good for whoever already has one, hard to buy into. Deliberately *not* dressed up as a buy |
+| **Cooling / Flat** | Reported, not hidden — the "everything measured" view exists so a scan can say "nothing here is climbing" and be believed |
+
+Backed by a **Theil–Sen slope** (median of pairwise slopes, in $/month) across every dated sale, as a
+second opinion on the two-window comparison. Least-squares would let one parts-only sale tilt a whole
+trend; a median of slopes can't.
+
+### The four ways a price-trend tool prints confident nonsense — and the guard for each
+
+This is the product. Most of `PriceTrendAnalyzer` is an argument with itself about when a number is
+real:
+
+1. **The database's own drift.** If the collector ingested twice as many rows this month, every
+   product's velocity doubles and the whole board reads as a boom. Velocity is therefore
+   **detrended against a scan-wide baseline** (`BuildCorpus`), multiplicatively. Not theoretical: the
+   live scan run during this session came back with the corpus **up 211.8%** (220 → 686 comps between
+   windows). Undetrended, every product on that board would have looked like rising demand.
+2. **The collector stopping.** A comps database whose newest row predates the recent window hasn't
+   said the market went quiet — it has said it stopped being updated. The scan **refuses entirely**
+   (`status: stale_data`) rather than reporting a market-wide collapse. This is the single most
+   expensive lie the feature could tell, so it is a refusal, not a caveat.
+3. **Missing dates.** `SoldDate` is free text and absent on a real share of rows. Coverage is
+   measured, shown on a summary tile, and gates the verdict (≥6 dated comps and ≥60% coverage).
+4. **Mix shift.** A cluster that quietly took in the Pro variant shows a price "rise" that is a change
+   of product. Wide or widening dispersion demotes the reading to **tentative**, and the cluster has
+   already been through `JackpotHunter.Screen` (accessories, lots, broken-item comps and too-wide
+   clusters dropped) before it is measured at all.
+
+### The load-bearing money rule
+
+**Every buy number comes from TODAY's sold price.** `MaxBuyToday`, `TargetBuyPrice` and
+`ProfitAtTarget` are computed from the estimator's current price through the same `ProfitCalculator`
++ `FeeProfile` as every other profit path in the app. The trend contributes exactly one number —
+`MaxBuyIfTrendHolds` — and the gap between the two is reported separately as **upside on a buy that
+already works**. The climb can never be the reason a buy is affordable.
+
+The projection itself is clamped three ways: one window forward, **never compounded**, never above the
+highest price anyone actually paid in the recent window, and never more than 1.5x.
+
+### Reuse, not a second engine
+
+| Borrowed | From |
+|---|---|
+| Category universe + seed rotation ("scan different categories") | `CategorySweep` (Roll the Dice) |
+| Product clustering signature and the pre-pricing screen | `JackpotHunter.ProductSignature` / `.Screen` |
+| Resale price, confidence, liquidity, days-to-cash | `AnalyzeProductAsync` → `ResalePricing` |
+| Break-even and goldmine target buy price | `JackpotHunter.BreakEvenBuyPrice` / `.TargetBuyPrice` |
+| Evidence bar for a green badge (≥5 comps, ≥50 confidence) | `LocalArbitrageAnalyzer` constants |
+| Terapeak scrape rationing (cache-only pass, then ≤N real) | `LocalArbitrageAnalyzer.SelectScrapeTargets` |
+| The two drop gates (thin history, sweep-vs-estimate disagreement) | Roll the Dice's board |
+
+A product is the same product here as it is on the Roll the Dice board, and a "buy now" clears the
+same bar a "goldmine" does. The genuinely new code is the time-series read, the corpus baseline and
+the ranking.
+
+**Ordering matters and is the cost control:** the trend read is free (arithmetic over comps already
+fetched), so *everything* gets measured, and the expensive per-product pricing lookup is only spent on
+the products that already showed a move.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/PriceTrendModels.cs` | **New** — `TrendWindow`, `TrendPoint`, `PriceTrendReading`, `TrendRadarRow`, `TrendNicheOutcome`, `TrendCorpus`, `TrendRadarResult` |
+| `Services/PriceTrendAnalyzer.cs` | **New** — `BuildCorpus`, `Measure`, `Judge`, `JudgeRow`, `SlopePerMonth` (Theil–Sen), `WeeklySeries`, `Detrend`, `TrendMultiplier`, `Rank`. Pure and clock-free — `nowUtc` is always passed in |
+| `Program.cs` | `GET /api/trends/radar` + `ScanPriceTrendsAsync` (sweep → baseline → measure → price) + `BuildTrendRow` (the money) |
+| `wwwroot/index.html` | "Rising Now" nav entry, `#trends-section` page, honesty footnote. `app.js?v=48`, `style.css?v=41` |
+| `wwwroot/app.js` | `bindTrendRadar`, `runTrendScan`, `renderTrendScan`, `renderTrendCorpus`, `renderTrendSummary`, `renderTrendRows`, `trendRowHtml`, `trendSparkline`, `huntTrendProduct` |
+| `wwwroot/style.css` | `.tr-*` — signal/verdict badges, tentative pill, gap-aware sparkline toned per signal |
+| `ING eBay AutoLister.Tests/PriceTrendAnalyzerTests.cs` | **New** — 38 tests |
+
+### Judgement calls worth knowing about
+
+- **A weekly sparkline keeps its gaps.** Weeks with no sales break the line rather than being closed
+  up; joining straight through them draws a steady seller out of an intermittent one.
+- **The sparkline is toned from the server's signal**, never re-derived from first-vs-last in the
+  browser — a squeeze whose newest week happened to be high would otherwise be drawn "rising green"
+  while the sentence beside it said the opposite.
+- **A flat trend line does not demote a rise.** A price that stepped up and held reads as a zero median
+  slope; only a *falling* line contradicts a window-on-window jump. (Caught by a test that failed
+  against the first, stricter version of this rule.)
+- **Growth from zero is left null, not printed as +100% or infinity.** No baseline, no percentage.
+- **Sales stopping is `cooling`, not `no data`** — a product that sold 12 last window and none since
+  has told you something, and it is not that the data is missing.
+- **"Find one" hands the product to Local Deals** with the same short keyword the server built, so the
+  radar says *what* and the existing sourcing screens say *where*. No new scraping.
+- **Seasonality is not modelled**, and the footnote says so outright: a product that climbs every
+  November will show as climbing every November.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **858 passed**, 0 failed, 0 skipped (820 pre-existing + 38 new) |
+| Live endpoint, small scan (dev port 9371) | 16 comps, 0 products with enough dated history → honest "scan again" warning, no exception |
+| Live endpoint, wide scan (10 niches x 3 probes) | 1,064 comps, 12 products measured, 2 rising, 10 priced, 6 dropped by the two gates; **corpus detrending fired for real** (+211.8% baseline removed, pushing relative velocities negative) and a genuine `supply_squeeze` was detected on a Snap-on drill |
+| Real browser (Playwright, stubbed API) | Nav opens the page; 3 rows rank buy-now → get-in-early → watch; buy row gold-edged; sparklines drawn with gaps split into 5 polylines; tentative pill on the dispersed row; summary tiles; baseline banner; "Find one" prefills Local Deals with `nvidia geforce rtx 3080` |
+| Real browser, **stale-data path** | A refused scan renders the "can't be read as a trend" banner, **hides the summary and renders no table at all** |
+| Browser console errors | **None** |
+
+Screenshot: `docs/screenshots/trend-radar.png`.
+
+One wording bug was found by the live run and fixed in the code: the thin-evidence verdict said
+*"The price is moving, but…"* on rows the scan had classified as **cooling** or unreadable — exactly
+backwards in front of a product whose sales had stopped. Now worded from the evidence, with a test.
+
+### Not verified
+
+- **Against a populated hosted comps database.** The local `Marketplace.db` available here is thin
+  (1,064 comps across ten categories, most clusters under the 6-dated-comp bar), so the *rows* in the
+  browser check come from a stub. The measurement, the corpus guards and the refusal paths were all
+  exercised against the real database; what is unproven is a full board of real rising products.
+- **Terapeak-blended rows** — needs a connected Terapeak session. The rationing is the same code path
+  Roll the Dice and Local Deals already use.

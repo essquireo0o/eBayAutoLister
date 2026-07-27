@@ -7345,3 +7345,123 @@ td.skeleton-cell { padding: 0 !important; }
 @media (max-width: 900px) {
   .th-ads-meta { align-items: flex-start; }
 }
+
+/* ── Rising-Demand / Price-Trend Radar ────────────────────────────────────────
+   Colour carries meaning here and nothing else: green is a measured rise, gold is
+   an early or squeezed one, grey is flat. The tentative pill is deliberately plain
+   rather than alarming — it qualifies a number, it doesn't condemn it. */
+
+.tr-table { table-layout: auto; }
+
+.tr-row-buy { background: linear-gradient(90deg, var(--success-soft) 0%, transparent 55%); }
+
+.tr-product { max-width: 340px; }
+
+.tr-name {
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.tr-sub {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.tr-note {
+  margin-top: 5px;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+/* The raw measurement sentence. Present on every row, quieter than the verdict — it
+   is the working, and the working should be available without competing with the answer. */
+.tr-note-quiet { color: var(--muted); }
+
+.tr-strong { font-weight: 700; color: var(--ink); }
+.tr-up     { color: var(--success); }
+
+.tr-trend { min-width: 150px; }
+
+.tr-signal {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tr-s-up      { background: var(--success-soft); color: var(--success); }
+.tr-s-early   { background: var(--gold-soft);    color: var(--gold-dark); }
+.tr-s-squeeze { background: #fdf0e2;             color: var(--warning); }
+.tr-s-flat    { background: var(--soft);         color: var(--muted); }
+.tr-s-down    { background: var(--danger-soft);  color: var(--danger); }
+
+.tr-tentative {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  cursor: help;
+}
+
+.tr-spark {
+  display: block;
+  margin: 6px 0 2px;
+  overflow: visible;
+}
+
+.tr-spark polyline { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.tr-spark circle   { stroke: none; }
+
+/* One tone per signal, named to match the badge classes above, so the line and the
+   label beside it can never disagree about which way this product is going. */
+.tr-spark-up      polyline { stroke: var(--success); }
+.tr-spark-up      circle   { fill: var(--success); }
+.tr-spark-early   polyline { stroke: var(--gold-dark); }
+.tr-spark-early   circle   { fill: var(--gold-dark); }
+.tr-spark-squeeze polyline { stroke: var(--warning); }
+.tr-spark-squeeze circle   { fill: var(--warning); }
+.tr-spark-down    polyline { stroke: var(--danger); }
+.tr-spark-down    circle   { fill: var(--danger); }
+.tr-spark-flat    polyline { stroke: var(--line-strong); }
+.tr-spark-flat    circle   { fill: var(--line-strong); }
+
+.tr-spark-empty {
+  margin: 6px 0 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tr-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tr-v-buy   { background: var(--success-soft); color: var(--success); }
+.tr-v-early { background: var(--gold-soft);    color: var(--gold-dark); }
+.tr-v-watch { background: var(--soft);         color: var(--ink-2); }
+.tr-v-thin  { background: #fdf1dc;             color: var(--warning); }
+.tr-v-pass  { background: var(--soft);         color: var(--muted); }
+
+.tr-hunt-btn { display: block; margin-top: 6px; }
+
+@media (max-width: 1100px) {
+  .tr-product { max-width: none; }
+  .tr-note-quiet { display: none; }
+}
