@@ -339,6 +339,37 @@ builder.Services.AddSingleton<DealPipelineCalculator>();
 // Craigslist. The sweep itself is orchestrated in ScanSnipesAsync below.
 builder.Services.AddSingleton<AuctionSniperAnalyzer>();
 
+// ── Deal Radar: the board that reads itself ───────────────────────────────────
+// Every sourcing screen above is a button. This is the same local-arbitrage scan, saved with a
+// profit bar on it and run on a human cadence, so the $400 miner three miles away doesn't need
+// somebody to be looking at the right tab at the right minute.
+//
+// The delegate below is the whole seam: FindLocalArbitrageAsync is a static local function wired to
+// fourteen singletons at the HTTP edge, and the radar needs exactly it — not a second pricing path,
+// which is how a notification ends up quoting a profit the board it links to doesn't show. Every
+// service it closes over is a singleton, so there is no scope to create and nothing to dispose.
+builder.Services.AddSingleton<DealRadarStore>();
+builder.Services.AddSingleton<DesktopNotifier>();
+builder.Services.AddSingleton<LocalArbitrageScan>(sp => (request, token) => FindLocalArbitrageAsync(
+    request.Query, request.Zip, request.RadiusMiles, request.MaxItems, request.TerapeakBudget,
+    sort: null, sp.GetRequiredService<LocalSupplySources>().Resolve(request.Sources), request.CraigslistSite,
+    // The rate only touches retail rows, and a radar watch reads classifieds by default. The board's
+    // own default is used rather than a per-watch field nobody would fill in.
+    RetailBuyCosts.DefaultSalesTaxPercent,
+    sp.GetRequiredService<IMarketplaceRepository>(), sp.GetRequiredService<ProductNormalizer>(),
+    sp.GetRequiredService<ComparableMatcher>(), sp.GetRequiredService<MarketPriceEstimator>(),
+    sp.GetRequiredService<SellThroughCalculator>(), sp.GetRequiredService<ProfitCalculator>(),
+    sp.GetRequiredService<FeeProfile>(), sp.GetRequiredService<OpportunityScoringService>(),
+    sp.GetRequiredService<ConfidenceScoringService>(), sp.GetRequiredService<TerapeakMarketService>(),
+    sp.GetRequiredService<TerapeakService>(), sp.GetRequiredService<LocalArbitrageAnalyzer>(),
+    sp.GetRequiredService<ActionLog>(), token,
+    request.Coupons ? sp.GetRequiredService<CouponService>() : null,
+    ResaleCategoryCatalog.Resolve(request.CategoryId)));
+builder.Services.AddSingleton<DealRadarService>();
+// Registered as the same instance twice: the hosted service that runs the loop, and the object the
+// endpoints ask "is a scan running" and "run this one now".
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DealRadarService>());
+
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
 // key, so opening it to any origin only exposes what an admin-key holder can
@@ -2086,6 +2117,126 @@ app.MapPost("/api/local/negotiate", (
 
     return Results.Ok(plan);
 });
+
+// ── Deal Radar ────────────────────────────────────────────────────────────────────────────────
+// Saved searches that run themselves. Everything below is bookkeeping over DealRadarStore plus one
+// call into DealRadarService — the scanning, the cadence and the bar all live there, because the
+// timer and the "Scan now" button have to take exactly the same path or the two will drift.
+//
+// Nothing here scans on a GET. The status endpoint is polled by the open tab every half-minute.
+
+app.MapGet("/api/radar/status", (
+    DealRadarStore store, DealRadarService radar, DesktopNotifier notifier) =>
+    Results.Ok(BuildRadarStatus(store, radar, notifier)));
+
+// The feed. Dismissed alerts are excluded unless asked for — dismissing is "I've dealt with this",
+// not "delete the record", and the seen-memory keeps it from being re-found either way.
+app.MapGet("/api/radar/alerts", (int? limit, bool? includeDismissed, DealRadarStore store) =>
+    Results.Ok(store.ListAlerts(limit ?? 60, includeDismissed == true)));
+
+// Create or edit one watch. A partial body edits only what it names (see DealWatchRequest), so the
+// pause toggle can post two fields without blanking the seller's thresholds.
+app.MapPost("/api/radar/watches", (
+    DealWatchRequest req, DealRadarStore store, DealRadarService radar, DesktopNotifier notifier, ActionLog log) =>
+{
+    try
+    {
+        var watch = store.SaveWatch(req);
+        log.Add("Deal Radar", req.Id is > 0 ? "Watch updated" : "Watch saved",
+            $"\"{watch.Name}\" — {DealRadarService.EffectiveSources(watch)}, every {watch.IntervalMinutes} min, " +
+            $"at least {watch.MinNetProfit:C0} and {watch.MinRoiPercent:0}%");
+        return Results.Ok(new { ok = true, watch, status = BuildRadarStatus(store, radar, notifier) });
+    }
+    catch (InvalidOperationException ex)
+    {
+        // The validation messages are sentences a seller can act on, so they're returned as-is
+        // rather than as a generic 400 body the UI would have to translate.
+        return Results.BadRequest(new { ok = false, error = ex.Message });
+    }
+});
+
+app.MapDelete("/api/radar/watches/{id:long}", (
+    long id, DealRadarStore store, DealRadarService radar, DesktopNotifier notifier, ActionLog log) =>
+{
+    var deleted = store.DeleteWatch(id);
+    if (deleted) log.Add("Deal Radar", "Watch deleted", $"Watch #{id} and its alerts were removed.");
+    return Results.Ok(new { ok = deleted, status = BuildRadarStatus(store, radar, notifier) });
+});
+
+// Scan one watch right now. Takes the same one-at-a-time gate the timer does, so pressing this
+// during a background sweep is answered immediately with what's happening rather than queued.
+app.MapPost("/api/radar/watches/{id:long}/run", async (
+    long id, DealRadarStore store, DealRadarService radar, DesktopNotifier notifier, CancellationToken ct) =>
+{
+    var run = await radar.RunWatchAsync(id, manual: true, ct);
+    return Results.Ok(new
+    {
+        ok = run.Status != RadarRunStatuses.Error,
+        // `runStatus`, not `status`: the camelCase policy would collide it with the radar status
+        // below, and System.Text.Json answers a duplicate property name with a 500 — which reads,
+        // after a two-minute scan, as "the scan failed" rather than "the reply couldn't be written".
+        runStatus = run.Status,
+        run.Note, run.Alerts, run.Scanned,
+        status = BuildRadarStatus(store, radar, notifier),
+    });
+});
+
+app.MapPost("/api/radar/settings", (
+    DealRadarSettings req, DealRadarStore store, DealRadarService radar, DesktopNotifier notifier, ActionLog log) =>
+{
+    var saved = store.SaveSettings(req);
+    log.Add("Deal Radar", saved.Enabled ? "Radar switched on" : "Radar switched off",
+        saved.Enabled
+            ? $"Watches will run on their own schedule. Quiet hours: {(DealRadarClock.DescribeQuietHours(saved) is { Length: > 0 } q ? q : "off")}."
+            : "Nothing will scan in the background. Scan now still works.");
+    return Results.Ok(new { ok = true, settings = saved, status = BuildRadarStatus(store, radar, notifier) });
+});
+
+app.MapPost("/api/radar/alerts/{id:long}/read", (long id, bool? value, DealRadarStore store) =>
+    Results.Ok(new { ok = store.SetAlertFlag(id, "read", value ?? true) }));
+
+app.MapPost("/api/radar/alerts/{id:long}/dismiss", (long id, DealRadarStore store) =>
+    // Dismissing marks it read too: an alert taken off the feed unread would keep the badge lit for
+    // something the seller has already dealt with.
+    Results.Ok(new { ok = store.SetAlertFlag(id, "dismissed", true) && store.SetAlertFlag(id, "read", true) }));
+
+app.MapPost("/api/radar/alerts/read-all", (DealRadarStore store) =>
+    Results.Ok(new { ok = true, marked = store.MarkAllRead() }));
+
+app.MapPost("/api/radar/alerts/clear", (DealRadarStore store, ActionLog log) =>
+{
+    var cleared = store.ClearAlerts();
+    log.Add("Deal Radar", "Feed cleared", $"{cleared} alert(s) removed. Nothing already found will be re-alerted.");
+    return Results.Ok(new { ok = true, cleared });
+});
+
+// One read for the whole screen: the settings, every watch with where the scanner got to, the
+// counts behind the sidebar badge, and — stated rather than assumed — whether a notification can
+// physically reach this desktop from this process. See DesktopNotifier.
+static DealRadarStatus BuildRadarStatus(DealRadarStore store, DealRadarService radar, DesktopNotifier notifier)
+{
+    var settings = store.GetSettings();
+    var watches = store.ListWatches();
+    var counts = store.AlertCounts();
+    var now = DateTimeOffset.UtcNow;
+
+    return new DealRadarStatus
+    {
+        Settings = settings,
+        Watches = watches,
+        Scanning = radar.Scanning,
+        ScanningWatchId = radar.ScanningWatchId,
+        LastScanUtc = radar.LastScanUtc,
+        NextScanUtc = settings.Enabled ? DealRadarClock.NextScanDue(watches, now) : null,
+        UnreadAlertCount = counts.Unread,
+        TotalAlertCount = counts.Total,
+        UnreadProfit = counts.UnreadProfit,
+        DesktopChannel = notifier.Channel,
+        InQuietHours = DealRadarClock.IsQuiet(settings, now.ToLocalTime()),
+        MaxWatches = DealRadarClock.MaxWatches,
+        MinIntervalMinutes = DealRadarClock.MinIntervalMinutes,
+    };
+}
 
 // ── Spend the budget: the sourcing basket ─────────────────────────────────────────────────────
 // Every board above ranks deals one at a time. This is the only endpoint that answers the question
@@ -7296,6 +7447,7 @@ trayIcon.ShowBalloonTip(
 
 var ctxMenu = new System.Windows.Forms.ContextMenuStrip();
 ctxMenu.Items.Add("Open ING AutoLister", null, (_, _) => OpenBrowser());
+ctxMenu.Items.Add("Open Deal Radar", null, (_, _) => OpenBrowserAt("#radar"));
 ctxMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
 ctxMenu.Items.Add("Quit ING AutoLister", null, (_, _) =>
 {
@@ -7305,7 +7457,38 @@ ctxMenu.Items.Add("Quit ING AutoLister", null, (_, _) =>
 trayIcon.ContextMenuStrip  = ctxMenu;
 trayIcon.DoubleClick      += (_, _) => OpenBrowser();
 
+// ── Deal Radar → the Windows notification tray ───────────────────────────────
+// The radar runs inside this process and knows nothing about WinForms — a background service
+// touching a NotifyIcon is how the headless service install turns into a 3am crash with nobody
+// watching (see Services/DesktopNotifier.cs). This is the entire connection between the two.
+//
+// The hidden control exists only for its handle: ShowBalloonTip has to be called on the thread that
+// created the tray icon, and the radar fires from a timer thread.
+var uiMarshal = new System.Windows.Forms.Control();
+_ = uiMarshal.Handle;
+
+var desktopNotifier = app.Services.GetRequiredService<DesktopNotifier>();
+desktopNotifier.Notified += notification =>
+{
+    try
+    {
+        uiMarshal.BeginInvoke(() => trayIcon.ShowBalloonTip(
+            10000, notification.Title, notification.Message, System.Windows.Forms.ToolTipIcon.Info));
+    }
+    catch
+    {
+        // The tray is being torn down, or the handle is gone. The find is already saved and sitting
+        // in the feed — a notification is the least important thing happening at this moment.
+    }
+};
+// Only now can /api/radar/status promise a desktop notification. Without this it reports "browser"
+// and the UI says the tab has to stay open, rather than promising a balloon nothing can draw.
+desktopNotifier.AttachDesktopChannel();
+trayIcon.BalloonTipClicked += (_, _) => OpenBrowserAt("#radar");
+
 System.Windows.Forms.Application.Run(); // blocks until ExitThread()
+desktopNotifier.DetachDesktopChannel();
+uiMarshal.Dispose();
 await app.StopAsync(TimeSpan.FromSeconds(3));
 _mutex?.Dispose();
 
@@ -7351,6 +7534,12 @@ static System.Drawing.Icon CreateAppIcon()
 void OpenBrowser() =>
     System.Diagnostics.Process.Start(
         new System.Diagnostics.ProcessStartInfo(baseUrl) { UseShellExecute = true });
+
+// The same, landing on one screen. Used by the Deal Radar balloon and its tray entry: a
+// notification that opens the dashboard makes the seller hunt for the thing it just told them about.
+void OpenBrowserAt(string hash) =>
+    System.Diagnostics.Process.Start(
+        new System.Diagnostics.ProcessStartInfo(baseUrl + hash) { UseShellExecute = true });
 
 // EnsureLocalDns removed: no hosts-file write means nothing for antivirus/EDR to
 // flag as hosts hijacking. The app is reached at http://localhost:9332.

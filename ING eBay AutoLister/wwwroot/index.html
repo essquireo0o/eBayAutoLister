@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=65" />
+  <link rel="stylesheet" href="style.css?v=66" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -57,6 +57,9 @@
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.1"/><path d="M12 2.7v2.3M12 19v2.3M2.7 12H5M19 12h2.3M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.3 14.6A8.5 8.5 0 019.4 3.7a8.5 8.5 0 1010.9 10.9z"/></symbol>
       <symbol id="i-auto" viewBox="0 0 24 24"><rect x="2.8" y="4.3" width="18.4" height="12.4" rx="2"/><path d="M8.6 20.3h6.8M12 16.7v3.6"/></symbol>
+      <!-- Deal Radar. Sweeping arcs out of a fixed point, with the blip it found — the one
+           icon in the set that has to say "this is watching while you aren't". -->
+      <symbol id="i-radar" viewBox="0 0 24 24"><path d="M4 20a11.3 11.3 0 0116-16"/><path d="M4 20a7.1 7.1 0 0110-10"/><path d="M4 20a3 3 0 014-4"/><circle cx="17" cy="14" r="1.5" fill="currentColor" stroke="none"/></symbol>
     </defs>
   </svg>
 
@@ -103,6 +106,13 @@
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
 
         <p class="nav-group-label">Grow</p>
+        <!-- The only screen in the app that works when nobody is looking at it. Every other
+             sourcing board is a button someone has to remember to press; this one is that same
+             scan, saved with a profit bar on it, running on its own. It sits first in Grow
+             because the deals it finds are the ones the other screens were never open for.
+             The badge is drawn from data-count in CSS, so the tab bar takes its title from this
+             button's text without picking the number up with it. -->
+        <button class="nav-item" type="button" data-page="radar"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>Deal Radar<span id="nav-radar-badge" class="nav-badge hidden" data-count="0" aria-hidden="true"></span></button>
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
         <!-- The only sourcing screen that buys on the same marketplace it sells on. Sits directly
              under the Opportunity Finder because it answers the same question with a clock on it:
@@ -2354,6 +2364,218 @@
       <!-- Rising-Demand / Price-Trend Radar. Every other screen prices the present tense; this one
            reads the sold-comps database as a time series and finds what is on its way up, while it
            is still cheap to buy. Read-only — it lists nothing and changes no price. -->
+      <!-- ── Deal Radar ────────────────────────────────────────────────────────────────────────
+           The only screen here that does its work with nobody watching. It is the local-arbitrage
+           board's own scan — same sources, same sold comps, same ProfitCalculator — saved with a
+           profit bar on it and run on a human cadence, so a deal that appears at 2am is waiting in
+           the morning instead of gone. Backed by /api/radar/*. -->
+      <section id="radar-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="rad-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Deal Radar</div>
+              <h2>📡 The deals that find you</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="rad-add" class="btn btn-primary" type="button">+ New watch</button>
+            <button id="rad-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">
+              Save a search — <strong>what, where, and how far</strong> — plus the smallest profit worth
+              driving for. The radar re-runs it on its own, prices every result against the same eBay sold
+              comps the boards use, and <strong>tells your desktop</strong> the moment something clears your
+              bar. It reads the sites the way a person does: one search at a time, a few times a day.
+            </p>
+
+            <!-- The master switch, its live state, and the one browser permission this feature needs.
+                 Deliberately the first thing on the screen: everything below it is inert until this
+                 is on, and a screen full of watches that aren't running is worse than an empty one. -->
+            <div class="rad-master">
+              <label class="rad-switch" for="rad-enabled">
+                <input id="rad-enabled" type="checkbox" />
+                <span class="rad-switch-track" aria-hidden="true"></span>
+                <span class="rad-switch-text">Watch in the background</span>
+              </label>
+              <span id="rad-state" class="rad-state">Off — nothing is scanning.</span>
+              <div class="rad-master-actions">
+                <button id="rad-desktop-permit" class="btn btn-secondary small hidden" type="button">🔔 Turn on desktop alerts</button>
+                <button id="rad-settings-toggle" class="btn btn-ghost small" type="button" aria-expanded="false" aria-controls="rad-settings">Alert settings</button>
+              </div>
+            </div>
+
+            <div id="rad-settings" class="rad-settings hidden">
+              <div class="inv-controls">
+                <div class="opp-field inv-field-small">
+                  <label for="rad-quiet-from">Don't ping me from</label>
+                  <select id="rad-quiet-from"></select>
+                </div>
+                <div class="opp-field inv-field-small">
+                  <label for="rad-quiet-to">until</label>
+                  <select id="rad-quiet-to"></select>
+                </div>
+                <label class="rad-check">
+                  <input id="rad-quiet-enabled" type="checkbox" /> Use quiet hours
+                </label>
+                <label class="rad-check">
+                  <input id="rad-desktop-on" type="checkbox" /> Desktop notifications
+                </label>
+              </div>
+              <p class="rad-note">
+                Quiet hours silence the <em>ping</em>, never the scan — the whole point is that it keeps
+                working overnight. Anything found while you're asleep is in the feed at breakfast.
+              </p>
+            </div>
+
+            <!-- Where a notification can physically come from. Stated rather than assumed: promising a
+                 Windows notification the app cannot draw is worse than saying to leave the tab open. -->
+            <div id="rad-channel" class="rad-channel hidden"></div>
+          </div>
+
+          <!-- ── The watch editor ──────────────────────────────────────────────────────────────
+               Hidden until New watch or Edit. The thresholds are the interesting half: they are what
+               separates "tell me about everything" from "tell me about the ones worth the drive". -->
+          <div id="rad-form" class="rad-form hidden">
+            <div class="rad-form-head">
+              <h3 id="rad-form-title">New watch</h3>
+              <button id="rad-form-cancel" class="btn btn-ghost small" type="button">Cancel</button>
+            </div>
+
+            <p class="rad-form-legend">What to look for</p>
+            <div class="inv-controls">
+              <div class="opp-field">
+                <label for="rad-name">Name it (optional)</label>
+                <input id="rad-name" type="text" placeholder="S19s under $500" maxlength="60" />
+              </div>
+              <div class="opp-field">
+                <label for="rad-query">Keyword</label>
+                <input id="rad-query" type="text" placeholder="antminer s19" maxlength="80" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rad-category">Kind of thing</label>
+                <select id="rad-category"></select>
+              </div>
+            </div>
+
+            <p class="rad-form-legend">Where</p>
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="rad-zip">ZIP code</label>
+                <input id="rad-zip" type="text" inputmode="numeric" placeholder="89101" maxlength="10" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rad-radius">Within</label>
+                <select id="rad-radius">
+                  <option value="10">10 miles</option>
+                  <option value="20">20 miles</option>
+                  <option value="40" selected>40 miles</option>
+                  <option value="60">60 miles</option>
+                  <option value="100">100 miles</option>
+                  <option value="150">150 miles</option>
+                </select>
+              </div>
+              <div class="opp-field">
+                <label>Sites to read</label>
+                <div id="rad-sources" class="rad-sources"></div>
+              </div>
+            </div>
+
+            <p class="rad-form-legend">What's worth waking you for</p>
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="rad-min-profit">At least this much profit</label>
+                <input id="rad-min-profit" type="number" min="0" step="5" value="75" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rad-min-roi">…and this much ROI (%)</label>
+                <input id="rad-min-roi" type="number" min="0" step="5" value="40" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rad-max-ask">Don't show asks above</label>
+                <input id="rad-max-ask" type="number" min="0" step="25" placeholder="no limit" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rad-max-distance">Within driving distance (mi)</label>
+                <input id="rad-max-distance" type="number" min="0" step="5" placeholder="anywhere in radius" />
+              </div>
+            </div>
+
+            <p class="rad-form-legend">How often</p>
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="rad-interval">Re-check every</label>
+                <select id="rad-interval">
+                  <option value="30">30 minutes</option>
+                  <option value="60">1 hour</option>
+                  <option value="120">2 hours</option>
+                  <option value="180" selected>3 hours</option>
+                  <option value="360">6 hours</option>
+                  <option value="720">12 hours</option>
+                  <option value="1440">Once a day</option>
+                </select>
+              </div>
+              <label class="rad-check">
+                <input id="rad-confident" type="checkbox" checked /> Only deals backed by solid sold comps
+              </label>
+              <label class="rad-check">
+                <input id="rad-notify" type="checkbox" checked /> Notify my desktop
+              </label>
+            </div>
+
+            <p class="rad-note">
+              <strong>Only deals backed by solid sold comps</strong> is worth leaving on. With it off you'll
+              also hear about deals priced from thin or unmatched sold history — the board dims those
+              figures and explains why, and a notification has no room for the explanation.
+            </p>
+
+            <div class="rad-form-actions">
+              <span id="rad-form-error" class="rad-form-error hidden"></span>
+              <button id="rad-delete" class="btn btn-ghost small hidden" type="button">Delete this watch</button>
+              <button id="rad-save" class="btn btn-primary" type="button">Save watch</button>
+            </div>
+          </div>
+
+          <div id="rad-watches" class="rad-watches"></div>
+
+          <div id="rad-feed-head" class="rad-feed-head hidden">
+            <div>
+              <p class="eyebrow">What it found</p>
+              <h3 id="rad-feed-title">Deals</h3>
+            </div>
+            <div class="rad-feed-actions">
+              <button id="rad-read-all" class="btn btn-ghost small" type="button">Mark all read</button>
+              <button id="rad-clear" class="btn btn-ghost small" type="button">Clear feed</button>
+            </div>
+          </div>
+
+          <div id="rad-alerts" class="rad-alerts">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></div>
+              <div class="state-title">The best deal you'll see this week will be posted while you're doing something else.</div>
+              <p class="state-body">A watch is one saved search plus the smallest profit worth your time. The radar re-runs it every few hours, prices what it finds against real eBay sold history, and only interrupts you for the ones that clear your bar.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('rad-add')?.click()">Create your first watch</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing here buys, bids, lists or messages anyone.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            Every figure on an alert is the figure the local board published at the moment it was found —
+            frozen, because a classified is deleted the hour it sells and an alert that re-read its listing
+            would blank itself exactly when you want to know what you missed. <strong>Prices and stock change;
+            check the listing before you drive.</strong> The radar reads each site once per scan, one scan at a
+            time, and never signs into anything on a schedule: Facebook is only read when you've already
+            connected it, and Terapeak is never scraped unattended. Nothing is alerted on twice.
+          </p>
+        </div>
+      </section>
+
       <section id="trends-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
@@ -4263,6 +4485,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=73"></script>
+  <script src="app.js?v=74"></script>
 </body>
 </html>

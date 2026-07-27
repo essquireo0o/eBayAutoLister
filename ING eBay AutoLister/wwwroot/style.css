@@ -12848,3 +12848,322 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   .theme-switch-thumb { display: none; }
   .theme-switch-opt[aria-checked="true"] { border: 2px solid CanvasText; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Deal Radar
+   The one screen whose subject is a machine working while nobody watches,
+   so its visual job differs from every other board here: not "rank these
+   rows" but "here is what is running, and here is what it caught". Two
+   stacks, deliberately unalike — watch cards read as instruments (state
+   pill, terms, last reading), alert cards read as finds (image, one
+   sentence, the money, and the two things to do about it).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* The sidebar's unread count. Drawn from data-count rather than as text, so
+   the workspace tab bar keeps taking its title from the button's
+   textContent without picking the number up with it. */
+.nav-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--grad-gold-flat);
+  color: var(--on-gold);
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .06);
+}
+.nav-badge::after { content: attr(data-count); }
+
+/* ── The master strip ──────────────────────────────────────────────── */
+.rad-master {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.rad-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+.rad-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.rad-switch-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  transition: background-color .18s ease;
+}
+.rad-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--e1);
+  transition: transform .18s ease;
+}
+.rad-switch input:checked + .rad-switch-track { background: var(--success-600); }
+.rad-switch input:checked + .rad-switch-track::after { transform: translateX(18px); }
+.rad-switch input:focus-visible + .rad-switch-track { box-shadow: 0 0 0 3px rgba(199, 154, 54, .45); }
+
+.rad-state { font-size: var(--fs-sm); color: var(--muted); }
+.rad-master-actions { display: flex; gap: var(--s2); margin-left: auto; }
+
+.rad-settings {
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+
+.rad-note {
+  margin-top: var(--s2);
+  max-width: 90ch;
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.rad-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+/* Whether a notification can physically reach this desktop. Green when it
+   can, gold when it cannot — never hidden, because a seller who believes
+   they will be told and will not be is the one failure this cannot afford. */
+.rad-channel {
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.rad-channel--ok   { border-color: var(--success-line); border-left-color: var(--success-600); background: var(--success-tint); color: var(--ink); }
+.rad-channel--warn { border-color: var(--warning-line); border-left-color: var(--warning-600); background: var(--warning-tint); color: var(--ink); }
+
+/* ── The watch editor ──────────────────────────────────────────────── */
+.rad-form {
+  margin: var(--s5) 0;
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e2);
+}
+.rad-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+.rad-form-head h3 { font-family: var(--font-display); font-size: var(--fs-lg); color: var(--ink); }
+
+/* Four short legends instead of one long form: what, where, what is worth
+   waking you for, how often. The third one is the whole feature. */
+.rad-form-legend {
+  margin: var(--s4) 0 var(--s2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rad-sources { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); padding-top: var(--s1); }
+/* These sit inside an .opp-field, whose label rule sets small caps and wide
+   tracking — right for "SITES TO READ" above them, wrong for a site name and
+   badly wrong for the sentence explaining why one of them is unavailable. */
+.rad-sources .rad-check {
+  text-transform: none;
+  letter-spacing: var(--tracking-normal);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-normal);
+  color: var(--ink-2);
+}
+.rad-source-note { font-size: var(--fs-xs); color: var(--muted); }
+
+.rad-form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line-soft);
+}
+.rad-form-actions .btn-primary { margin-left: auto; }
+.rad-form-error { flex: 1; font-size: var(--fs-sm); color: var(--danger); }
+
+/* ── The watch cards ───────────────────────────────────────────────── */
+.rad-watches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: var(--s4);
+  margin: var(--s5) 0;
+}
+
+.rad-watch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+.rad-watch.is-paused { background: var(--soft); opacity: .82; }
+
+.rad-watch-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.rad-watch-head h4 {
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.rad-watch-terms { font-size: var(--fs-sm); color: var(--ink-2); }
+.rad-watch-bar,
+.rad-watch-last { font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
+.rad-watch-found { font-size: var(--fs-xs); color: var(--success); font-weight: var(--fw-medium); }
+
+.rad-watch-actions { display: flex; gap: var(--s2); margin-top: auto; padding-top: var(--s3); }
+
+.rad-pill {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rad-pill--ok     { background: var(--success-soft); color: var(--success); }
+.rad-pill--quiet  { background: var(--soft-2);       color: var(--muted); }
+.rad-pill--paused { background: var(--line-soft);    color: var(--faint); }
+.rad-pill--error  { background: var(--danger-soft);  color: var(--danger); }
+.rad-pill--scan   { background: var(--info-soft);    color: var(--info); }
+.rad-pill--new    { background: var(--grad-gold-flat); color: var(--on-gold); }
+
+/* ── The feed ──────────────────────────────────────────────────────── */
+.rad-feed-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin: var(--s6) 0 var(--s3);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--line-soft);
+}
+.rad-feed-head h3 { font-family: var(--font-display); font-size: var(--fs-lg); color: var(--ink); }
+.rad-feed-actions { display: flex; gap: var(--s2); }
+
+.rad-alerts { display: flex; flex-direction: column; gap: var(--s3); }
+
+.rad-alert {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: var(--s4);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+/* An unread find gets the app's one accent, and nothing else does. */
+.rad-alert.is-new { border-left: 4px solid var(--gold); background: var(--gold-tint); }
+
+.rad-alert-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  background: var(--soft-2);
+}
+.rad-alert-img--none { border: 1px dashed var(--line-strong); }
+
+.rad-alert-body { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.rad-alert-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
+
+/* The sentence the whole feature exists to write. Sized like a heading
+   because on this screen it IS the heading — the item's own title is a
+   detail inside it, not the other way round. */
+.rad-alert-headline {
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+}
+
+.rad-alert-meta { font-size: var(--fs-xs); color: var(--muted); }
+.rad-alert-evidence { font-size: var(--fs-xs); color: var(--muted); font-style: italic; }
+.rad-alert-nolink { font-size: var(--fs-xs); color: var(--muted); align-self: center; }
+
+.rad-alert-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--s2) var(--s4);
+  padding: var(--s2) 0;
+}
+.rad-figure { display: flex; flex-direction: column; gap: 1px; }
+.rad-figure-label {
+  font-size: var(--fs-3xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rad-figure-value {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.rad-alert-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s1); }
+
+@media (max-width: 720px) {
+  .rad-alert { grid-template-columns: 1fr; }
+  .rad-alert-img { width: 100%; height: 140px; }
+  .rad-master-actions { margin-left: 0; }
+}
+
+/* The gold tint on an unread alert is a light-mode surface; the same rule
+   on the dark palette would paint a near-white card into a dark stack. */
+:root[data-theme="dark"] .rad-alert.is-new { background: rgba(199, 154, 54, .10); }
+:root[data-theme="dark"] .rad-switch-track::after { background: var(--on-dark); }

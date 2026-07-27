@@ -381,6 +381,7 @@
     bindPromoted();
     bindShipping();
     bindTrendRadar();
+    bindDealRadar();
     bindWhereToSell();
     bindSniper();
     bindEarnings();
@@ -610,6 +611,10 @@
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
     ai:          { section: 'new-listing-overlay',   open: showAiSection },
     photos:      { section: 'photo-library-section', open: showPhotoLibrarySection },
+    // The one page that is doing something whether or not it is open. onShow/onHide only control
+    // how often it re-reads itself — the scanning happens in the server either way.
+    radar:       { section: 'radar-section',         open: showRadarSection,
+                   onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
     snipe:       { section: 'snipe-section',         open: showSnipeSection,
                    onShow: startSnipeTicker, onHide: stopSnipeTicker },
@@ -951,7 +956,7 @@
 
   // Every full-screen view in the app, including the AI Listing modal: hiding "the screens" has
   // to mean all of them, or navigating out of a draft leaves it sitting on top of the next one.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -7169,6 +7174,795 @@
           </div>
         </div>`;
     }).join('');
+  }
+
+  // ══ Deal Radar ═══════════════════════════════════════════════════════════
+  // The only feature in this app that keeps working when its screen is closed. The server does the
+  // scanning; everything here is (a) managing the saved searches, (b) rendering what was found, and
+  // (c) getting a find onto the desktop when the tray couldn't do it.
+  //
+  // Two notification paths, deliberately not one. When the app is running with its tray icon, the
+  // server raises a Windows balloon and marks the alert `notified` — that reaches the seller with no
+  // browser open at all. When it can't (a headless Windows service install), this page's own
+  // Notification API is the channel, and it fires only for alerts the tray did NOT already announce.
+  // Double-notifying is exactly how a good alert becomes an annoying one.
+
+  let radarStatus = null;
+  let radarAlerts = [];
+  let radarEditingId = null;       // null while creating
+  let radarCategories = [];
+  let radarSourceList = [];
+  let radarOpenTimer = null;       // fast poll, only while the screen is open
+  let radarBackgroundTimer = null; // slow poll, always — the badge and the notifications
+  const RADAR_LAST_SEEN_KEY = 'ing-radar-last-alert-id';
+  const RADAR_OPEN_POLL_MS = 15000;
+  const RADAR_BACKGROUND_POLL_MS = 60000;
+
+  function showRadarSection() {
+    hideOverlaySections();
+    $('radar-section')?.classList.remove('hidden');
+    setActiveNavItem('radar');
+    markWorkspaceTabOpen('radar');
+    refreshRadar();
+  }
+
+  function closeRadarSection() {
+    closeWorkspacePage('radar');
+  }
+
+  function bindDealRadar() {
+    on('rad-close', 'click', closeRadarSection);
+    on('rad-home', 'click', goHome);
+    on('rad-add', 'click', () => openRadarForm(null));
+    on('rad-form-cancel', 'click', closeRadarForm);
+    on('rad-save', 'click', saveRadarWatch);
+    on('rad-delete', 'click', deleteRadarWatch);
+    on('rad-settings-toggle', 'click', () =>
+      toggleDisclosure('rad-settings', 'rad-settings-toggle', 'Alert settings', 'Hide settings'));
+    on('rad-desktop-permit', 'click', requestRadarNotificationPermission);
+    on('rad-read-all', 'click', markAllRadarAlertsRead);
+    on('rad-clear', 'click', clearRadarFeed);
+
+    // The master switch and the four alert settings all post the same object, so there is one
+    // server-side shape to reason about rather than five partial ones.
+    ['rad-enabled', 'rad-quiet-enabled', 'rad-desktop-on', 'rad-quiet-from', 'rad-quiet-to']
+      .forEach(id => on(id, 'change', saveRadarSettings));
+
+    fillRadarHourSelects();
+    $('rad-watches')?.addEventListener('click', onRadarWatchClick);
+    $('rad-alerts')?.addEventListener('click', onRadarAlertClick);
+
+    // Runs whether or not the screen is open: the badge and the notification are the whole point,
+    // and both have to work while the seller is looking at the editor.
+    startRadarBackgroundPolling();
+  }
+
+  // ── Reading the server ───────────────────────────────────────────────────
+
+  async function refreshRadar() {
+    await Promise.all([loadRadarStatus(), loadRadarAlerts()]);
+    if (!radarCategories.length) loadRadarPickers();
+  }
+
+  async function loadRadarStatus() {
+    const { data } = await localFetchJson('/api/radar/status', 15000);
+    if (!data) return null;
+    radarStatus = data;
+    renderRadarStatus();
+    renderRadarWatches();
+    return data;
+  }
+
+  async function loadRadarAlerts() {
+    const { data } = await localFetchJson('/api/radar/alerts?limit=60', 15000);
+    if (!Array.isArray(data)) return;
+    radarAlerts = data;
+    renderRadarAlerts();
+  }
+
+  // The category list and the source list, for the watch editor. Loaded once — they don't change
+  // while the app is running, and the editor opens often.
+  async function loadRadarPickers() {
+    const [cats, sources] = await Promise.all([
+      localFetchJson('/api/local/categories', 15000),
+      localFetchJson('/api/local/sources', 15000),
+    ]);
+    if (Array.isArray(cats.data)) radarCategories = cats.data;
+    if (Array.isArray(sources.data)) radarSourceList = sources.data;
+  }
+
+  // ── The master strip ─────────────────────────────────────────────────────
+
+  function renderRadarStatus() {
+    if (!radarStatus) return;
+    const s = radarStatus.settings || {};
+    const watches = radarStatus.watches || [];
+    const live = watches.filter(w => w.enabled).length;
+
+    const enabledBox = $('rad-enabled');
+    if (enabledBox) enabledBox.checked = !!s.enabled;
+    const quietBox = $('rad-quiet-enabled');
+    if (quietBox) quietBox.checked = !!s.quietHoursEnabled;
+    const desktopBox = $('rad-desktop-on');
+    if (desktopBox) desktopBox.checked = !!s.desktopNotifications;
+    setValue('rad-quiet-from', String(s.quietFromHour ?? 23));
+    setValue('rad-quiet-to', String(s.quietToHour ?? 7));
+
+    // Says what is happening now, in this order of usefulness: a scan in flight, then the reason
+    // nothing is, then when the next one lands. "On" with no watches is the trap this avoids.
+    let state;
+    if (!s.enabled) {
+      state = watches.length
+        ? 'Off — your watches are saved but nothing is scanning.'
+        : 'Off — add a watch, then switch this on.';
+    } else if (radarStatus.scanning) {
+      const which = watches.find(w => w.id === radarStatus.scanningWatchId);
+      state = `Scanning ${which ? `“${which.name}”` : 'now'}…`;
+    } else if (!live) {
+      state = 'On, but every watch is paused.';
+    } else {
+      const next = radarStatus.nextScanUtc ? radarAgo(radarStatus.nextScanUtc, true) : 'shortly';
+      state = `On · ${live} watch${live === 1 ? '' : 'es'} · next sweep ${next}`;
+      if (radarStatus.inQuietHours) state += ' · quiet hours — finds are collected silently';
+    }
+    setText('rad-state', state);
+
+    renderRadarChannelNote();
+    updateRadarBadge();
+
+    const hasAlerts = (radarStatus.totalAlertCount || 0) > 0;
+    $('rad-feed-head')?.classList.toggle('hidden', !hasAlerts);
+    setText('rad-feed-title', hasAlerts
+      ? `${radarStatus.totalAlertCount} deal${radarStatus.totalAlertCount === 1 ? '' : 's'} found` +
+        (radarStatus.unreadAlertCount ? ` · ${radarStatus.unreadAlertCount} new` : '')
+      : 'Deals');
+  }
+
+  // Where a notification can actually come from, said out loud. The server knows whether a tray icon
+  // is attached; the browser knows whether it has permission. Neither alone can answer the seller's
+  // real question, which is "will I actually hear about this".
+  function renderRadarChannelNote() {
+    const el = $('rad-channel');
+    const permitBtn = $('rad-desktop-permit');
+    if (!el) return;
+
+    const supported = 'Notification' in window;
+    const granted = supported && Notification.permission === 'granted';
+    const denied = supported && Notification.permission === 'denied';
+    const tray = radarStatus?.desktopChannel === 'tray';
+
+    permitBtn?.classList.toggle('hidden', !supported || granted || denied || tray);
+
+    let html = '';
+    if (tray) {
+      html = '✓ <strong>Windows notifications are on.</strong> Finds appear from the tray icon even ' +
+             'with this tab closed — you only need the app running.';
+      el.className = 'rad-channel rad-channel--ok';
+    } else if (granted) {
+      html = '✓ <strong>Browser notifications are on.</strong> This app is running without its tray ' +
+             'icon, so <strong>leave this tab open</strong> to be told about a find as it happens. ' +
+             'Everything is waiting in the feed either way.';
+      el.className = 'rad-channel rad-channel--ok';
+    } else if (denied) {
+      html = 'Notifications are <strong>blocked for this site</strong> in your browser, and this app ' +
+             'is running without its tray icon. The radar still scans and the feed still fills — ' +
+             'you just won\'t be interrupted. Re-allow notifications in the padlock menu to change that.';
+      el.className = 'rad-channel rad-channel--warn';
+    } else if (supported) {
+      html = 'The radar will keep finding deals, but nothing will pop until you allow notifications.';
+      el.className = 'rad-channel rad-channel--warn';
+    } else {
+      html = 'This browser can\'t show notifications. The radar still scans and the feed still fills.';
+      el.className = 'rad-channel rad-channel--warn';
+    }
+    el.innerHTML = html;
+    el.classList.remove('hidden');
+  }
+
+  function fillRadarHourSelects() {
+    const hours = Array.from({ length: 24 }, (_, h) => {
+      const label = h === 0 ? '12am' : h === 12 ? '12pm' : h < 12 ? `${h}am` : `${h - 12}pm`;
+      return `<option value="${h}">${label}</option>`;
+    }).join('');
+    const from = $('rad-quiet-from');
+    const to = $('rad-quiet-to');
+    if (from) from.innerHTML = hours;
+    if (to) to.innerHTML = hours;
+  }
+
+  async function saveRadarSettings() {
+    const body = {
+      enabled: !!$('rad-enabled')?.checked,
+      quietHoursEnabled: !!$('rad-quiet-enabled')?.checked,
+      desktopNotifications: !!$('rad-desktop-on')?.checked,
+      quietFromHour: parseInt($('rad-quiet-from')?.value ?? '23', 10),
+      quietToHour: parseInt($('rad-quiet-to')?.value ?? '7', 10),
+    };
+
+    const { body: res } = await safePost('/api/radar/settings', body);
+    if (!res?.ok) { toastErr(res?.error || 'The setting couldn\'t be saved.', { title: 'Deal Radar' }); return; }
+
+    radarStatus = res.status || radarStatus;
+    renderRadarStatus();
+    renderRadarWatches();
+
+    // Asking for permission at the moment the seller turns the feature on, rather than on page load
+    // — a permission prompt with no context attached is the one people click Block on.
+    if (body.enabled && body.desktopNotifications) requestRadarNotificationPermission({ quiet: true });
+  }
+
+  // ── The watch cards ──────────────────────────────────────────────────────
+
+  function renderRadarWatches() {
+    const el = $('rad-watches');
+    if (!el) return;
+
+    const watches = radarStatus?.watches || [];
+    if (!watches.length) {
+      el.innerHTML = '';
+      return;
+    }
+
+    el.innerHTML = watches.map(radarWatchCard).join('');
+  }
+
+  function radarWatchCard(w) {
+    const paused = !w.enabled;
+    const scanning = radarStatus?.scanning && radarStatus.scanningWatchId === w.id;
+    const pill = scanning ? { cls: 'scan', text: 'Scanning…' }
+      : paused ? { cls: 'paused', text: 'Paused' }
+      : w.lastStatus === 'error' ? { cls: 'error', text: 'Couldn\'t scan' }
+      : w.lastStatus === 'ok' ? { cls: 'ok', text: `${w.lastMatchCount} found` }
+      : w.lastStatus === 'no_matches' ? { cls: 'quiet', text: 'Nothing yet' }
+      : { cls: 'quiet', text: 'Not run yet' };
+
+    const terms = [
+      w.query ? `“${esc(w.query)}”` : '',
+      w.categoryLabel || radarCategoryLabel(w.categoryId),
+      w.zipCode ? `${w.radiusMiles} mi of ${esc(w.zipCode)}` : '',
+      esc(radarSourceLabels(w.sources)),
+    ].filter(Boolean).join(' · ');
+
+    const bar = [
+      `at least ${money(w.minNetProfit)} profit`,
+      w.minRoiPercent > 0 ? `${Math.round(w.minRoiPercent)}% ROI` : '',
+      w.maxAsk > 0 ? `asks under ${money(w.maxAsk)}` : '',
+      w.maxDistanceMiles > 0 ? `within ${Math.round(w.maxDistanceMiles)} mi` : '',
+      w.requireConfidentEvidence ? 'solid comps only' : 'thin comps allowed',
+    ].filter(Boolean).join(' · ');
+
+    // The last run's own sentence. It is the difference between a seller lowering a threshold and a
+    // seller assuming the feature is broken, so it is never summarised away to "0".
+    const last = w.lastRunUtc
+      ? `Checked ${radarAgo(w.lastRunUtc)} — ${esc(w.lastNote || 'nothing to report.')}`
+      : paused ? 'Paused before its first scan.'
+      : 'Waiting for its first scan.';
+
+    const next = !paused && radarStatus?.settings?.enabled && w.nextRunUtc
+      ? ` Next ${radarAgo(w.nextRunUtc, true)}.`
+      : '';
+
+    const found = w.totalAlertCount > 0
+      ? `<p class="rad-watch-found">${w.totalAlertCount} deal${w.totalAlertCount === 1 ? '' : 's'} found so far, worth ${money(w.totalProfitFound)} in projected profit.</p>`
+      : '';
+
+    return `
+      <article class="rad-watch${paused ? ' is-paused' : ''}" data-id="${w.id}">
+        <div class="rad-watch-head">
+          <h4>${esc(w.name)}</h4>
+          <span class="rad-pill rad-pill--${pill.cls}">${esc(pill.text)}</span>
+        </div>
+        <p class="rad-watch-terms">${terms}</p>
+        <p class="rad-watch-bar">Alerts on ${esc(bar)} · every ${radarInterval(w.intervalMinutes)}</p>
+        <p class="rad-watch-last">${last}${next}</p>
+        ${found}
+        <div class="rad-watch-actions">
+          <button class="btn btn-secondary small" type="button" data-act="run" ${scanning ? 'disabled' : ''}>Scan now</button>
+          <button class="btn btn-ghost small" type="button" data-act="toggle">${paused ? 'Resume' : 'Pause'}</button>
+          <button class="btn btn-ghost small" type="button" data-act="edit">Edit</button>
+        </div>
+      </article>`;
+  }
+
+  async function onRadarWatchClick(e) {
+    const btn = e.target.closest?.('button[data-act]');
+    const card = e.target.closest?.('.rad-watch');
+    if (!btn || !card) return;
+
+    const id = Number(card.dataset.id);
+    const watch = (radarStatus?.watches || []).find(w => w.id === id);
+    if (!watch) return;
+
+    if (btn.dataset.act === 'edit') { openRadarForm(watch); return; }
+
+    if (btn.dataset.act === 'toggle') {
+      const { body } = await safePost('/api/radar/watches', { id, enabled: !watch.enabled });
+      if (!body?.ok) { toastErr(body?.error || 'That didn\'t save.', { title: 'Deal Radar' }); return; }
+      radarStatus = body.status || radarStatus;
+      renderRadarStatus();
+      renderRadarWatches();
+      return;
+    }
+
+    if (btn.dataset.act === 'run') {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Scanning…';
+      try {
+        // Deliberately un-timed on this side: this is the full pricing pipeline over live
+        // classifieds, the same minutes-long wait the local board asks for, and the server already
+        // bounds it (DealRadarService.RunTimeout).
+        const { body: data } = await safePost(`/api/radar/watches/${id}/run`, {});
+        if (!data) throw new Error('The scan didn\'t answer.');
+        radarStatus = data.status || radarStatus;
+        await loadRadarAlerts();
+        renderRadarStatus();
+        renderRadarWatches();
+
+        const found = (data.alerts || []).length;
+        if (found) toastOk(`${found} new deal${found === 1 ? '' : 's'} cleared your bar.`, { title: watch.name });
+        else toast(data.note || 'Nothing new this time.', { kind: 'info', title: watch.name });
+      } catch (err) {
+        toastErr(err.message || 'Unknown error.', { title: 'The scan couldn\'t be run' });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+  }
+
+  // ── The watch editor ─────────────────────────────────────────────────────
+
+  function openRadarForm(watch) {
+    // The pickers are loaded once and cached. On the very first open they may not be back yet, so
+    // the form is filled now with what there is and re-filled when they arrive — rather than making
+    // the seller wait on two requests before the box they came to type in appears.
+    if (!radarCategories.length) loadRadarPickers().then(() => fillRadarForm(watch));
+
+    radarEditingId = watch?.id ?? null;
+    fillRadarForm(watch);
+
+    setText('rad-form-title', watch ? 'Edit watch' : 'New watch');
+    $('rad-delete')?.classList.toggle('hidden', !watch);
+    $('rad-form-error')?.classList.add('hidden');
+    $('rad-form')?.classList.remove('hidden');
+    $('rad-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    $('rad-query')?.focus();
+  }
+
+  function fillRadarForm(watch) {
+    renderRadarCategorySelect(watch?.categoryId);
+    renderRadarSourceChecks(watch?.sources);
+
+    setVal('rad-name', watch?.name ?? '');
+    setVal('rad-query', watch?.query ?? '');
+    setVal('rad-zip', watch?.zipCode ?? radarDefaultZip());
+    setVal('rad-radius', String(watch?.radiusMiles ?? 40));
+    setVal('rad-min-profit', String(watch?.minNetProfit ?? 75));
+    setVal('rad-min-roi', String(watch?.minRoiPercent ?? 40));
+    setVal('rad-max-ask', watch?.maxAsk > 0 ? String(watch.maxAsk) : '');
+    setVal('rad-max-distance', watch?.maxDistanceMiles > 0 ? String(watch.maxDistanceMiles) : '');
+    setVal('rad-interval', String(watch?.intervalMinutes ?? 180));
+
+    const confident = $('rad-confident');
+    if (confident) confident.checked = watch ? !!watch.requireConfidentEvidence : true;
+    const notify = $('rad-notify');
+    if (notify) notify.checked = watch ? !!watch.notifyDesktop : true;
+  }
+
+  // The ZIP the seller already told the app about, so a second watch isn't a blank form. Three
+  // places have it, in descending order of how recently they were right: the local board's search
+  // box, its saved value, and a watch that is already running.
+  function radarDefaultZip() {
+    const known = $('fb-zip')?.value || localStorage.getItem('fbZip') || '';
+    if (known.trim()) return known.trim();
+    return ((radarStatus?.watches || []).find(w => w.zipCode)?.zipCode || '').trim();
+  }
+
+  function renderRadarCategorySelect(selected) {
+    const sel = $('rad-category');
+    if (!sel) return;
+    if (!radarCategories.length) {
+      sel.innerHTML = '<option value="anything">Anything</option>';
+      return;
+    }
+    const groups = [...new Set(radarCategories.map(c => c.group))];
+    sel.innerHTML = groups.map(group => {
+      const inGroup = radarCategories.filter(c => c.group === group);
+      const options = inGroup.map(c => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('');
+      return inGroup.length === 1 && group === 'Anything' ? options : `<optgroup label="${esc(group)}">${options}</optgroup>`;
+    }).join('');
+    sel.value = selected || 'anything';
+  }
+
+  // Craigslist is ticked by default and Facebook is not, on purpose: a watch runs unattended, and a
+  // login-gated site should only be read on a schedule because the seller said so.
+  function renderRadarSourceChecks(csv) {
+    const el = $('rad-sources');
+    if (!el) return;
+
+    const chosen = (csv || '').split(',').map(s => s.trim()).filter(Boolean);
+    const list = radarSourceList.length ? radarSourceList : [{ id: 'craigslist', label: 'Craigslist', available: true, note: '' }];
+
+    el.innerHTML = list.filter(s => s.locationBased !== false).map(s => {
+      const on = chosen.length ? chosen.includes(s.id) : s.id === 'craigslist';
+      const note = s.available ? '' : ` <span class="rad-source-note">${esc(s.note || 'not connected')}</span>`;
+      return `<label class="rad-check rad-source">
+                <input type="checkbox" value="${esc(s.id)}" ${on ? 'checked' : ''} />
+                ${esc(s.label)}${note}
+              </label>`;
+    }).join('');
+  }
+
+  function radarSelectedSources() {
+    return [...($('rad-sources')?.querySelectorAll('input:checked') || [])].map(i => i.value).join(',');
+  }
+
+  function closeRadarForm() {
+    radarEditingId = null;
+    $('rad-form')?.classList.add('hidden');
+  }
+
+  async function saveRadarWatch() {
+    const err = $('rad-form-error');
+    err?.classList.add('hidden');
+
+    const payload = {
+      id: radarEditingId ?? undefined,
+      name: ($('rad-name')?.value ?? '').trim(),
+      query: ($('rad-query')?.value ?? '').trim(),
+      categoryId: $('rad-category')?.value ?? 'anything',
+      zipCode: ($('rad-zip')?.value ?? '').trim(),
+      radiusMiles: parseInt($('rad-radius')?.value ?? '40', 10),
+      sources: radarSelectedSources(),
+      minNetProfit: parseFloat($('rad-min-profit')?.value || '0') || 0,
+      minRoiPercent: parseFloat($('rad-min-roi')?.value || '0') || 0,
+      maxAsk: parseFloat($('rad-max-ask')?.value || '0') || 0,
+      maxDistanceMiles: parseFloat($('rad-max-distance')?.value || '0') || 0,
+      intervalMinutes: parseInt($('rad-interval')?.value ?? '180', 10),
+      requireConfidentEvidence: !!$('rad-confident')?.checked,
+      notifyDesktop: !!$('rad-notify')?.checked,
+      enabled: true,
+    };
+
+    const btn = $('rad-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    try {
+      const { body } = await safePost('/api/radar/watches', payload);
+      if (!body?.ok) {
+        // The server's refusals are sentences, not codes — shown where the seller is looking rather
+        // than as a toast they have to remember while fixing the field.
+        if (err) { err.textContent = body?.error || 'That watch couldn\'t be saved.'; err.classList.remove('hidden'); }
+        return;
+      }
+
+      radarStatus = body.status || radarStatus;
+      closeRadarForm();
+      renderRadarStatus();
+      renderRadarWatches();
+
+      if (!radarStatus?.settings?.enabled) {
+        toast('Watch saved. Switch on “Watch in the background” and it starts running.',
+          { kind: 'info', title: 'One more step' });
+      } else {
+        toastOk(`“${body.watch.name}” is running. First sweep within a few minutes.`, { title: 'Watch saved' });
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save watch'; }
+    }
+  }
+
+  async function deleteRadarWatch() {
+    if (!radarEditingId) return;
+    const watch = (radarStatus?.watches || []).find(w => w.id === radarEditingId);
+    if (!confirm(`Delete “${watch?.name ?? 'this watch'}”? Its alerts go with it.`)) return;
+
+    const res = await fetch(`/api/radar/watches/${radarEditingId}`, { method: 'DELETE' });
+    const body = await res.json().catch(() => null);
+    radarStatus = body?.status || radarStatus;
+    closeRadarForm();
+    await loadRadarAlerts();
+    renderRadarStatus();
+    renderRadarWatches();
+  }
+
+  // ── The feed ─────────────────────────────────────────────────────────────
+
+  function renderRadarAlerts() {
+    const el = $('rad-alerts');
+    if (!el) return;
+
+    if (!radarAlerts.length) {
+      // Two different empty states, because they mean different things. With no watches saved the
+      // screen's job is to explain the feature; with watches running and nothing found, the job is
+      // to say that finding nothing IS the radar working. The first is the markup already in
+      // index.html, so it survives a page load with no server call.
+      if ((radarStatus?.watches || []).length) el.innerHTML = radarEmptyFeed();
+      return;
+    }
+
+    el.innerHTML = radarAlerts.map(radarAlertCard).join('');
+  }
+
+  function radarEmptyFeed() {
+    return `
+      <div class="state">
+        <div class="state-icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></div>
+        <div class="state-title">Nothing has cleared your bar yet.</div>
+        <p class="state-body">That is the radar working, not the radar failing — it only interrupts you for deals that beat the thresholds you set. Each watch above says what its last sweep actually saw.</p>
+      </div>`;
+  }
+
+  function radarAlertCard(a) {
+    const figures = [
+      ['Ask', money(a.localAsk)],
+      ['Resells for', a.resalePrice ? money(a.resalePrice) : '—'],
+      ['Net profit', a.netProfit != null ? money(a.netProfit) : '—'],
+      ['ROI', a.roiPercent != null ? `${Math.round(a.roiPercent)}%` : '—'],
+      ['Pay no more than', a.maxBuyPrice != null ? money(a.maxBuyPrice) : '—'],
+      ['Cash back in', a.daysToCash != null ? `${a.daysToCash} days` : '—'],
+    ].map(([label, value]) =>
+      `<div class="rad-figure"><span class="rad-figure-label">${label}</span><span class="rad-figure-value">${esc(value)}</span></div>`).join('');
+
+    const meta = [
+      esc(a.watchName),
+      esc(a.sourceLabel || a.source),
+      a.location ? esc(a.location) : '',
+      `found ${radarAgo(a.foundUtc)}`,
+      a.compCount ? `${a.compCount} sold comps` : '',
+    ].filter(Boolean).join(' · ');
+
+    const evidence = a.evidenceNote
+      ? `<p class="rad-alert-evidence">${esc(a.evidenceNote)}</p>` : '';
+
+    const image = a.imageUrl
+      ? `<img class="rad-alert-img" src="${esc(a.imageUrl)}" alt="" loading="lazy" />`
+      : '<div class="rad-alert-img rad-alert-img--none" aria-hidden="true"></div>';
+
+    return `
+      <article class="rad-alert${a.read ? '' : ' is-new'}" data-id="${a.id}">
+        ${image}
+        <div class="rad-alert-body">
+          <div class="rad-alert-top">
+            <p class="rad-alert-headline">${esc(a.headline || a.title)}</p>
+            ${a.read ? '' : '<span class="rad-pill rad-pill--new">NEW</span>'}
+          </div>
+          <p class="rad-alert-meta">${meta}</p>
+          <div class="rad-alert-figures">${figures}</div>
+          ${evidence}
+          <div class="rad-alert-actions">
+            ${a.url
+              ? `<a class="btn btn-primary small" href="${esc(a.url)}" target="_blank" rel="noopener" data-act="open">See the listing ↗</a>`
+              : '<span class="rad-alert-nolink">The listing didn\'t publish a link.</span>'}
+            <button class="btn btn-secondary small" type="button" data-act="track">Track this deal</button>
+            <button class="btn btn-ghost small" type="button" data-act="dismiss">Dismiss</button>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  async function onRadarAlertClick(e) {
+    const trigger = e.target.closest?.('[data-act]');
+    const card = e.target.closest?.('.rad-alert');
+    if (!card) return;
+
+    const id = Number(card.dataset.id);
+    const alert = radarAlerts.find(a => a.id === id);
+    if (!alert) return;
+
+    // Opening the listing is reading it. Marking it read there rather than only on Dismiss is what
+    // keeps the badge honest — a seller who clicked through has been told.
+    if (!trigger || trigger.dataset.act === 'open') {
+      if (!alert.read) markRadarAlertRead(alert, card);
+      return;
+    }
+
+    if (trigger.dataset.act === 'dismiss') {
+      await fetch(`/api/radar/alerts/${id}/dismiss`, { method: 'POST' });
+      radarAlerts = radarAlerts.filter(a => a.id !== id);
+      renderRadarAlerts();
+      loadRadarStatus();
+      return;
+    }
+
+    if (trigger.dataset.act === 'track') trackRadarAlert(alert, trigger);
+  }
+
+  async function markRadarAlertRead(alert, card) {
+    alert.read = true;
+    card?.classList.remove('is-new');
+    card?.querySelector('.rad-pill--new')?.remove();
+    await fetch(`/api/radar/alerts/${alert.id}/read`, { method: 'POST' });
+    loadRadarStatus();
+  }
+
+  // Straight into the Deal Pipeline, with the forecast frozen exactly as the alert quoted it — so
+  // the flip can later be graded against the number that justified driving out for it.
+  async function trackRadarAlert(alert, btn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Tracking…';
+
+    try {
+      const res = await fetch('/api/deals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: alert.title,
+          stage: 'sourced',
+          source: alert.source,
+          sourceLabel: alert.sourceLabel,
+          sourceUrl: alert.url,
+          sourceItemId: alert.itemKey,
+          askPrice: alert.localAsk,
+          maxBuyPrice: alert.maxBuyPrice,
+          projectedSalePrice: alert.resalePrice,
+          projectedNetProfit: alert.netProfit,
+          projectedRoiPercent: alert.roiPercent,
+          projectedDaysToCash: alert.daysToCash,
+          projectedBasis: [
+            alert.compCount ? `${alert.compCount} sold comps` : '',
+            alert.evidenceTier ? `${alert.evidenceTier} evidence` : '',
+            'found by Deal Radar',
+          ].filter(Boolean).join(' · '),
+          note: alert.location ? `Local pickup: ${alert.location}` : '',
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+
+      btn.textContent = '✓ Tracked';
+      toastOk('Tracked at Sourced. The Deal Pipeline will grade it against this forecast.',
+        { title: 'In the pipeline', action: { label: 'Open pipeline', onClick: () => navigateTo('pipeline') } });
+      if (!alert.read) markRadarAlertRead(alert, btn.closest('.rad-alert'));
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = original;
+      toastErr(e.message || 'Unknown error.', { title: 'Couldn\'t track that deal' });
+    }
+  }
+
+  async function markAllRadarAlertsRead() {
+    await safePost('/api/radar/alerts/read-all', {});
+    radarAlerts.forEach(a => { a.read = true; });
+    renderRadarAlerts();
+    loadRadarStatus();
+  }
+
+  async function clearRadarFeed() {
+    if (!confirm('Clear the feed? Nothing already found will be shown to you again — the radar remembers every listing it has alerted on.')) return;
+    await safePost('/api/radar/alerts/clear', {});
+    radarAlerts = [];
+    renderRadarAlerts();
+    loadRadarStatus();
+  }
+
+  // ── The badge, the polling and the notifications ─────────────────────────
+
+  function startRadarWatchPolling() {
+    stopRadarWatchPolling();
+    radarOpenTimer = setInterval(() => {
+      if ($('radar-section')?.classList.contains('hidden')) { stopRadarWatchPolling(); return; }
+      loadRadarStatus();
+      loadRadarAlerts();
+    }, RADAR_OPEN_POLL_MS);
+  }
+
+  function stopRadarWatchPolling() {
+    if (radarOpenTimer) { clearInterval(radarOpenTimer); radarOpenTimer = null; }
+  }
+
+  // The one timer that runs for the whole session. Cheap: a status read is a few SQLite counts, and
+  // it only pulls the alert list when the unread count actually moved.
+  function startRadarBackgroundPolling() {
+    if (radarBackgroundTimer) return;
+    const tick = async () => {
+      const before = radarStatus?.unreadAlertCount ?? 0;
+      const status = await loadRadarStatus().catch(() => null);
+      if (!status) return;
+      if ((status.unreadAlertCount || 0) > before) await announceNewRadarAlerts();
+    };
+    radarBackgroundTimer = setInterval(tick, RADAR_BACKGROUND_POLL_MS);
+    tick();
+  }
+
+  function updateRadarBadge() {
+    const badge = $('nav-radar-badge');
+    if (!badge) return;
+    const count = radarStatus?.unreadAlertCount || 0;
+    badge.dataset.count = count > 99 ? '99+' : String(count);
+    badge.classList.toggle('hidden', count === 0);
+  }
+
+  // Fires only for finds the tray did NOT already announce (a.notified), so the seller is never told
+  // the same thing twice by two channels.
+  async function announceNewRadarAlerts() {
+    const { data } = await localFetchJson('/api/radar/alerts?limit=20', 15000);
+    if (!Array.isArray(data)) return;
+    radarAlerts = data;
+    renderRadarAlerts();
+
+    const lastSeen = Number(localStorage.getItem(RADAR_LAST_SEEN_KEY) || 0);
+    const fresh = data.filter(a => a.id > lastSeen && !a.read && !a.dismissed);
+    if (!fresh.length) return;
+    localStorage.setItem(RADAR_LAST_SEEN_KEY, String(Math.max(...data.map(a => a.id))));
+
+    // In-app first: it works with no permission at all, and it is the only one that can offer a
+    // button that goes straight to the deal.
+    const best = fresh[0];
+    toastOk(best.headline, {
+      title: fresh.length > 1 ? `Deal Radar · ${fresh.length} new deals` : 'Deal Radar',
+      action: { label: 'Open Deal Radar', onClick: () => navigateTo('radar') },
+    });
+
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    fresh.filter(a => !a.notified).slice(0, 2).forEach(a => {
+      try {
+        const note = new Notification(a.watchName || 'Deal Radar', {
+          body: a.headline,
+          icon: 'favicon.svg',
+          // Tagged per alert so the same find can never stack up as two notifications.
+          tag: `ing-radar-${a.id}`,
+        });
+        note.onclick = () => { window.focus(); navigateTo('radar'); note.close(); };
+      } catch { /* a browser that refuses to construct one is not worth breaking the poll over */ }
+    });
+  }
+
+  async function requestRadarNotificationPermission(opts = {}) {
+    if (!('Notification' in window)) {
+      if (!opts.quiet) toast('This browser can\'t show desktop notifications. The feed still fills.',
+        { kind: 'warning', title: 'Not supported here' });
+      return;
+    }
+    if (Notification.permission === 'granted') { renderRadarChannelNote(); return; }
+    if (Notification.permission === 'denied') {
+      if (!opts.quiet) toast('Notifications are blocked for this site. Re-allow them in the padlock menu next to the address bar.',
+        { kind: 'warning', title: 'Blocked by the browser' });
+      return;
+    }
+
+    const result = await Notification.requestPermission().catch(() => 'default');
+    renderRadarChannelNote();
+    if (result === 'granted' && !opts.quiet) {
+      toastOk('You\'ll be told the moment a deal clears your bar.', { title: 'Desktop alerts on' });
+    }
+  }
+
+  // ── Small formatters ─────────────────────────────────────────────────────
+
+  function radarCategoryLabel(id) {
+    if (!id || id === 'anything') return '';
+    return radarCategories.find(c => c.id === id)?.label || '';
+  }
+
+  function radarSourceLabels(csv) {
+    const ids = (csv || 'craigslist').split(',').map(s => s.trim()).filter(Boolean);
+    return ids.map(id => radarSourceList.find(s => s.id === id)?.label || id).join(' + ');
+  }
+
+  function radarInterval(minutes) {
+    if (!minutes || minutes < 60) return `${minutes || 0} min`;
+    if (minutes === 1440) return 'day';
+    const hours = minutes / 60;
+    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hours`;
+  }
+
+  // "12 min ago" / "in 2 hours". One helper for both directions, because a card shows the last run
+  // and the next one side by side and two different phrasings would read as two different clocks.
+  function radarAgo(iso, future = false) {
+    const then = new Date(iso).getTime();
+    if (!then || Number.isNaN(then)) return future ? 'soon' : 'recently';
+
+    const diff = Math.abs(Date.now() - then);
+    const mins = Math.round(diff / 60000);
+    const text = mins < 1 ? 'less than a minute'
+      : mins < 60 ? `${mins} min`
+      : mins < 1440 ? `${Math.round(mins / 60)} hour${Math.round(mins / 60) === 1 ? '' : 's'}`
+      : `${Math.round(mins / 1440)} day${Math.round(mins / 1440) === 1 ? '' : 's'}`;
+
+    if (!future) return `${text} ago`;
+    return Date.now() >= then ? 'any moment' : `in ${text}`;
   }
 
   function showTrendsSection() {

@@ -5919,3 +5919,210 @@ screen that had never mentioned policies.
   automated regression.
 - `queue_forever.py` was already untracked at the start of the session and is
   unrelated to this work; it was **left untracked**.
+
+---
+
+## Deal Radar — the sourcing board that reads itself (autonomous session, 2026-07-27)
+
+### The problem
+
+Every sourcing screen in this app is a **button**. The local-arbitrage board is
+the best of them — pluggable sources, hosted sold comps, category-aware fee
+models, the evidence tiering — and it does absolutely nothing until somebody
+remembers to open the right tab and press scan.
+
+Which means the money it is best at finding is exactly the money it misses. A
+classified is a race: a $400 S19 posted at 11pm is claimed by 8am. A seller who
+scans twice a day is not competing with other flippers, they are competing with
+whoever happened to be refreshing craigslist at the moment it went up. The board
+can price that deal perfectly and still be looking at it a day late.
+
+Nothing in the app ran on its own. There was no scheduler, no notification path,
+and no saved search — a scan's parameters lived in form fields and died with the
+page.
+
+### What was built
+
+A **watch** is the same local-arbitrage scan, saved with a profit bar on it, run
+on a human cadence by a background service. When something clears the bar, a
+**real Windows notification** appears from the tray icon — with no browser open
+at all — saying the thing the feature exists to say:
+
+> `$400 Antminer S19 · 3 mi away → resells ~$700 · $210 profit, 52% margin`
+
+**Not a second pricing path.** The radar calls `FindLocalArbitrageAsync` — the
+same function the board's own endpoint calls, with the same fourteen singletons
+behind it. It is reached through a one-line `LocalArbitrageScan` delegate
+registered in `Program.cs`, because the alternative (lifting that orchestration
+into a class, or re-pricing rows a second way) is how a notification ends up
+quoting a profit the screen it links to doesn't show. Every figure on an alert is
+copied from the row the board produced; nothing is recomputed.
+
+**The bar — three gates, in cost order** (`DealRadarMatcher`):
+
+1. **Is there a number at all?** A row the app *refused* to value — a truck
+   against tow-hitch comps, see `ResaleValuation` — never fires, at any
+   threshold. The board can afford to show it with dashes and a sold-listings
+   link; a toast has room for neither.
+2. **Does the board believe it?** Only `goldmine` and `solid` verdicts, and by
+   default only `confident` evidence. **This gate earned itself on live data
+   during this session**: a "DeWalt Tool Box - No Lid" at $15 priced against 3
+   comps at $283 — a 1471% ROI the board dims and explains, and that a
+   notification would have published as a fact. With the gate on, it was
+   correctly refused. `none` evidence never fires even with the gate off, because
+   that is not thin evidence, it is a price for a different product.
+3. **Is it this seller's deal?** Profit floor, ROI floor, cash ceiling, driving
+   distance — all four ANDed. The cash ceiling measures `BuyCostAllIn`, so a
+   retail row can't clear a $500 budget by exactly the sales tax. An *unstated*
+   distance passes: the radius already bounded the search, and dropping every
+   classified without a published mileage would empty the feature.
+
+**Once per listing, ever.** A craigslist post sits up for a fortnight; a watch on
+a three-hour interval re-finds it 112 times. Dedupe is on
+`source:item_id`, and — the part that matters — the memory
+(`radar_seen`) is a **separate table from the feed** (`radar_alerts`). Prune the
+feed and every listing still up would look new again, so the seller gets last
+month's deals pushed at them at 2am and switches the feature off. Clearing the
+feed forgets nothing.
+
+**The scraping posture, restated as code** (`DealRadarClock`, `DealRadarService`):
+
+- **One scan at a time, process-wide** — a semaphore of one, which the "Scan now"
+  button takes too. Six watches never become six concurrent sessions.
+- **One watch per tick**, most overdue first, with a **5-minute global floor**
+  between any two scans. That floor is what stops a restart — where every watch
+  is instantly overdue — from firing twelve scans in twelve seconds.
+- **A 30-minute floor under the interval**, so no UI setting can turn this into a
+  polling loop.
+- **Stable per-watch jitter** derived from the id, so watches don't march in
+  lockstep and requests don't land on the hour forever.
+- **No Terapeak scrapes unattended.** A Terapeak lookup drives a real logged-in
+  browser session. Background runs are cache-only (`terapeakBudget: 0`); a manual
+  run gets 3, because a person is at the keyboard. Coupon lookups are manual-only
+  for the same reason.
+- **Craigslist unless told otherwise.** A watch with no source list reads the
+  public site — never "everything available", which would quietly enrol a
+  connected Facebook session into a schedule nobody asked for. Facebook is opt-in
+  per watch and reports `not_connected` rather than logging in on a timer.
+- **Off until switched on.** The master setting ships disabled.
+
+**Two notification paths, deliberately not one.** `DesktopNotifier` is a queue
+and an event; `Program.cs` subscribes the existing tray `NotifyIcon` to it and
+calls `AttachDesktopChannel()`. Nothing in `Services/` touches WinForms, because
+this app also installs as a **Windows service**, which runs in session 0 and
+physically cannot draw a balloon. So `/api/radar/status` reports
+`desktopChannel: tray | browser`, and the screen says either *"finds appear even
+with this tab closed"* or *"leave this tab open"* — rather than promising a
+notification that cannot be shown. The page's own Notification API fires only for
+alerts the tray did **not** already announce (`notified`), so nothing is
+double-reported. A run with more than two finds sends **one summary balloon**
+instead of a stack, because five notifications in five seconds teaches a person
+to dismiss without reading.
+
+**Quiet hours silence the ping, never the scan** (default 11pm–7am). The entire
+promise is that it works overnight; what stops at 11pm is the popping, and the
+badge is waiting at breakfast.
+
+**Saying which kind of nothing happened.** "0 deals" has four meanings and the
+card names the right one every time: nothing listed near you · N listings, none
+profitable after fees · N listings, some profitable, none clearing your bar · N
+still clearing your bar, all of them ones you've already been shown. That last
+one is the normal state of a healthy watch, and reporting it as "nothing cleared
+your bar" would send a seller to lower a threshold that is working perfectly.
+
+**The screen** — a workspace tab like every other feature, with a live unread
+badge in the sidebar (drawn from `data-count` in CSS so the tab bar keeps taking
+its title from the button's text without picking the number up with it):
+
+- The master switch, what is happening right now, and the channel note.
+- Watch cards as instruments: state pill, the search in words, the bar in words,
+  the last reading in its own sentence, next sweep, running totals, and Scan
+  now / Pause / Edit.
+- The feed as finds: image, the headline sentence sized as the heading (because
+  on this screen it *is* the heading), six figures including **pay no more than**
+  and **cash back in**, the evidence note, and three actions — See the listing,
+  **Track this deal** (straight into the Deal Pipeline with the forecast frozen
+  as the alert quoted it), and Dismiss.
+- The editor in four short legends: what to look for · where · what's worth
+  waking you for · how often.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/DealRadarModels.cs` | **New** — `DealWatch`, `DealWatchRequest` (partial-save), `DealAlert`, `DealRadarSettings`, `DealRadarStatus`, `RadarRunStatuses`, `RadarChannels`, `DesktopNotification` |
+| `Services/DealRadarClock.cs` | **New** — the cadence and the posture: interval floor, global gap, per-watch jitter, due selection, quiet-hours wrap |
+| `Services/DealRadarMatcher.cs` | **New** — the three gates, the dedupe key, the headline sentence, the run summary |
+| `Services/DealRadarStore.cs` | **New** — `radar_watches` / `radar_alerts` / `radar_seen` / `radar_settings`, partial-save semantics, prune |
+| `Services/DealRadarService.cs` | **New** — the `BackgroundService` loop, the `LocalArbitrageScan` delegate + request record, one-at-a-time gate, run interpretation, announcement rules |
+| `Services/DesktopNotifier.cs` | **New** — the seam between the radar and the tray icon; `Channel` states what can actually be delivered |
+| `Program.cs` | Registration of the store, notifier, scan delegate and hosted service; ten `/api/radar/*` endpoints + `BuildRadarStatus`; tray balloon wiring, `Open Deal Radar` tray entry, `OpenBrowserAt` |
+| `wwwroot/index.html` | `i-radar` sprite, sidebar entry with badge, the whole `radar-section`; `app.js?v=74`, `style.css?v=66` |
+| `wwwroot/app.js` | The Deal Radar module (~600 lines): `WORKSPACE_PAGES.radar`, watch CRUD, the feed, the badge, two polling timers, browser notifications, `trackRadarAlert` |
+| `wwwroot/style.css` | Nav badge, master strip and switch, channel note, editor, watch cards and pills, alert cards and figures, dark-mode overrides |
+| `Tests/DealRadarTests.cs` | **New** — 85 cases across four classes |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1867 passed, 0 failed** (1782 before this session; every
+  pre-existing test still passes untouched).
+- `node --check` on `app.js`; a tag-stack parse of `index.html` reports balanced.
+- **The feature was run end to end against live craigslist** on dev port 9461,
+  and against a real Windows desktop:
+  - `/api/radar/status` reported `desktopChannel: "tray"`, confirming the tray
+    icon attached to the notifier.
+  - A watch for `"antminer"` within 100 mi of 89101 ran and answered
+    *"Nothing was listed near you this time."*
+  - A watch for `"dewalt"` scanned **63 live listings** and, with the default bar,
+    answered *"63 listings — some profitable, none clearing $25 and 15% on
+    evidence this app stands behind."*
+  - Dropping the evidence gate on that same watch produced **2 alerts** — both
+    `low` evidence, including the 1471%-ROI lidless tool box. **The default
+    configuration had correctly refused both.**
+  - Re-running it found the same 63 listings and reported **0 new**:
+    *"2 still clearing your bar, all of them ones you've already been shown."*
+  - **The background loop was left to fire on its own**: a `"milwaukee"` watch it
+    had never run scanned 28 listings unattended, found 3, logged
+    *"3 new deals worth $221"*, scheduled its next sweep 3h+jitter later, and
+    **raised a real Windows balloon** — the highest-profit alert came back
+    `notified: true`.
+  - Driven in a real browser (Playwright, chromium): the tab opens as **Deal
+    Radar**, the sidebar badge reads **5**, three watch cards render with their
+    own state pills and sentences, five alert cards render with the headline and
+    all six figures, the in-app toast fired with an *Open Deal Radar* action, the
+    editor loads 11 categories and 4 sources with **Craigslist ticked and
+    Facebook not**, and saving a blank watch returns the sentence *"Give the
+    watch something to look for…"* in the form. **Zero unexpected console
+    errors** (the only 4xx was the deliberate validation POST), in both light and
+    dark themes.
+- Two bugs were found by that live run and fixed: the run endpoint's anonymous
+  object had `Status` and `status` colliding under the camelCase policy (a 500
+  after a two-minute scan, which reads as "the scan failed"), and the re-run
+  wording blamed the seller's thresholds for what was actually the dedupe working.
+
+### Not verified / known limits
+
+- **The desktop balloon only works in the interactive (tray) install.** Under the
+  Windows service install there is no session to draw in; the app says so and
+  falls back to the browser's Notification API with the tab open. That fallback
+  path was exercised in chromium but not against a service-mode install.
+- **Alerts are frozen snapshots.** A classified is deleted the hour it sells, and
+  an alert that re-read its listing would blank itself exactly when the seller
+  wants to know what they missed. The footnote says to check the listing before
+  driving.
+- **The evidence tiering is inherited, not improved.** Everything the board can
+  get wrong about a comp set, the radar can get wrong more quietly — which is
+  precisely why the default gate is on and why refused valuations never fire.
+- **Craigslist rows frequently carry no thumbnail**, so many alert cards show the
+  dashed placeholder. That is the source data, not a rendering fault.
+- **No UI test covers the screen.** The browser pass was driven manually; only
+  the sidebar/registry/section contract is locked by `WorkspaceTabsAssetTests`.
+- **The cadence constants are judgement calls** (30-minute floor, 5-minute gap,
+  12 watches, 25 items a scan). They are conservative on purpose and are stated
+  in the UI rather than hidden.
+- The live run wrote its watches and alerts to the **build-output** database
+  under `bin/Debug`, not to any installed instance's data.
+- `queue_forever.py` was already untracked at the start of the session and is
+  unrelated to this work; it was **left untracked**.
