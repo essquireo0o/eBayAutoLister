@@ -8674,3 +8674,176 @@ a.dp-card-title:hover { color: var(--teal-600); text-decoration: underline; }
   .sn-risks { display: none; }
   .dash-snipe .dash-pipeline-next { display: none; }
 }
+
+/* ── Where to Sell Highest ────────────────────────────────────────────────── */
+/* One card per venue, ranked left to right by what the seller actually banks. The take-home is the
+   biggest thing on every card and the asking price is deliberately not — this screen exists because
+   those two numbers are different. */
+
+.wts-field-wide { flex: 1 1 260px; min-width: 200px; }
+.wts-field-wide input { width: 100%; }
+
+.wts-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s5);
+  margin: var(--s4) 0 0;
+  padding: var(--s5) var(--s6);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.wts-banner-move  { border-left-color: var(--success); background: var(--success-soft); }
+.wts-banner-stay  { border-left-color: var(--info);    background: var(--info-soft); }
+.wts-banner-close { border-left-color: var(--gold);    background: var(--gold-soft); }
+.wts-banner-none  { border-left-color: var(--line-strong); }
+
+.wts-banner-head {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.wts-banner-sub {
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.wts-banner-extra { text-align: right; flex: 0 0 auto; }
+
+.wts-extra-value {
+  display: block;
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--success);
+  letter-spacing: -.02em;
+}
+
+.wts-extra-label {
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+
+.wts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+
+.wts-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.wts-card-best { border-color: var(--success-line); box-shadow: var(--e2); }
+.wts-card-quiet { background: var(--soft); }
+
+.wts-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.wts-venue { font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
+.wts-mode { font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; }
+
+.wts-verdict {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wts-v-best  { background: var(--success-soft); color: var(--success); }
+.wts-v-close { background: var(--gold-soft);    color: var(--gold-dark); }
+.wts-v-lower { background: var(--soft-2);       color: var(--muted); }
+.wts-v-thin  { background: var(--warning-soft); color: var(--warning); }
+.wts-v-none  { background: var(--soft-2);       color: var(--muted); }
+
+.wts-take {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -.02em;
+  line-height: 1.1;
+}
+
+.wts-take-none { color: var(--muted); }
+
+.wts-take-label { font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; }
+
+.wts-gap { margin-top: 6px; font-size: var(--fs-xs); font-weight: 700; }
+.wts-gap-up { color: var(--success); }
+.wts-gap-down { color: var(--muted); }
+
+/* The word that stops the comparison lying: a sold price and an asking price are not the same
+   evidence, and the badge saying which is on every card. */
+.wts-evidence { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.wts-ev {
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.wts-e-sold { background: var(--success-soft); color: var(--success); }
+.wts-e-ask  { background: var(--warning-soft); color: var(--warning); }
+.wts-e-none { background: var(--soft-2);       color: var(--muted); }
+
+.wts-ev-sub { font-size: var(--fs-2xs); color: var(--muted); }
+
+.wts-lines { display: flex; flex-direction: column; gap: 3px; }
+
+.wts-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.wts-line-cost span:last-child { color: var(--danger); }
+.wts-line-quiet, .wts-line-quiet span { color: var(--muted); }
+.wts-line-free strong { color: var(--success); }
+
+.wts-beat {
+  padding: 7px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.wts-note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.55; }
+.wts-speed { font-size: var(--fs-2xs); font-weight: 700; color: var(--ink-2); }
+.wts-speed-quiet { font-weight: 600; color: var(--muted); }
+.wts-fee-note { font-size: var(--fs-2xs); color: var(--muted); line-height: 1.5; }
+.wts-go { align-self: flex-start; margin-top: auto; }
+
+@media (max-width: 900px) {
+  .wts-banner { flex-direction: column; align-items: flex-start; }
+  .wts-banner-extra { text-align: left; }
+}

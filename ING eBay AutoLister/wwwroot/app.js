@@ -366,6 +366,7 @@
     bindLotAnalyzer();
     bindPromoted();
     bindTrendRadar();
+    bindWhereToSell();
     bindSniper();
     bindEarnings();
     bindPipeline();
@@ -473,6 +474,7 @@
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
+    if (page !== 'wheretosell') $('wts-section')?.classList.add('hidden');
     if (page !== 'snipe') closeSnipeSection({ back: false });
     if (page !== 'earnings') $('earnings-section')?.classList.add('hidden');
     if (page !== 'pipeline') $('pipeline-section')?.classList.add('hidden');
@@ -528,6 +530,10 @@
       showTrendsSection();
       return;
     }
+    if (page === 'wheretosell') {
+      showWhereToSellSection();
+      return;
+    }
     if (page === 'snipe') {
       showSnipeSection();
       return;
@@ -541,7 +547,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -4459,6 +4465,250 @@
       box.scrollIntoView({ behavior: 'smooth', block: 'center' });
       box.focus();
     }
+  }
+
+  // ── Where to Sell Highest ─────────────────────────────────────────────────
+  // Off /api/where-to-sell. The whole screen is one comparison, so the rules it renders by are
+  // about not overstating it:
+  //   * the evidence word ("sold" vs "asking") is on every price, never a footnote — they are not
+  //     the same kind of number and the seller is deciding on the difference;
+  //   * a venue with thin evidence is drawn as thin even when its number is the biggest on screen;
+  //   * a venue that could not be searched shows why, rather than an empty column that reads as a
+  //     venue which lost;
+  //   * "the price it has to fetch to beat eBay" is shown everywhere, including where there is no
+  //     price data at all — it is fee arithmetic and it is always true.
+  let wtsReport = null;
+
+  function showWhereToSellSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('wts-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'wheretosell'));
+  }
+
+  function closeWhereToSellSection() {
+    $('wts-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindWhereToSell() {
+    on('wts-run-btn', 'click', runWhereToSell);
+    on('wts-close', 'click', closeWhereToSellSection);
+    on('wts-home', 'click', closeWhereToSellSection);
+    on('wts-query', 'keydown', e => { if (e.key === 'Enter') runWhereToSell(); });
+    on('wts-zip', 'keydown', e => { if (e.key === 'Enter') runWhereToSell(); });
+
+    // The same remembered zip and radius every other local search uses — a seller types their zip
+    // code once for the whole app, not once per screen.
+    const zip = localStorage.getItem('fbZip');
+    const radius = localStorage.getItem('fbRadius');
+    if (zip && $('wts-zip')) $('wts-zip').value = zip;
+    if (radius && $('wts-radius')) $('wts-radius').value = radius;
+  }
+
+  function setWtsStatus(text) {
+    const el = $('wts-status');
+    if (el) el.textContent = text || '';
+  }
+
+  async function runWhereToSell() {
+    const query = $('wts-query')?.value.trim() || '';
+    const zip = $('wts-zip')?.value.trim() || '';
+    const radius = $('wts-radius')?.value || '40';
+    const cost = $('wts-cost')?.value.trim() || '';
+    const btn = $('wts-run-btn');
+
+    if (!query) {
+      setWtsStatus('Tell me what the item is first.');
+      $('wts-query')?.focus();
+      return;
+    }
+    if (zip) localStorage.setItem('fbZip', zip);
+    localStorage.setItem('fbRadius', radius);
+
+    const qs = `q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}` +
+      (cost ? `&cost=${encodeURIComponent(cost)}` : '');
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Comparing…'; }
+    setWtsStatus(zip ? `Pricing on eBay, then searching within ${radius} miles of ${zip}…`
+                     : 'Pricing on eBay… add a zip code to price the local venues too.');
+    $('wts-banner')?.classList.add('hidden');
+    $('wts-warnings')?.classList.add('hidden');
+    $('wts-results').innerHTML = '<p class="opportunity-empty">Reading sold history, then what people near you are asking. The local sites are searched one at a time, so give it a moment.</p>';
+
+    try {
+      const res = await fetch(`/api/where-to-sell?${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'The comparison failed.');
+      wtsReport = data;
+      renderWhereToSell();
+    } catch (err) {
+      wtsReport = null;
+      $('wts-banner')?.classList.add('hidden');
+      $('wts-warnings')?.classList.add('hidden');
+      $('wts-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The comparison failed.')}</p>`;
+      setWtsStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🧭 Compare Venues'; }
+    }
+  }
+
+  const WTS_VERDICTS = {
+    best:        { label: '🏆 Sell it here', cls: 'wts-v-best' },
+    close:       { label: 'About the same',  cls: 'wts-v-close' },
+    lower:       { label: 'Pays less',       cls: 'wts-v-lower' },
+    thin:        { label: '⚠️ Thin data',    cls: 'wts-v-thin' },
+    no_data:     { label: 'No price data',   cls: 'wts-v-none' },
+    unavailable: { label: 'Not searched',    cls: 'wts-v-none' },
+  };
+
+  const WTS_EVIDENCE = {
+    sold:   { label: 'what buyers PAID',   cls: 'wts-e-sold' },
+    asking: { label: 'what sellers ASK',   cls: 'wts-e-ask' },
+    none:   { label: 'no price data',      cls: 'wts-e-none' },
+  };
+
+  function renderWhereToSell() {
+    if (!wtsReport) return;
+
+    if (wtsReport.status === 'error') {
+      $('wts-banner')?.classList.add('hidden');
+      $('wts-results').innerHTML = `<p class="opportunity-empty">${esc(wtsReport.error || 'The comparison failed.')}</p>`;
+      setWtsStatus('');
+      return;
+    }
+
+    renderWtsBanner();
+    renderWtsWarnings();
+    renderWtsVenues();
+
+    const priced = (wtsReport.venues || []).filter(v => v.netProceeds != null).length;
+    setWtsStatus(`${priced} of ${(wtsReport.venues || []).length} venues priced` +
+      (wtsReport.zipCode ? ` · within ${wtsReport.radiusMiles} miles of ${wtsReport.zipCode}` : ' · no zip, so eBay only'));
+  }
+
+  // The one sentence the screen exists for, with the money in it.
+  function renderWtsBanner() {
+    const el = $('wts-banner');
+    if (!el) return;
+
+    const tone = { move: 'wts-banner-move', stay_on_ebay: 'wts-banner-stay',
+                   too_close: 'wts-banner-close', no_data: 'wts-banner-none' }[wtsReport.verdict] || '';
+
+    // Only a real, material gap gets the money strip — a two-dollar edge dressed up as a headline
+    // figure is exactly how this feature would start lying.
+    const extra = wtsReport.verdict === 'move' && wtsReport.extraVsEbay > 0
+      ? `<div class="wts-banner-extra"><span class="wts-extra-value">+${moneyExact(wtsReport.extraVsEbay)}</span>
+           <span class="wts-extra-label">more on this one item</span></div>`
+      : '';
+
+    el.className = `wts-banner ${tone}`;
+    el.innerHTML = `
+      <div class="wts-banner-text">
+        <div class="wts-banner-head">${esc(wtsReport.headline || '')}</div>
+        <div class="wts-banner-sub">${esc(wtsReport.subhead || '')}</div>
+      </div>
+      ${extra}`;
+    el.classList.remove('hidden');
+  }
+
+  function renderWtsWarnings() {
+    const el = $('wts-warnings');
+    if (!el) return;
+    const warnings = wtsReport.warnings || [];
+    if (warnings.length === 0) { el.classList.add('hidden'); return; }
+
+    el.innerHTML = warnings.map(w => `<div>${esc(w)}</div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  function renderWtsVenues() {
+    const el = $('wts-results');
+    const venues = wtsReport.venues || [];
+    if (venues.length === 0) {
+      el.innerHTML = '<p class="opportunity-empty">Nothing to compare.</p>';
+      return;
+    }
+    el.innerHTML = `<div class="wts-grid">${venues.map(wtsVenueHtml).join('')}</div>`;
+  }
+
+  function wtsVenueHtml(v) {
+    const verdict = WTS_VERDICTS[v.verdict] || WTS_VERDICTS.no_data;
+    const evidence = WTS_EVIDENCE[v.evidenceKind] || WTS_EVIDENCE.none;
+
+    // The headline number is the take-home, never the price. The price is shown under it, as the
+    // input it is.
+    const takeHome = v.netProceeds != null
+      ? `<div class="wts-take">${moneyExact(v.netProceeds)}</div>
+         <div class="wts-take-label">${wtsReport.hasCostBasis && v.netProfit != null
+            ? `${moneyExact(v.netProfit)} profit after what you paid`
+            : 'in your pocket'}</div>`
+      : `<div class="wts-take wts-take-none">—</div><div class="wts-take-label">not priced here</div>`;
+
+    const gap = v.venue !== 'ebay' && v.netVsEbay != null
+      ? `<div class="wts-gap ${v.netVsEbay > 0 ? 'wts-gap-up' : 'wts-gap-down'}">${v.netVsEbay > 0 ? '+' : ''}${moneyExact(v.netVsEbay)} vs eBay</div>`
+      : '';
+
+    const price = v.expectedPrice != null
+      ? `<div class="wts-line"><span>Likely sale price</span><strong>${moneyExact(v.expectedPrice)}</strong></div>` +
+        (v.buyerPaidShipping > 0
+          ? `<div class="wts-line wts-line-quiet"><span>Buyer also pays shipping</span><span>${moneyExact(v.buyerPaidShipping)}</span></div>` : '')
+      : '';
+
+    const costs = (v.costs || []).filter(c => c.amount > 0);
+    const costLines = v.netProceeds != null
+      ? (costs.length
+          ? costs.map(c => `<div class="wts-line wts-line-cost" title="${esc(c.detail)}"><span>${esc(c.label)}</span><span>−${moneyExact(c.amount)}</span></div>`).join('')
+          : '<div class="wts-line wts-line-free"><span>Taken out of the sale</span><strong>nothing</strong></div>')
+      : '';
+
+    const beat = v.priceToBeatEbay != null
+      ? `<div class="wts-beat" title="${esc(v.priceToBeatEbayNote || '')}">Beat eBay here at <strong>${moneyExact(v.priceToBeatEbay)}</strong></div>`
+      : '';
+
+    // A venue with no price has no speed either — an "unknown" clock under an empty column is
+    // noise pretending to be a measurement.
+    const speed = v.netProceeds == null ? ''
+      : v.daysToCash != null
+        ? `<div class="wts-speed" title="${esc(v.speedNote || '')}">${v.daysToCash}d to cash${v.netPerDay > 0 ? ` · ${perDay(v.netPerDay)}` : ''}</div>`
+        : `<div class="wts-speed wts-speed-quiet" title="${esc(v.speedNote || '')}">${esc(v.speedLabel || 'Speed unknown')}</div>`;
+
+    const evidenceBits = [
+      v.sampleCount > 0 ? `${v.sampleCount} ${v.evidenceKind === 'sold' ? 'sold' : 'listed'}` : null,
+      v.confidenceLevel && v.sampleCount > 0 ? v.confidenceLevel : null,
+    ].filter(Boolean).join(' · ');
+
+    return `
+      <div class="wts-card ${v.verdict === 'best' ? 'wts-card-best' : ''} ${v.netProceeds == null ? 'wts-card-quiet' : ''}">
+        <div class="wts-card-head">
+          <div>
+            <div class="wts-venue">${esc(v.venueLabel)}</div>
+            <div class="wts-mode">${esc(v.saleModeLabel)}</div>
+          </div>
+          <span class="wts-verdict ${verdict.cls}">${esc(verdict.label)}</span>
+        </div>
+
+        <div class="wts-money">
+          ${takeHome}
+          ${gap}
+        </div>
+
+        <div class="wts-evidence">
+          <span class="wts-ev ${evidence.cls}">${esc(evidence.label)}</span>
+          ${evidenceBits ? `<span class="wts-ev-sub">${esc(evidenceBits)}</span>` : ''}
+        </div>
+
+        <div class="wts-lines">
+          ${price}
+          ${costLines}
+        </div>
+
+        ${beat}
+        <div class="wts-note">${esc(v.priceBasis || v.note || '')}</div>
+        ${speed}
+        <div class="wts-fee-note">${esc(v.feeNote || '')}</div>
+        ${v.createUrl ? `<a class="btn btn-secondary small wts-go" href="${esc(v.createUrl)}" target="_blank" rel="noopener noreferrer">List it on ${esc(v.venueLabel)} ↗</a>` : ''}
+      </div>`;
   }
 
   // ── The Undervalued-Auction Sniper ────────────────────────────────────────

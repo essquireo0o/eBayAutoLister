@@ -3123,3 +3123,104 @@ Screenshots: `docs/screenshots/auction-sniper.png` (all verdict states) and
 - **Non-ASIC categories.** The hosted comps database is this seller's own niche, so consumer terms
   price thinly or not at all. The watch list is built from whatever the seller has actually sold, so
   the board follows their inventory rather than needing new data.
+
+---
+
+## Where to Sell Highest — the venue that pays most, not the one you default to
+
+### The money
+
+Every pricing screen in this app answers "what is this worth?" with an **eBay** number, and then eBay
+takes 13.25% plus the per-order fee plus the shipping label out of it. A local cash sale takes
+**none** of that. So the venue showing the highest price and the venue handing over the most money
+are routinely different venues, and until now nothing in the app ever said so.
+
+On the seller's own default profile, a $200 item nets **$173.10** on eBay. The same item collected
+locally at a $220 median ask — marked down to $198 because an ask is not a sale — nets **$198.00**.
+That is **$24.90 a flip**, on an item already sourced, already photographed, already priced. No new
+inventory, no new capital, no extra work: the money comes entirely from not paying a fee that a
+different buyer would not have charged.
+
+The screen answers three questions at once:
+
+1. **Where does this net the most, right now?** eBay priced from real sold comps, Facebook
+   Marketplace and Craigslist priced from live listings near the seller's zip, each costed by the
+   seller's own fee profile.
+2. **How much is the difference worth?** One number, on this one item, at the top of the screen.
+3. **What would it take to beat eBay anywhere?** Every off-eBay venue carries the exact price it
+   must fetch to match eBay's take-home — pure fee arithmetic, so it is answerable even for Mercari,
+   which this app cannot see prices on at all.
+
+### What it will not do
+
+The comparison can move a seller off the marketplace their whole workflow lives on, so four rules
+are enforced in the analyzer rather than left to the copy:
+
+- **An ask is not a sale.** eBay's figure is what buyers *paid*; every off-eBay figure is what
+  sellers are *asking* (no site outside eBay publishes sold prices). Local asks are marked down 10%
+  before they compete, and the evidence word — `sold` / `asking` / `no price data` — is rendered on
+  every card, never as a footnote.
+- **Three listings minimum.** A venue with fewer matching listings is shown, and its number is
+  shown, but it can never be crowned. Two hopeful listings priced at double the eBay comp lose to
+  eBay, by rule.
+- **A win has to be worth the move.** The gap must clear **both** $5 and 4% of the eBay take. A
+  $6.90 edge on a $173 sale reads "about the same — stay where you are", not a recommendation.
+- **Missing is not losing.** A source that is disconnected, expired or broken says which, and never
+  appears as a venue that came last. Mercari is never given a price estimate at all.
+
+Speed is reported the same way: eBay gets a real days-to-cash because it has dated sold history; a
+local venue reports only the half it genuinely knows — the money arrives at handoff with no
+ship-and-payout wait — and says plainly that how long it takes to find a local buyer is not something
+this data can measure.
+
+### Built on what was already there
+
+No new fee math. Each venue is a **clone of the seller's own `FeeProfile`** with the four things a
+venue actually changes overridden (who takes a cut, who ships, whether returns exist, whether a
+processor is involved), run through the same `ProfitCalculator` as every other screen — so the eBay
+column here cannot disagree with the eBay number anywhere else in the app. "The price that beats
+eBay" reuses `NetProceedsCalculator`'s existing floor identity rather than re-deriving it. eBay is
+priced by `AnalyzeProductAsync` (the Opportunity Finder / Local Deals pipeline, identity guard and
+all); the other venues are searched through the same `ILocalSupplySource` registry Local Deals uses,
+then filtered through `ComparableMatcher` so a nearby shelf does not price an $800 miner.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/WhereToSellModels.cs` | **New** — `VenueOutlook` (price + evidence + itemised deductions + net + speed + verdict), `VenueCostLine`, `WhereToSellReport` |
+| `Services/WhereToSellAnalyzer.cs` | **New** — the venue catalogue and their economics, the per-venue fee-profile derivation, the ask→sold haircut, the sample and materiality bars, the price-to-beat-eBay solve, ranking, verdicts and copy. Pure: no I/O |
+| `Program.cs` | DI + `GET /api/where-to-sell`, `WhereToSellAsync` (one comps lookup + one search per source), `RelevantLocalPrices` (match filter + per-unit normalisation) |
+| `wwwroot/index.html` | `#wts-section`, the `Where to Sell` nav entry, the footnote. `app.js?v=54`, `style.css?v=45` |
+| `wwwroot/app.js` | `bindWhereToSell`, `runWhereToSell`, `renderWtsBanner` / `renderWtsWarnings` / `renderWtsVenues`, `wtsVenueHtml`. Uses `moneyExact` throughout — the cents are the entire argument on this screen |
+| `wwwroot/style.css` | `.wts-*` |
+| `ING eBay AutoLister.Tests/WhereToSellAnalyzerTests.cs` | **New** — 24 tests |
+
+### What one click costs
+
+One comp lookup (the item is one product, so one lookup answers it) plus one search per selected
+local source, run sequentially because one of them drives a real browser. Terapeak stays opt-in per
+request and is skipped entirely unless a session is saved. Read-only throughout: it searches and
+compares, and posts, lists or sells nothing anywhere.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,145 passed**, 0 failed, 0 skipped (1,121 pre-existing + 24 new) |
+| Live endpoint (dev port 9344, real hosted comps + real Craigslist search) | Returned a complete report: eBay priced off **20 real sold comps** ($85.00 sale, $12.24 fees, $4.35 label → **$72.76** net, 11 days to cash), Craigslist searched live (`lasvegas.craigslist.org`, 0 matches → "no evidence", not "loses"), Facebook reported as not searched, Mercari carried **"Get $72.76 here and you match eBay's $72.76 take-home"** with no invented price |
+| Fee identity, per venue | eBay $200 → $26.90 fees → $173.10; local pickup at the same take keeps the label, packaging and returns reserve at $0 while keeping the seller's own handling cost |
+| Materiality rule | $6.90 on a $173.10 base → `too_close`; $29.40 → `move` |
+| Two live findings, fixed | A loss was being narrated as *"-$727.24 of profit"* (now *"the best venue here still loses $726.90"*), and unpriced venues were rendering an "unknown" clock under an empty column (now no clock at all) |
+
+### Not verified
+
+- **A live local win.** The Craigslist search for the seller's own niche returned no matching local
+  supply, so the "move off eBay" path is verified against the analyzer's arithmetic (24 tests) and
+  the endpoint's real eBay half, not against a real nearby listing that beat eBay. Facebook
+  Marketplace needs a saved session to contribute at all.
+- **Off-eBay fee rates are published standard rates, not the seller's account.** Facebook's 5%
+  shipped rate and Mercari's 0% seller fee come from `CrossListingFeeProfile`, which already
+  documents them as estimates; every figure derived from them is labelled an estimate.
+- **How fast a local sale actually happens.** Deliberately unmeasured — see above.

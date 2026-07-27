@@ -229,6 +229,11 @@ builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
 builder.Services.AddSingleton<CrossListingFeeProfile>();
 builder.Services.AddSingleton<CrossListingExporter>();
+// Where to sell highest — the exporter above answers "how do I post this elsewhere"; this answers
+// the question that comes first, which is whether posting it elsewhere pays more. Pure comparison
+// logic over the seller's own fee profile, the published off-eBay rates, and whatever live supply
+// the local sources can see; the searching is orchestrated in WhereToSellAsync below.
+builder.Services.AddSingleton<WhereToSellAnalyzer>();
 // Local arbitrage — prices each Facebook Marketplace result against the sold-comps database and
 // Terapeak, then ranks by net profit after fees. Pure ranking/verdict logic plus ProfitCalculator;
 // the pricing lookups themselves are orchestrated in FindLocalArbitrageAsync below.
@@ -1820,6 +1825,60 @@ app.MapPost("/api/local/negotiate", (
     return Results.Ok(plan);
 });
 
+// ── Where to sell highest ─────────────────────────────────────────────────────────────────────
+// Every other pricing screen in this app assumes the answer to "where does this sell" is eBay,
+// because eBay is where it lists. This one checks. It prices the item on eBay from sold history,
+// prices it off eBay from live local supply, costs each venue with the seller's own fee profile,
+// and reports which one actually hands over the most money.
+//
+// Read-only and user-initiated: it searches, it compares, and it posts nothing anywhere.
+app.MapGet("/api/where-to-sell", async (
+    string q, string? zip, int? radius, decimal? cost, string? sources, string? craigslistSite,
+    bool? terapeak,
+    LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakService terapeakSession,
+    WhereToSellAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(q))
+        return Results.BadRequest(new { error = "Tell me what the item is and I'll tell you where it pays most." });
+
+    try
+    {
+        var report = await WhereToSellAsync(
+            q.Trim(), zip ?? "", Math.Clamp(radius ?? 40, 1, 500), cost,
+            registry.Resolve(sources), craigslistSite,
+            // A Terapeak scrape drives a real browser, so it stays opt-in per request like it is
+            // everywhere else — and it only helps at all when a session is actually saved.
+            (terapeak ?? false) && terapeakSession.IsConnected,
+            marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, analyzer, log, ct);
+
+        log.Add("Research", "Compared where to sell",
+            $"\"{q.Trim()}\": {report.Headline}");
+
+        return Results.Ok(report);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        // The comparison reaches across the comps database and up to two scraped sites. Whatever
+        // broke comes back as a sentence the seller can read rather than a rejected fetch.
+        log.Add("Error", "Where-to-sell comparison failed", ex.Message);
+        return Results.Ok(new WhereToSellReport
+        {
+            Status = "error", Query = q.Trim(), ZipCode = zip ?? "", RadiusMiles = radius ?? 40,
+            Error = $"The comparison couldn't be completed: {ex.Message}",
+            Headline = "The comparison couldn't be completed",
+            Subhead = "Nothing was changed or posted. Try it again in a moment.",
+        });
+    }
+});
+
 // ── Roll the Dice ─────────────────────────────────────────────────────────────────────────────
 // The one money feature that needs nothing from the seller — no keyword, no supplier file, no idea
 // what to look for. It sweeps several CATEGORIES of the sold-comps database at once, keeps the
@@ -3187,6 +3246,99 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         $"Sorted by: {LocalArbitrageAnalyzer.NormalizeSort(sort)}; Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;
+}
+
+// Where to sell highest: one item, priced on every venue this app can see, ranked by what the
+// seller actually banks. Two lookups, both already built:
+//
+//   * eBay is priced by AnalyzeProductAsync — the same sold-comps + Terapeak pipeline the
+//     Opportunity Finder and Local Deals use, so the eBay column here is the eBay number the rest
+//     of the app would give.
+//   * Everywhere else is priced from live local supply through the same ILocalSupplySource
+//     registry that Local Deals searches, then filtered through ComparableMatcher so a search for
+//     "Antminer S19j Pro" is not priced off a mining-rig-shaped shelf someone is selling nearby.
+//
+// The money comparison itself is WhereToSellAnalyzer and is pure — everything here is I/O.
+static async Task<WhereToSellReport> WhereToSellAsync(
+    string q, string zip, int radius, decimal? cost,
+    IReadOnlyList<ILocalSupplySource> sources, string? craigslistSite, bool allowTerapeakScrape,
+    IMarketplaceRepository marketplace, ProductNormalizer normalizer, ComparableMatcher matcher,
+    MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
+    FeeProfile feeProfile, OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    WhereToSellAnalyzer analyzer, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+
+    // ── The eBay side: what buyers actually paid ─────────────────────────────────────────────
+    var analysis = await AnalyzeProductAsync(
+        q, supplierUnitCost: cost, quantity: 1, listingType: "FIXED_PRICE",
+        activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+        allowRealTerapeakScrape: allowTerapeakScrape,
+        normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+        opportunityScorer, confidenceScorer, log, ct);
+    var resale = ResalePricing.From(analysis, q);
+
+    // ── Everywhere else: what the item is going for nearby, right now ────────────────────────
+    // Sequential for the same reason every other local scan is: one of these sources is a real
+    // browser, and running it alongside anything else turns a slow search into a stuck one.
+    var target = normalizer.Normalize(q);
+    var evidence = new List<LocalVenueEvidence>();
+    var outcomes = new List<LocalSupplySourceOutcome>();
+
+    foreach (var source in sources)
+    {
+        var search = await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, ct);
+        outcomes.Add(LocalSupplySourceOutcome.From(search));
+        evidence.Add(new LocalVenueEvidence
+        {
+            Venue = search.SourceId, Label = search.SourceLabel,
+            Status = search.Status, Error = search.Error, SearchUrl = search.SearchUrl,
+            RawResultCount = search.Count,
+            Prices = RelevantLocalPrices(target, search.Items, matcher),
+        });
+    }
+
+    var report = analyzer.Build(q, resale, evidence, feeProfile, cost, zip, radius);
+    report.Sources = outcomes;
+
+    log.Add("Research", "Where-to-sell comparison",
+        $"\"{q}\" within {radius} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")}; " +
+        $"eBay comps: {resale.SoldCompCount}+{resale.TerapeakCompCount}; " +
+        $"local matched: {string.Join(", ", evidence.Select(e => $"{e.Venue} {e.Prices.Count}/{e.RawResultCount}"))}; " +
+        $"verdict: {report.Verdict}; Duration: {sw.ElapsedMilliseconds}ms");
+
+    return report;
+}
+
+// Local asking prices for listings that are actually THIS item, per unit.
+//
+// A keyword search on a classifieds site returns whatever shares a word with the query, and pricing
+// a venue off those is how "sell it locally for $40" gets printed under an $800 item. Every
+// candidate goes through the same ComparableMatcher that guards the sold-comps set — including its
+// hard exclusions for parts/broken/accessory listings — and a lot of three is divided down to one,
+// exactly as MarketPriceEstimator normalizes a lot comp.
+static List<decimal> RelevantLocalPrices(
+    NormalizedProduct target, IEnumerable<LocalSupplyListing> items, ComparableMatcher matcher)
+{
+    // The same floor ComparableMatcher itself treats as broad-keyword tier. Below it a "match" is
+    // a shared word, not a shared product.
+    const int MinLocalMatchConfidence = 40;
+
+    var prices = new List<decimal>();
+    foreach (var item in items)
+    {
+        if (item.Price is not decimal price || price <= 0m || string.IsNullOrWhiteSpace(item.Title)) continue;
+
+        var candidate = new MarketplaceComparableResult { Title = item.Title, SoldPrice = price, TotalPrice = price };
+        var match = matcher.Match(target, candidate);
+        if (match.Excluded || match.MatchConfidence < MinLocalMatchConfidence) continue;
+
+        // Match() sets Quantity from the candidate's own title ("lot of 3", "2x") — a $300 pair is
+        // a $150 comparable for one unit, not a $300 one.
+        var quantity = Math.Max(1, candidate.Quantity);
+        prices.Add(Math.Round(price / quantity, 2));
+    }
+    return prices;
 }
 
 // Roll the Dice: the cross-category sweep. Every other money feature starts from something the
