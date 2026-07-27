@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=52" />
+  <link rel="stylesheet" href="style.css?v=53" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -1182,6 +1182,10 @@
                 </select>
                 <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
+                <!-- Used stock that still carries cover: lower risk to buy, and a line the seller
+                     can put in their own listing. A different KIND of row rather than a
+                     better-priced one, which is why it filters rather than sorts. -->
+                <label class="fb-arb-check"><input id="fb-arb-warranty-only" type="checkbox" /> Only items still under warranty</label>
                 <span id="fb-arb-shown" class="fb-arb-shown"></span>
                 <!-- The step after ranking: this table says which deal is best, and that is not the
                      same question as how to spend a fixed amount of cash across all of them. -->
@@ -3862,6 +3866,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=61"></script>
+  <script src="app.js?v=62"></script>
 </body>
 </html>

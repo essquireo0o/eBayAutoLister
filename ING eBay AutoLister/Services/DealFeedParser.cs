@@ -120,6 +120,10 @@ public static class DealFeedParser
             Retailer = retailer,
             FreeShipping = DealFeedSelectors.FreeShipping.IsMatch($"{rawTitle} {prose}"),
             CouponCode = ReadCouponCode(body, description, rawTitle, prose),
+            // The deal's own write-up, which on these feeds is where the condition lives: "certified
+            // refurbished", "open-box", "1-year manufacturer warranty". A refurb deal and a new one
+            // have the same title shape and are not the same buy — see WarrantyDetector.
+            DetailText = CraigslistParser.Truncate(prose),
         };
 
         if (listing.Title.Length == 0) return null;

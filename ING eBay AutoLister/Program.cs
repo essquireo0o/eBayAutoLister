@@ -3919,6 +3919,21 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         result.ExpiringTodayCount = freebies.Count(r =>
             r.NetProfit is > 0 && r.Freebie!.Urgency is FreebieUrgency.Today or FreebieUrgency.FirstCome);
 
+        // The covered half of the board. A used item with warranty left is not a better-priced row,
+        // it is a different KIND of row: the same flip with the downside cut off. A seller who can't
+        // absorb one bad buy shops this column before the profit ranking, so it gets its own count.
+        var covered = result.Items.Where(r => r.Warranty is { Kind: not WarrantyKinds.None }).ToList();
+        result.WarrantyCount = covered.Count;
+        result.TransferableWarrantyCount = covered.Count(r => r.NetProfit is > 0 && r.Warranty!.TransfersToBuyer);
+        // Already inside TotalPotentialProfit, unlike the coupon and negotiation figures — a stated
+        // warranty is a claim about the goods that the seller repeats in their own listing, not a
+        // promo code that may be dead. Reported anyway so the bare-comps number stays recoverable.
+        result.WarrantyUpliftOnTheTable = Math.Round(
+            covered.Where(r => r.NetProfit is > 0).Sum(r => r.Warranty!.ResaleUplift), 2);
+        // And the rows where the listing says the opposite. Counted only where the money is big
+        // enough for "no returns" to be the loss — see WarrantyPricer.RiskNote.
+        result.AsIsRiskCount = result.Items.Count(r => r.Warranty?.RiskNote is not null);
+
         // The buy-side half of the retail rows, counted apart from the board's own totals and never
         // added into them: a public code is a claim, and TotalPotentialProfit is a figure the app
         // stands behind. Only rows that make money WITH the code are counted — extra profit on a
@@ -3975,6 +3990,8 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
         $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +
         $"Goldmines: {result.GoldmineCount}; Fast cash (<={DaysToCashEstimator.FastCashDays}d): {result.FastCashCount}; " +
+        $"Still under warranty: {result.WarrantyCount} ({result.TransferableWarrantyCount} transferable, " +
+        $"+{result.WarrantyUpliftOnTheTable:C} resale); Sold as-is at risk: {result.AsIsRiskCount}; " +
         $"Sorted by: {LocalArbitrageAnalyzer.NormalizeSort(sort)}; Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;

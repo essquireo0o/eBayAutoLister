@@ -123,6 +123,13 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     {
         var localAsk = listing.Price ?? 0m;
 
+        // What the listing says about cover. A source that already knows (a refurb outlet publishing
+        // its own programme terms) wins; everything else is read here rather than in each parser, so
+        // every board that reaches this method gets warranty at once and no parser has to learn the
+        // word. See WarrantyDetector, which is pure and answers null for most rows.
+        var warranty = listing.Warranty
+            ?? WarrantyDetector.Detect(listing.Title, listing.DetailText, listing.Retailer, DateTime.UtcNow);
+
         // A free item's cost basis is not its price — it is what surviving the word "free" costs:
         // a rebate's unrefundable sales tax, the slice of the claim held in reserve, and nothing at
         // all on a curb pickup. Computed first because everything below is measured against it.
@@ -180,13 +187,18 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // LiquidationLotPricer, which does the money through the Liquidation Lot Analyzer's own
         // grade, cost and max-bid arithmetic.
         if (listing.Liquidation is { } lot)
-            return BuildLiquidation(row, lot, resale, fees, retailSalesTaxPercent);
+            return BuildLiquidation(row, lot, warranty, resale, fees, retailSalesTaxPercent);
 
         if (resale is null || !resale.HasPrice)
         {
             row.Verdict = "no_data";
             row.VerdictNote = "No eBay sold history matched this title.";
             row.PricedAs = resale?.LookupTitle ?? "";
+            // No price to add a premium to, and still worth saying out loud: "this one is under
+            // factory warranty until March" is the most useful thing an unpriceable row can carry,
+            // and it is the reason to go and look at it by hand.
+            row.Warranty = warranty is null ? null
+                : WarrantyPricer.Value(warranty, 0m, buyCost, 0, 0, allowUplift: false);
             ApplyDaysToCash(row, resale);
             // A row nobody could price still buys cheaper with a code. There is no profit to
             // recompute, so what the seller gets is the discount and the code itself — which is
@@ -198,6 +210,25 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         ApplyResale(row, resale);
 
         var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
+
+        // Remaining cover, priced. This is the only place in the app where a listing's own prose can
+        // lift a resale estimate above the sold comps, and WarrantyPricer refuses far more often than
+        // it allows: the cover has to be STATED, transferable, still running, and sitting on comps
+        // solid enough to add a premium to — then capped as a percentage and again in dollars.
+        //
+        // When it does allow one, the row's own resale column moves with it. A profit computed
+        // against a price the row doesn't show is a row that doesn't add up, and every figure below
+        // — fees, net, ROI, max buy price — is meant to be checkable against the column beside it.
+        var compCount = resale.SoldCompCount + resale.TerapeakCompCount;
+        if (warranty is not null)
+        {
+            row.Warranty = WarrantyPricer.Value(warranty, expected, buyCost, compCount, resale.ConfidenceScore);
+            if (row.Warranty.ResaleUplift > 0m)
+            {
+                expected = row.Warranty.ResaleWithWarranty;
+                row.EbayExpectedSale = expected;
+            }
+        }
 
         // Shipping is booked on both sides: buyers paid it (revenue, and eBay charges its final
         // value fee on it) and it costs the seller the same amount to actually ship. Booking it
@@ -232,9 +263,14 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay.
         var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, buyCost,
-            resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
+            compCount, resale.ConfidenceScore);
 
         if (freebie is not null) (verdict, note) = JudgeFreebie(verdict, note, freebie, profit.NetProfitPerUnit);
+
+        // Cover the listing states is absent, on a buy big enough for that to BE the loss. Lowers a
+        // verdict and never raises one — the uplift above has already had its say through the money,
+        // and this is the part the money cannot express.
+        if (row.Warranty is { } cover) (verdict, note) = WarrantyPricer.JudgeWarranty(verdict, note, cover);
 
         row.Verdict = verdict;
         row.VerdictNote = note;
@@ -375,7 +411,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     /// here rather than written again.
     /// </summary>
     private LocalArbitrageOpportunity BuildLiquidation(
-        LocalArbitrageOpportunity row, LiquidationLotDetails lot,
+        LocalArbitrageOpportunity row, LiquidationLotDetails lot, WarrantyDetails? warranty,
         ResalePricing? resale, FeeProfile fees, decimal salesTaxPercent)
     {
         var quote = liquidationPricer.Price(lot, row.LocalAsk, resale, fees, salesTaxPercent);
@@ -386,6 +422,14 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         row.SalesTax = quote.Economics.SalesTax;
         row.BuyCostAllIn = quote.TotalCost;
         row.PricedAs = resale?.LookupTitle ?? "";
+
+        // Read and shown, never priced in. A lot's number is its grade times its unit count, and a
+        // warranty line in the catalogue describes one unit of it — but "these are sealed and still
+        // under factory cover" is exactly what separates a good pallet from a bad one, so the seller
+        // gets to read it. The refusal says so in the row's own words rather than silently.
+        row.Warranty = warranty is null ? null
+            : WarrantyPricer.Value(
+                warranty, resale?.ExpectedSale ?? 0m, quote.TotalCost, 0, 0, allowUplift: false);
 
         if (resale is not null && resale.HasPrice) ApplyResale(row, resale);
 
@@ -431,6 +475,8 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             note = $"${quote.NetProfit:0.##} across {quote.Economics.Units} units — but on {compCount} sold comp" +
                    $"{(compCount == 1 ? "" : "s")}, and a lot multiplies whatever that comp gets wrong.";
         }
+
+        if (row.Warranty is { } cover) (verdict, note) = WarrantyPricer.JudgeWarranty(verdict, note, cover);
 
         row.Verdict = verdict;
         // The bid moves. Saying where to stop is the only honest way to state a profit measured

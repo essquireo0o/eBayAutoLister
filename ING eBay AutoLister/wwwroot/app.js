@@ -911,6 +911,7 @@
     on('fb-arb-sort', 'change', renderArbitrageRows);
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
     on('fb-arb-fast-only', 'change', renderArbitrageRows);
+    on('fb-arb-warranty-only', 'change', renderArbitrageRows);
     // The seller's zip and radius don't change between searches — remembering them is the
     // difference between a two-field search and a one-field one.
     const zip = localStorage.getItem('fbZip');
@@ -1405,6 +1406,19 @@
       data.couponRescuedCount
         ? `<strong class="fb-arb-hit">${data.couponRescuedCount} only ${data.couponRescuedCount === 1 ? 'works' : 'work'} with a code</strong>`
         : '',
+      // The covered half of the board. Its own headline because it is not a better price — it is the
+      // same flip with the downside cut off, and a seller who can't absorb one bad buy shops this
+      // column before the profit ranking.
+      data.warrantyCount
+        ? `<strong class="fb-arb-hit">${data.warrantyCount} still under warranty</strong>` +
+          (data.warrantyUpliftOnTheTable > 0
+            ? ` — ${money(data.warrantyUpliftOnTheTable)} of the profit above is what that cover is worth on resale`
+            : '')
+        : '',
+      // And the rows that say the opposite, where the price makes it matter.
+      data.asIsRiskCount
+        ? `<strong class="fb-arb-hit">${data.asIsRiskCount} sold as-is with no returns</strong> — test before you pay`
+        : '',
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
       scanned +
@@ -1432,11 +1446,16 @@
     const sort = $('fb-arb-sort')?.value || 'profit';
     const hideLosers = !!$('fb-arb-hide-losers')?.checked;
     const fastOnly = !!$('fb-arb-fast-only')?.checked;
+    const warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
 
     let rows = arbitrageData.items.slice();
     if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
     // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
     if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
+    // Cover that is still running, whoever it protects. A seller's own guarantee is worth nothing
+    // on resale and is still the reason to buy this unit over the identical uncovered one, so it
+    // belongs in the same filter — see WarrantyPricer.
+    if (warrantyOnly) rows = rows.filter(r => r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0);
 
     // Unpriced rows always sort last whatever the key — "we couldn't price this" isn't a zero.
     const nullsLast = (a, b, key) => (a[key] == null) - (b[key] == null) || null;
@@ -1472,9 +1491,12 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : `<tr><td colspan="14" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
-          ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
-          : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
+      : `<tr><td colspan="14" class="fb-arb-empty">${
+          warrantyOnly && arbitrageData.items.length
+            ? 'Nothing in this search said it still carries a warranty. Untick the filter to see everything it did find — most classifieds listings never mention cover either way, so this is as often silence as it is a no.'
+            : fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
+              ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
+              : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
 
     // Re-bound after every render: the table body is replaced wholesale by the sort and filter
     // controls, so listeners attached to the previous rows are gone with them.
@@ -1560,6 +1582,7 @@
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
       ...liquidationMeta(row),
       ...freebieMeta(row),
+      ...warrantyMeta(row),
       ...couponMeta(row),
     ].filter(Boolean).join(' · ');
 
@@ -1595,7 +1618,7 @@
         </td>
         <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
         <td class="num">${buyCostCell(row)}</td>
-        <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
+        <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}${warrantyResaleLine(row)}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
         <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
         <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
@@ -1680,6 +1703,57 @@
       // A cost the app could not see, large enough to change the answer — see FreebiePricer.CapReason.
       free.cappedReason ? `<span class="free-caveat" title="${esc(free.cappedReason)}">⚠ read this</span>` : '',
     ];
+  }
+
+  // What a used item's cover says about itself. Two very different chips come out of here and the
+  // difference is the whole feature: cover that TRANSFERS is a line the seller can put in their own
+  // listing and is already inside the profit beside it, while cover that doesn't still protects the
+  // money they are about to spend. A stated absence of cover gets the loudest chip of the three,
+  // because on an expensive buy it is the most important thing the listing said.
+  const WARRANTY_TONE = {
+    none: 'risk',
+    seller: 'partial',
+    manufacturer: 'ok',
+    refurbisher: 'ok',
+    extended: 'ok',
+  };
+
+  function warrantyMeta(row) {
+    const cover = row.warranty;
+    if (!cover) return [];
+
+    // An estimate is never dressed as a fact. It reaches the seller because "bought three months
+    // ago and Dyson runs two years — ask for the receipt" is worth acting on, and it is marked as
+    // worked-out rather than stated everywhere it appears.
+    const tone = cover.kind === 'none' ? 'risk'
+      : cover.evidence === 'estimated' ? 'guess'
+      : (WARRANTY_TONE[cover.kind] || 'partial');
+
+    const worth = cover.resaleUplift > 0
+      ? ` — worth ${money(cover.resaleUplift)} more on resale`
+      : '';
+
+    return [
+      `<span class="warranty-chip warranty-chip-${tone}" title="${esc(cover.note)}">` +
+        `${cover.kind === 'none' ? '⚠' : '🛡'} ${esc(cover.kindLabel)}${worth}</span>`,
+      // The one that changes a decision rather than a number.
+      cover.riskNote
+        ? `<span class="warranty-risk" title="${esc(cover.riskNote)}">no cover, no returns — test it first</span>`
+        : '',
+      // Said plainly, because it is the difference between a claim and a conversation.
+      cover.hasProofOfPurchase ? '<span class="warranty-proof">receipt mentioned</span>' : '',
+    ];
+  }
+
+  // The premium, under the resale price it is already part of. Shown rather than folded away
+  // silently: this is the one figure on the board that came from a listing's prose instead of from
+  // sold comps, and the seller should be able to see it and subtract it.
+  function warrantyResaleLine(row) {
+    const cover = row.warranty;
+    if (!cover || !(cover.resaleUplift > 0)) return '';
+
+    return `<br /><span class="warranty-extra" title="${esc(cover.note)}">` +
+      `incl. +${money(cover.resaleUplift)} still under warranty</span>`;
   }
 
   // What a promo code does to this row. The code itself leads, because it is the thing the seller

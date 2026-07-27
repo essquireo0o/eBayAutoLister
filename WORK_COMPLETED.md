@@ -4368,3 +4368,169 @@ data. `coupons=false` on the endpoint turns the whole thing off.
   published a cashback percentage — the portals themselves are link-only by design.
 - **Whether an applied code actually works at checkout.** Untestable without checking out, which is
   precisely why the row's own profit never depends on one.
+
+---
+
+## Used-with-warranty finder — used stock that still carries cover
+
+### The money question
+
+Every board in this app so far asks *"how far under resale can I buy this?"*. This one asks the
+question that decides whether the answer is worth acting on: **and what happens if it's dead?**
+
+A used item with time left on a manufacturer warranty is a different asset from the identical item
+without one, in two ways that are both money:
+
+1. **The downside shrinks.** A $600 laptop bought off a stranger that doesn't boot is a $600 loss.
+   The same laptop with eight months of factory cover is a repair ticket and a wait. On a board that
+   ranks by profit alone those two rows were indistinguishable, and one of them is a trap.
+2. **The resale rises.** *"Still under manufacturer warranty until March 2027"* is a line the seller
+   can put in their own eBay listing, and buyers pay for it. The sold comps behind the price estimate
+   are a blend of covered and uncovered units, so that premium was not in the number the board
+   started from.
+
+### What was built
+
+Not a new source — a capability that runs across **every** source at once. Detection happens in
+`LocalArbitrageAnalyzer.Build`, so Craigslist, Facebook Marketplace, the deal feeds, the liquidation
+auctions and the freebie board all gained it in the same commit, and no parser had to learn the word
+"warranty". A future refurb-outlet `ILocalSupplySource` can override the reading by setting
+`LocalSupplyListing.Warranty` itself; everything else is read from the listing's own text.
+
+**Detected**, in the order the sources deserve to be trusted:
+
+| Reading | Evidence | Worth money? |
+|---|---|---|
+| A stated end date — *"warranty until 3/2027"* | `stated` | **Yes** |
+| A stated term plus a stated purchase date — *"3 year warranty, bought March 2025"* | `stated` | **Yes** |
+| A named programme — Apple Certified Refurbished, Amazon Renewed, Best Buy Open-Box | `program` | **Yes** |
+| A stated term with no start date — *"1 year warranty"* on a used phone | `stated` | **No** — how much is left is unknown |
+| A purchase date plus the brand's standard term — *"bought 3 months ago"* on a Sony | `estimated` | **Never** |
+| An unopened box plus the brand's term — *"brand new in box, never opened"* | `estimated` | **Never** |
+| A stated absence — *"no warranty"*, *"as-is, no returns"*, *"all sales final"* | `stated` | Holds a verdict **down** |
+
+### The one place prose is allowed to move a price, and its four fences
+
+`WarrantyPricer` adds a premium to the resale estimate — the only place in the app where a listing's
+own words can lift a price above what the sold comps produced. The argument for allowing it at all:
+**the board already trusts the listing's price completely.** A row that says `$250` is costed at $250
+with no corroboration whatsoever. Reading *"still under manufacturer warranty until March 2027"* out
+of the same sentence and adding a capped few percent is strictly less credulous than what the board
+already does — and it is a premium the reseller can actually realise, because that sentence is a line
+they can repeat in their own listing.
+
+It is fenced anyway, and when any fence bites the row's money is **identical to what it would have
+been without this feature**, with `heldBackReason` saying which fence and why:
+
+| Fence | Rule |
+|---|---|
+| Evidence | `estimated` readings earn **$0**, however plausible |
+| Transferability | A seller's own guarantee, and brands whose terms name the original purchaser (DeWalt, Milwaukee, Makita, Ryobi, Samsung, Sony…) earn **$0** on resale |
+| Believability | Under **3 sold comps** or **50 confidence** — the goldmine bar — earn **$0** |
+| Size | **10%** of expected sale, then **$75** absolute. 10% of a $2,400 miner is $240 of unverified prose inside a profit ranking; the dollar cap is what stops it |
+
+Bands: 12+ months → 10%, 6+ → 7%, 3+ → 4%, 1+ → 2%, under a month → nothing. A step function, because
+that is how it works in a buyer's head — *"still covered"* is worth far more than *"isn't"*, and two
+years left is worth barely more than one. Cover is credited to a maximum of 36 months.
+
+**When a premium is paid, the row's own resale column moves with it.** A profit computed against a
+price the row doesn't show is a row that doesn't add up, and the fees, net, ROI and max-buy-price
+beside it are all meant to be checkable against that column. The premium is printed under it as
+*"incl. +$20 still under warranty"* so it can be seen and subtracted.
+
+### What the verdict does with it
+
+The uplift has already had its say through the money by the time verdicts are judged, so
+`WarrantyPricer.JudgeWarranty` only handles what money cannot express — and, like `JudgeFreebie`,
+**every correction it makes lowers a verdict and none raises one**. The single case: a buy over
+**$150** the listing states is sold as-is with no returns drops from `goldmine` to `solid`. The profit
+on that row may well be real; a green badge on it is an instruction to commit four figures to a
+stranger's word about a thing that cannot be returned, and that instruction should come with a hand
+on the arm.
+
+### What the seller sees
+
+- **A chip per row** in four weights, and the difference between them is the whole feature:
+  green — stated, transferable, running (*"Manufacturer warranty · 17 months left — worth $20 more on
+  resale"*); grey solid — real cover that protects the buy and moves no price (*"Seller warranty ·
+  1 month left"*); grey dashed — *"(estimated)"*, worth exactly $0; amber — *"No warranty — sold
+  as-is"*.
+- **"no cover, no returns — test it first"** on the expensive as-is rows, matching the held-down verdict.
+- **"receipt mentioned"**, because that is the difference between a warranty claim and a conversation.
+- **A filter — *"Only items still under warranty"*** — the finder itself. Client-side over the response
+  already in hand, like every other filter on this board: it must never re-run a multi-minute scan.
+- **Two scan headlines**: *"6 still under warranty — $94 of the profit above is what that cover is
+  worth on resale"* and *"2 sold as-is with no returns — test before you pay"*.
+
+`WarrantyUpliftOnTheTable` **is** inside `TotalPotentialProfit`, unlike the coupon and negotiation
+figures. Those are claims about a code that may be dead; this is a claim about the goods that the
+seller repeats in their own listing. It is reported separately anyway so the bare-comps number stays
+recoverable.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `Models/WarrantyModels.cs` | **New** — `WarrantyKinds`, `WarrantyEvidence`, `WarrantyDetails`, `WarrantyEconomics` |
+| `Services/WarrantySelectors.cs` | **New** — every pattern and every bound, isolated for tuning |
+| `Services/WarrantyCatalog.cs` | **New** — 16 refurb/open-box programmes, 40 brand terms, each with a transferability answer |
+| `Services/WarrantyDetector.cs` | **New** — pure detection and dating; refusal runs first |
+| `Services/WarrantyPricer.cs` | **New** — the uplift, the four fences, the risk note, the verdict correction |
+| `Services/LocalArbitrageAnalyzer.cs` | Detects once per row; uplift feeds the profit and the resale column; `JudgeWarranty` on both the ordinary and the auction path |
+| `Services/CraigslistParser.cs` | Fills `DetailText` from the RSS body (+ shared `Truncate`) — the warranty is almost never in the title |
+| `Services/DealFeedParser.cs` | Fills `DetailText` from the deal's write-up, where *"certified refurbished"* lives |
+| `Models/LocalSupplyModels.cs` | `Warranty` and `[JsonIgnore] DetailText` on the listing |
+| `Models/LocalArbitrageModels.cs` | `Warranty` on the row; `WarrantyCount`, `TransferableWarrantyCount`, `WarrantyUpliftOnTheTable`, `AsIsRiskCount` on the result |
+| `Program.cs` | The four board counts, and the warranty figures in the scan log line |
+| `wwwroot/index.html` | *"Only items still under warranty"* filter. `app.js?v=62`, `style.css?v=53` |
+| `wwwroot/app.js` | `warrantyMeta`, `warrantyResaleLine`, the filter, the empty-state copy, two summary headlines |
+| `wwwroot/style.css` | `.warranty-chip*` (four weights), `.warranty-risk`, `.warranty-proof`, `.warranty-extra` |
+| `Tests/WarrantyDetectorTests.cs` | **New** — 23 cases, most of them refusal |
+| `Tests/WarrantyMoneyTests.cs` | **New** — 15 cases: one premium paid, the rest of the fences, and four end-to-end through the board's own arithmetic |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **1,613 passed**, 0 failed, 0 skipped (1,580 pre-existing + 33 new) |
+| `node --check app.js` | Syntax OK |
+| A covered flip end to end | $50 buy, $200 comps, *"3 year manufacturer warranty, bought last month"* → resale **$220**, net **$140.45** vs **$123.10** bare, max buy price **$190.45** |
+| An estimated one end to end | Sealed Dyson, same comps → chip shown, **every number identical** to a row with no warranty |
+| An expensive as-is buy | $400 buy, $1,000 comps → net **$467.10** kept, verdict **`goldmine` → `solid`**, risk note attached |
+
+#### The same flaky-store-test family again, recorded rather than glossed over
+
+`DealStoreTests.Hand_entered_deals_are_never_collapsed_together` failed **once** in five full runs of
+the suite this session, and passed on the other four plus in isolation (21/21). It is the same shape
+as the `EarningsStoreTests` flake recorded earlier and has the same plausible cause: the class gives
+every test its own GUID-named temp SQLite file but calls the process-global
+`SqliteConnection.ClearAllPools()` in `Dispose`, which collides when xUnit runs collections in
+parallel on Windows. Nothing in this change touches `DealStore`. Two store test classes now sharing
+one failure mode is enough to say the pattern itself is the bug and not the luck — worth a pass of
+its own.
+
+### Bugs found and fixed while building this
+
+- **`3/2027` read as `3/20`.** A day-first alternation matched two digits of the year and turned an
+  eight-month expiry into a date three weeks away — inverting the answer on the commonest way anyone
+  writes a warranty end date. The month/year form is now tried first.
+- **`under factory warranty` did not match.** The qualifier group consumed *"factory"* and then
+  demanded *"warranty"* with no space between them, so the single most common phrasing in the whole
+  feature silently produced nothing. Caught by the transferability test, not by the happy path.
+
+### Not verified
+
+- **The rendered board in a browser.** The endpoint shape, the counts and the row arithmetic are
+  covered by tests and the served assets are at `v=62`/`v=53`; the chip, the *"incl. +$20"* line and
+  the filter were not driven visually.
+- **Live supply carrying warranty text.** Every detection case is drawn from how these listings are
+  actually worded, but no live scan was run in this session to measure the hit rate — how many
+  Craigslist rows in a real search mention cover at all is unknown, and Facebook tiles have no body
+  text to read, so those rows can only ever be read from their titles.
+- **Whether a warranty a seller claims is actually live.** Untestable without the serial number and
+  the manufacturer's lookup, which is exactly why the row prints *"ask for the receipt"* on every
+  covered row rather than treating the claim as settled.
+- **The premium's real size.** 10%/$75 is a bounded, defensible policy, not a measurement. Nobody
+  here has a dataset of covered-versus-uncovered sold pairs; if one is ever built, this is the number
+  to replace with it.

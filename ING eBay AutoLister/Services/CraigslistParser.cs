@@ -157,6 +157,11 @@ public static class CraigslistParser
         listing.Title = title;
         listing.Location = place;
 
+        // The post's own body. Kept because it is where people say the two things a title never has
+        // room for and a buyer most needs: what condition it is in, and whether it is still under
+        // warranty. Truncated on the way in — see LocalSupplyListing.DetailText.
+        listing.DetailText = Truncate(WebUtilityDecode(StripHtml(description)));
+
         var date = Child("date");
         if (date.Length == 0) date = Child("pubDate");
         if (DateTimeOffset.TryParse(date, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var posted))
@@ -391,6 +396,19 @@ public static class CraigslistParser
     }
 
     private static string StripHtml(string? html) => TagRx.Replace(html ?? "", " ").Trim();
+
+    /// <summary>
+    /// Body text cut to the length anything downstream actually reads — see
+    /// <see cref="WarrantySelectors.MaxDetailChars"/>. Whitespace is collapsed first, because an RSS
+    /// description is mostly the newlines the poster typed and they would eat the budget.
+    /// </summary>
+    internal static string Truncate(string? text)
+    {
+        var tidied = Regex.Replace((text ?? "").Trim(), @"\s+", " ");
+        return tidied.Length > WarrantySelectors.MaxDetailChars
+            ? tidied[..WarrantySelectors.MaxDetailChars]
+            : tidied;
+    }
 
     // &nbsp; decodes to U+00A0, which survives Trim() and every word comparison downstream as a
     // character that merely looks like a space — so it becomes a real one here, once.

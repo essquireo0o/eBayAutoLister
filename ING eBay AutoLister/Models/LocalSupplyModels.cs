@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace ING_eBay_AutoLister.Models;
 
 // ── Local supply, source-agnostic ─────────────────────────────────────────────
@@ -68,6 +70,27 @@ public class LocalSupplyListing
     // without notice. What "free" actually costs (a rebate's sales tax, its wait, its risk of never
     // being paid) is FreebiePricer's answer, not this field's. See Models/FreebieModels.cs.
     public FreebieDetails? Freebie { get; set; }
+
+    // ── Used, but still covered ───────────────────────────────────────────────
+    // Null on every row whose listing said nothing about warranty — which is most of them. Non-null
+    // means the item carries (or explicitly lacks) cover, and that cover is worth money on the
+    // resale and risk on the buy. Detected centrally in LocalArbitrageAnalyzer rather than per
+    // source, so every board gets it at once. See Models/WarrantyModels.cs.
+    public WarrantyDetails? Warranty { get; set; }
+
+    // The source's own body text, where it published one — craigslist's RSS description, a deal
+    // feed's content:encoded. Truncated at WarrantySelectors.MaxDetailChars, because everything
+    // that reads it wants the opening paragraph: the condition, the purchase date and the warranty
+    // wording live there, and past it are shipping boilerplate and forum chatter.
+    //
+    // Empty on the sources that publish tiles rather than posts (Facebook), which is the honest
+    // answer rather than a gap: a tile has no body to read.
+    //
+    // Not serialised: it is read on the way through the pipeline and nothing in the browser renders
+    // it, and three hundred posts' worth of body text is a few hundred kilobytes of response that
+    // would slow down every board carrying it for no one's benefit.
+    [JsonIgnore]
+    public string DetailText { get; set; } = "";
 
     // "Just listed", "3 hours ago" — free text as the site rendered it.
     public string PostedAgo { get; set; } = "";

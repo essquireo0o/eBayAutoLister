@@ -62,6 +62,14 @@ public class LocalArbitrageOpportunity
     // claimed the same day. See Services/FreebiePricer.cs.
     public FreebieEconomics? Freebie { get; set; }
 
+    // ── When the item is used but still covered ──────────────────────────────
+    // Null on every row whose listing said nothing about warranty. Non-null means the listing either
+    // claims remaining cover or explicitly disclaims it — and both change what this row is worth.
+    // Remaining, transferable, STATED cover is the one thing in this app allowed to lift a resale
+    // estimate above the sold comps, capped hard and gated on evidence; a stated "as-is, no returns"
+    // on an expensive buy holds the verdict down instead. See Services/WarrantyPricer.cs.
+    public WarrantyEconomics? Warranty { get; set; }
+
     // ── When a code cuts the buy price ───────────────────────────────────────
     // Null on every non-retail row (nobody on Craigslist takes a promo code) and on any retail row
     // no public code was found for. Non-null means the same flip costs less than LocalAsk if the
@@ -198,6 +206,25 @@ public class LocalArbitrageResult
     // as soon as somebody drives over. The count that decides whether this list is read now or
     // tomorrow.
     public int ExpiringTodayCount { get; set; }
+
+    // ── What the warranty finder found ───────────────────────────────────────
+    // Counted separately because these are a different KIND of row rather than a better-priced one:
+    // a used item with cover left is the same flip with the downside cut off. A seller who cannot
+    // afford one bad buy shops this column first, whatever the profit ranking says.
+    public int WarrantyCount { get; set; }
+    // Profitable rows whose remaining cover transfers to the buyer — the ones the seller can
+    // advertise "still under warranty until X" on, which is where the premium below comes from.
+    public int TransferableWarrantyCount { get; set; }
+    // Extra resale value across the board that came from stated, transferable, remaining cover.
+    // Already inside TotalPotentialProfit, unlike the coupon and negotiation figures — this is not a
+    // claim about a code that might be dead, it is a claim about the goods that the seller can
+    // repeat in their own listing. Reported separately anyway so it can be subtracted back out by
+    // anyone who wants the bare-comps number.
+    public decimal WarrantyUpliftOnTheTable { get; set; }
+    // Rows the listing states are sold as-is with no returns, at a price big enough for that to be
+    // the loss. The count that stops a green badge from reading as "commit four figures to a
+    // stranger's word about a thing you cannot return".
+    public int AsIsRiskCount { get; set; }
 
     // ── What the coupon lists found on the buy side ──────────────────────────
     // Counted separately from every other figure on this result, and never added into

@@ -4522,6 +4522,72 @@ textarea {
   color: var(--warn, #b4530a);
 }
 
+/* ── Remaining warranty ─────────────────────────────────────────────────────
+   Used stock that still carries cover. Three visual weights, and the difference between them is the
+   whole feature: cover that transfers is money already inside the profit column, cover that doesn't
+   still protects the buy, and a stated absence of cover is the loudest thing on the row. */
+.warranty-chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0 5px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* Stated, transferable, still running — the case the resale premium is paid on. */
+.warranty-chip-ok {
+  border: 1px solid rgba(31, 122, 69, 0.45);
+  color: #1f7a45;
+}
+
+/* Real cover that is worth nothing on resale: the seller's own guarantee, or a brand whose terms
+   name the original purchaser. Quieter, because it protects the buy and moves no price. */
+.warranty-chip-partial {
+  border: 1px solid var(--border, #d6d6d6);
+  color: var(--muted);
+}
+
+/* Worked out from the item's age rather than claimed by the listing. Dashed on purpose: nothing
+   here was stated, and it is worth exactly $0 on the board. */
+.warranty-chip-guess {
+  border: 1px dashed var(--border, #d6d6d6);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* The listing says there is no cover. The only warranty chip that is a warning. */
+.warranty-chip-risk {
+  border: 1px solid rgba(180, 83, 10, 0.55);
+  color: #b4530a;
+}
+
+/* Sold as-is with no returns, at a price where that IS the loss. Loud, and it holds the row's
+   verdict down as well — see WarrantyPricer.JudgeWarranty. */
+.warranty-risk {
+  font-weight: 700;
+  color: #b4530a;
+  cursor: help;
+}
+
+.warranty-proof {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The premium, under the resale price it is already part of. Same weight as the coupon line beside
+   it: a figure that came from a listing's prose never outshouts one that came from sold comps. */
+.warranty-extra {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #1f7a45;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* ── Coupons, promo codes and cashback ──────────────────────────────────────
    The buy side of a retail row. Everything here is deliberately quieter than the money columns it
    sits beside: a public promo code is a claim rather than a price, and the visual weight has to say
