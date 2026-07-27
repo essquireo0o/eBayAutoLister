@@ -4534,3 +4534,130 @@ its own.
 - **The premium's real size.** 10%/$75 is a bounded, defensible policy, not a measurement. Nobody
   here has a dataset of covered-versus-uncovered sold pairs; if one is ever built, this is the number
   to replace with it.
+
+## Ship Smart — the Shipping Profit Engine (autonomous session, 2026-07-27)
+
+### The gap this closes
+
+Every profit number this app has ever shown was computed against **one flat shipping figure** —
+`FeeProfile.DefaultShippingCost` — applied identically to a phone case and a 40 lb miner. That one
+assumption sits underneath the local-arbitrage board, the lot analyzer, the deal scanner, inventory
+health, break-even, the offer floors and every sourcing verdict. When it is wrong it is wrong
+*everywhere at once*, and always in the seller's favour, which is the worst direction for a number
+to be wrong.
+
+Running the finished scan against the real account made the point better than any argument: **87
+live listings, all ASIC miners, with `DefaultShippingCost` set to $0.** Every net-profit figure in
+the app was assuming it is free to ship a 44 lb box. The board reports the gap at **$3,241.77 per
+sale across 86 listings**, and the single best finding is not even the flat figure — it is that UPS
+Ground carries a miner for **$50.36 against USPS Ground Advantage's $70.20**, which is $19.84 a sale
+on every unit, forever, for choosing a different carrier.
+
+`ListingData` has carried `WeightLbs`/`PackageLengthIn`/… since the beginning. The app collected the
+data and never once turned it into money.
+
+### What was built
+
+**`Models/ShippingModels.cs`** — `PackageSpec` (with girth, volume, longest side),
+`ShippingServiceQuote`, `ShipModeOption`, `PackagingTip`, `ShippingRecommendation`, `ZoneShare`,
+`ShippingLeak`, `ShippingScanResult`.
+
+**`Services/ShippingZones.cs`** — turns "where do I ship from" into "what does an average sale cost".
+Quoting a single zone is the mistake most shipping calculators make: a seller in Ohio quoting zone 4
+understates half their sales, and one in California quoting zone 8 scares themselves off items that
+are fine. Instead this produces a *population-weighted distribution* over zones from the seller's ZIP
+prefix, and every downstream cost is the expectation over it, with the tails kept alongside — because
+the tails are where free shipping loses money. Ten ZIP-prefix regions with population shares and
+centroids; great-circle distance into USPS distance bands. No data file, no network, no lookup service.
+
+**`Services/ShippingRateBook.cs`** — eight services with real eligibility rules: eBay Standard
+Envelope (4 oz, quarter-inch, category-restricted), USPS Ground Advantage, Priority, all four
+Priority Flat Rate containers, and UPS Ground (the only one that goes past the 70 lb USPS ceiling,
+which is what every miner on this seller's account needs). Rate anchors interpolated on weight, held
+per zone band, dense where the card is steep. **Dimensional weight** with the right rules per carrier
+— USPS only above one cubic foot at divisor 166, UPS at any size at 139 — plus oversize surcharges.
+
+**`Services/PackageEstimator.cs`** — 50 packing profiles keyed by ~180 title keywords, longest match
+first. This is what lets the engine answer from a *title alone*, which is the only way it can ever be
+useful on a 200-row sourcing board or standing in a thrift store. Measured input always wins outright;
+the estimate only fills holes, and an unrecognised item is deliberately guessed **upward** (a parcel,
+not an envelope) because guessing downward is the exact failure this feature exists to end.
+
+**`Services/ShippingAdvisor.cs`** — the cheapest eligible service, the packing tips worth money, and
+the four ways to charge, all priced **at a constant buyer outlay**.
+
+**`Services/ShippingLeakScanner.cs`** — the same maths across every live listing, one finding per
+listing (ranked: label gap, then packing fix, then zone exposure, then the item simply being too
+heavy for its price), read-only, no comp lookups, so unlike the pricing scans it needs no budget.
+
+**Endpoints** — `POST /api/shipping/quote`, `GET /api/shipping/services`, `GET /api/shipping/leaks`.
+**`POST /api/pricing/net-quote` now estimates a real label** when the caller sends a title/package and
+no explicit shipping cost, and returns a `ShippingEstimateSummary` saying what it assumed and why — so
+a break-even that moved $9 can explain itself rather than silently being a better-or-worse number.
+
+**UI** — new *Ship Smart* page: a two-tab panel (price one item / scan my listings), the package strip
+that looks visibly different for a guessed box than a weighed one, the mode comparison table, every
+service priced with ineligible ones *shown* and reasoned, the packing tips, and a collapsible zone mix.
+Plus the leak board with tiles and per-sale impact. Assets bumped to `app.js?v=64` / `style.css?v=55`.
+
+### The correction at the centre of it
+
+Sellers overwhelmingly believe that charging shipping separately avoids eBay's cut on it. **It does
+not** — the final value fee is charged on the order total, shipping included. So at a fixed buyer
+outlay, free / flat / worst-case all net within pennies of each other. The mode table proves this on
+screen (free at average and flat both show $323.68 on the miner), and there is a test asserting it
+that will fail the day the app starts repeating the folk myth.
+
+What *actually* differs between the modes is **who carries the risk that the buyer lives far away** —
+which nothing else in this category reports. On the miner: free shipping at the average cost loses
+money on **42.2% of US buyers**; calculated shipping cuts the seller's exposure from $45.46 to $6.02.
+
+### Three things the tests found that I had backwards
+
+- **Calculated shipping does not remove the seller's exposure.** I wrote copy saying "your take-home
+  is the same on every sale" and a test asserting `ZoneRisk == 0`. The engine returned $4.91, and the
+  engine was right: eBay charges the fee on the shipping line too, so a dearer label still costs the
+  seller the *fee on the difference*. The copy was corrected to say so, and the test now pins the
+  residual to exactly `spread x feeRate` — a sharper claim than the wrong one it replaced.
+- **A flat-rate tip that was physically impossible.** The rate book rejects flat rate on a strict
+  dimension check, so a 14x12x10 carton is technically only "too big" for the *padded envelope* — and
+  the tips engine cheerfully advised repacking ten inches of depth into three quarters of an inch.
+  Fixed with a volume-plausibility gate (`CouldBeRepackedInto`), with a regression test.
+- **The heavy-shipping headline quoted actual weight where it meant billable.** On a dimensional-weight
+  item those differ by an order of magnitude — it read "$59.75 to ship… at 3 lb billable", which makes
+  the app look broken rather than the box. Now quotes billable, with a test.
+
+### Verified
+
+- `dotnet build` — 0 errors. `dotnet test` — **1689 passed, 0 failed** (73 new across five test classes:
+  `ShippingZonesTests`, `PackageEstimatorTests`, `ShippingRateBookTests`, `ShippingAdvisorTests`,
+  `ShippingLeakScannerTests`).
+- **Driven in a real browser** (Playwright, the app's own runtime) against the live account: quote panel,
+  mode table, service table, tips, and the leak board over all 87 listings. Zero page errors.
+- Endpoints exercised directly for the flat-rate win ($9.75/sale), the eBay Standard Envelope case
+  ($0.62), and dimensional weight (a 3 lb lampshade billing as 56 lb).
+
+### Two UI bugs caught only by looking at it
+
+- **The tables rendered at zero height.** I reused `.table-wrap`, which is `display: none` until a
+  *listings* panel opts into table mode — so every table on the page was invisible while present in the
+  DOM. No test would ever have caught this. Own wrapper class added.
+- **Calculated shipping displayed as "free shipping"**, because its `BuyerPaidShipping` is 0 by design
+  (it varies per buyer). Now shows the by-zone range.
+
+### Not verified / known limits
+
+- **Rates are calibrated estimates of eBay/commercial label pricing, not live carrier quotes.** Stated
+  in the footnote, in the API response, and on the reference table. Expect within about a dollar. A live
+  rate API needs per-carrier credentials the seller does not have and would fail closed exactly when
+  this is most useful. If those credentials ever exist, `ShippingRateBook` is the single seam to replace.
+- **Zone resolution is the ZIP prefix, not the ZIP.** A zone band is 300+ miles wide, so full
+  ZIP-to-zone precision would move the expected cost by cents; being approximate and saying so beats
+  looking exact and being stale.
+- **The seller's `DefaultPostalCode` is currently blank**, so the live scan above ran on the
+  national-average zone mix. Filling it in (Settings) will sharpen every number on the page — and for
+  a coastal seller, sharpen them upward.
+- **Package estimates are unmeasured for all 87 live listings** (`0 weighed, 87 estimated`). The board
+  labels every such row, and the tiles report the split, but the dollar figures are only as good as the
+  profiles until someone puts a box on a scale.
+- **Nothing writes to eBay.** No labels are bought, no listing is edited, no shipping policy is changed.

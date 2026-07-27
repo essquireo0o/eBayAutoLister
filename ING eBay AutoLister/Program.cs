@@ -253,6 +253,15 @@ builder.Services.AddSingleton<FeeProfileStore>();
 // All-in net proceeds, break-even and the minimum offer to accept — the one calculation behind
 // every price the app shows, on the sourcing screens and in the listing editor alike.
 builder.Services.AddSingleton<NetProceedsCalculator>();
+// The shipping profit engine. Until this existed, FeeProfile.DefaultShippingCost — ONE number —
+// was the assumed cost of putting a label on a phone case and on a 40 lb miner alike, underneath
+// every board in the app at once. PackageEstimator infers a box from a title so the sourcing
+// screens can cost shipping on items nobody has weighed; ShippingRateBook prices it across
+// carriers and zones; ShippingAdvisor turns that into the label to buy and the way to charge for
+// it; ShippingLeakScanner runs the same maths over everything already live.
+builder.Services.AddSingleton<PackageEstimator>();
+builder.Services.AddSingleton<ShippingAdvisor>();
+builder.Services.AddSingleton<ShippingLeakScanner>();
 builder.Services.AddSingleton<OpportunityScoringService>();
 builder.Services.AddSingleton<ConfidenceScoringService>();
 builder.Services.AddSingleton<CrossListingFeeProfile>();
@@ -1160,22 +1169,63 @@ app.MapPost("/api/fees/profile", (FeeProfileView body, FeeProfileStore store, Fe
 // Net proceeds at one or more candidate prices, plus the two floors. Takes a list because a
 // pricing panel shows several prices at once — the seller's ask, the comps median, a suggestion —
 // and each one needs the same treatment.
-app.MapPost("/api/pricing/net-quote", (NetQuoteRequest req, NetProceedsCalculator net, FeeProfile fees) =>
+app.MapPost("/api/pricing/net-quote", (NetQuoteRequest req, NetProceedsCalculator net, FeeProfile fees,
+    ShippingAdvisor shipping, CredentialsStore creds) =>
 {
     if (req is null) return Results.BadRequest(new { error = "No pricing request supplied." });
 
     // Capped so a malformed client cannot turn one request into an unbounded amount of work.
     var prices = (req.Prices ?? []).Where(p => p >= 0m).Distinct().Take(12).ToList();
 
+    // The shipping cost these numbers are built on, in order of how much it can be trusted: what
+    // the caller measured, then a real label priced off the package, then the flat profile default.
+    // The default is a last resort rather than the norm now — it is the same number for every item
+    // the seller owns, which is exactly why the profit figures used to drift.
+    var shippingCost = req.ShippingCost;
+    ShippingEstimateSummary? estimate = null;
+
+    if (shippingCost is null && req.EstimateShipping)
+    {
+        var advice = shipping.Advise(new ShippingQuoteRequest
+        {
+            Title = req.Title,
+            Category = req.Category,
+            Price = prices.Count > 0 ? prices.Max() : 0m,
+            WeightLbs = req.WeightLbs,
+            WeightOz = req.WeightOz,
+            PackageLengthIn = req.PackageLengthIn,
+            PackageWidthIn = req.PackageWidthIn,
+            PackageHeightIn = req.PackageHeightIn,
+            OriginZip = creds.GetPublicFields().DefaultPostalCode,
+        }, fees);
+
+        // A fallback package is the estimator admitting it has no idea what the item is. Costing
+        // against that would be swapping one arbitrary number for another, so the profile default
+        // — which the seller at least chose — keeps the job.
+        if (advice.Best is not null && advice.Package.Source != "fallback")
+        {
+            shippingCost = advice.Best.ExpectedCost;
+            estimate = new ShippingEstimateSummary
+            {
+                LabelCost = advice.Best.ExpectedCost,
+                ServiceName = advice.Best.Name,
+                WeightLb = advice.Package.WeightLb,
+                PackageSource = advice.Package.Source,
+                Basis = advice.Package.Basis,
+                ZoneSpread = advice.Best.ZoneSpread,
+            };
+        }
+    }
+
     var quotes = prices
         .Select(p => net.Quote(p, req.UnitCost, fees, req.BuyerPaidShipping, req.Quantity,
-                               req.ShippingCost, req.OtherCosts))
+                               shippingCost, req.OtherCosts))
         .ToList();
 
     // The floors do not depend on the asking price, so they are computed once from a reference
     // quote rather than read off whichever price happened to be first in the list.
     var reference = net.Quote(0m, req.UnitCost, fees, req.BuyerPaidShipping, req.Quantity,
-                              req.ShippingCost, req.OtherCosts);
+                              shippingCost, req.OtherCosts);
     var hasCost = req.UnitCost is > 0m;
 
     return Results.Ok(new NetQuoteResponse
@@ -1186,7 +1236,77 @@ app.MapPost("/api/pricing/net-quote", (NetQuoteRequest req, NetProceedsCalculato
         MinimumOfferBasis = reference.MinimumOfferBasis,
         HasCostBasis = hasCost,
         Fees = FeeProfileStore.ToView(fees),
+        Shipping = estimate,
     });
+});
+
+// ── Shipping Profit Engine ───────────────────────────────────────────────────────────────────────
+// One item: the box, every service that will carry it, and the four ways to charge for it.
+app.MapPost("/api/shipping/quote", (ShippingQuoteRequest req, ShippingAdvisor advisor, FeeProfile fees,
+    CredentialsStore creds, ActionLog log) =>
+{
+    if (req is null) return Results.BadRequest(new { error = "No shipping request supplied." });
+
+    // The seller's own listing ZIP is the right default — zones only exist relative to an origin,
+    // and asking for it again on a screen that could already know it is how a field gets left blank.
+    if (string.IsNullOrWhiteSpace(req.OriginZip))
+        req.OriginZip = creds.GetPublicFields().DefaultPostalCode;
+
+    try
+    {
+        return Results.Ok(advisor.Advise(req, fees));
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Shipping quote failed", ex.Message);
+        return Results.Ok(new ShippingRecommendation
+        {
+            Status = "error",
+            Headline = "Could not price this package.",
+            Note = ex.Message,
+        });
+    }
+});
+
+// The rate card itself, so the numbers on every other screen are checkable rather than magic.
+app.MapGet("/api/shipping/services", () => Results.Ok(new
+{
+    services = ShippingRateBook.Describe(),
+    note = "Calibrated estimates of eBay/commercial label pricing, not live carrier rates. "
+         + "Expect them to be within about a dollar; weigh and measure to be exact.",
+}));
+
+// The bulk view: what shipping is quietly costing across every listing already live. Read-only —
+// no eBay writes, and no comp lookups, so unlike the pricing scans this one has no budget to ration.
+app.MapGet("/api/shipping/leaks", async (int? maxItems, EbayService ebay, ShippingLeakScanner scanner,
+    FeeProfile fees, CredentialsStore creds, ActionLog log) =>
+{
+    List<EbayListingSummary> listings;
+    try
+    {
+        listings = await ebay.GetListingsAsync();
+    }
+    catch (Exception ex)
+    {
+        // Same contract as every other inventory-wide board: reported, never silently retried.
+        // Reconnecting eBay is the seller's decision, made in Settings.
+        log.Add("Warning", "Shipping leak scan could not read eBay listings", ex.Message);
+        return Results.Ok(new ShippingScanResult { Status = "ebay_unavailable", Error = ex.Message });
+    }
+
+    var active = listings
+        .Where(l => l.Status is "ACTIVE" or "PUBLISHED" || string.IsNullOrWhiteSpace(l.Status))
+        .Where(l => l.Price > 0m && !string.IsNullOrWhiteSpace(l.Title))
+        .ToList();
+
+    var result = scanner.Scan(active, creds.GetPublicFields().DefaultPostalCode, fees,
+                              Math.Clamp(maxItems ?? 500, 1, 1000));
+
+    log.Add("Info", "Shipping leak scan finished",
+        $"{result.Summary.ListingsScanned} listings checked, {result.Summary.LeaksFound} leaks, "
+      + $"${result.Summary.TotalPerSaleImpact:0.00} per sale on the table ({result.ElapsedMs} ms).");
+
+    return Results.Ok(result);
 });
 
 app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, decimal? buyerShipping,

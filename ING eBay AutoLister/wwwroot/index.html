@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=53" />
+  <link rel="stylesheet" href="style.css?v=55" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -74,6 +74,11 @@
         <button class="nav-item" type="button" data-page="relist"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Lost Sales</button>
         <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
         <button class="nav-item" type="button" data-page="promoted"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Ad Rate Advisor</button>
+        <!-- The cost every other screen in this app used to guess at. Until this existed, one flat
+             shipping figure was applied to a phone case and a 40 lb miner alike, underneath every
+             profit number here at once — so it sits with the money tools, because that is what it
+             fixes: not shipping, but every figure that shipping was quietly wrong inside. -->
+        <button class="nav-item" type="button" data-page="shipping"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Ship Smart</button>
         <!-- The only screen that questions the assumption every other screen makes: that the item
              belongs on eBay. Sits with the money tools because that is what it is about — the same
              item, the same buyer, a different amount of it left after fees. -->
@@ -2003,6 +2008,155 @@
         </div>
       </section>
 
+      <!-- ── Ship Smart — the Shipping Profit Engine ──────────────────────────────────────────
+           Two halves of one question. The calculator answers it for an item the seller is holding
+           or thinking about buying: what the box really weighs, which service is cheapest, and
+           which of the four ways to charge for shipping leaves the most money after eBay's cut.
+           The leak scan answers it across everything already live at once.
+           Read-only throughout: no labels are bought, no listing is changed, nothing is sent. -->
+      <section id="shipping-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="ship-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Ship Smart</div>
+              <h2>📦 What It Really Costs To Ship</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="ship-scan-btn" class="btn btn-primary" type="button">📦 Find My Shipping Leaks</button>
+            <button id="ship-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+          <p class="opp-hint">
+            Every profit number in this app used to be built on <strong>one flat shipping figure</strong> —
+            the same cost for a phone case and a 40 lb miner. This prices the actual box: real weight
+            or an estimate from the title, <strong>dimensional weight</strong>, every carrier service that
+            will legally carry it, and what it costs to each part of the country from your ZIP.
+            Then it answers the question sellers get wrong most often — free shipping, flat, or calculated.
+          </p>
+
+          <div class="ship-tabs" role="tablist">
+            <button id="ship-tab-quote" class="ship-tab active" type="button" role="tab" aria-selected="true">Price one item</button>
+            <button id="ship-tab-leaks" class="ship-tab" type="button" role="tab" aria-selected="false">Scan my listings</button>
+          </div>
+          </div>
+
+          <!-- ── One item ──────────────────────────────────────────────────────────────────── -->
+          <div id="ship-quote-panel" class="ship-panel">
+            <div class="inv-controls ship-controls">
+              <div class="opp-field ship-field-wide">
+                <label for="ship-title">What is it?</label>
+                <input id="ship-title" type="text" placeholder="e.g. Dell Latitude 7420 laptop" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-price">Asking price</label>
+                <input id="ship-price" class="wo-profit-input" type="number" min="0" step="1" placeholder="0" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-cost">What you paid</label>
+                <input id="ship-cost" class="wo-profit-input" type="number" min="0" step="1" placeholder="optional" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-zip">Ship from ZIP</label>
+                <input id="ship-zip" class="wo-profit-input" type="text" inputmode="numeric" maxlength="5" placeholder="from Settings" />
+              </div>
+            </div>
+
+            <div class="inv-controls ship-controls">
+              <div class="opp-field inv-field-small">
+                <label for="ship-lb">Weight (lb)</label>
+                <input id="ship-lb" class="wo-profit-input" type="number" min="0" step="0.1" placeholder="estimate" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-oz">and (oz)</label>
+                <input id="ship-oz" class="wo-profit-input" type="number" min="0" max="15" step="0.1" placeholder="0" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-len">Length (in)</label>
+                <input id="ship-len" class="wo-profit-input" type="number" min="0" step="0.5" placeholder="estimate" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-wid">Width (in)</label>
+                <input id="ship-wid" class="wo-profit-input" type="number" min="0" step="0.5" placeholder="estimate" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-hgt">Height (in)</label>
+                <input id="ship-hgt" class="wo-profit-input" type="number" min="0" step="0.5" placeholder="estimate" />
+              </div>
+              <button id="ship-quote-btn" class="btn btn-primary small" type="button">Price this package</button>
+              <span id="ship-quote-status" class="inv-status"></span>
+            </div>
+
+            <div id="ship-quote-results" class="inv-results">
+              <div class="state">
+                <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+                <div class="state-title">The cheapest label is rarely the one you reach for.</div>
+                <p class="state-body">Type what the item is — a title is enough. The box gets estimated, every carrier service gets priced across the whole country from your ZIP, and you get the label to buy plus what free shipping would really cost you. Weigh it to make the numbers exact.</p>
+                <div class="state-actions">
+                  <button class="btn btn-primary" type="button" onclick="document.getElementById('ship-quote-btn')?.click()">Price a package</button>
+                </div>
+                <p class="state-hint">Read-only. No labels are bought and no listing changes.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Everything already live ───────────────────────────────────────────────────── -->
+          <div id="ship-leaks-panel" class="ship-panel hidden">
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="ship-max-items">Scan up to</label>
+                <select id="ship-max-items">
+                  <option value="100">100 listings</option>
+                  <option value="250" selected>250 listings</option>
+                  <option value="500">500 listings</option>
+                  <option value="1000">1000 listings</option>
+                </select>
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="ship-filter">Show</label>
+                <select id="ship-filter">
+                  <option value="all" selected>Everything found</option>
+                  <option value="critical">Costing me the most</option>
+                  <option value="underpriced_label">Label costs more than assumed</option>
+                  <option value="wrong_service">A cheaper box would work</option>
+                  <option value="dim_weight">Paying to ship air</option>
+                  <option value="shipping_heavy">Shipping eats the price</option>
+                </select>
+              </div>
+              <span id="ship-status" class="inv-status"></span>
+            </div>
+
+            <div id="ship-warning" class="inv-warning hidden"></div>
+            <div id="ship-summary" class="inv-summary hidden"></div>
+
+            <div id="ship-results" class="inv-results">
+              <div class="state">
+                <div class="state-icon"><svg aria-hidden="true"><use href="#i-inventory"/></svg></div>
+                <div class="state-title">A dollar a sale, across two hundred listings, is not a rounding error.</div>
+                <p class="state-body">This prices a real label for every live listing and compares it with the flat figure your profit numbers have been using. What comes back is the gap, per sale, biggest first — plus the listings where a different box, not a different price, is the fix.</p>
+                <div class="state-actions">
+                  <button class="btn btn-primary" type="button" onclick="document.getElementById('ship-scan-btn')?.click()">Find my shipping leaks</button>
+                </div>
+                <p class="state-hint">Read-only, and no comp lookups — this scan has nothing to ration.</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            Rates are <strong>calibrated estimates of eBay/commercial label pricing, not live carrier quotes</strong> —
+            expect them within about a dollar. A live rate API needs per-carrier credentials you don't have and would
+            fail exactly when this is most useful, standing in a shop deciding whether to buy something. Packages are
+            estimated from the title unless you enter a weight, and every estimate says so on the row it drives. Zones
+            are worked out from your ZIP against a population-weighted map of where US buyers are, which is why you get
+            an expected cost rather than one zone's price. Nothing here buys a label or edits a listing.
+          </p>
+        </div>
+      </section>
+
       <!-- The buy side of one local deal: what to open at, where to stop, and what to actually say.
            Every number here is already in the row behind it — this is arithmetic and wording, not a
            second opinion, and nothing is sent anywhere on the seller's behalf. -->
@@ -3866,6 +4020,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=62"></script>
+  <script src="app.js?v=64"></script>
 </body>
 </html>

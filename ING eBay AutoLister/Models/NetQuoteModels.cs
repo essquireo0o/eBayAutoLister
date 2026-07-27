@@ -109,6 +109,22 @@ public sealed class NetQuoteRequest
     /// <summary>Per-item actual shipping cost, when it differs from the profile default.</summary>
     public decimal? ShippingCost { get; set; }
     public decimal? OtherCosts { get; set; }
+
+    // ── Package, for a real label estimate ───────────────────────────────────────────────────────
+    // When ShippingCost is not supplied, these let the quote price the actual box instead of
+    // falling back to one flat number that was never right for this item. Anything the seller has
+    // measured is used as-is; a title alone is enough for an estimate.
+
+    public string Title { get; set; } = "";
+    public string Category { get; set; } = "";
+    public decimal WeightLbs { get; set; }
+    public decimal WeightOz { get; set; }
+    public decimal PackageLengthIn { get; set; }
+    public decimal PackageWidthIn { get; set; }
+    public decimal PackageHeightIn { get; set; }
+
+    /// <summary>Set false to price against the flat profile default even when a package is known.</summary>
+    public bool EstimateShipping { get; set; } = true;
 }
 
 public sealed class NetQuoteResponse
@@ -124,6 +140,30 @@ public sealed class NetQuoteResponse
     public bool HasCostBasis { get; set; }
     /// <summary>The fee assumptions used, echoed back so the panel can explain and link to them.</summary>
     public FeeProfileView Fees { get; set; } = new();
+
+    /// <summary>
+    /// The label estimate these numbers were costed with, when one was used instead of the flat
+    /// profile default. Null when the caller supplied its own shipping cost or opted out.
+    /// </summary>
+    /// <remarks>
+    /// Returned rather than silently applied. A break-even that moved $9 because the app decided
+    /// the item was a monitor has to be able to say so, or the seller cannot tell a better number
+    /// from a wrong one.
+    /// </remarks>
+    public ShippingEstimateSummary? Shipping { get; set; }
+}
+
+/// <summary>The one-line version of a <see cref="ShippingRecommendation"/>, for panels that only
+/// need to show what shipping cost was assumed and why.</summary>
+public sealed class ShippingEstimateSummary
+{
+    public decimal LabelCost { get; set; }
+    public string ServiceName { get; set; } = "";
+    public decimal WeightLb { get; set; }
+    /// <summary>measured | estimated | fallback</summary>
+    public string PackageSource { get; set; } = "";
+    public string Basis { get; set; } = "";
+    public decimal ZoneSpread { get; set; }
 }
 
 /// <summary>

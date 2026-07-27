@@ -369,6 +369,7 @@
     bindRelist();
     bindLotAnalyzer();
     bindPromoted();
+    bindShipping();
     bindTrendRadar();
     bindWhereToSell();
     bindSniper();
@@ -480,6 +481,7 @@
     if (page !== 'relist') $('relist-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
+    if (page !== 'shipping') $('shipping-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
     if (page !== 'wheretosell') $('wts-section')?.classList.add('hidden');
     if (page !== 'snipe') closeSnipeSection({ back: false });
@@ -545,6 +547,10 @@
       showPromotedSection();
       return;
     }
+    if (page === 'shipping') {
+      showShippingSection();
+      return;
+    }
     if (page === 'trends') {
       showTrendsSection();
       return;
@@ -566,7 +572,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -5945,6 +5951,475 @@
   //   * let the projected price sit anywhere near the "max to pay" column. What to pay comes from
   //     today's price; the climb is reported separately, as upside.
   let trendScan = null;
+
+  // ── Ship Smart — the Shipping Profit Engine ────────────────────────────────────────────────
+  // Two views of one number. The quote panel prices a single package end to end; the leak scan
+  // runs the same maths over every live listing and reports the gap against the one flat shipping
+  // figure the rest of the app has been assuming. Both are read-only — no labels, no listing edits.
+
+  let shipScan = null;   // last ShippingScanResult, kept so filtering never re-scans
+
+  async function showShippingSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('shipping-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'shipping'));
+
+    // Zones only exist relative to an origin, and the seller already told us theirs once. Filling
+    // it in beats asking again — a blank ZIP silently falls back to the national average, which is
+    // the right default but the wrong answer for anyone on a coast.
+    const zip = $('ship-zip');
+    if (zip && !zip.value) {
+      try {
+        const res = await fetch('/api/setup/fields');
+        if (res.ok) zip.value = (await res.json())?.defaultPostalCode || '';
+      } catch { /* the quote still works without it */ }
+    }
+  }
+
+  function closeShippingSection() {
+    $('shipping-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindShipping() {
+    on('ship-close', 'click', closeShippingSection);
+    on('ship-home', 'click', closeShippingSection);
+    on('ship-quote-btn', 'click', runShippingQuote);
+    on('ship-scan-btn', 'click', () => { showShipPanel('leaks'); runShippingLeakScan(); });
+    on('ship-tab-quote', 'click', () => showShipPanel('quote'));
+    on('ship-tab-leaks', 'click', () => showShipPanel('leaks'));
+    // Filtering is a pure view over the scan already in hand — it must never re-run the scan.
+    on('ship-filter', 'change', renderShipLeaks);
+
+    // Enter anywhere in the package form prices it, so the whole panel is keyboard-usable.
+    ['ship-title', 'ship-price', 'ship-cost', 'ship-zip', 'ship-lb', 'ship-oz', 'ship-len', 'ship-wid', 'ship-hgt']
+      .forEach(id => on(id, 'keydown', e => { if (e.key === 'Enter') runShippingQuote(); }));
+  }
+
+  function showShipPanel(which) {
+    const isQuote = which === 'quote';
+    $('ship-quote-panel')?.classList.toggle('hidden', !isQuote);
+    $('ship-leaks-panel')?.classList.toggle('hidden', isQuote);
+    $('ship-tab-quote')?.classList.toggle('active', isQuote);
+    $('ship-tab-leaks')?.classList.toggle('active', !isQuote);
+    $('ship-tab-quote')?.setAttribute('aria-selected', String(isQuote));
+    $('ship-tab-leaks')?.setAttribute('aria-selected', String(!isQuote));
+  }
+
+  // ── One package ─────────────────────────────────────────────────────────────────────────────
+
+  async function runShippingQuote() {
+    const title = ($('ship-title')?.value || '').trim();
+    const btn = $('ship-quote-btn');
+    const status = $('ship-quote-status');
+
+    // A title is the one thing that cannot be defaulted — it is what the package is inferred from.
+    if (!title && !shipNum('ship-lb') && !shipNum('ship-oz')) {
+      if (status) status.textContent = 'Say what the item is, or enter a weight.';
+      $('ship-title')?.focus();
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Pricing…'; }
+    if (status) status.textContent = '';
+    $('ship-quote-results').innerHTML = '<p class="opportunity-empty">Pricing every service across every zone…</p>';
+
+    try {
+      const res = await fetch('/api/shipping/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          price: shipNum('ship-price'),
+          unitCost: shipNum('ship-cost') || null,
+          originZip: ($('ship-zip')?.value || '').trim(),
+          weightLbs: shipNum('ship-lb'),
+          weightOz: shipNum('ship-oz'),
+          packageLengthIn: shipNum('ship-len'),
+          packageWidthIn: shipNum('ship-wid'),
+          packageHeightIn: shipNum('ship-hgt'),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'The quote failed.');
+      renderShippingQuote(data);
+    } catch (err) {
+      $('ship-quote-results').innerHTML =
+        `<p class="opportunity-empty">${esc(err.message || 'The quote failed.')}</p>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Price this package'; }
+    }
+  }
+
+  // Deliberately not the file's num(): that one returns null for a blank field, and every package
+  // field here means "not measured" when empty, which the server reads as a zero.
+  function shipNum(id) {
+    return parseFloat($(id)?.value) || 0;
+  }
+
+  function renderShippingQuote(r) {
+    const el = $('ship-quote-results');
+    if (!el) return;
+
+    if (r.status === 'no_service' || !r.best) {
+      el.innerHTML = `
+        <div class="ship-headline ship-headline-bad">
+          <div class="ship-headline-main">${esc(r.headline || 'No service will carry this package.')}</div>
+          <div class="ship-headline-sub">${esc(r.note || '')}</div>
+        </div>
+        ${renderShipServices(r)}`;
+      return;
+    }
+
+    el.innerHTML = [
+      renderShipHeadline(r),
+      renderShipPackage(r),
+      renderShipModes(r),
+      renderShipServices(r),
+      renderShipTips(r),
+      renderShipZoneMix(r),
+    ].join('');
+  }
+
+  function renderShipHeadline(r) {
+    const heavy = (r.shippingLoadPercent || 0) >= 30;
+    return `
+      <div class="ship-headline ${heavy ? 'ship-headline-warn' : 'ship-headline-good'}">
+        <div class="ship-headline-main">${esc(r.headline || '')}</div>
+        <div class="ship-headline-sub">${esc(r.note || '')}</div>
+      </div>`;
+  }
+
+  // The package gets its own strip, always labelled with where it came from. An inferred 4 lb and
+  // a weighed 4 lb produce identical numbers downstream and deserve very different confidence.
+  function renderShipPackage(r) {
+    const p = r.package || {};
+    const measured = p.source === 'measured';
+    const chip = measured
+      ? '<span class="ship-chip ship-chip-measured">measured</span>'
+      : `<span class="ship-chip ship-chip-estimated">${p.source === 'fallback' ? 'guessed' : 'estimated'}</span>`;
+
+    return `
+      <div class="ship-package">
+        <div class="ship-package-head">The package ${chip}</div>
+        <div class="ship-package-figures">
+          <span><strong>${(p.weightLb ?? 0).toFixed(2)} lb</strong> actual</span>
+          <span>${(p.lengthIn ?? 0)}&quot; &times; ${(p.widthIn ?? 0)}&quot; &times; ${(p.heightIn ?? 0)}&quot;</span>
+          <span>${Math.round(p.volumeCubicIn ?? 0).toLocaleString()} cu in</span>
+          ${r.best?.dimWeightApplied
+            ? `<span class="ship-dim-flag">billed at ${((r.best.billableWeightOz || 0) / 16).toFixed(1)} lb — dimensional weight</span>`
+            : ''}
+        </div>
+        <div class="ship-package-basis">${esc(p.basis || '')}</div>
+      </div>`;
+  }
+
+  // The centrepiece. Sellers overwhelmingly believe charging shipping separately dodges eBay's cut
+  // on it; it does not, and at a constant buyer outlay every mode nets within pennies. What the
+  // table is really showing is who carries the risk that the buyer lives far away.
+  function renderShipModes(r) {
+    if (!r.modes?.length) {
+      return `<p class="ship-modes-empty">Enter an asking price to see how free, flat and calculated shipping compare.</p>`;
+    }
+
+    const rows = r.modes.map(m => `
+      <tr class="${m.recommended ? 'ship-mode-pick' : ''}">
+        <td>
+          <div class="ship-mode-name">${esc(m.name)}${m.recommended ? '<span class="ship-pick-tag">recommended</span>' : ''}</div>
+          <div class="ship-mode-desc">${esc(m.description)}</div>
+          <div class="ship-mode-verdict">${esc(m.verdict)}</div>
+        </td>
+        <td class="ship-num">${moneyExact(m.itemPrice)}<div class="ship-sub">${shipModeShippingLine(m)}</div></td>
+        <td class="ship-num">${moneyExact(m.netExpected)}</td>
+        <td class="ship-num">
+          ${moneyExact(m.zoneRisk)}
+          <div class="ship-sub">${moneyExact(m.netNear)} near / ${moneyExact(m.netFar)} far</div>
+        </td>
+        <td class="ship-num ${m.underwaterBuyerPercent > 0 ? 'ship-num-bad' : 'ship-num-ok'}">
+          ${m.underwaterBuyerPercent > 0 ? `${m.underwaterBuyerPercent}%` : 'none'}
+        </td>
+      </tr>`).join('');
+
+    return `
+      <div class="ship-block">
+        <h3 class="ship-block-title">How to charge for it</h3>
+        <p class="ship-block-sub">
+          All four are priced at the <strong>same buyer total</strong>, which is why the take-home column barely
+          moves: eBay charges its final value fee on the shipping line too, so charging separately saves you
+          nothing. What changes is the last two columns — what you stand to lose if the buyer is far away.
+        </p>
+        <div class="ship-table-wrap">
+          <table class="ship-table">
+            <thead>
+              <tr>
+                <th>Way of charging</th>
+                <th class="ship-num">Listed at</th>
+                <th class="ship-num">You keep (typical)</th>
+                <th class="ship-num">Your zone risk</th>
+                <th class="ship-num">Buyers you lose on</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  // Calculated shipping carries no single shipping figure — that is the entire point of it — so it
+  // gets the range the buyer will actually see. Reporting its zero as "free shipping" would say the
+  // opposite of what the mode does.
+  function shipModeShippingLine(m) {
+    if (m.mode === 'calculated') {
+      const near = m.buyerOutlayNear - m.itemPrice;
+      const far  = m.buyerOutlayFar - m.itemPrice;
+      return `+ ${moneyExact(near)}–${moneyExact(far)} by zone`;
+    }
+    return m.buyerPaidShipping > 0 ? `+ ${moneyExact(m.buyerPaidShipping)} shipping` : 'free shipping';
+  }
+
+  function renderShipServices(r) {
+    const services = r.services || [];
+    if (!services.length) return '';
+
+    const rows = services.map(s => {
+      if (!s.eligible) {
+        return `
+          <tr class="ship-service-out">
+            <td>
+              <div class="ship-mode-name">${esc(s.name)}</div>
+              <div class="ship-mode-desc">${esc(s.carrier)}</div>
+            </td>
+            <td colspan="4" class="ship-out-reason">${esc(s.ineligibleReason)}</td>
+          </tr>`;
+      }
+      return `
+        <tr class="${s.recommended ? 'ship-mode-pick' : ''}">
+          <td>
+            <div class="ship-mode-name">${esc(s.name)}${s.recommended ? '<span class="ship-pick-tag">cheapest</span>' : ''}</div>
+            <div class="ship-mode-desc">${esc(s.note)}</div>
+            ${s.surchargeAmount > 0 ? `<div class="ship-mode-verdict">${esc(s.surchargeReason)}</div>` : ''}
+          </td>
+          <td class="ship-num"><strong>${moneyExact(s.expectedCost)}</strong>${s.extraVsBest > 0 ? `<div class="ship-sub">+${moneyExact(s.extraVsBest)}</div>` : ''}</td>
+          <td class="ship-num">${s.isFlatRate ? 'same everywhere' : `${moneyExact(s.nearestZoneCost)} – ${moneyExact(s.farthestZoneCost)}`}</td>
+          <td class="ship-num">${((s.billableWeightOz || 0) / 16).toFixed(2)} lb${s.dimWeightApplied ? '<div class="ship-sub">dimensional</div>' : ''}</td>
+          <td class="ship-num">${s.transitDaysMin}–${s.transitDaysMax} days</td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="ship-block">
+        <h3 class="ship-block-title">Every service, priced</h3>
+        <p class="ship-block-sub">Services that can't carry this package are listed with the reason, because
+          "two inches from a flat-rate box" is worth knowing.</p>
+        <div class="ship-table-wrap">
+          <table class="ship-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th class="ship-num">Average label</th>
+                <th class="ship-num">Near – far</th>
+                <th class="ship-num">Billable</th>
+                <th class="ship-num">Transit</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function renderShipTips(r) {
+    if (!r.tips?.length) return '';
+    return `
+      <div class="ship-block">
+        <h3 class="ship-block-title">Money in the box, not in the price</h3>
+        <div class="ship-tips">
+          ${r.tips.map(t => `
+            <div class="ship-tip">
+              <div class="ship-tip-save">${moneyExact(t.savingPerSale)}<span>a sale</span></div>
+              <div class="ship-tip-body">
+                <div class="ship-tip-head">${esc(t.headline)}</div>
+                <div class="ship-tip-detail">${esc(t.detail)}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  // Shown because the expected cost is otherwise a number the seller has to take on faith. This is
+  // the distribution it was averaged over, and it makes the coastal-seller penalty visible.
+  function renderShipZoneMix(r) {
+    if (!r.zoneMix?.length) return '';
+    const best = r.best;
+    return `
+      <details class="ship-zones">
+        <summary>Where your buyers are${r.originZip ? `, shipping from ${esc(r.originZip)}` : ''}</summary>
+        <table class="ship-table ship-zone-table">
+          <thead><tr><th>Zone</th><th class="ship-num">Share of US buyers</th><th class="ship-num">Label</th><th>Reaches</th></tr></thead>
+          <tbody>
+            ${r.zoneMix.map(z => `
+              <tr>
+                <td>Zone ${z.zone}</td>
+                <td class="ship-num">${z.sharePercent}%</td>
+                <td class="ship-num">${best?.zoneCosts?.[z.zone] != null ? moneyExact(best.zoneCosts[z.zone]) : '—'}</td>
+                <td class="ship-zone-regions">${esc(z.regions || '—')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        <p class="ship-zones-note">
+          Zones are worked out from your ZIP against a population-weighted map of where US buyers live, so the
+          "average label" above is what a typical month actually costs — not one zone's price.
+        </p>
+      </details>`;
+  }
+
+  // ── Everything already live ─────────────────────────────────────────────────────────────────
+
+  async function runShippingLeakScan() {
+    const btn = $('ship-scan-btn');
+    const maxItems = $('ship-max-items')?.value || '250';
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    $('ship-status').textContent = '';
+    $('ship-results').innerHTML =
+      '<p class="opportunity-empty">Pricing a real label for every live listing — this is all local, so it is quick.</p>';
+
+    try {
+      const res = await fetch(`/api/shipping/leaks?maxItems=${encodeURIComponent(maxItems)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'The scan failed.');
+      shipScan = data;
+      renderShipScan();
+    } catch (err) {
+      shipScan = null;
+      $('ship-summary')?.classList.add('hidden');
+      $('ship-warning')?.classList.add('hidden');
+      $('ship-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📦 Find My Shipping Leaks'; }
+    }
+  }
+
+  function renderShipScan() {
+    if (!shipScan) return;
+    const warn = $('ship-warning');
+
+    if (shipScan.status === 'ebay_unavailable') {
+      $('ship-summary')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('ship-results').innerHTML =
+        '<p class="opportunity-empty">Couldn\'t read your eBay listings. Reconnect eBay in Settings, then scan again. '
+        + 'The one-item calculator works without eBay.</p>';
+      return;
+    }
+
+    if (shipScan.dataWarning) {
+      warn.textContent = shipScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    const s = shipScan.summary || {};
+    $('ship-status').textContent =
+      `${s.listingsScanned || 0} of ${shipScan.activeListings || 0} active listings priced · `
+      + `${s.measuredPackages || 0} weighed, ${s.estimatedPackages || 0} estimated`;
+
+    renderShipSummary(s);
+    renderShipLeaks();
+  }
+
+  // Leads with the money, not the listing count. "23 leaks" is a statistic; "$118 a sale is
+  // walking out of the door" is a reason to keep reading.
+  function renderShipSummary(s) {
+    const el = $('ship-summary');
+    if (!el) return;
+
+    const tiles = [
+      { label: 'Leaking, per sale', value: moneyExact(s.totalPerSaleImpact),
+        sub: `${s.leaksFound || 0} listing${s.leaksFound === 1 ? '' : 's'} out of ${s.listingsScanned || 0}`,
+        tone: s.totalPerSaleImpact > 0 ? 'warn' : 'good' },
+      { label: 'Across the stock you hold', value: moneyExact(s.totalAtRisk),
+        sub: 'per-sale gap times the units listed',
+        tone: s.totalAtRisk > 0 ? 'warn' : '' },
+      { label: 'Costing you the most', value: String(s.criticalCount || 0),
+        sub: s.criticalCount ? 'worth fixing before you list anything else' : 'nothing critical',
+        tone: s.criticalCount > 0 ? 'warn' : 'good' },
+      { label: 'Average real label', value: moneyExact(s.averageLabelCost),
+        sub: `your profit numbers assume ${moneyExact(shipScan.assumedLabelCost)}`,
+        tone: s.averageLabelCost > shipScan.assumedLabelCost ? 'warn' : 'good' },
+      { label: 'Packages weighed', value: `${s.measuredPackages || 0} / ${s.listingsScanned || 0}`,
+        sub: s.estimatedPackages ? `${s.estimatedPackages} estimated from the title` : 'all measured',
+        tone: s.estimatedPackages > (s.measuredPackages || 0) ? 'warn' : 'good' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const SHIP_KIND = {
+    underpriced_label: { label: '💸 Costs more than assumed', cls: 'inv-v-dead' },
+    wrong_service:     { label: '📦 A cheaper box works',      cls: 'inv-v-over' },
+    dim_weight:        { label: '💨 Paying to ship air',        cls: 'inv-v-over' },
+    oversize:          { label: '🚚 Oversize',                  cls: 'inv-v-dead' },
+    zone_risk:         { label: '🗺️ Depends on the buyer',      cls: 'inv-v-stale' },
+    shipping_heavy:    { label: '⚖️ Shipping eats the price',   cls: 'inv-v-stale' },
+  };
+
+  function shipFilterMatches(leak, filter) {
+    switch (filter) {
+      case 'critical': return leak.severity === 'critical';
+      case 'all':      return true;
+      default:         return leak.kind === filter;
+    }
+  }
+
+  function renderShipLeaks() {
+    if (!shipScan) return;
+    const filter = $('ship-filter')?.value || 'all';
+    const leaks = (shipScan.leaks || []).filter(l => shipFilterMatches(l, filter));
+    const el = $('ship-results');
+    if (!el) return;
+
+    if (!leaks.length) {
+      el.innerHTML = shipScan.leaks?.length
+        ? '<p class="opportunity-empty">Nothing matches that filter. Try "Everything found".</p>'
+        : '<p class="opportunity-empty">No shipping leaks found — every live listing\'s real label is inside '
+          + 'what your profit numbers already assume. That is the good outcome.</p>';
+      return;
+    }
+
+    el.innerHTML = leaks.map(l => {
+      const kind = SHIP_KIND[l.kind] || { label: l.kind, cls: '' };
+      return `
+        <div class="ship-leak">
+          <div class="ship-leak-main">
+            <div class="ship-leak-top">
+              <span class="inv-verdict ${kind.cls}">${kind.label}</span>
+              ${l.packageEstimated ? '<span class="ship-chip ship-chip-estimated">package estimated</span>' : '<span class="ship-chip ship-chip-measured">weighed</span>'}
+            </div>
+            <div class="ship-leak-title">
+              ${l.listingUrl ? `<a href="${esc(l.listingUrl)}" target="_blank" rel="noopener">${esc(l.title)}</a>` : esc(l.title)}
+            </div>
+            <div class="ship-leak-head">${esc(l.headline)}</div>
+            <div class="ship-leak-detail">${esc(l.detail)}</div>
+            <div class="ship-leak-fix">→ ${esc(l.fix)}</div>
+          </div>
+          <div class="ship-leak-money">
+            <div class="ship-leak-impact">${moneyExact(l.perSaleImpact)}</div>
+            <div class="ship-leak-impact-label">a sale</div>
+            ${l.quantity > 1 ? `<div class="ship-leak-atrisk">${moneyExact(l.atRisk)} across ${l.quantity}</div>` : ''}
+            <div class="ship-leak-price">listed at ${moneyExact(l.price)}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
 
   function showTrendsSection() {
     hideOverlaySections();
