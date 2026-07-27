@@ -2729,6 +2729,325 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             throw new Exception(msg);
         }
     }
+
+    // ── Recovering lost sales: unsold listings, relisting, Second Chance Offers ──────────────
+    //
+    // All four of these live on the Trading API and nowhere else. eBay's modern Sell APIs have no
+    // concept of an ended-unsold listing, no relist call, and no Second Chance Offer at all — the
+    // whole "recover the sale that got away" surface is XML-only, which is a large part of why so
+    // few tools touch it.
+
+    /// <summary>
+    /// One Trading API call. Returns the response root, or throws with eBay's own sentence in it.
+    /// </summary>
+    private async Task<XElement> SendTradingAsync(string callName, string innerXml)
+    {
+        var token  = await GetOrRefreshTokenAsync();
+        var c      = creds.Get();
+        var client = httpClientFactory.CreateClient();
+
+        var body = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <{callName}Request xmlns="urn:ebay:apis:eBLBaseComponents">
+              <RequesterCredentials><eBayAuthToken>{token}</eBayAuthToken></RequesterCredentials>
+            {innerXml}
+            </{callName}Request>
+            """;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, TradingEndpoint)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "text/xml")
+        };
+        request.Headers.Add("X-EBAY-API-SITEID", "0");
+        request.Headers.Add("X-EBAY-API-COMPATIBILITY-LEVEL", "967");
+        request.Headers.Add("X-EBAY-API-CALL-NAME", callName);
+        request.Headers.Add("X-EBAY-API-APP-NAME",  c.EbayClientId ?? "");
+        request.Headers.Add("X-EBAY-API-DEV-NAME",  c.EbayDevId ?? "");
+        request.Headers.Add("X-EBAY-API-CERT-NAME", c.EbayClientSecret ?? "");
+        request.Headers.Add("X-EBAY-API-IAF-TOKEN", token);
+
+        var response = await client.SendAsync(request);
+        var xml = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            log.Add("Warning", $"{callName} HTTP {(int)response.StatusCode}", xml[..Math.Min(500, xml.Length)]);
+            throw new Exception($"eBay returned HTTP {(int)response.StatusCode} for {callName}.");
+        }
+
+        var root = XElement.Parse(xml);
+        var ack = root.Element(EbayNs + "Ack")?.Value ?? "";
+
+        if (ack is "Failure" or "PartialFailure")
+        {
+            var errors = root.Descendants(EbayNs + "Errors")
+                .Where(e => (e.Element(EbayNs + "SeverityCode")?.Value ?? "") == "Error")
+                .ToList();
+
+            if (errors.Count > 0)
+            {
+                var message = string.Join("; ", errors.Select(e =>
+                    e.Element(EbayNs + "LongMessage")?.Value
+                    ?? e.Element(EbayNs + "ShortMessage")?.Value
+                    ?? "eBay reported an error with no message."));
+
+                log.Add("Warning", $"{callName} Ack={ack}", message);
+
+                if (message.Contains("insufficient permission", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("not permitted", StringComparison.OrdinalIgnoreCase)
+                    || errors.Any(e => (e.Element(EbayNs + "ErrorCode")?.Value ?? "") is "21916884" or "931" or "932"))
+                    throw new EbayPermissionException(
+                        "Your saved eBay connection doesn't cover this action. Click \"Log into eBay\" to reconnect — "
+                        + "that grants it, and nothing else changes.");
+
+                // PartialFailure with errors still means this call did not do what was asked.
+                throw new Exception(message);
+            }
+        }
+
+        return root;
+    }
+
+    /// <summary>
+    /// The seller's listings that ended in the last <paramref name="lookbackDays"/> days without
+    /// selling. eBay caps the unsold list at 60 days.
+    /// </summary>
+    public async Task<List<EbayEndedListing>> GetUnsoldListingsAsync(int lookbackDays = 45)
+    {
+        var days = Math.Clamp(lookbackDays, 1, 60);
+        var results = new List<EbayEndedListing>();
+        var pageNumber = 1;
+
+        while (pageNumber <= 20)
+        {
+            var root = await SendTradingAsync("GetMyeBaySelling", $"""
+                  <UnsoldList>
+                    <Include>true</Include>
+                    <DurationInDays>{days}</DurationInDays>
+                    <Pagination>
+                      <EntriesPerPage>200</EntriesPerPage>
+                      <PageNumber>{pageNumber}</PageNumber>
+                    </Pagination>
+                  </UnsoldList>
+                """);
+
+            var unsold = root.Elements(EbayNs + "UnsoldList").FirstOrDefault();
+            var items = unsold?.Descendants(EbayNs + "Item").ToList() ?? [];
+            foreach (var item in items)
+            {
+                var parsed = ParseEndedListing(item);
+                if (!string.IsNullOrWhiteSpace(parsed.ListingId)) results.Add(parsed);
+            }
+
+            var pagination = unsold?.Descendants(EbayNs + "PaginationResult").FirstOrDefault();
+            var totalPages = 1;
+            int.TryParse(pagination?.Element(EbayNs + "TotalNumberOfPages")?.Value, out totalPages);
+            if (items.Count == 0 || pageNumber >= Math.Max(1, totalPages)) break;
+            pageNumber++;
+        }
+
+        log.Add("Info", $"eBay unsold list: {results.Count} ended listing(s) in the last {days} days",
+            $"{results.Count(r => r.IsAuction)} auction(s), {results.Count(r => !string.IsNullOrWhiteSpace(r.RelistedItemId))} already relisted");
+        return results;
+    }
+
+    // Read defensively throughout. GetMyeBaySelling's unsold entries vary by account and by
+    // listing type — watcher and view counts in particular are present on some and absent on
+    // others, and "eBay didn't say" leads to a different recommendation than "nobody looked".
+    private static EbayEndedListing ParseEndedListing(XElement item)
+    {
+        var details = item.Element(EbayNs + "ListingDetails");
+        var selling = item.Element(EbayNs + "SellingStatus");
+        var category = item.Element(EbayNs + "PrimaryCategory");
+
+        decimal? Dec(XElement? parent, string name)
+        {
+            var text = parent?.Descendants(EbayNs + name).FirstOrDefault()?.Value;
+            return decimal.TryParse(text, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : null;
+        }
+
+        int? Int(XElement? parent, string name)
+        {
+            var text = parent?.Descendants(EbayNs + name).FirstOrDefault()?.Value;
+            return int.TryParse(text, out var value) ? value : null;
+        }
+
+        DateTime? Time(string name)
+        {
+            var text = details?.Element(EbayNs + name)?.Value;
+            return DateTime.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var parsed) ? parsed : null;
+        }
+
+        var bidCount = Int(selling, "BidCount") ?? 0;
+        var currentPrice = Dec(selling, "CurrentPrice");
+
+        // On an auction, CurrentPrice is the top bid rather than the ask, so the two are kept
+        // apart: the ask is what the seller wanted, the bid is what somebody actually offered.
+        var ask = Dec(item, "StartPrice") ?? Dec(item, "BuyItNowPrice") ?? currentPrice ?? 0m;
+
+        var startTime = Time("StartTime");
+        var endTime   = Time("EndTime");
+
+        // StartTime only means "when this listing went up" on a fixed-duration listing. A Good Til
+        // Cancelled listing renews itself every cycle and reports the START OF THE LAST CYCLE, so
+        // subtracting it from the end date measures the renewal, not the listing — the seller's own
+        // unsold list returned exactly that, a GTC listing that had been up for months reporting a
+        // start date hours before it ended. Rendering that as "ran 0 days" would be a falsehood, so
+        // the start date is dropped and the age reported as unknown, as a missing one would be.
+        var durationText = item.Element(EbayNs + "ListingDuration")?.Value ?? "";
+        var bookedDays = durationText.StartsWith("Days_", StringComparison.OrdinalIgnoreCase)
+                         && int.TryParse(durationText[5..], out var parsedDays) ? parsedDays : 0;
+        if (bookedDays <= 0) startTime = null;
+
+        // eBay's unsold list carries no "the seller pulled this" flag, so it is derived: a listing
+        // that ran meaningfully less than the duration it was booked for was ended early. Only a
+        // fixed-duration listing can be asked this — a GTC listing has no scheduled end to fall
+        // short of, and is left alone rather than guessed at, because an item wrongly labelled
+        // "you ended this yourself" is dropped from the lost-sales total it belongs in.
+        var endedByUser = bookedDays > 0 && startTime is DateTime s && endTime is DateTime e
+                          && (e - s).TotalDays < bookedDays - 0.5;
+
+        var quantity = Int(item, "Quantity") ?? 1;
+        var quantitySold = Int(selling, "QuantitySold") ?? 0;
+
+        return new EbayEndedListing
+        {
+            ListingId = item.Element(EbayNs + "ItemID")?.Value ?? "",
+            Sku = item.Element(EbayNs + "SKU")?.Value ?? "",
+            Title = item.Element(EbayNs + "Title")?.Value ?? "",
+            Condition = item.Descendants(EbayNs + "ConditionDisplayName").FirstOrDefault()?.Value ?? "",
+            Category = category?.Element(EbayNs + "CategoryName")?.Value ?? "",
+            CategoryId = category?.Element(EbayNs + "CategoryID")?.Value ?? "",
+            ThumbnailUrl = item.Descendants(EbayNs + "GalleryURL").FirstOrDefault()?.Value ?? "",
+            ListingUrl = details?.Element(EbayNs + "ViewItemURL")?.Value ?? "",
+            ListingType = item.Element(EbayNs + "ListingType")?.Value ?? "",
+            Price = ask,
+            Quantity = quantity,
+            QuantityUnsold = Math.Max(1, quantity - quantitySold),
+            StartTimeUtc = startTime,
+            EndTimeUtc = endTime,
+            WatchCount = Int(item, "WatchCount"),
+            HitCount = Int(item, "HitCount"),
+            BidCount = bidCount,
+            HighBid = bidCount > 0 ? currentPrice : null,
+            RelistedItemId = details?.Element(EbayNs + "RelistedItemID")?.Value ?? "",
+            EndedByUser = endedByUser,
+        };
+    }
+
+    /// <summary>
+    /// The bidders who lost an ended auction and are still eligible for a Second Chance Offer.
+    /// </summary>
+    /// <remarks>
+    /// eBay decides eligibility, not this app: <c>ViewSecondChanceEligibleBidders</c> returns only
+    /// the bidders it will actually carry an offer to. Bidder IDs come back masked on some
+    /// responses, which the analyzer treats as "cannot be offered to" rather than guessing.
+    /// </remarks>
+    public async Task<List<(string UserId, decimal? MaxBid, int Quantity)>> GetSecondChanceBiddersAsync(string itemId)
+    {
+        var root = await SendTradingAsync("GetAllBidders", $"""
+              <ItemID>{itemId}</ItemID>
+              <CallMode>ViewSecondChanceEligibleBidders</CallMode>
+            """);
+
+        var bidders = new List<(string, decimal?, int)>();
+        foreach (var offer in root.Descendants(EbayNs + "Offer"))
+        {
+            var userId = offer.Element(EbayNs + "User")?.Element(EbayNs + "UserID")?.Value ?? "";
+            var bidText = offer.Element(EbayNs + "MaxBid")?.Value;
+            decimal? maxBid = decimal.TryParse(bidText, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var bid) ? bid : null;
+            int.TryParse(offer.Element(EbayNs + "Quantity")?.Value, out var qty);
+            bidders.Add((userId, maxBid, Math.Max(1, qty)));
+        }
+
+        // eBay can list the same bidder more than once (one entry per bid). The offer goes to a
+        // person, not to a bid, so they are collapsed on their highest.
+        var deduped = bidders
+            .Where(b => !string.IsNullOrWhiteSpace(b.Item1))
+            .GroupBy(b => b.Item1, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (UserId: g.Key, MaxBid: g.Max(x => x.Item2), Quantity: g.Max(x => x.Item3)))
+            .OrderByDescending(b => b.MaxBid ?? 0m)
+            .ToList();
+
+        log.Add("Info", $"Second-chance bidders on item {itemId}: {deduped.Count}", "");
+        return deduped;
+    }
+
+    /// <summary>
+    /// Puts an ended listing back on eBay, optionally at a new price. Returns the new item ID and
+    /// what eBay charged to list it.
+    /// </summary>
+    /// <remarks>
+    /// Auctions and fixed-price listings take different calls with the same payload shape. Only the
+    /// price and quantity are overridden — every other field (photos, description, item specifics,
+    /// business policies) is carried over by eBay from the original listing, which is precisely
+    /// what makes relisting the cheapest action in the app.
+    /// </remarks>
+    public async Task<(string NewItemId, decimal? InsertionFee)> RelistListingAsync(
+        string itemId, decimal? newPrice, int quantity, bool isAuction)
+    {
+        var call = isAuction ? "RelistItem" : "RelistFixedPriceItem";
+        var fields = new StringBuilder();
+        fields.Append($"    <ItemID>{itemId}</ItemID>\n");
+        if (newPrice is decimal price && price > 0m)
+            fields.Append($"    <StartPrice currencyID=\"USD\">{price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}</StartPrice>\n");
+        if (quantity > 1)
+            fields.Append($"    <Quantity>{quantity}</Quantity>\n");
+
+        var root = await SendTradingAsync(call, $"  <Item>\n{fields}  </Item>");
+
+        var newItemId = root.Element(EbayNs + "ItemID")?.Value ?? "";
+        if (string.IsNullOrWhiteSpace(newItemId))
+            throw new Exception("eBay accepted the relist but returned no new item ID.");
+
+        // eBay itemises the listing fees; the insertion fee is the one the seller is actually
+        // charged to put it back up, and it is reported rather than buried.
+        decimal? insertionFee = null;
+        foreach (var fee in root.Descendants(EbayNs + "Fee"))
+        {
+            if ((fee.Element(EbayNs + "Name")?.Value ?? "") != "InsertionFee") continue;
+            if (decimal.TryParse(fee.Element(EbayNs + "Fee")?.Value, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var amount))
+                insertionFee = amount;
+            break;
+        }
+
+        log.Add("Info", $"Relisted {itemId} as {newItemId}",
+            $"{call}{(newPrice is decimal p ? $" at ${p:0.00}" : " at the original price")}"
+            + (insertionFee is decimal f ? $"; insertion fee ${f:0.00}" : ""));
+
+        return (newItemId, insertionFee);
+    }
+
+    /// <summary>
+    /// Sends a Second Chance Offer to one bidder who lost an ended auction. Returns eBay's item ID
+    /// for the offer.
+    /// </summary>
+    public async Task<string> SendSecondChanceOfferAsync(
+        string itemId, string bidderUserId, decimal offerPrice, int durationDays, string? message)
+    {
+        var duration = durationDays is 1 or 3 or 5 or 7 ? durationDays : 3;
+        var sellerMessage = string.IsNullOrWhiteSpace(message)
+            ? ""
+            : $"  <SellerMessage>{System.Security.SecurityElement.Escape(message.Trim())}</SellerMessage>\n";
+
+        var root = await SendTradingAsync("AddSecondChanceItem", $"""
+              <ItemID>{itemId}</ItemID>
+              <RecipientBidderUserID>{System.Security.SecurityElement.Escape(bidderUserId)}</RecipientBidderUserID>
+              <Duration>Days_{duration}</Duration>
+              <BuyItNowPrice currencyID="USD">{offerPrice.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}</BuyItNowPrice>
+            {sellerMessage}
+            """);
+
+        var offerItemId = root.Element(EbayNs + "ItemID")?.Value ?? "";
+        log.Add("Info", $"Second Chance Offer sent on item {itemId}",
+            $"To one bidder at ${offerPrice:0.00} for {duration} day(s); offer item {offerItemId}");
+        return offerItemId;
+    }
 }
 
 // A saved connection that is valid but was granted before this app asked for a permission it now

@@ -5754,6 +5754,95 @@ body.drawer-open {
   color: var(--ink);
 }
 
+/* ── Recover Lost Sales ────────────────────────────────────────────────
+   Reuses the inventory table wholesale (.inv-*) — this is the third view of
+   the same inventory, so it should not look like a different application.
+   Only the two things this screen has and the others don't get styles of
+   their own: the verdicts specific to an ended listing, and the block of
+   losing bidders that lives inside a row. */
+
+/* An ended auction with reachable bidders is the most valuable row on the
+   board, so it is the only verdict here rendered as a full-strength badge. */
+.rl-v-second {
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid var(--success-line);
+}
+
+/* "Put it back up unchanged" is a real recommendation, not a fallback, but it
+   is a quieter one than a repriced relist — the money comes from the relist
+   itself rather than from a decision about the price. */
+.rl-v-asis { background: var(--warning-soft); color: var(--warning); }
+
+.rl-bids { font-weight: 700; color: var(--warning); }
+
+.rl-duration {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.rl-price-input {
+  width: 88px;
+  padding: 5px 6px;
+  border: 1px solid var(--teal-700);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  background: var(--card);
+  color: var(--ink);
+}
+
+/* The bidders sit inside the listing's own row on purpose: a person who bid on
+   this item is a fact about this item, and putting them on a separate screen is
+   how a seller relists something they could simply have sold. */
+.rl-bidders {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--success-line);
+  border-radius: var(--r-md, 8px);
+  background: var(--success-soft);
+}
+
+.rl-bidders-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--success);
+}
+
+.rl-bidder {
+  display: grid;
+  grid-template-columns: 18px auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* A bidder who can't be offered to is still shown — the reason is the useful
+   part — but stops competing with the ones who can. */
+.rl-bidder-muted { opacity: .68; cursor: default; }
+.rl-bidder-spacer { display: inline-block; width: 18px; }
+.rl-bidder-id { font-weight: 700; color: var(--ink); }
+.rl-bidder-price { font-weight: 700; white-space: nowrap; color: var(--success); }
+.rl-bidder-note { color: var(--muted); }
+
+@media (max-width: 720px) {
+  .rl-bidder { grid-template-columns: 18px 1fr auto; }
+  .rl-bidder-note { grid-column: 1 / -1; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    Design system — states, skeletons and shared surfaces
    Added in the premium design pass. Everything below is generic: no screen

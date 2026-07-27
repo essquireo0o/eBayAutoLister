@@ -363,6 +363,7 @@
     bindPhotoLibrary();
     bindInventoryHealth();
     bindWatcherOffers();
+    bindRelist();
     bindLotAnalyzer();
     bindPromoted();
     bindTrendRadar();
@@ -471,6 +472,7 @@
     if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
+    if (page !== 'relist') $('relist-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
@@ -518,6 +520,10 @@
       showOffersSection();
       return;
     }
+    if (page === 'relist') {
+      showRelistSection();
+      return;
+    }
     if (page === 'lots') {
       showLotsSection();
       return;
@@ -547,7 +553,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2887,6 +2893,549 @@
 
   function setWoStatus(text) {
     const el = $('wo-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // ── Recover Lost Sales — relist + Second Chance Offers ────────────────────
+  // The third view of the same inventory, and the only one that can see the listings that ENDED.
+  // Two different kinds of money live on this board and they are kept visually apart, because
+  // they are worth very different amounts: a relist is a second run at a maybe, and a Second
+  // Chance Offer goes to a named person who publicly bid a specific number on this exact item.
+  // See RelistAnalyzer.cs for what sets each price and what stops it.
+  let rlScan     = null;   // last RelistRecoveryResult, kept so filtering never re-scans
+  let rlSelected = new Set();   // listing IDs picked for relist
+  let rlBidders  = new Set();   // "listingId||userId" picked for a Second Chance Offer
+
+  function showRelistSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('relist-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'relist'));
+  }
+
+  function closeRelistSection() {
+    $('relist-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindRelist() {
+    on('rl-scan-btn', 'click', runRelistScan);
+    on('rl-close', 'click', closeRelistSection);
+    on('rl-home', 'click', closeRelistSection);
+    // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
+    on('rl-filter', 'change', renderRelistRows);
+    on('rl-select-all', 'change', toggleSelectAllRelists);
+    on('rl-preview-btn', 'click', () => submitRelists(true));
+    on('rl-relist-btn', 'click', openRelistConfirm);
+    on('rl-confirm-cancel', 'click', () => $('rl-confirm-overlay')?.classList.add('hidden'));
+    on('rl-confirm-go', 'click', () => {
+      $('rl-confirm-overlay')?.classList.add('hidden');
+      submitRelists(false);
+    });
+    on('rl-sc-cancel', 'click', () => $('rl-sc-overlay')?.classList.add('hidden'));
+    on('rl-sc-go', 'click', () => {
+      $('rl-sc-overlay')?.classList.add('hidden');
+      submitSecondChance(false);
+    });
+    on('rl-sc-message', 'input', updateScMessageCount);
+  }
+
+  async function runRelistScan() {
+    const btn = $('rl-scan-btn');
+    const days      = $('rl-days')?.value || '45';
+    const maxItems  = $('rl-max-items')?.value || '120';
+    const minProfit = Math.max(0, parseFloat($('rl-min-profit')?.value || '0') || 0);
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    setRlStatus('Reading the listings that ended without selling…');
+    $('rl-results').innerHTML = '<p class="opportunity-empty">Pricing each ended listing against sold comps and checking who bid on the auctions — this takes a moment.</p>';
+
+    try {
+      const res  = await fetch(`/api/relist/recover?days=${days}&maxItems=${maxItems}&minProfit=${minProfit}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      rlScan = data;
+      rlSelected.clear();
+      rlBidders.clear();
+      renderRelistScan();
+    } catch (err) {
+      rlScan = null;
+      $('rl-summary')?.classList.add('hidden');
+      $('rl-bulk-bar')?.classList.add('hidden');
+      $('rl-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setRlStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '♻️ Find My Lost Sales'; }
+    }
+  }
+
+  function renderRelistScan() {
+    const warn = $('rl-warning');
+
+    if (rlScan.status === 'ebay_unavailable') {
+      $('rl-summary')?.classList.add('hidden');
+      $('rl-bulk-bar')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('rl-results').innerHTML =
+        '<p class="opportunity-empty">Your eBay account isn\'t connected, or the token has expired. Reconnect it in Settings, then scan again.</p>';
+      setRlStatus('');
+      return;
+    }
+
+    if (rlScan.dataWarning) {
+      warn.textContent = rlScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    renderRelistSummary(rlScan.summary || {});
+    renderRelistRows();
+
+    const s = rlScan.summary || {};
+    setRlStatus(
+      `${s.analyzed || 0} of ${s.endedListings || 0} ended listing${s.endedListings === 1 ? '' : 's'} in the last ${rlScan.lookbackDays} days · ` +
+      `${s.readyToRelist || 0} worth putting back up` +
+      (s.secondChanceBidders ? ` · ${s.secondChanceBidders} lost bidder${s.secondChanceBidders === 1 ? '' : 's'} reachable` : ''));
+  }
+
+  // Leads with the size of the pile and the cash already sunk in it, because those are facts.
+  // Everything conditional on a future sale is labelled as conditional, in the tile itself.
+  function renderRelistSummary(s) {
+    const el = $('rl-summary');
+    if (!el) return;
+
+    const tiles = [
+      { label: 'Asked and never sold', value: money(s.askedAndUnsold),
+        sub: `${s.analyzed || 0} listing${s.analyzed === 1 ? '' : 's'} that ended without a buyer`,
+        tone: s.askedAndUnsold > 0 ? 'warn' : '' },
+      { label: 'Your cash sitting in it', value: money(s.cashSunk),
+        sub: s.withCostBasis ? `what you paid, across ${s.withCostBasis} recorded item${s.withCostBasis === 1 ? '' : 's'}` : 'Record what you paid to see this',
+        tone: s.cashSunk > 0 ? 'warn' : '' },
+      { label: 'Worth putting back up', value: String(s.readyToRelist || 0),
+        sub: s.relistValue ? `${money(s.relistValue)} back on the site` : 'Nothing to relist yet',
+        tone: s.readyToRelist > 0 ? 'good' : '' },
+      { label: 'If those sell this time', value: money(s.netIfAllSell),
+        sub: s.netIfAllSell ? 'net after fees — only on the ones that sell' : 'Record cost basis to see net profit',
+        tone: s.netIfAllSell > 0 ? 'good' : '' },
+      { label: 'Bidders who already said yes', value: String(s.secondChanceBidders || 0),
+        sub: s.secondChanceValue
+          ? `${money(s.secondChanceValue)} of offers at prices they bid`
+          : 'No reachable losing bidders',
+        tone: s.secondChanceBidders > 0 ? 'good' : '' },
+      { label: 'Held back', value: String((s.underwater || 0) + (s.alreadyRelisted || 0)),
+        sub: `${s.underwater || 0} with no profitable price · ${s.alreadyRelisted || 0} eBay already relisted`,
+        tone: (s.underwater || 0) > 0 ? 'warn' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const RL_VERDICTS = {
+    second_chance:   { label: '🎯 Bidders waiting',   cls: 'rl-v-second' },
+    relist_cheaper:  { label: '♻️ Relist cheaper',    cls: 'wo-v-ready' },
+    relist_as_is:    { label: '♻️ Relist as-is',      cls: 'rl-v-asis' },
+    relist:          { label: '♻️ Relist',            cls: 'wo-v-ready' },
+    underwater:      { label: '🛑 No price that pays', cls: 'inv-v-underwater' },
+    already_relisted:{ label: '✅ Already back up',    cls: 'inv-v-nodata' },
+    ended_by_seller: { label: '⏹ You ended this',     cls: 'inv-v-nodata' },
+    no_price:        { label: '? No price',           cls: 'inv-v-nodata' },
+    no_data:         { label: '? No data',            cls: 'inv-v-nodata' },
+  };
+
+  function rlFilterMatches(item, filter) {
+    switch (filter) {
+      case 'ready':         return item.canRelist;
+      case 'second_chance': return (item.sendableBidders || 0) > 0;
+      case 'blocked':       return !item.canRelist;
+      default:              return true;
+    }
+  }
+
+  function renderRelistRows() {
+    if (!rlScan) return;
+    const filter = $('rl-filter')?.value || 'ready';
+    const rows = (rlScan.items || []).filter(i => rlFilterMatches(i, filter));
+    const el = $('rl-results');
+
+    if (rows.length === 0) {
+      const total = (rlScan.items || []).length;
+      el.innerHTML = `<p class="opportunity-empty">${
+        total === 0
+          ? 'Nothing of yours ended unsold in that window — which is the good version of this screen being empty. Widen the window to look further back.'
+          : 'Nothing matches that filter. Switch to "Everything" to see why each one was held back.'}</p>`;
+      $('rl-bulk-bar')?.classList.add('hidden');
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th class="inv-col-check"></th>
+            <th>Listing</th>
+            <th class="num">Ended</th>
+            <th class="num">Interest</th>
+            <th class="num">Asked</th>
+            <th class="num">Market</th>
+            <th class="num">Put back at</th>
+            <th class="num">Your net</th>
+            <th>What happened</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(rlRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.rl-check').forEach(cb => cb.addEventListener('change', onRelistCheck));
+    el.querySelectorAll('.rl-price-input').forEach(inp => {
+      inp.addEventListener('change', onRelistPriceEdit);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+    });
+    el.querySelectorAll('.rl-bidder-check').forEach(cb => cb.addEventListener('change', onBidderCheck));
+    el.querySelectorAll('.rl-sc-send').forEach(btn => btn.addEventListener('click', openSecondChanceConfirm));
+
+    $('rl-bulk-bar')?.classList.remove('hidden');
+    refreshRelistSelectionNote();
+  }
+
+  // "eBay didn't say" and "nobody looked" are different findings and must not render the same.
+  function rlInterestHtml(item) {
+    const watchers = item.watchCount;
+    const views = item.hitCount;
+    if (watchers == null && views == null)
+      return '<span class="inv-dash" title="eBay reported no watcher or view counts for this listing">—</span>';
+
+    const parts = [];
+    if (watchers != null) parts.push(`<span class="wo-watchers ${watchers >= 5 ? 'hot' : ''}">${watchers} 👁</span>`);
+    if (views != null) parts.push(`<div class="inv-sub">${views} view${views === 1 ? '' : 's'}</div>`);
+    if (item.bidCount > 0) parts.push(`<div class="inv-sub rl-bids">${item.bidCount} bid${item.bidCount === 1 ? '' : 's'}</div>`);
+    return parts.join('');
+  }
+
+  function rlRowHtml(item) {
+    const v = RL_VERDICTS[item.verdict] || RL_VERDICTS.no_data;
+    const checked = rlSelected.has(item.listingId) ? 'checked' : '';
+
+    const priceCell = item.relistPrice != null
+      ? `<input class="rl-price-input" type="number" step="0.01" min="0.01"
+                value="${Number(item.relistPrice).toFixed(2)}" data-id="${esc(item.listingId)}"
+                title="Edit to override the suggested relist price. The server re-checks it against your floor." />
+         <div class="inv-change ${item.samePrice ? '' : 'down'}">${
+           item.floorLimited ? 'at your floor' : item.samePrice ? 'unchanged' : `${Number(item.relistChangePercent || 0).toFixed(0)}%`}</div>`
+      : '<span class="inv-dash">—</span>';
+
+    return `
+      <tr class="${item.canRelist ? '' : 'wo-row-muted'}">
+        <td class="inv-col-check">${item.canRelist
+          ? `<input class="rl-check" type="checkbox" data-id="${esc(item.listingId)}" ${checked} />`
+          : ''}</td>
+        <td class="inv-cell-title">
+          <div class="inv-title-row">
+            ${item.imageUrl ? `<img class="inv-thumb" src="${esc(item.imageUrl)}" alt="" loading="lazy" />` : ''}
+            <div>
+              ${item.url
+                ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title)}</a>`
+                : esc(item.title)}
+              <div class="inv-sub">${esc(item.sku || item.listingId)}${item.isAuction ? ' · auction' : ''}${
+                item.quantity > 1 ? ` · ${item.quantity} unsold` : ''}${
+                item.costBasis != null ? ` · paid ${moneyExact(item.costBasis)}` : ' · no cost recorded'}</div>
+            </div>
+          </div>
+        </td>
+        <td class="num">${item.daysSinceEnded == null
+            ? '<span class="inv-dash" title="eBay reported no end date">—</span>'
+            : `${item.daysSinceEnded}d ago${item.daysListed != null ? `<div class="inv-sub">ran ${item.daysListed}d</div>` : ''}`}</td>
+        <td class="num">${rlInterestHtml(item)}</td>
+        <td class="num">${moneyExact(item.endPrice)}${item.quantity > 1 ? `<div class="inv-sub">×${item.quantity}</div>` : ''}</td>
+        <td class="num">${item.marketPrice != null && item.marketComparable !== false
+            ? `${moneyExact(item.marketPrice)}<div class="inv-sub">${item.soldCompCount + item.terapeakCompCount} comps</div>`
+            : '<span class="inv-dash">—</span>'}</td>
+        <td class="num inv-cell-suggested">${priceCell}</td>
+        <td class="num">${item.netProfitAtRelist != null
+            ? `<span class="${item.netProfitAtRelist > 0 ? 'inv-gap-good' : 'inv-gap-bad'}">${moneyExact(item.netProfitAtRelist)}</span>${
+                item.netProfitAtEndPrice != null ? `<div class="inv-sub">${moneyExact(item.netProfitAtEndPrice)} at the old price</div>` : ''}`
+            : '<span class="inv-dash" title="Record what you paid in Inventory Health to see net profit">—</span>'}</td>
+        <td class="inv-cell-verdict">
+          <span class="inv-verdict ${v.cls}">${v.label}</span>
+          <div class="inv-note">${esc(item.verdictNote)}</div>
+          ${(item.signals || []).length ? `<div class="inv-signals">${item.signals.map(s => esc(s)).join(' ')}</div>` : ''}
+          ${item.bidderNote ? `<div class="inv-signals">${esc(item.bidderNote)}</div>` : ''}
+          ${rlBiddersHtml(item)}
+        </td>
+      </tr>`;
+  }
+
+  // The bidders live inside the row rather than on their own screen: a lost bidder is a fact about
+  // this listing, and splitting them apart is how a seller relists an item they could have just sold.
+  function rlBiddersHtml(item) {
+    const bidders = item.bidders || [];
+    if (bidders.length === 0) return '';
+
+    const sendable = bidders.filter(b => b.canSend);
+    const rows = bidders.map(b => {
+      const key = `${item.listingId}||${b.userId}`;
+      return `
+        <label class="rl-bidder ${b.canSend ? '' : 'rl-bidder-muted'}">
+          ${b.canSend
+            ? `<input class="rl-bidder-check" type="checkbox" data-key="${esc(key)}" ${rlBidders.has(key) ? 'checked' : ''} />`
+            : '<span class="rl-bidder-spacer"></span>'}
+          <span class="rl-bidder-id">${esc(b.userId || 'hidden bidder')}</span>
+          <span class="rl-bidder-price">${b.offerPrice > 0 ? moneyExact(b.offerPrice) : '—'}</span>
+          <span class="rl-bidder-note">${esc(b.note)}</span>
+        </label>`;
+    }).join('');
+
+    return `
+      <div class="rl-bidders">
+        <div class="rl-bidders-head">
+          <strong>${sendable.length} of ${bidders.length} losing bidder${bidders.length === 1 ? '' : 's'} reachable</strong>
+          ${sendable.length ? `<button class="btn btn-secondary small rl-sc-send" type="button" data-id="${esc(item.listingId)}">Send Second Chance…</button>` : ''}
+        </div>
+        ${rows}
+      </div>`;
+  }
+
+  function rlItemById(listingId) {
+    return (rlScan?.items || []).find(i => i.listingId === listingId) || null;
+  }
+
+  function onRelistCheck(e) {
+    const id = e.target.dataset.id;
+    if (e.target.checked) rlSelected.add(id); else rlSelected.delete(id);
+    refreshRelistSelectionNote();
+  }
+
+  function onBidderCheck(e) {
+    const key = e.target.dataset.key;
+    if (e.target.checked) rlBidders.add(key); else rlBidders.delete(key);
+  }
+
+  function toggleSelectAllRelists(e) {
+    const filter = $('rl-filter')?.value || 'ready';
+    const isOn = e.target.checked;
+    // Only what is on screen — a select-all that ticks rows hidden behind a filter is how someone
+    // relists an item they never looked at.
+    (rlScan?.items || [])
+      .filter(i => rlFilterMatches(i, filter) && i.canRelist)
+      .forEach(i => { if (isOn) rlSelected.add(i.listingId); else rlSelected.delete(i.listingId); });
+    document.querySelectorAll('.rl-check').forEach(cb => { cb.checked = rlSelected.has(cb.dataset.id); });
+    refreshRelistSelectionNote();
+  }
+
+  function refreshRelistSelectionNote() {
+    const picked = [...rlSelected].map(rlItemById).filter(Boolean);
+    const note = $('rl-selection-note');
+    if (note) {
+      if (picked.length === 0) note.textContent = 'Nothing selected.';
+      else {
+        const value = picked.reduce((sum, i) => sum + (i.relistPrice || 0) * (i.quantity || 1), 0);
+        const net = picked.filter(i => i.netProfitAtRelist != null)
+                          .reduce((sum, i) => sum + i.netProfitAtRelist * (i.quantity || 1), 0);
+        note.textContent = `${picked.length} listing${picked.length === 1 ? '' : 's'} selected · ` +
+          `${moneyExact(value)} back on the site` +
+          (net ? ` · ${moneyExact(net)} net if they all sell` : '');
+      }
+    }
+    const disabled = picked.length === 0;
+    if ($('rl-preview-btn')) $('rl-preview-btn').disabled = disabled;
+    if ($('rl-relist-btn'))  $('rl-relist-btn').disabled  = disabled;
+  }
+
+  // An edited price is the seller's call, and the server re-checks it against the floor either way.
+  function onRelistPriceEdit(e) {
+    const item = rlItemById(e.target.dataset.id);
+    if (!item) return;
+    const raw = parseFloat(e.target.value);
+    const value = isFinite(raw) && raw > 0 ? Math.round(raw * 100) / 100 : (item.relistPrice || item.endPrice);
+    e.target.value = value.toFixed(2);
+    item.relistPrice = value;
+    item.samePrice = Math.abs(value - item.endPrice) < 0.01;
+    item.relistChangePercent = item.endPrice > 0 ? ((value - item.endPrice) / item.endPrice) * 100 : 0;
+    // The net shown next to it was computed for the old number, so it is cleared rather than left
+    // to say something that is no longer true. The confirm screen shows the price, which is exact.
+    item.netProfitAtRelist = null;
+    const label = e.target.parentElement?.querySelector('.inv-change');
+    if (label) label.textContent = 'edited';
+    refreshRelistSelectionNote();
+  }
+
+  function openRelistConfirm() {
+    const picked = [...rlSelected].map(rlItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    const value = picked.reduce((sum, i) => sum + (i.relistPrice || 0) * (i.quantity || 1), 0);
+    const cut   = picked.reduce((sum, i) => sum + Math.max(0, (i.endPrice - (i.relistPrice || 0))) * (i.quantity || 1), 0);
+    $('rl-confirm-total').textContent =
+      `${picked.length} listing${picked.length === 1 ? '' : 's'} back on eBay · ${moneyExact(value)} of stock` +
+      (cut > 0 ? ` · ${moneyExact(cut)} off the prices that already failed` : ' · at the same prices');
+
+    $('rl-confirm-list').innerHTML = picked.map(i => `
+      <div class="inv-confirm-row">
+        <span class="inv-confirm-title">${esc(i.title)}</span>
+        <span class="inv-confirm-prices">${moneyExact(i.endPrice)} → <strong>${moneyExact(i.relistPrice)}</strong>${
+          i.samePrice ? ' (unchanged)' : ''}</span>
+      </div>`).join('');
+
+    const loss = $('rl-allow-loss');
+    if (loss) loss.checked = false;
+    $('rl-confirm-overlay')?.classList.remove('hidden');
+  }
+
+  async function submitRelists(dryRun) {
+    const picked = [...rlSelected].map(rlItemById).filter(Boolean);
+    if (picked.length === 0) return;
+
+    const body = {
+      items: picked.map(i => ({
+        listingId: i.listingId, sku: i.sku, title: i.title,
+        newPrice: i.relistPrice, endPrice: i.endPrice,
+        quantity: i.quantity || 1, isAuction: !!i.isAuction,
+      })),
+      minNetProfit: Math.max(0, parseFloat($('rl-min-profit')?.value || '0') || 0),
+      dryRun,
+      confirmed: !dryRun,
+      allowBelowFloor: !dryRun && !!$('rl-allow-loss')?.checked,
+    };
+
+    setRlStatus(dryRun ? 'Previewing…' : 'Relisting on eBay…');
+    try {
+      const res = await fetch('/api/relist/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'Relisting failed.');
+      renderRelistOutcome(data);
+      if (!dryRun && data.relisted > 0) {
+        addActivity(`${data.relisted} listing${data.relisted === 1 ? '' : 's'} back on eBay`,
+          `${moneyExact(data.listedValue)} of stock relisted from Recover Lost Sales.`);
+        // Those listings now have new item numbers, so the board is stale for them.
+        await runRelistScan();
+      }
+    } catch (err) {
+      setRlStatus(`Relisting failed: ${err.message || err}`);
+    }
+  }
+
+  function renderRelistOutcome(data) {
+    const parts = [];
+    if (data.dryRun) parts.push(`Preview only — nothing relisted. ${data.items.length} listing${data.items.length === 1 ? '' : 's'} ready, ${moneyExact(data.listedValue)} of stock.`);
+    else parts.push(`${data.relisted} back on eBay · ${moneyExact(data.listedValue)} of stock` +
+      (data.totalFees > 0 ? ` · ${moneyExact(data.totalFees)} in insertion fees` : ''));
+    if (data.skipped) parts.push(`${data.skipped} skipped`);
+    if (data.failed)  parts.push(`${data.failed} failed`);
+
+    const problems = (data.items || []).filter(i => i.status === 'skipped' || i.status === 'failed');
+    setRlStatus(parts.join(' · ') + (problems.length
+      ? ' — ' + problems.map(p => `${p.title}: ${p.message}`).join('; ')
+      : ''));
+  }
+
+  // ── Second Chance Offers ─────────────────────────────────────────────────
+  // Priced at what the bidder already bid, so there is nothing to size and no slider to move. The
+  // only decision is whether to send it.
+
+  function selectedBidders() {
+    const out = [];
+    for (const key of rlBidders) {
+      const [listingId, userId] = key.split('||');
+      const item = rlItemById(listingId);
+      const bidder = (item?.bidders || []).find(b => b.userId === userId);
+      if (item && bidder && bidder.canSend) out.push({ item, bidder });
+    }
+    return out;
+  }
+
+  function openSecondChanceConfirm(e) {
+    // The button belongs to one listing, so tick that listing's reachable bidders if the seller
+    // hasn't ticked any of them — clicking "send" on a row should never open an empty confirm.
+    const listingId = e.currentTarget.dataset.id;
+    const item = rlItemById(listingId);
+    if (item && !(item.bidders || []).some(b => b.canSend && rlBidders.has(`${listingId}||${b.userId}`)))
+      (item.bidders || []).filter(b => b.canSend).forEach(b => rlBidders.add(`${listingId}||${b.userId}`));
+    document.querySelectorAll('.rl-bidder-check').forEach(cb => { cb.checked = rlBidders.has(cb.dataset.key); });
+
+    const picked = selectedBidders();
+    if (picked.length === 0) return;
+
+    const total = picked.reduce((sum, p) => sum + p.bidder.offerPrice, 0);
+    $('rl-sc-total').textContent =
+      `${picked.length} offer${picked.length === 1 ? '' : 's'} · ${moneyExact(total)} if every one is taken`;
+
+    $('rl-sc-list').innerHTML = picked.map(p => `
+      <div class="inv-confirm-row">
+        <span class="inv-confirm-title">${esc(p.item.title)}</span>
+        <span class="inv-confirm-prices">${esc(p.bidder.userId)} &nbsp; <strong>${moneyExact(p.bidder.offerPrice)}</strong> (their bid)</span>
+      </div>`).join('');
+
+    const box = $('rl-sc-message');
+    if (box && !box.value) box.value = rlScan?.defaultSellerMessage || '';
+    updateScMessageCount();
+    const loss = $('rl-sc-allow-loss');
+    if (loss) loss.checked = false;
+    $('rl-sc-overlay')?.classList.remove('hidden');
+  }
+
+  function updateScMessageCount() {
+    const box = $('rl-sc-message');
+    const counter = $('rl-sc-message-count');
+    if (box && counter) counter.textContent = `${box.value.length}/250`;
+  }
+
+  async function submitSecondChance(dryRun) {
+    const picked = selectedBidders();
+    if (picked.length === 0) return;
+
+    const body = {
+      items: picked.map(p => ({
+        listingId: p.item.listingId, sku: p.item.sku, title: p.item.title,
+        bidderUserId: p.bidder.userId, offerPrice: p.bidder.offerPrice,
+      })),
+      message: $('rl-sc-message')?.value || '',
+      durationDays: parseInt($('rl-sc-duration')?.value || '3', 10),
+      minNetProfit: Math.max(0, parseFloat($('rl-min-profit')?.value || '0') || 0),
+      dryRun,
+      confirmed: !dryRun,
+      allowBelowFloor: !dryRun && !!$('rl-sc-allow-loss')?.checked,
+    };
+
+    setRlStatus(dryRun ? 'Previewing offers…' : 'Sending Second Chance Offers on eBay…');
+    try {
+      const res = await fetch('/api/relist/second-chance', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'Sending failed.');
+
+      const parts = [];
+      if (data.dryRun) parts.push(`Preview only — nothing sent. ${data.items.length} offer${data.items.length === 1 ? '' : 's'} ready.`);
+      else parts.push(`${data.sent} Second Chance Offer${data.sent === 1 ? '' : 's'} sent · ${moneyExact(data.offeredValue)} if all are taken`);
+      if (data.skipped) parts.push(`${data.skipped} skipped`);
+      if (data.failed)  parts.push(`${data.failed} failed`);
+
+      const problems = (data.items || []).filter(i => i.status === 'skipped' || i.status === 'failed');
+      setRlStatus(parts.join(' · ') + (problems.length
+        ? ' — ' + problems.map(p => `${p.bidderUserId}: ${p.message}`).join('; ')
+        : ''));
+
+      if (!dryRun && data.sent > 0) {
+        addActivity(`${data.sent} Second Chance Offer${data.sent === 1 ? '' : 's'} sent`,
+          `${moneyExact(data.offeredValue)} offered to bidders who lost your ended auctions.`);
+        rlBidders.clear();
+        await runRelistScan();
+      }
+    } catch (err) {
+      setRlStatus(`Sending failed: ${err.message || err}`);
+    }
+  }
+
+  function setRlStatus(text) {
+    const el = $('rl-status');
     if (el) el.textContent = text || '';
   }
 

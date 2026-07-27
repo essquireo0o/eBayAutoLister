@@ -249,6 +249,12 @@ builder.Services.AddSingleton<JackpotHunter>();
 // break-even-checked one.
 builder.Services.AddSingleton<CostBasisStore>();
 builder.Services.AddSingleton<InventoryHealthAnalyzer>();
+// Recover lost sales — the same pricing stack pointed at listings that ENDED without selling, the
+// one slice of a seller's inventory no other screen in the app (or in eBay Seller Hub) puts a
+// number on. Decides what to put back up and at what price, and finds the bidders who lost an
+// ended auction and can still be sold to. Pure; the eBay reads are orchestrated in
+// ScanRelistRecoveryAsync below.
+builder.Services.AddSingleton<RelistAnalyzer>();
 // Liquidation lots — the same pricing stack pointed at a whole pallet at once. LotAnalyzer owns
 // only the part that is specific to buying in bulk: recovery by grade, per-unit fees across every
 // unit on the manifest, the ask allocated across the lines, the max bid solved exactly, and which
@@ -2787,6 +2793,279 @@ app.MapPost("/api/offers/send", async (
     return Results.Ok(result);
 });
 
+// ── Recover lost sales: relist + Second Chance Offers ─────────────────────────────────────────
+// The one pile of inventory nothing else in this app can see. An ended, unsold listing is not in
+// the active-listing import, never reached Money Made, and on eBay's own Unsold page comes with a
+// Relist button and nothing else — no market read, no cost basis, no reason it failed. So the
+// platform's default is to put the same failed price back up and fail again.
+//
+// Two different kinds of money come back here, and the board leads with the bigger one: a relist
+// is a second run at a maybe, while a Second Chance Offer goes to somebody who publicly bid a
+// specific dollar amount on this exact item and lost.
+app.MapGet("/api/relist/recover", async (
+    int? days, int? maxItems, int? terapeakBudget, decimal? minProfit, int? bidderBudget,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    RelistAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+{
+    var result = await ScanRelistRecoveryAsync(
+        Math.Clamp(days ?? RelistAnalyzer.DefaultLookbackDays, 1, RelistAnalyzer.MaxLookbackDays),
+        Math.Clamp(maxItems ?? 120, 1, 400),
+        Math.Clamp(terapeakBudget ?? 3, 0, 15),
+        Math.Clamp(bidderBudget ?? 15, 0, 60),
+        // With no explicit ask, the floor is the one the seller already set in Fees & Costs — the
+        // same default the offers board uses, so the two screens cannot disagree about the floor.
+        Math.Max(0m, minProfit ?? feeProfile.MinimumNetProfit),
+        ebay, costBasis, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+
+    return Results.Ok(result);
+});
+
+// Puts listings back on eBay. The same three brakes as the repricer and the offers board, because
+// this is the third endpoint in the app that creates something buyer-visible:
+//   1. It previews by default — `dryRun` has to be explicitly false.
+//   2. `confirmed` has to be true on top of that.
+//   3. Every relist price is re-checked against a floor the SERVER recomputes from the stored cost
+//      basis, not the one the browser sent. Going under it takes a deliberate opt-in, on the
+//      record in the action log.
+app.MapPost("/api/relist/run", async (
+    RelistRequest req, EbayService ebay, CostBasisStore costBasis, FeeProfile feeProfile,
+    ProfitCalculator profitCalc, ActionLog log) =>
+{
+    var items = req?.Items ?? [];
+    var dryRun = req is null || req.DryRun || !req.Confirmed;
+    var result = new RelistResult { DryRun = dryRun, Requested = items.Count };
+
+    if (items.Count == 0) return Results.Ok(result);
+    if (items.Count > 50)
+        return Results.BadRequest("Too many listings in one relist — 50 at a time is the limit.");
+
+    var minProfit = Math.Max(0m, req?.MinNetProfit ?? feeProfile.MinimumNetProfit);
+    var allCosts = costBasis.GetAll();
+
+    foreach (var item in items)
+    {
+        var quantity = Math.Max(1, item.Quantity);
+        var row = new RelistItemResult
+        {
+            ListingId = item.ListingId, Title = item.Title,
+            OldPrice = item.EndPrice, NewPrice = item.NewPrice,
+            ChangePercent = item.EndPrice > 0m
+                ? Math.Round((item.NewPrice - item.EndPrice) / item.EndPrice * 100m, 1) : 0m,
+        };
+        result.Items.Add(row);
+
+        if (string.IsNullOrWhiteSpace(item.ListingId))
+        {
+            row.Status = "skipped";
+            row.Message = "No eBay item ID — there is nothing to relist.";
+            result.Skipped++;
+            continue;
+        }
+
+        if (item.NewPrice <= 0m)
+        {
+            row.Status = "skipped";
+            row.Message = "A relist needs a price above zero.";
+            result.Skipped++;
+            continue;
+        }
+
+        // Recomputed here rather than trusted from the request: the floor is the safety property of
+        // this endpoint, and a number that arrived over HTTP is not one.
+        var cost = CostBasisStore.Find(allCosts, item.ListingId, item.Sku);
+        if (cost is not null && !(req?.AllowBelowFloor ?? false))
+        {
+            var breakEven = profitCalc.Calculate(
+                supplierUnitCost: cost.TotalUnitCost, quantity: 1, expectedSalePrice: item.NewPrice,
+                quickSalePrice: item.NewPrice, buyerPaidShipping: 0m, fees: feeProfile).BreakEvenSalePrice;
+
+            var (floor, _) = breakEven == decimal.MaxValue
+                ? ((decimal?)null, "")
+                : NetProceedsCalculator.MinimumOffer(breakEven, feeProfile, 0m, minProfit);
+
+            if (floor is decimal f && item.NewPrice < f)
+            {
+                row.Status = "skipped";
+                row.Message = minProfit > 0m
+                    ? $"${item.NewPrice:0.00} leaves less than the ${minProfit:0.00} profit you asked to keep (floor ${f:0.00} on a ${cost.TotalUnitCost:0.00} cost). Relisting it would book the loss again."
+                    : $"${item.NewPrice:0.00} is below the ${f:0.00} break-even on a ${cost.TotalUnitCost:0.00} cost basis.";
+                result.Skipped++;
+                continue;
+            }
+        }
+
+        if (dryRun)
+        {
+            row.Status = "preview";
+            row.Message = Math.Abs(item.NewPrice - item.EndPrice) < 0.01m
+                ? $"Would relist at the same ${item.NewPrice:0.00}."
+                : $"Would relist at ${item.NewPrice:0.00} (was ${item.EndPrice:0.00}).";
+            result.ListedValue += item.NewPrice * quantity;
+            continue;
+        }
+
+        try
+        {
+            var (newItemId, insertionFee) = await ebay.RelistListingAsync(
+                item.ListingId, item.NewPrice, quantity, item.IsAuction);
+
+            row.Status = "relisted";
+            row.NewListingId = newItemId;
+            row.InsertionFee = insertionFee;
+            row.Message = $"Back on eBay as item {newItemId} at ${item.NewPrice:0.00}"
+                        + (insertionFee is decimal fee ? $" (${fee:0.00} insertion fee)." : ".");
+            result.Relisted++;
+            result.ListedValue += item.NewPrice * quantity;
+            if (insertionFee is decimal charged) result.TotalFees += charged;
+
+            log.Add("Info", "Listing relisted",
+                $"{item.ListingId} \"{item.Title}\" → {newItemId}: ${item.EndPrice:0.00} → ${item.NewPrice:0.00}"
+                + ((req?.AllowBelowFloor ?? false) ? " (profit floor overridden by the seller)" : ""));
+        }
+        catch (EbayPermissionException ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Relist blocked by missing eBay permission", ex.Message);
+        }
+        catch (Exception ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Relist failed", $"{item.ListingId}: {ex.Message}");
+        }
+    }
+
+    result.ListedValue = Math.Round(result.ListedValue, 2);
+    result.TotalFees = Math.Round(result.TotalFees, 2);
+    return Results.Ok(result);
+});
+
+// Sends Second Chance Offers to bidders who lost an ended auction. Same three brakes again, with
+// one extra rule that is specific to this call: eBay will not carry an offer above what the
+// recipient already bid, so the offer price is THEIR number — the only question this endpoint can
+// answer is whether that number still clears the seller's floor.
+app.MapPost("/api/relist/second-chance", async (
+    SecondChanceRequest req, EbayService ebay, CostBasisStore costBasis, FeeProfile feeProfile,
+    ProfitCalculator profitCalc, ActionLog log) =>
+{
+    var items = req?.Items ?? [];
+    var dryRun = req is null || req.DryRun || !req.Confirmed;
+    var result = new SecondChanceResult { DryRun = dryRun, Requested = items.Count };
+
+    if (items.Count == 0) return Results.Ok(result);
+    if (items.Count > 50)
+        return Results.BadRequest("Too many offers in one send — 50 at a time is the limit.");
+
+    var duration = RelistAnalyzer.NormalizeDuration(req?.DurationDays ?? RelistAnalyzer.DefaultOfferDays);
+    var message = RelistAnalyzer.CleanMessage(req?.Message);
+    var minProfit = Math.Max(0m, req?.MinNetProfit ?? feeProfile.MinimumNetProfit);
+    var allCosts = costBasis.GetAll();
+
+    foreach (var item in items)
+    {
+        var row = new SecondChanceResultItem
+        {
+            ListingId = item.ListingId, Title = item.Title,
+            BidderUserId = item.BidderUserId, OfferPrice = item.OfferPrice,
+        };
+        result.Items.Add(row);
+
+        if (string.IsNullOrWhiteSpace(item.ListingId) || string.IsNullOrWhiteSpace(item.BidderUserId))
+        {
+            row.Status = "skipped";
+            row.Message = "An offer needs both the ended item and the bidder it goes to.";
+            result.Skipped++;
+            continue;
+        }
+
+        // A masked bidder ID cannot receive an offer. Caught here as well as in the analyzer,
+        // because this endpoint accepts whatever the browser sends it.
+        if (item.BidderUserId.Contains('*'))
+        {
+            row.Status = "skipped";
+            row.Message = "eBay masked this bidder's user ID, so no offer can be addressed to them.";
+            result.Skipped++;
+            continue;
+        }
+
+        if (item.OfferPrice <= 0m)
+        {
+            row.Status = "skipped";
+            row.Message = "eBay didn't disclose what this bidder bid, so there is no price to offer.";
+            result.Skipped++;
+            continue;
+        }
+
+        var cost = CostBasisStore.Find(allCosts, item.ListingId, item.Sku);
+        if (cost is not null && !(req?.AllowBelowFloor ?? false))
+        {
+            var breakEven = profitCalc.Calculate(
+                supplierUnitCost: cost.TotalUnitCost, quantity: 1, expectedSalePrice: item.OfferPrice,
+                quickSalePrice: item.OfferPrice, buyerPaidShipping: 0m, fees: feeProfile).BreakEvenSalePrice;
+
+            var (floor, _) = breakEven == decimal.MaxValue
+                ? ((decimal?)null, "")
+                : NetProceedsCalculator.MinimumOffer(breakEven, feeProfile, 0m, minProfit);
+
+            if (floor is decimal f && item.OfferPrice < f)
+            {
+                row.Status = "skipped";
+                row.Message = $"They bid ${item.OfferPrice:0.00} and you need ${f:0.00} to clear costs on a ${cost.TotalUnitCost:0.00} basis. eBay won't carry an offer above their bid, so there is no price that works for both of you.";
+                result.Skipped++;
+                continue;
+            }
+        }
+
+        if (dryRun)
+        {
+            row.Status = "preview";
+            row.Message = $"Would offer this to {item.BidderUserId} at ${item.OfferPrice:0.00} for {duration} day{(duration == 1 ? "" : "s")}.";
+            result.OfferedValue += item.OfferPrice;
+            continue;
+        }
+
+        try
+        {
+            var offerItemId = await ebay.SendSecondChanceOfferAsync(
+                item.ListingId, item.BidderUserId, item.OfferPrice, duration, message);
+
+            row.Status = "sent";
+            row.OfferItemId = offerItemId;
+            row.Message = $"Offered to {item.BidderUserId} at ${item.OfferPrice:0.00}, open for {duration} day{(duration == 1 ? "" : "s")}.";
+            result.Sent++;
+            result.OfferedValue += item.OfferPrice;
+
+            log.Add("Info", "Second Chance Offer sent",
+                $"{item.ListingId} \"{item.Title}\" to a losing bidder at ${item.OfferPrice:0.00}"
+                + ((req?.AllowBelowFloor ?? false) ? " (profit floor overridden by the seller)" : ""));
+        }
+        catch (EbayPermissionException ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Second Chance Offer blocked by missing eBay permission", ex.Message);
+        }
+        catch (Exception ex)
+        {
+            row.Status = "failed";
+            row.Message = ex.Message;
+            result.Failed++;
+            log.Add("Warning", "Second Chance Offer failed", $"{item.ListingId}: {ex.Message}");
+        }
+    }
+
+    result.OfferedValue = Math.Round(result.OfferedValue, 2);
+    return Results.Ok(result);
+});
+
 // ── Promoted Listings ROI ─────────────────────────────────────────────────────────────────────
 // eBay's suggested ad rate is computed from what the rest of the category pays. It does not know
 // what the seller paid for the item, so it will suggest a rate bigger than the margin and call it a
@@ -3061,6 +3340,179 @@ static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
         $"Active: {result.ActiveListings}; Analyzed: {result.ItemsAnalyzed} across {result.ProductsPriced} product(s); " +
         $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Stale (90d+): {result.Summary.StaleCount}; " +
         $"Overpriced: {result.Summary.OverpricedCount}; Reprice candidates: {result.Summary.RepriceCandidates}; " +
+        $"Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
+
+// The lost-sales scan. Same shape as ScanInventoryHealthAsync above and rationed the same way —
+// one comp lookup per distinct PRODUCT rather than per listing, cache-only first, then the scrape
+// budget spent where the most money hangs on the answer — because the two screens ask the same
+// pricing question about different halves of the seller's inventory.
+//
+// One thing is rationed that the health scan has no equivalent for: bidder lookups. Every ended
+// auction with bids costs one more eBay call to find out who lost it, so that budget goes to the
+// auctions whose losing bidders are worth the most.
+static async Task<RelistRecoveryResult> ScanRelistRecoveryAsync(
+    int lookbackDays, int maxItems, int terapeakBudget, int bidderBudget, decimal minNetProfit,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    RelistAnalyzer analyzer, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var nowUtc = DateTime.UtcNow;
+    var result = new RelistRecoveryResult
+    {
+        LookbackDays = lookbackDays,
+        MinNetProfit = minNetProfit,
+        DefaultSellerMessage = RelistAnalyzer.DefaultSellerMessage,
+    };
+
+    List<EbayEndedListing> ended;
+    try
+    {
+        ended = await ebay.GetUnsoldListingsAsync(lookbackDays);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Lost-sales scan could not read eBay's unsold list", ex.Message);
+        return new RelistRecoveryResult { Status = "ebay_unavailable", Error = ex.Message, LookbackDays = lookbackDays };
+    }
+
+    result.Summary.EndedListings = ended.Count;
+
+    // Biggest money first when the cap bites, so a truncated scan is still the useful part of it.
+    var scanned = ended
+        .Where(e => !string.IsNullOrWhiteSpace(e.Title) && !string.IsNullOrWhiteSpace(e.ListingId))
+        .OrderByDescending(e => e.Price * Math.Max(1, e.QuantityUnsold))
+        .Take(maxItems)
+        .ToList();
+
+    if (scanned.Count == 0)
+    {
+        sw.Stop();
+        log.Add("Info", "Lost-sales scan", $"No unsold listings in the last {lookbackDays} days.");
+        return result;
+    }
+
+    // One lookup per product signature, on Terapeak's own cache key — so two differently-worded
+    // listings for the same item share both the group and any cached scrape.
+    var groups = new Dictionary<string, (string LookupTitle, List<EbayEndedListing> Listings)>(StringComparer.OrdinalIgnoreCase);
+    var keyOf = new Dictionary<string, string>(StringComparer.Ordinal);
+    var lotQtyOf = new Dictionary<string, int>(StringComparer.Ordinal);
+    foreach (var listing in scanned)
+    {
+        var identity = normalizer.Normalize(listing.Title);
+        lotQtyOf[listing.ListingId] = Math.Max(1, identity.Quantity);
+        var key = TerapeakMarketService.BuildCacheKey(identity);
+        if (string.IsNullOrWhiteSpace(key)) key = listing.Title.Trim().ToLowerInvariant();
+        keyOf[listing.ListingId] = key;
+
+        if (!groups.TryGetValue(key, out var group)) group = (listing.Title, []);
+        group.Listings.Add(listing);
+        if (listing.Title.Length > group.LookupTitle.Length) group = (listing.Title, group.Listings);
+        groups[key] = group;
+    }
+    result.ProductsPriced = groups.Count;
+
+    async Task<ResalePricing> PriceAsync(string lookupTitle, bool allowScrape)
+    {
+        var analysis = await AnalyzeProductAsync(
+            lookupTitle, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: allowScrape,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        return ResalePricing.From(analysis, lookupTitle);
+    }
+
+    // ── Pass 1: sold-comps database plus whatever Terapeak already has cached. No scrapes. ──────
+    var pricing = new Dictionary<string, ResalePricing>(StringComparer.OrdinalIgnoreCase);
+    var cached = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (key, group) in groups)
+    {
+        cached[key] = await terapeakMarket.GetAsync(
+            normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
+        pricing[key] = await PriceAsync(group.LookupTitle, allowScrape: false);
+    }
+
+    // ── Pass 2: spend the scrape budget where the most money hangs on the answer ────────────────
+    if (terapeak.IsConnected && terapeakBudget > 0)
+    {
+        var targets = InventoryHealthAnalyzer.SelectScrapeTargets(
+            groups.Select(g =>
+            {
+                var priced = pricing[g.Key];
+                var askedValue = g.Value.Listings.Sum(l => l.Price * Math.Max(1, l.QuantityUnsold));
+                var atStake = priced.HasPrice
+                    ? g.Value.Listings.Sum(l => Math.Abs(l.Price - (priced.ExpectedSale ?? priced.Median)!.Value) * Math.Max(1, l.QuantityUnsold))
+                    : askedValue;
+                return (g.Key, DollarsAtStake: (decimal?)atStake, HasTerapeak: cached[g.Key], Unpriced: !priced.HasPrice);
+            }), terapeakBudget);
+
+        foreach (var key in targets)
+        {
+            pricing[key] = await PriceAsync(groups[key].LookupTitle, allowScrape: true);
+            result.TerapeakScrapesUsed++;
+        }
+    }
+
+    // ── Judge ───────────────────────────────────────────────────────────────────────────────────
+    var costs = costBasis.GetAll();
+    var rows = scanned.Select(e => analyzer.Build(
+            e, pricing[keyOf[e.ListingId]], CostBasisStore.Find(costs, e.ListingId, e.Sku),
+            feeProfile, nowUtc, lotQtyOf[e.ListingId], minNetProfit))
+        .ToList();
+    var rowById = rows.ToDictionary(r => r.ListingId, StringComparer.OrdinalIgnoreCase);
+
+    // ── Who lost the auctions ──────────────────────────────────────────────────────────────────
+    // One eBay call per auction, so only the ones worth it, and a failure on any single auction
+    // never takes the board down — the relist half of the answer is still true without it.
+    foreach (var listingId in RelistAnalyzer.SelectBidderLookups(scanned, bidderBudget))
+    {
+        if (!rowById.TryGetValue(listingId, out var row)) continue;
+        try
+        {
+            var bidders = await ebay.GetSecondChanceBiddersAsync(listingId);
+            RelistAnalyzer.ApplyBidders(row, bidders.Select(b => RelistAnalyzer.BuildBidder(
+                b.UserId, b.MaxBid, b.Quantity, row.FloorPrice, row.BreakEvenPrice, feeProfile)));
+            result.BidderLookups++;
+        }
+        catch (EbayPermissionException ex)
+        {
+            row.BidderNote = ex.Message;
+            log.Add("Warning", "Second-chance bidder lookup blocked by missing eBay permission", ex.Message);
+        }
+        catch (Exception ex)
+        {
+            row.BidderNote = "eBay wouldn't say who bid on this one, so any Second Chance Offers here are unknown rather than absent.";
+            log.Add("Warning", "Second-chance bidder lookup failed (non-fatal)", $"{listingId}: {ex.Message}");
+        }
+    }
+
+    result.Items = RelistAnalyzer.Rank(rows);
+    result.Summary = RelistAnalyzer.Summarize(result.Items);
+    result.Summary.EndedListings = ended.Count;
+    result.Summary.Analyzed = rows.Count;
+
+    if (result.Items.All(r => r.MarketPrice is null))
+    {
+        var compsReachable = await SoldCompsReachableAsync(marketplace, ct);
+        result.DataWarning = (compsReachable, terapeak.IsConnected) switch
+        {
+            (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these before you relist them.",
+            (true, _) => "The sold-comps database had no history for any of these listings, so every relist price below is your old price rather than a market-checked one.",
+            (false, true) => "Terapeak is connected but returned no sold history for these listings.",
+        };
+    }
+
+    sw.Stop();
+    log.Add("Info", "Lost-sales scan",
+        $"Ended unsold ({lookbackDays}d): {ended.Count}; Analyzed: {rows.Count} across {result.ProductsPriced} product(s); " +
+        $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Bidder lookups: {result.BidderLookups}; " +
+        $"Ready to relist: {result.Summary.ReadyToRelist}; Second-chance bidders: {result.Summary.SecondChanceBidders}; " +
         $"Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;

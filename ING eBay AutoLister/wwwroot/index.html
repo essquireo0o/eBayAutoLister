@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=45" />
+  <link rel="stylesheet" href="style.css?v=46" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -64,6 +64,9 @@
         <button class="nav-item" type="button" data-page="snipe"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Auction Sniper</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
+        <!-- Sits with Inventory Health and Offers to Watchers because it is the third view of the
+             same inventory — and the only one that can see the listings that ENDED. -->
+        <button class="nav-item" type="button" data-page="relist"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Lost Sales</button>
         <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
         <button class="nav-item" type="button" data-page="promoted"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Ad Rate Advisor</button>
         <!-- The only screen that questions the assumption every other screen makes: that the item
@@ -1846,6 +1849,155 @@
         </div>
       </section>
 
+      <!-- ── Lost Sales: relist + Second Chance Offers ─────────────────────────────────────────
+           The one pile of inventory nothing else in this app can see. An ended, unsold listing is
+           not in the listings import, never reached Money Made, and on eBay's own Unsold page comes
+           with a Relist button and nothing else — no market read, no cost basis, no reason it
+           failed. Backed by /api/relist/recover, /api/relist/run and /api/relist/second-chance. -->
+      <section id="relist-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="rl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">The sales that got away</div>
+              <h2>♻️ Recover Lost Sales</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="rl-scan-btn" class="btn btn-primary" type="button">♻️ Find My Lost Sales</button>
+            <button id="rl-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">
+              Every listing that ended without selling is an item you already bought, already
+              photographed and are already paying to store. eBay's Relist button puts the price that
+              failed straight back up. This works out <strong>why</strong> each one didn't sell, what
+              to put it back at, and — on ended auctions — which bidders lost and can still be sold
+              to at the price they already bid. Nothing reaches eBay until you confirm it.
+            </p>
+
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="rl-days">Ended in the last</label>
+                <select id="rl-days">
+                  <option value="14">14 days</option>
+                  <option value="30">30 days</option>
+                  <option value="45" selected>45 days</option>
+                  <option value="60">60 days (eBay's limit)</option>
+                </select>
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rl-max-items">Scan up to</label>
+                <select id="rl-max-items">
+                  <option value="50">50 listings</option>
+                  <option value="120" selected>120 listings</option>
+                  <option value="250">250 listings</option>
+                  <option value="400">400 listings</option>
+                </select>
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rl-min-profit">Keep at least (per sale)</label>
+                <input id="rl-min-profit" class="wo-profit-input" type="number" min="0" step="1" value="0" placeholder="0" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="rl-filter">Show</label>
+                <select id="rl-filter">
+                  <option value="ready" selected>Only what's worth putting back up</option>
+                  <option value="second_chance">Ended auctions with lost bidders</option>
+                  <option value="all">Everything</option>
+                  <option value="blocked">Held back, and why</option>
+                </select>
+              </div>
+              <span id="rl-status" class="inv-status"></span>
+            </div>
+          </div>
+
+          <div id="rl-warning" class="inv-warning hidden"></div>
+
+          <div id="rl-summary" class="inv-summary hidden"></div>
+
+          <div id="rl-bulk-bar" class="inv-bulk-bar hidden">
+            <label class="inv-select-all">
+              <input id="rl-select-all" type="checkbox" />
+              Select everything worth relisting
+            </label>
+            <span id="rl-selection-note" class="inv-selection-note">Nothing selected.</span>
+            <button id="rl-preview-btn" class="btn btn-secondary small" type="button" disabled>Preview relists</button>
+            <button id="rl-relist-btn" class="btn btn-primary small" type="button" disabled>Relist on eBay…</button>
+          </div>
+
+          <div id="rl-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">You already bought these. Go get the sale.</div>
+              <p class="state-body">Reads the listings that ended without selling, prices each one against real sold comps, works out what actually stopped it, and finds the bidders who lost your ended auctions and can still be sold to.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('rl-scan-btn')?.click()">Find my lost sales</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing is relisted and no offer is sent until you confirm it.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            eBay's unsold list reaches back 60 days and no further. Relisting carries whatever insertion
+            fee your store allowance leaves — the fee eBay charges is reported on each row after the relist.
+            A Second Chance Offer can only be priced at or below what the bidder already bid, so that price
+            is theirs, not a suggestion. Break-even uses the cost basis recorded in Inventory Health plus
+            the fee assumptions in the profit model — eBay publishes no per-account fee API.
+          </p>
+        </div>
+      </section>
+
+      <!-- The relist gate. A relist creates a real, buyer-visible listing and starts charging fees,
+           so the exact list of what is about to go up lives here next to the confirm button. -->
+      <div id="rl-confirm-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box">
+          <h3>Put these back on eBay?</h3>
+          <p class="inv-confirm-sub">Each one becomes a new live listing with a new item number, carrying over its photos, description and item specifics. eBay charges its usual insertion fee where your allowance is used up.</p>
+          <p id="rl-confirm-total" class="wo-confirm-total"></p>
+          <div id="rl-confirm-list" class="inv-confirm-list"></div>
+          <label class="inv-confirm-override">
+            <input id="rl-allow-loss" type="checkbox" />
+            Allow relisting below my floor (clearing stock at a deliberate loss)
+          </label>
+          <div class="inv-confirm-actions">
+            <button id="rl-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="rl-confirm-go" class="btn btn-primary" type="button">Yes — relist on eBay</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- The Second Chance gate. These go to named people who bid on the item, cannot be recalled,
+           and are priced at the buyer's own bid — so the price is shown per bidder, not summarised. -->
+      <div id="rl-sc-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box">
+          <h3>Send these Second Chance Offers?</h3>
+          <p class="inv-confirm-sub">Each bidder gets a private Buy It Now at the price they already bid. eBay charges its final value fee if one is taken, and an offer can't be recalled once sent.</p>
+          <p id="rl-sc-total" class="wo-confirm-total"></p>
+          <div id="rl-sc-list" class="inv-confirm-list"></div>
+          <label class="wo-message-label" for="rl-sc-message">Message to the bidder <span class="wo-message-count" id="rl-sc-message-count">0/250</span></label>
+          <textarea id="rl-sc-message" class="wo-message" rows="2" maxlength="250"></textarea>
+          <label class="wo-message-label" for="rl-sc-duration">How long they have</label>
+          <select id="rl-sc-duration" class="rl-duration">
+            <option value="1">1 day</option>
+            <option value="3" selected>3 days</option>
+            <option value="5">5 days</option>
+            <option value="7">7 days</option>
+          </select>
+          <label class="inv-confirm-override">
+            <input id="rl-sc-allow-loss" type="checkbox" />
+            Allow offers below my floor (taking a deliberate loss to clear it)
+          </label>
+          <div class="inv-confirm-actions">
+            <button id="rl-sc-cancel" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="rl-sc-go" class="btn btn-primary" type="button">Yes — send on eBay</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Where to Sell Highest. Every other screen prices against eBay and stops there; this one
            checks whether eBay is even the right place to put the item. Read-only: it searches and
            compares, and posts nothing anywhere. -->
@@ -3430,6 +3582,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=54"></script>
+  <script src="app.js?v=55"></script>
 </body>
 </html>

@@ -3224,3 +3224,137 @@ compares, and posts, lists or sells nothing anywhere.
   shipped rate and Mercari's 0% seller fee come from `CrossListingFeeProfile`, which already
   documents them as estimates; every figure derived from them is labelled an estimate.
 - **How fast a local sale actually happens.** Deliberately unmeasured — see above.
+
+## Recover Lost Sales — relist + Second Chance Offers (autonomous session, 2026-07-26)
+
+### The money
+
+Every other screen in this app is about a sale that has not happened yet. This one is about sales
+that **nearly happened and then quietly expired**. That inventory is invisible everywhere else: an
+ended, unsold listing is not in the listings import (it ended), never reached Money Made (it never
+sold), and on eBay's own Unsold page it comes with a Relist button and **nothing else** — no market
+read, no cost basis, no reason it failed. So the platform's default behaviour is to put the price
+that already failed straight back up, and fail again.
+
+It is also the cheapest money in the business. The item is already bought, already photographed,
+already written up and already being paid to store. On the seller's own account this scan found
+**$20,128.20 of stock that was asked for and never sold**, sitting in two listings nothing else in
+the app can see.
+
+Two different kinds of money come back here, and they are worth very different amounts:
+
+1. **A relist** is a second run at a maybe — with the price corrected by real sold comps instead of
+   repeated.
+2. **A Second Chance Offer** goes to somebody who publicly bid a specific dollar amount on this
+   exact item and lost. That is the shortest distance in the whole app between one click and money
+   in the account, so it outranks every relist on the board by rule.
+
+### The part that isn't a relist button
+
+The whole feature is the diagnosis, not the button. The scan asks *why* each one didn't sell and
+answers it from the listing's own record, because the answers point in opposite directions:
+
+- **Priced above market** — back up at the going rate. The price was the blocker; comps say by how much.
+- **At market, watched, no sale** — a small step down. A queue of watchers is close, so it takes
+  *less* of a discount, not more: the same ladder shape as Offers to Watchers, for the same reason.
+- **At market, viewed, nobody saved it** — a sharper step. They saw the price and left.
+- **At market, nobody watched, barely seen** — **relist unchanged**. The price was never the
+  blocker; almost nobody found it. Marking this down is paying for a problem that isn't price. The
+  relist is still right on its own — it buys a fresh run in eBay search, which is exactly what a
+  listing nobody found needs — and the row says the real fix is the title and the first photo.
+- **Already under market and still unsold** — never raised. The listing's own record contradicts the
+  comps for this exact item, and raising it would act on the one reading the evidence denies.
+
+That is the difference from the repricer, and it is structural: there, "no change" means do nothing,
+because the listing is live. Here the listing is **down**, so "no change" still means relist.
+
+### What it will not do
+
+- **No relist price ever lands under the floor.** Break-even plus the profit the seller set in
+  Fees & Costs, recomputed **server-side** from the stored cost basis on every send — never trusted
+  from the browser. A listing that was under water the whole time it was up goes back up at the
+  floor, and says so, rather than repeating the loss.
+- **A Second Chance Offer is never priced above what the bidder bid** — eBay will not carry it — and
+  never below the floor. When their bid is under the floor there is simply no price that works for
+  both parties, and the row says that instead of offering something.
+- **A masked bidder ID is never sent to.** eBay withholds bidder IDs on some responses; that is
+  reported as unreachable rather than guessed at, in the analyzer *and* again in the endpoint.
+- **A listing eBay has already relisted is never relisted again** — that is a duplicate on the site.
+- **"eBay didn't say" is not "nobody looked."** Missing watcher and view counts produce a different
+  recommendation and different copy from a genuine zero. The same rule applies to listing age below.
+- **No profitable price means say so.** Where the floor sits above the market, the verdict is
+  `underwater` and there is no relist — a relist there is a relisted loss.
+- **A failed comp match never moves a price.** Lot listings and 300%+ gaps are marked
+  not-comparable and the relist price is left alone.
+
+### Built on what was already there
+
+No fee math is re-derived. Break-even comes from the same `ProfitCalculator`/`FeeProfile` pair every
+other screen costs an item with, the floor from `NetProceedsCalculator.MinimumOffer`, the charm
+rounding from `InventoryHealthAnalyzer.Charm`, the scrape rationing from
+`InventoryHealthAnalyzer.SelectScrapeTargets`, and the market read from `AnalyzeProductAsync` — the
+same hosted sold-comps + Terapeak pipeline as the Opportunity Finder. A break-even is a break-even
+whichever screen asks.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/RelistModels.cs` | **New** — `EbayEndedListing`, `RelistCandidate`, `SecondChanceBidder`, `RelistSummary`, `RelistRecoveryResult`, and the request/result types for both write paths |
+| `Services/RelistAnalyzer.cs` | **New** — the relist ladder, the "why didn't it sell" diagnosis, the floor binding, second-chance pricing, ranking, verdicts, bidder-lookup budgeting. Pure: no I/O |
+| `Services/EbayService.cs` | `SendTradingAsync` (one shared Trading API call path), `GetUnsoldListingsAsync`, `ParseEndedListing`, `GetSecondChanceBiddersAsync`, `RelistListingAsync`, `SendSecondChanceOfferAsync` |
+| `Program.cs` | DI + `GET /api/relist/recover`, `POST /api/relist/run`, `POST /api/relist/second-chance`, `ScanRelistRecoveryAsync` |
+| `wwwroot/index.html` | `#relist-section`, the `Lost Sales` nav entry, both confirmation gates. `app.js?v=55`, `style.css?v=46` |
+| `wwwroot/app.js` | `bindRelist`, `runRelistScan`, `renderRelistSummary` / `renderRelistRows` / `rlRowHtml` / `rlBiddersHtml`, `submitRelists`, `submitSecondChance` |
+| `wwwroot/style.css` | `.rl-*` — only the two things this screen has that the others don't; the table is `.inv-*` reused |
+| `ING eBay AutoLister.Tests/RelistAnalyzerTests.cs` | **New** — 37 tests |
+
+### Why this is Trading-API-only
+
+eBay's modern Sell APIs have **no** concept of an ended-unsold listing, **no** relist call, and
+**no** Second Chance Offer at all. The entire surface is XML-only (`GetMyeBaySelling/UnsoldList`,
+`GetAllBidders`, `RelistFixedPriceItem` / `RelistItem`, `AddSecondChanceItem`), which is a large part
+of why so few tools touch it. No new OAuth scope is needed — `sell.inventory` already covers it —
+and a token that predates a permission raises the same one-click reconnect message as elsewhere.
+
+### What one click costs
+
+One `GetMyeBaySelling` page set, one comp lookup **per distinct product** (not per listing), a
+Terapeak scrape budget of 3 spent where the most money hangs on the answer, and one
+`GetAllBidders` call per ended auction with bids — budgeted, biggest bids first. Every write path
+previews by default and needs `dryRun:false` **and** `confirmed:true`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,182 passed**, 0 failed, 0 skipped (1,145 pre-existing + 37 new) |
+| Live `GET /api/relist/recover` (dev port 9346, real eBay account) | `status=ok`, 2 real ended-unsold listings, **$20,128.20** asked and never sold, both correctly judged `relist_as_is` |
+| Live `POST /api/relist/run` (dry run) | `preview: Would relist at $349.99 (was $379.99)`, `listedValue=$17,499.50` across 50 units — nothing sent to eBay |
+| Live `POST /api/relist/second-chance` (dry run) | Masked bidder `b***r` **skipped** with the reason; real bidder previewed at their own $250 bid |
+| Served assets | `relist-section`, nav entry, both gates, `bindRelist`, `.rl-bidders` all present at `v=55` / `v=46` |
+| Comp-match guard, live | The $1,128.70 listing matched comps **653% away**; marked not-comparable and its price left alone rather than cut to $149.97 |
+
+### One live finding, fixed
+
+The first run reported both listings as having **"ran 0-1 days"**, which is not credible for
+listings sitting in a 60-day unsold window. Cause: `StartTime` only means "when this listing went
+up" on a **fixed-duration** listing. A Good Til Cancelled listing renews itself and reports the
+start of its **last renewal cycle**, so subtracting it from the end date measures the renewal, not
+the listing. Rendering that as "ran 0 days" about a listing that had been up for months is a
+falsehood with a number on it, and it also risked the ended-early derivation wrongly labelling a
+lost sale as "you ended this yourself" — which would drop it from the total it belongs in. Now the
+start date is used only where it means what it says, and the age is reported as **unknown**
+otherwise. Both real listings are GTC and now correctly carry no age at all.
+
+### Not verified
+
+- **A real relist and a real Second Chance Offer.** Both write paths are verified in dry run only —
+  publishing to the live eBay account is outside what this session is allowed to do. The XML calls,
+  the fee parsing and the error/permission handling are unexercised against eBay's live responses.
+- **A real losing bidder.** The seller's ended listings are both fixed-price, so no ended auction
+  existed to look bidders up on. The second-chance half is verified against the analyzer's rules
+  (masked IDs, withheld bids, floor blocking, ranking — 11 tests) and the endpoint's own guards,
+  not against a real `GetAllBidders` response.
+- **Multi-page unsold lists.** Only two ended listings existed, so pagination is untested live.
