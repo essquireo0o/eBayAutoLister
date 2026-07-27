@@ -3739,6 +3739,7 @@ unnamed). DealNews' own `dealType=sale` is trusted over any wording. A DealNews 
 |---|---|
 | `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
 | `dotnet test` | **1,332 passed**, 0 failed, 0 skipped (1,258 pre-existing + 74 new) |
+| `dotnet test` × 3 more full runs | 1,332 passed each time — see the flake note below |
 | `node --check app.js` | Syntax OK |
 | Live `GET /api/local/sources` (dev port 9351) | `dealfeeds` present, `available=true`, `locationBased=false` |
 | Live `GET /api/local/search?q=laptop&sources=dealfeeds` | `status=ok`, 12 deals, $19.99–$1,449.99, stores named (Amazon, Woot, Best Buy, Costco, Staples, Lenovo) |
@@ -3761,3 +3762,12 @@ unnamed). DealNews' own `dealType=sale` is trusted over any wording. A DealNews 
   behaviour shared with every other board, and it errs **conservative** (those rows came back
   `pass` / `no_data`, zero goldmines, zero claimed profit), so it understates rather than inflates.
   Long, spec-heavy retail titles hit it harder than short classifieds titles do; worth its own pass.
+
+### One flaky test, recorded rather than glossed over
+
+`EarningsStoreTests.Different_lines_of_the_same_order_are_separate_sales` failed **once** across six
+full runs of the suite this session, and passed on the other five plus in isolation. Nothing in this
+change touches `EarningsStore` — the class gives every test its own GUID-named temp SQLite file, and
+its `Dispose` calls the process-global `SqliteConnection.ClearAllPools()`, which is the plausible
+cause when xUnit runs collections in parallel on Windows. Pre-existing, unrelated to the deal
+scanner, and worth its own look rather than being quietly ignored.
