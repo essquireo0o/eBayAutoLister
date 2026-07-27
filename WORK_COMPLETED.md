@@ -6268,3 +6268,181 @@ and there is a test that says so.
   past the prompt loses every draft in the banner.
 - `queue_forever.py` was untracked before this session and is unrelated to this
   work; it was **left untracked** again.
+
+---
+
+## Snap & Source — a Buy/Pass verdict in the two seconds you have, from a link or a photo (autonomous session, 2026-07-27)
+
+### The problem
+
+Every sourcing screen in this app answers *"what should I go and buy?"* — Local Deals,
+Deal Radar, Roll the Dice, the Opportunity Finder, Spend My Budget. All of them are a
+search, a scan and a ranked table: minutes of work, at a desk, with two hands.
+
+None of them answers the question that actually decides whether money is made, which
+gets asked **standing up, holding the thing, with the seller waiting**: *should I buy
+THIS?* A seller at a yard sale, an estate sale or a thrift aisle has about ten seconds
+and one hand free, and the app's answer was to go home, open a board and run a scan
+against a search term — by which time the item is gone.
+
+There was also no way in that matched the situation. Everything sourcing-related started
+from a saved search or a typed keyword. Nobody standing in a driveway types "Bitmain
+Antminer S19j Pro 104TH" into a keyword box; they point a camera at the thing, or they
+paste the link the seller just texted them.
+
+### What was built
+
+**One screen, three ways in, one word out.**
+
+**1. `POST /api/snap` — the same pricing, a different question.**
+The pricing is deliberately *not* new: it is `AnalyzeProductAsync` → `ResalePricing` →
+`LocalArbitrageAnalyzer.Build`, the same path Local Deals, Deal Radar and Roll the Dice
+take. A snap and a board row for the same item at the same price **cannot disagree**,
+because they are the same call. What is new is the input and the output.
+
+- **A pasted listing URL.** Read for its metadata, not screenshotted. The app already has
+  a URL route (`/api/analyze-url` → `TakeHeadlessScreenshot` → Claude vision) and it takes
+  tens of seconds — right for writing a listing at a desk, useless in a driveway. Every
+  listing site publishes Open Graph tags and JSON-LD for link previews, and **a link
+  preview is exactly the amount of information a Buy/Pass answer needs**. Measured
+  end-to-end: 0.7–2.2s.
+- **A photo.** New `ClaudeService.IdentifyItemAsync` — six short fields at
+  `ThinkingEffort.low` with a 1,024-token ceiling, against the same `claude-opus-4-8`
+  every other call in that file uses. Contrast `AnalyzeImageAsync`, which writes a
+  complete SEO listing (80-char title, 4,000 characters of HTML, item specifics, package
+  dimensions) at high effort with an 8,192-token ceiling and a four-minute timeout. The
+  seller is not going to publish anything; the only field that matters is the search
+  query. Effort is the latency lever, not the model — "identify this object" is not the
+  part worth economising on.
+- **A typed name.** Also the correction path: the identified name renders as an **input**,
+  and re-pricing a corrected name deliberately does **not** re-send the photo. The seller
+  has already told the app what it is; paying for a second look at the same picture would
+  buy nothing and cost a wait.
+
+**2. `SnapPageParser` — pure, total, no network.** HTML in, `SnapPageFacts` out. Declared
+metadata only (`og:*`, `product:price:amount`, `itemprop`, JSON-LD), with exactly one
+markup exception: Craigslist's own price element, because Craigslist publishes no price
+metadata at all and is the single most likely site this gets pointed at. A price scraped
+from visible body text is as likely to be a "customers also bought" tile as the item's own
+price, and a wrong price here does not produce a wrong number — it produces a **confident
+BUY on a deal that doesn't exist**. So the price comes from a declared field or from
+nowhere, and a page that declares none hands back a null the UI asks the seller to fill in.
+
+**3. `SnapJudge` — translation, never a second opinion.** The verdict tiers, profit, ROI
+and break-even were all decided upstream. This collapses the analyzer's four tiers into
+the three answers a person can act on (`goldmine`/`solid` → BUY, `thin` → CLOSE CALL,
+`pass` → PASS, `no_data` → CAN'T PRICE IT) and computes exactly one number of its own.
+
+**The one number: `PayUpTo`.** Below break-even, net profit at a price `p` is
+`breakEven - p` and ROI is `(breakEven - p) / p`. Solving each of
+`LocalArbitrageAnalyzer`'s own public bars (`SolidRoiPercent`, `SolidProfit`) for `p` and
+taking the tighter gives one price that clears both — floored to the cent, because a
+number quoted as safe has to be safe at the number quoted. It is the twin of
+`JackpotHunter.TargetBuyPrice`, which asks the same question against the goldmine bar.
+**This is the number the seller acts on**, and it leads every priced answer.
+
+**4. The case the app had never had an answer for: no price named.** Every board in this
+app starts from an ask. At a yard sale there isn't one — nobody has said a number yet. The
+row is still costed (against a zero, which is what makes `MaxBuyPrice` come back as the
+break-even), but the profit and ROI that implies are **arithmetic about a price the seller
+has not been offered**, and publishing them as "your profit" would be the most flattering
+lie this screen could tell. They are dropped, and the answer becomes **"BUY UNDER $112"** —
+with a PASS when no price clears the bar, distinguishing *"even free, this doesn't clear
+eBay's cut and the cost of shipping it"* from *"only $10 of headroom even if they hand it
+to you — not worth fetching, photographing, listing and packing"*.
+
+**5. The screen.** The only one in this app written **mobile-first** — the base CSS rules
+are the phone layout and the desktop widening is a `min-width` query, because the small
+screen is the real one here. `capture="environment"` on the file input, which is the whole
+difference between a field tool and a file picker. Drop, paste and tap all work. The
+verdict renders at 34px, readable at arm's length; tap targets are 44–52px.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/SnapModels.cs` | **New** — `SnapRequest`, `SnapResult`, `SnapIdentity`, `SnapPageFacts`, `SnapCalls` |
+| `Services/SnapPageParser.cs` | **New** — pure metadata parse, challenge-page detection, title/price/image extraction |
+| `Services/SnapJudge.cs` | **New** — `PayUpTo`, the four-tier → three-answer collapse, the no-price-named branch |
+| `Services/ClaudeService.cs` | `IdentifyItemAsync` + `NormalizeIdentity` — fast vision ID at low effort |
+| `Program.cs` | `POST /api/snap` and `SnapFetchPageAsync` |
+| `wwwroot/index.html` | `snap` sidebar entry, `#snap-section`, `app.js?v=76`, `style.css?v=68` |
+| `wwwroot/app.js` | `WORKSPACE_PAGES.snap`, `OVERLAY_SECTIONS`, `bindSnapSource` and the render path |
+| `wwwroot/style.css` | `.snap-*` — mobile-first layout, verdict card, tiles, dark-mode overrides |
+| `Tests/SnapPageParserTests.cs` | **New** — 45 cases |
+| `Tests/SnapJudgeTests.cs` | **New** — 24 cases |
+
+### Verified
+
+- `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` — **0 errors**
+  (the 2 `NU1903` SQLite advisory warnings are the pre-existing baseline).
+- `dotnet test` — **1976 passed, 0 failed** (1887 before this change). `node --check` on `app.js`.
+- `WorkspaceTabsAssetTests` passes unchanged, so the sidebar / `WORKSPACE_PAGES` / section-id
+  wiring is locked for the new screen exactly the way it is for every other.
+- **Driven end-to-end against the live hosted comps database**, dev instance on port 9347:
+  a typed name at a known price returned PASS in 2.2s with the identity guard fired and the
+  right warning; the same item with no price returned **BUY UNDER $112** in 0.7s.
+- **Driven in a real browser (Playwright, chromium)** at 390x844 and 1440x900, light and
+  dark: the sidebar opens the tab, a real snap runs through the real endpoint, the verdict
+  renders at 34px, the phone button is 52px and the photo drop 132px, and the
+  re-price-a-corrected-name path re-runs and returns a different verdict. **Zero console
+  errors** in all three passes.
+
+### Three defects the live and browser passes caught, that review had not
+
+1. **A bot check returning HTTP 200.** Pointed at a live Walmart product page, the challenge
+   page answered **200** with a complete set of Open Graph tags, and the screen priced an
+   item called **"Robot or human?"** — coming back with a confident *"BUY UNDER $464"*
+   against comps for whatever eBay thinks those words are worth. Nothing failed, so no
+   status-code check could have caught it. Fixed with `IsChallengeTitle`: phrases no product
+   is ever called are matched anywhere in a bounded title; words that *are* plausible in an
+   item name (`blocked`, `security check`, `page not found`) only count as the whole title,
+   so "Blocked Drain Auger 25ft" survives. A challenge page now yields no title, which routes
+   into *"that page didn't say what it is — take a photo instead"*, the one route no CDN can
+   block.
+2. **`flex: 0 0 130px` on a column flex container.** On the phone the fields stack, so the
+   flex-basis was read as a **height** — forcing the price field to 130px tall and leaving a
+   76px dead band above the button, on the one layout that can least afford it. Moved into
+   the `min-width` query; measured 76px → 12px.
+3. **The evidence sentence rendered twice on one card**, once in the evidence strip and once
+   as a bullet under it. `SnapJudge` no longer puts comp evidence in `Warnings` at all —
+   `EvidenceTier`/`EvidenceNote` already carry it in the analyzer's own words with a tier the
+   UI colours on, and the card already has a *See the sold listings* button, which is the
+   action the second copy was spelling out. A caveat repeated is a caveat discounted.
+
+A fourth was caught by a test rather than a browser: the site-name stripper derived the brand
+from the second-to-last host label, which makes `someshop.co.uk` a site called **"co"**.
+
+### Not verified / known limits
+
+- **The photo path was never run against the real Anthropic API this session.**
+  `IdentifyItemAsync` is exercised only through `SnapJudge.AddIdentityWarnings` in tests; the
+  prompt, the JSON shape and the low-effort latency claim are unproven against the live model.
+  Everything downstream of the identification — the pricing, the verdict, the warnings — is the
+  same code the typed-name path runs, and that path was driven end-to-end.
+- **The URL success path was proven on Wikipedia and Walmart, not on a listing site.**
+  Craigslist's RSS, eBay's search and B&H all returned **403** to this machine during the
+  session, and the two listing URLs tried were invented item ids that correctly 404'd. The
+  failure sentences are therefore well tested and the success path is covered by the unit
+  fixtures plus two live non-listing pages. How often the real listing sites refuse a plain
+  client is the open question — and it is exactly why the photo route exists.
+- **A photo verdict is a price on what the app thinks it is.** Nothing here sees a cracked
+  screen, a missing charger, water damage or a counterfeit. `CheckThis` asks the model for the
+  one thing to check by hand, and `Certainty: low` adds a caveat naming what was actually
+  priced — but neither is a substitute for looking.
+- **Terapeak is never scraped on this path** (`allowRealTerapeakScrape: false`). A real scrape
+  is a browser page load against a logged-in session, and this screen exists to answer before
+  the seller gets bored. A snap therefore rests on the hosted comps database alone, and can be
+  thinner than the same item on a board that was allowed to spend a scrape.
+- **The page is horizontally scrollable at 390px — pre-existing, not this feature.** The
+  document's `scrollWidth` is 606px at a 390px viewport, and it is identical on the Dashboard
+  and on Where to Sell. The offender is `#step1-row` in the setup wizard behind the overlay;
+  no element with a `snap-` class overflows. Left alone as out of scope for one cohesive
+  change, but it does undercut the mobile promise and is worth its own pass.
+- **The parser reads metadata, so a site that publishes none is a photo job.** That is stated
+  in the UI rather than worked around; no amount of markup scraping would make it reliable.
+- **The `.co.uk`-style list is not a public-suffix list** and does not need to be — it only
+  decides which word to strip off the end of a title, so a miss leaves the title slightly long
+  rather than breaking anything.
+- `queue_forever.py` was untracked before this session and is unrelated; it was **left
+  untracked**.

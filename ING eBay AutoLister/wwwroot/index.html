@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=67" />
+  <link rel="stylesheet" href="style.css?v=68" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -106,6 +106,11 @@
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
 
         <p class="nav-group-label">Grow</p>
+        <!-- The only screen meant to be used away from the desk. Every board below it answers
+             "what should I go and buy"; this one answers "should I buy THIS", about the thing
+             already in the seller's hand. It sits first in Grow because it is the one that has to
+             be found in three seconds on a phone. -->
+        <button class="nav-item" type="button" data-page="snap"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>Snap &amp; Source</button>
         <!-- The only screen in the app that works when nobody is looking at it. Every other
              sourcing board is a button someone has to remember to press; this one is that same
              scan, saved with a profit bar on it, running on its own. It sits first in Grow
@@ -2838,6 +2843,86 @@
       <!-- Where to Sell Highest. Every other screen prices against eBay and stops there; this one
            checks whether eBay is even the right place to put the item. Read-only: it searches and
            compares, and posts nothing anywhere. -->
+      <!-- Snap & Source. The one screen designed to be used on a phone, one-handed, with somebody
+           waiting: a link or a photo in, and a single word out. Everything below the verdict card
+           is evidence for it, in the order a person actually wants it — the price to pay, then the
+           resale it rests on, then how much to believe that. -->
+      <section id="snap-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="snap-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Buy or pass, in seconds</div>
+              <h2>📸 Snap &amp; Source</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="snap-run-btn" class="btn btn-primary" type="button">⚡ Should I buy it?</button>
+            <button id="snap-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body snap-body">
+          <div class="snap-input-card">
+            <div class="snap-drop" id="snap-drop" tabindex="0" role="button"
+                 aria-label="Add a photo of the item. Tap to choose or take a photo, or drop an image here.">
+              <img id="snap-thumb" class="snap-thumb hidden" alt="" />
+              <div id="snap-drop-prompt" class="snap-drop-prompt">
+                <span class="snap-drop-icon" aria-hidden="true">📷</span>
+                <span class="snap-drop-label">Photo of the item</span>
+                <span class="snap-drop-hint">Tap to shoot · or drop / paste an image</span>
+              </div>
+              <button id="snap-clear-photo" class="snap-clear-photo hidden" type="button" aria-label="Remove the photo">✕</button>
+            </div>
+            <!-- capture="environment" is what makes the phone open the rear camera instead of the
+                 gallery. It is the whole difference between this being a field tool and a file picker. -->
+            <input id="snap-file" class="hidden" type="file" accept="image/*" capture="environment" />
+
+            <div class="snap-fields">
+              <div class="opp-field snap-field-wide">
+                <label for="snap-what">Paste a listing link — or type what it is</label>
+                <input id="snap-what" type="text" inputmode="url" autocomplete="off"
+                       placeholder="craigslist.org/… or “DeWalt DCD771 20V drill”" />
+              </div>
+              <div class="opp-field snap-field-price">
+                <label for="snap-ask">They want</label>
+                <input id="snap-ask" type="number" inputmode="decimal" min="0" step="0.01" placeholder="—" />
+              </div>
+            </div>
+
+            <button id="snap-go" class="btn btn-primary snap-go" type="button">⚡ Should I buy it?</button>
+            <p id="snap-status" class="snap-status" role="status" aria-live="polite"></p>
+            <p class="snap-hint">
+              No price yet? Leave it blank — you get the most to pay instead of a verdict on a number
+              nobody has said.
+            </p>
+          </div>
+
+          <div id="snap-result" class="snap-result">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></div>
+              <div class="state-title">Standing in front of it, with someone waiting.</div>
+              <p class="state-body">Paste the listing link or take a photo, add what they're asking, and get one word back: <strong>BUY</strong> or <strong>PASS</strong> — with the resale price, what's left after eBay's fees and shipping, and the most you can pay and still make money. Same sold comps and the same fee profile the rest of the app uses, so it can't disagree with your own boards.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('snap-what')?.focus()">Paste a link</button>
+                <button class="btn btn-ghost" type="button" onclick="document.getElementById('snap-file')?.click()">Take a photo</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing here buys, bids, lists or messages anyone.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            <strong>The verdict is about the money, not the item.</strong> It costs the flip with your
+            own fee profile and the shipping the matched comps actually charged, and it grades itself on
+            how many sold comps priced it — a green badge needs real sold history behind it, and a row
+            priced off one loose sale says so instead of shouting. Nothing here can see a cracked screen,
+            a missing charger or a counterfeit, so a photo verdict is a price on what the app thinks it
+            is: read the name before you trust the number. Terapeak is never scraped here — that means
+            a browser page load, and this screen exists to answer before the seller gets bored.
+          </p>
+        </div>
+      </section>
+
       <section id="wts-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
@@ -4485,6 +4570,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=75"></script>
+  <script src="app.js?v=76"></script>
 </body>
 </html>

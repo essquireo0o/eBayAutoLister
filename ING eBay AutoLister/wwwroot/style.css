@@ -13177,3 +13177,286 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
    on the dark palette would paint a near-white card into a dark stack. */
 :root[data-theme="dark"] .rad-alert.is-new { background: rgba(199, 154, 54, .10); }
 :root[data-theme="dark"] .rad-switch-track::after { background: var(--on-dark); }
+
+/* ── Snap & Source ──────────────────────────────────────────────────────
+   The only screen in this app designed for a phone held one-handed in
+   somebody's driveway, so it is the only one written mobile-first: the
+   base rules below are the phone layout, and the desktop widening happens
+   in a min-width query. Everything else in this file narrows down; this
+   widens up, because the small screen is the real one for this feature.
+
+   Tap targets are 44px or larger throughout — the seller is standing up,
+   possibly in gloves, and a mis-tap costs a re-run of a paid AI call. */
+
+.snap-body { max-width: 780px; }
+
+.snap-input-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e1);
+}
+
+/* The camera. Big and first, because on a phone this is the primary input
+   and a file-input-shaped control would read as an afterthought. */
+.snap-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  padding: var(--s4);
+  border: 2px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--info-tint);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .15s ease, background .15s ease;
+}
+.snap-drop:hover,
+.snap-drop:focus-visible,
+.snap-drop-over { border-color: var(--info-600); background: var(--info-soft); }
+
+.snap-drop-prompt {
+  display: grid;
+  justify-items: center;
+  gap: var(--s1);
+  text-align: center;
+  pointer-events: none;
+}
+.snap-drop-icon { font-size: var(--fs-3xl); line-height: 1; }
+.snap-drop-label { font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--ink); }
+.snap-drop-hint { font-size: var(--fs-xs); color: var(--muted); }
+
+.snap-thumb {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+}
+.snap-clear-photo {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.snap-fields { display: flex; flex-direction: column; gap: var(--s3); }
+.snap-fields input { width: 100%; min-height: 48px; font-size: var(--fs-md); }
+
+/* Full-width on the phone. The header's own button is the desktop route and
+   is hidden below, because a control off the top of a scrolled page is not a
+   control at all when the answer is the reason you scrolled. */
+.snap-go { width: 100%; min-height: 52px; font-size: var(--fs-md); }
+
+.snap-status { margin: 0; font-size: var(--fs-sm); color: var(--muted); min-height: 1.2em; }
+.snap-hint   { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
+
+.snap-result { margin-top: var(--s4); }
+
+.snap-working {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s5);
+  font-size: var(--fs-md);
+  color: var(--muted);
+}
+.snap-spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--line);
+  border-top-color: var(--info-600);
+  border-radius: var(--r-pill);
+  animation: snap-spin .8s linear infinite;
+}
+@keyframes snap-spin { to { transform: rotate(360deg); } }
+
+.snap-error {
+  padding: var(--s4);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--fs-base);
+}
+
+.snap-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s4);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e2);
+}
+
+/* The verdict. Readable at arm's length — the only thing on the screen that
+   has to survive being glanced at while somebody is talking to you. */
+.snap-verdict {
+  padding: var(--s5) var(--s4);
+  border-radius: var(--r-md);
+  text-align: center;
+  border: 1px solid transparent;
+}
+.snap-call {
+  font-family: var(--font-display);
+  font-size: var(--fs-4xl);
+  font-weight: var(--fw-heavy);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--lh-tight);
+}
+.snap-call-sub { margin-top: var(--s1); font-size: var(--fs-sm); opacity: .85; }
+
+.snap-call-buy     { background: var(--success-soft); border-color: var(--success-line); color: var(--success); }
+.snap-call-close   { background: var(--warning-soft); border-color: var(--warning-line); color: var(--warning); }
+.snap-call-pass    { background: var(--danger-soft);  border-color: var(--danger-line);  color: var(--danger); }
+.snap-call-unknown { background: var(--info-soft);    border-color: var(--info-line);    color: var(--info); }
+
+.snap-reason { font-size: var(--fs-md); line-height: var(--lh-normal); color: var(--ink); }
+
+.snap-item { display: flex; gap: var(--s3); align-items: flex-start; }
+.snap-item-img {
+  width: 76px; height: 76px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.snap-item-body { flex: 1 1 auto; min-width: 0; }
+.snap-item-label {
+  display: block;
+  font-size: var(--fs-3xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: var(--s1);
+}
+.snap-item-name {
+  width: 100%;
+  min-height: 44px;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+}
+.snap-item-meta { margin-top: var(--s1); font-size: var(--fs-xs); color: var(--muted); }
+.snap-id-note   { margin-top: var(--s1); font-size: var(--fs-xs); color: var(--accent); }
+
+/* Two across on a phone, auto-fit above. "Pay up to" spans the row because it
+   is the number the seller acts on, and the grid must not be able to bury it
+   beside a figure that is merely interesting. */
+.snap-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+}
+.snap-tile {
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--info-tint);
+}
+.snap-tile-label {
+  font-size: var(--fs-3xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.snap-tile-value {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-tight);
+}
+.snap-tile-foot { margin-top: 2px; font-size: var(--fs-2xs); color: var(--muted); }
+
+.snap-tile-hero {
+  grid-column: 1 / -1;
+  background: var(--info-soft);
+  border-color: var(--info-line);
+}
+.snap-tile-hero .snap-tile-value { font-size: var(--fs-3xl); color: var(--info); }
+.snap-tile-good .snap-tile-value { color: var(--success); }
+.snap-tile-bad  .snap-tile-value { color: var(--danger); }
+
+.snap-evidence {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-start;
+  padding: var(--s3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-normal);
+}
+.snap-ev-pill {
+  flex: 0 0 auto;
+  padding: 2px var(--s2);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.snap-ev-confident { background: var(--success-tint); color: var(--success); }
+.snap-ev-confident .snap-ev-pill { background: var(--success-soft); }
+.snap-ev-low  { background: var(--warning-tint); color: var(--warning); }
+.snap-ev-low  .snap-ev-pill { background: var(--warning-soft); }
+.snap-ev-none { background: var(--danger-tint); color: var(--danger); }
+.snap-ev-none .snap-ev-pill { background: var(--danger-soft); }
+
+.snap-warnings {
+  margin: 0;
+  padding-left: var(--s5);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-normal);
+  color: var(--warning);
+}
+.snap-warnings li + li { margin-top: var(--s1); }
+
+.snap-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.snap-actions .btn { flex: 1 1 auto; min-height: 46px; justify-content: center; }
+
+/* Desktop: the fields go back on one line and the header button takes over,
+   so the in-card button doesn't sit under a duplicate of itself. */
+@media (min-width: 720px) {
+  .snap-fields { flex-direction: row; align-items: flex-end; }
+  /* Only once the container is a ROW. On the phone the same declarations sit on a column
+     flex container, where flex-basis is read as a height — which forced the price field to
+     130px tall and left a dead band above the button on the one layout that can least
+     afford it. Found in a 390px browser pass, not in review. */
+  .snap-field-wide { flex: 1 1 auto; }
+  .snap-field-price { flex: 0 0 130px; }
+  .snap-go { display: none; }
+  .snap-tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .snap-actions .btn { flex: 0 0 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snap-spinner { animation-duration: 2.4s; }
+}
+
+/* The semantic soft fills are light-mode surfaces; on the dark palette the
+   same tints paint near-white blocks into a dark stack, so the verdict card
+   and the tiles are re-derived from the role colours at low alpha instead. */
+:root[data-theme="dark"] .snap-call-buy     { background: rgba(26, 138, 96, .16); color: var(--success-600); }
+:root[data-theme="dark"] .snap-call-close   { background: rgba(180, 119, 26, .16); color: var(--warning-600); }
+:root[data-theme="dark"] .snap-call-pass    { background: rgba(207, 75, 66, .16);  color: var(--danger-600); }
+:root[data-theme="dark"] .snap-call-unknown { background: rgba(26, 124, 137, .16); color: var(--info-600); }
+:root[data-theme="dark"] .snap-tile         { background: rgba(26, 124, 137, .07); }
+:root[data-theme="dark"] .snap-tile-hero    { background: rgba(26, 124, 137, .14); }
+:root[data-theme="dark"] .snap-tile-hero .snap-tile-value { color: var(--info-600); }
+:root[data-theme="dark"] .snap-drop         { background: rgba(26, 124, 137, .08); }
+:root[data-theme="dark"] .snap-error        { background: rgba(207, 75, 66, .14);  color: var(--danger-600); }
+:root[data-theme="dark"] .snap-ev-confident { background: rgba(26, 138, 96, .12); color: var(--success-600); }
+:root[data-theme="dark"] .snap-ev-low       { background: rgba(180, 119, 26, .12); color: var(--warning-600); }
+:root[data-theme="dark"] .snap-ev-none      { background: rgba(207, 75, 66, .12);  color: var(--danger-600); }

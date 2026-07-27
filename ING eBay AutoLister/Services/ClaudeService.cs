@@ -609,6 +609,118 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
             cancellationToken);
     }
 
+    // ── Photo → what is it, in one breath (Snap & Source) ───────────────────
+
+    /// <summary>
+    /// Names the product in a photo, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately not <see cref="AnalyzeImageAsync"/>. That one writes a complete SEO listing —
+    /// eighty-character title, four thousand characters of HTML, item specifics, package dimensions
+    /// — at high thinking effort with an eight-thousand-token ceiling and a four-minute timeout,
+    /// which is right for the job it does and wrong for every part of this one. Snap &amp; Source is
+    /// used standing in front of a stranger's table with somebody waiting; the seller is not going
+    /// to publish anything, and the only field that matters is the search query the comp lookup runs.
+    /// </para>
+    /// <para>
+    /// So this asks for six short fields at low effort with a small ceiling, which is where the
+    /// latency actually comes from — the model is the same one every other call in this file uses,
+    /// because "identify this object" is not the part worth economising on. The two extra fields it
+    /// does ask for are the two a number cannot supply: how sure it is that it named the right
+    /// product, and the one thing to physically check before handing over money.
+    /// </para>
+    /// </remarks>
+    public Task<SnapIdentity> IdentifyItemAsync(string base64Image, string mimeType,
+        CancellationToken cancellationToken = default)
+    {
+        var prompt = """
+            You are a reseller standing in front of this item at a yard sale, deciding in seconds
+            whether to buy it. Identify the product in the photo. Be fast and be specific.
+
+            Return ONLY a valid JSON object — no markdown, no code fences, no commentary:
+
+            {
+              "Title": "the eBay search you would type to find what this sold for. Brand + model + the
+                        one or two specs that distinguish it. Example: 'Bitmain Antminer S19j Pro 104TH'
+                        or 'DeWalt DCD771 20V Cordless Drill'. NOT a marketing sentence, NOT a listing
+                        title, max 12 words. If you cannot tell the brand or model, describe the item
+                        as specifically as the photo allows — a searchable description beats a guess
+                        at a model number.",
+              "Brand": "brand name, or empty string if you cannot read one",
+              "Model": "model or part number if legible, else empty string",
+              "Condition": "one of exactly: NEW, LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD,
+                            USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING — judged from visible wear only",
+              "ConditionNote": "the visible wear in under 12 words, or empty string if it looks clean",
+              "Certainty": "one of exactly: high, medium, low — how sure you are you named the RIGHT
+                            product. 'high' only when you can read a brand and model, or the item is
+                            unmistakable. If you are inferring the model from the shape, that is 'low'.",
+              "CheckThis": "the ONE thing to physically check before paying that a photo cannot answer,
+                            in under 12 words. Examples: 'Power it on before you pay', 'Ask if the
+                            charger is included', 'Check the heels for cracks'. Empty string if there
+                            is genuinely nothing."
+            }
+
+            Be honest in Certainty. A confident name for the wrong product costs the seller real money;
+            'low' costs them ten seconds of reading.
+            """;
+
+        var messages = new List<Message>
+        {
+            new()
+            {
+                Role = RoleType.User,
+                Content =
+                [
+                    new ImageContent { Source = new ImageSource { MediaType = mimeType, Data = base64Image } },
+                    new TextContent { Text = prompt }
+                ]
+            }
+        };
+
+        return CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-opus-4-8",
+                MaxTokens = 1024,
+                Messages  = messages,
+                // The whole point of this call is that it comes back before the seller has to answer
+                // the person waiting on them. Naming a familiar object does not need deliberation,
+                // and the field it feeds is a search query.
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
+            },
+            response => NormalizeIdentity(
+                JsonSerializer.Deserialize<SnapIdentity>(
+                    ExtractJsonObject(TextOf(response, "{}")), JsonOptions) ?? new SnapIdentity()),
+            "Identify item from photo",
+            cancellationToken);
+    }
+
+    private static readonly HashSet<string> IdentityCertainties =
+        new(StringComparer.OrdinalIgnoreCase) { "high", "medium", "low" };
+
+    // Everything downstream reads Title as a search query and Certainty as a gate on how loudly the
+    // answer is stated, so both are pinned to a known shape here rather than trusted. An empty title
+    // is the caller's signal that the photo could not be read at all.
+    private static SnapIdentity NormalizeIdentity(SnapIdentity identity)
+    {
+        identity.Title = TrimTo((identity.Title ?? "").Trim(), 120);
+        identity.Brand = TrimTo((identity.Brand ?? "").Trim(), 60);
+        identity.Model = TrimTo((identity.Model ?? "").Trim(), 60);
+        identity.ConditionNote = TrimTo((identity.ConditionNote ?? "").Trim(), 120);
+        identity.CheckThis = TrimTo((identity.CheckThis ?? "").Trim(), 120);
+
+        var condition = (identity.Condition ?? "").Trim();
+        identity.Condition = AllowedConditions.Contains(condition) ? condition.ToUpperInvariant() : "USED_GOOD";
+
+        var certainty = (identity.Certainty ?? "").Trim();
+        // Unrecognised means the model said something this code has never seen, and the safe reading
+        // of an unknown confidence claim is the cautious one — it only ever adds a caveat.
+        identity.Certainty = IdentityCertainties.Contains(certainty) ? certainty.ToLowerInvariant() : "low";
+
+        return identity;
+    }
+
     // ── SEO improvement pass ─────────────────────────────────────────────────
 
     public async Task<ListingData> ImproveSeoAsync(ImproveSeoRequest req)

@@ -2118,6 +2118,252 @@ app.MapPost("/api/local/negotiate", (
     return Results.Ok(plan);
 });
 
+// ── Snap & Source ─────────────────────────────────────────────────────────────────────────────
+// One item, one answer, from a pasted link or a photo. Every board in this app answers "what should
+// I buy?"; this answers "should I buy THIS?", which is the only version of the question that gets
+// asked standing up with somebody waiting.
+//
+// The pricing is not new and deliberately so: it is AnalyzeProductAsync → ResalePricing →
+// LocalArbitrageAnalyzer.Build, the identical path Local Deals, Deal Radar and Roll the Dice take.
+// A snap that disagreed with the board about the same item at the same price would mean the app has
+// two opinions and the seller has none. What is new is the two ways in and the one way out.
+
+app.MapPost("/api/snap", async (
+    SnapRequest req, ClaudeService claude, IHttpClientFactory httpFactory,
+    LocalArbitrageAnalyzer arbitrage, FeeProfile feeProfile,
+    ProductNormalizer normalizer, IMarketplaceRepository marketplace, ComparableMatcher matcher,
+    MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
+    OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+
+    var typedTitle = (req.Title ?? "").Trim();
+    var url = (req.Url ?? "").Trim();
+    var photo = (req.ImageBase64 ?? "").Trim();
+
+    // A URL pasted into the "what is it" box is still a URL. Sellers paste links into whichever box
+    // is in front of them, and refusing on which field it arrived in would be the app being pedantic
+    // about its own form layout.
+    if (url.Length == 0 && SnapPageParser.LooksLikeUrl(typedTitle))
+    {
+        url = typedTitle;
+        typedTitle = "";
+    }
+
+    if (url.Length == 0 && photo.Length == 0 && typedTitle.Length == 0)
+    {
+        return BadInputJson("Nothing to price",
+            "No link, no photo and no item name arrived with the request.",
+            "Paste a listing link, drop a photo of the item, or type what it is.");
+    }
+
+    string title = typedTitle;
+    string imageUrl = "";
+    string sourceLabel = typedTitle.Length > 0 ? "Typed" : "";
+    string inputMode = typedTitle.Length > 0 ? "text" : "";
+    decimal? pageAsk = null;
+    SnapIdentity? identity = null;
+    var warnings = new List<string>();
+
+    // ── The link ─────────────────────────────────────────────────────────────
+    // Read for its metadata, not screenshotted. The headless-browser route behind /api/analyze-url
+    // takes tens of seconds, which is fine at a desk and useless in a driveway — see SnapPageParser.
+    if (url.Length > 0)
+    {
+        inputMode = "url";
+        sourceLabel = SnapPageParser.SiteLabel(url);
+
+        var (html, fetchError) = await SnapFetchPageAsync(httpFactory, url, ct);
+        if (fetchError is not null)
+        {
+            return BadInputJson("That page wouldn't open", fetchError,
+                "Take a photo of the item instead, or type what it is — either one prices it the same way.");
+        }
+
+        var facts = SnapPageParser.Parse(html, url);
+        if (facts.SiteLabel.Length > 0) sourceLabel = facts.SiteLabel;
+        imageUrl = facts.ImageUrl;
+        if (title.Length == 0) title = facts.Title;
+        pageAsk = facts.Price;
+
+        if (title.Length == 0)
+        {
+            return BadInputJson("That page didn't say what it is",
+                "The listing loaded but published no title the app could read — some sites render " +
+                "everything in script, and a few deliberately hide it from link previews.",
+                "Take a photo of the item instead, or type what it is.");
+        }
+
+        if (facts.Price is null && !facts.IsFree)
+        {
+            warnings.Add("That page didn't publish a price the app could read — type what they want " +
+                         "for it and snap again, or use the pay-up-to figure below.");
+        }
+    }
+    // ── The photo ────────────────────────────────────────────────────────────
+    // Only when the seller has not already told us what it is. Re-pricing a corrected name must not
+    // pay for a second look at the same picture.
+    else if (photo.Length > 0 && title.Length == 0)
+    {
+        inputMode = "photo";
+        sourceLabel = "Photo";
+
+        try
+        {
+            identity = await claude.IdentifyItemAsync(photo, req.MimeType ?? "image/jpeg", ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
+            log.Add("Warning", "Snap identification failed", $"{failure.Kind} — {failure.Technical}");
+            return FailureJson(failure);
+        }
+
+        title = identity.Title;
+        if (title.Length == 0)
+        {
+            return BadInputJson("Couldn't tell what that is",
+                "The photo came through, but nothing in it identified a product well enough to price.",
+                "Get the label, the model plate or the whole item in frame and try again — or type what it is.");
+        }
+    }
+    else if (photo.Length > 0)
+    {
+        // A photo carried alongside a corrected name: kept as the picture on the card, never re-read.
+        inputMode = "photo";
+        sourceLabel = "Photo";
+    }
+
+    // ── The price ────────────────────────────────────────────────────────────
+    // What the seller typed wins over what the page said: a listing at $80 that the seller has
+    // already talked down to $55 is a different deal, and they are the one standing there.
+    var ask = req.AskPrice ?? pageAsk;
+    var askWasKnown = ask is > 0m;
+
+    var listing = new LocalSupplyListing
+    {
+        Source = "snap",
+        SourceLabel = sourceLabel.Length > 0 ? sourceLabel : "Snap",
+        ItemId = "snap",
+        Title = title,
+        Url = url,
+        ImageUrl = imageUrl,
+        // Zero, never null, when nobody has named a price. The row is then costed against a cost of
+        // nothing, which is exactly what makes MaxBuyPrice come back as the break-even sticker —
+        // and SnapJudge drops the profit and ROI that figure implies, because they are arithmetic
+        // about a price the seller has not been offered. See SnapJudge.Build.
+        Price = ask ?? 0m,
+        PriceText = askWasKnown ? $"{ask:C}" : "",
+        Location = sourceLabel,
+    };
+
+    // What KIND of thing this is, decided before anything prices it — the same classification the
+    // local scan runs, so a snapped truck is refused by the same rule that refuses one on the board
+    // rather than priced off tow-hitch comps.
+    var category = ResaleCategoryCatalog.Classify(
+        listing, req.CategoryId is { Length: > 0 } ? ResaleCategoryCatalog.Resolve(req.CategoryId) : null);
+    listing.CategoryId = category.Id;
+    listing.CategoryLabel = category.Label;
+
+    ResalePricing? resale;
+    try
+    {
+        var analysis = await AnalyzeProductAsync(
+            title, supplierUnitCost: askWasKnown ? ask : null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            // Never. A real Terapeak scrape is a browser page load against a logged-in session, and
+            // this screen exists to answer before the person selling the thing gets bored. The
+            // hosted comps database answers in milliseconds and is what the verdict rests on.
+            allowRealTerapeakScrape: false,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+
+        resale = ResalePricing.From(analysis, title);
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+        log.Add("Warning", "Snap pricing failed", $"\"{title}\": {failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+
+    var row = arbitrage.Build(listing, resale, feeProfile);
+    var result = SnapJudge.Build(row, askWasKnown);
+
+    result.InputMode = inputMode;
+    result.SourceLabel = listing.SourceLabel;
+    result.Item = title;
+    if (result.ImageUrl.Length == 0) result.ImageUrl = imageUrl;
+    result.SoldSearchUrl = ResaleValuationLinks.SoldSearchUrl(category, row.PricedAs.Length > 0 ? row.PricedAs : title);
+    result.Identity = identity;
+    // The page's caveats first, then the photo's, then the comps' — the order the seller meets them
+    // in. SnapJudge has already added its own, so these go in front of them.
+    result.Warnings.InsertRange(0, warnings);
+    if (identity is not null) SnapJudge.AddIdentityWarnings(result, identity);
+    result.ElapsedMs = sw.ElapsedMilliseconds;
+
+    log.Add("Research", "Snap & Source verdict",
+        $"\"{title}\" ({inputMode}); ask {(askWasKnown ? $"{ask:C}" : "unknown")}; " +
+        $"resale {(result.ResalePrice is { } r ? $"{r:C}" : "none")} on {result.CompCount} comp(s); " +
+        $"{result.Call} — {result.CallLabel}; {sw.ElapsedMilliseconds}ms");
+
+    return Results.Ok(result);
+});
+
+// One GET for one page the seller pasted. Shaped like a browser asking for a document, because the
+// CDNs in front of these sites refuse a bare client first — the same headers every feed read in this
+// app uses. Short deadline on purpose: this screen's whole promise is an answer before the person
+// selling the thing gets bored, and a page that needs longer than this is a page to photograph
+// instead.
+static async Task<(string? Html, string? Error)> SnapFetchPageAsync(
+    IHttpClientFactory httpFactory, string url, CancellationToken ct)
+{
+    const int maxBytes = 3_000_000;
+
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+    {
+        return (null, "That doesn't look like a web address.");
+    }
+
+    try
+    {
+        var http = httpFactory.CreateClient();
+        PublicFeedHttp.ApplyBrowserHeaders(http);
+        http.Timeout = TimeSpan.FromSeconds(12);
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(12));
+
+        using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            return (null, (int)response.StatusCode switch
+            {
+                403 or 429 => "The site turned the request away — several of these listing sites " +
+                              "refuse anything that isn't a signed-in browser.",
+                404 or 410 => "That listing is gone — it 404s, which usually means it sold or was deleted.",
+                >= 500 => "The site is having trouble right now.",
+                _ => $"The site answered HTTP {(int)response.StatusCode}.",
+            });
+        }
+
+        if (response.Content.Headers.ContentLength > maxBytes)
+            return (null, "That page came back far larger than a listing page should be.");
+
+        var html = await response.Content.ReadAsStringAsync(deadline.Token);
+        return html.Length == 0 ? (null, "That page came back empty.") : (html, null);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+    catch (OperationCanceledException) { return (null, "That page took too long to load."); }
+    catch (Exception ex) { return (null, $"That page couldn't be loaded: {ex.Message}"); }
+}
+
 // ── Deal Radar ────────────────────────────────────────────────────────────────────────────────
 // Saved searches that run themselves. Everything below is bookkeeping over DealRadarStore plus one
 // call into DealRadarService — the scanning, the cadence and the bar all live there, because the

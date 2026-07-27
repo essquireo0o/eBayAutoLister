@@ -435,6 +435,7 @@
     bindShipping();
     bindTrendRadar();
     bindDealRadar();
+    bindSnapSource();
     bindWhereToSell();
     bindSniper();
     bindEarnings();
@@ -666,6 +667,7 @@
     photos:      { section: 'photo-library-section', open: showPhotoLibrarySection },
     // The one page that is doing something whether or not it is open. onShow/onHide only control
     // how often it re-reads itself — the scanning happens in the server either way.
+    snap:        { section: 'snap-section',          open: showSnapSection },
     radar:       { section: 'radar-section',         open: showRadarSection,
                    onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
@@ -1009,7 +1011,7 @@
 
   // Every full-screen view in the app, including the AI Listing modal: hiding "the screens" has
   // to mean all of them, or navigating out of a draft leaves it sitting on top of the next one.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -8634,6 +8636,268 @@
       box.focus();
     }
   }
+
+  // ── Snap & Source ─────────────────────────────────────────────────────────
+  // Off /api/snap. The only screen in this app built for a phone held in one hand, and the rules it
+  // renders by follow from that:
+  //   * the verdict is the first and largest thing on the page, readable at arm's length;
+  //   * the number under it is the one to ACT on — what to pay — not the one that is most flattering;
+  //   * a photo verdict says it came from a photo, every time, because the app cannot see a cracked
+  //     screen or a missing charger and the seller can;
+  //   * the identified name is editable in place: the fastest fix for a wrong price is a right name,
+  //     and re-pricing a corrected name must never pay for a second look at the same picture.
+  let snapResult = null;
+  let snapImageBase64 = '';
+  let snapMimeType = '';
+  let snapRunning = false;
+
+  function showSnapSection() {
+    hideOverlaySections();
+    $('snap-section')?.classList.remove('hidden');
+    setActiveNavItem('snap');
+    markWorkspaceTabOpen('snap');
+  }
+
+  function closeSnapSection() {
+    closeWorkspacePage('snap');
+  }
+
+  function bindSnapSource() {
+    on('snap-run-btn', 'click', runSnap);
+    on('snap-go', 'click', runSnap);
+    on('snap-close', 'click', closeSnapSection);
+    on('snap-home', 'click', goHome);
+    on('snap-what', 'keydown', e => { if (e.key === 'Enter') runSnap(); });
+    on('snap-ask', 'keydown', e => { if (e.key === 'Enter') runSnap(); });
+
+    on('snap-drop', 'click', () => $('snap-file')?.click());
+    on('snap-drop', 'keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('snap-file')?.click(); }
+    });
+    on('snap-file', 'change', e => { if (e.target.files?.[0]) readSnapPhoto(e.target.files[0]); });
+
+    on('snap-clear-photo', 'click', e => { e.stopPropagation(); clearSnapPhoto(); });
+
+    const drop = $('snap-drop');
+    if (drop) {
+      drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('snap-drop-over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('snap-drop-over'));
+      drop.addEventListener('drop', e => {
+        e.preventDefault();
+        drop.classList.remove('snap-drop-over');
+        const file = e.dataTransfer?.files?.[0];
+        if (file) readSnapPhoto(file);
+      });
+    }
+
+    // A screenshot of a listing pasted straight in is the desk-bound half of this feature, and it
+    // is one keystroke. Scoped to this screen being open so it can't steal a paste from a form.
+    document.addEventListener('paste', e => {
+      if ($('snap-section')?.classList.contains('hidden')) return;
+      const item = [...(e.clipboardData?.items || [])].find(i => i.type?.startsWith('image/'));
+      if (!item) return;
+      const file = item.getAsFile();
+      if (file) { e.preventDefault(); readSnapPhoto(file); }
+    });
+  }
+
+  function readSnapPhoto(file) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const data = String(ev.target.result);
+      snapImageBase64 = data.split(',')[1] || '';
+      snapMimeType = file.type || 'image/jpeg';
+
+      const thumb = $('snap-thumb');
+      if (thumb) { thumb.src = data; thumb.classList.remove('hidden'); }
+      $('snap-drop-prompt')?.classList.add('hidden');
+      $('snap-clear-photo')?.classList.remove('hidden');
+      setSnapStatus('Photo ready. Add what they want for it, then hit the button.');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearSnapPhoto() {
+    snapImageBase64 = '';
+    snapMimeType = '';
+    const thumb = $('snap-thumb');
+    if (thumb) { thumb.src = ''; thumb.classList.add('hidden'); }
+    $('snap-drop-prompt')?.classList.remove('hidden');
+    $('snap-clear-photo')?.classList.add('hidden');
+    if ($('snap-file')) $('snap-file').value = '';
+  }
+
+  function setSnapStatus(text) {
+    const el = $('snap-status');
+    if (el) el.textContent = text || '';
+  }
+
+  async function runSnap() {
+    if (snapRunning) return;
+
+    const what = $('snap-what')?.value.trim() || '';
+    const askRaw = $('snap-ask')?.value.trim() || '';
+
+    if (!what && !snapImageBase64) {
+      setSnapStatus('Paste a link, type what it is, or add a photo first.');
+      $('snap-what')?.focus();
+      return;
+    }
+
+    // The server decides whether a typed string is a link or an item name — one rule, not two.
+    const body = { title: what || null, imageBase64: snapImageBase64 || null, mimeType: snapMimeType || null };
+    if (askRaw !== '') {
+      const ask = parseFloat(askRaw);
+      if (Number.isFinite(ask) && ask >= 0) body.askPrice = ask;
+    }
+
+    snapRunning = true;
+    const buttons = ['snap-run-btn', 'snap-go'].map($).filter(Boolean);
+    buttons.forEach(b => { b.disabled = true; b.textContent = 'Checking…'; });
+    setSnapStatus(snapImageBase64 && !what
+      ? 'Reading the photo, then the sold comps…'
+      : 'Reading the sold comps…');
+    $('snap-result').innerHTML = '<div class="snap-working"><span class="snap-spinner" aria-hidden="true"></span>Pricing it against real sold listings…</div>';
+
+    try {
+      const res = await fetch('/api/snap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.whatHappened || data?.error || data?.headline || 'That didn\'t price.');
+      snapResult = data;
+      renderSnap();
+    } catch (err) {
+      snapResult = null;
+      $('snap-result').innerHTML = `<div class="snap-error">${esc(err.message || 'That didn\'t price.')}</div>`;
+      setSnapStatus('');
+    } finally {
+      snapRunning = false;
+      buttons.forEach(b => { b.disabled = false; b.textContent = '⚡ Should I buy it?'; });
+    }
+  }
+
+  // The five answers, and nothing in between. The label text comes from the server so the badge and
+  // the log say the same word — this only decides how loud it is.
+  const SNAP_CALLS = {
+    buy:       { cls: 'snap-call-buy',     sub: 'Worth buying at that price.' },
+    buy_under: { cls: 'snap-call-buy',     sub: 'Nobody has named a price — this is the one to stop at.' },
+    close:     { cls: 'snap-call-close',   sub: 'Real money, thin margin. Only if the buy gets cheaper.' },
+    pass:      { cls: 'snap-call-pass',    sub: 'Walk away.' },
+    unknown:   { cls: 'snap-call-unknown', sub: 'Nothing priced it — check the sold listings yourself.' },
+  };
+
+  function renderSnap() {
+    const el = $('snap-result');
+    if (!el || !snapResult) return;
+
+    const r = snapResult;
+    const call = SNAP_CALLS[r.call] || SNAP_CALLS.unknown;
+
+    // "What to pay" leads every priced answer, including the ones where a profit figure exists.
+    // The profit is the reason; the price is the decision, and the decision is what the seller is
+    // holding the phone to make.
+    const money = [];
+    if (r.payUpTo > 0) {
+      money.push(tile('Pay up to', moneyExact(r.payUpTo), 'snap-tile-hero',
+        r.profitAtPayUpTo > 0 ? `keeps ${moneyExact(r.profitAtPayUpTo)}` : ''));
+    }
+    if (r.askWasKnown && r.netProfit != null) {
+      money.push(tile('Profit at ' + moneyExact(r.askPrice), moneyExact(r.netProfit),
+        r.netProfit > 0 ? 'snap-tile-good' : 'snap-tile-bad',
+        r.roiPercent != null ? `${Math.round(r.roiPercent)}% ROI` : ''));
+    }
+    if (r.resalePrice > 0) {
+      money.push(tile('Sells for', moneyExact(r.resalePrice), '',
+        r.quickSalePrice > 0 ? `quick sale ${moneyExact(r.quickSalePrice)}` : ''));
+    }
+    if (r.buyMax > 0) {
+      money.push(tile('Break even', moneyExact(r.buyMax), '', 'lose money above this'));
+    }
+    if (r.daysToCash != null) {
+      money.push(tile('Cash back in', `${r.daysToCash}d`, '', r.speedLabel || ''));
+    }
+
+    // Evidence is never a footnote here. A seller about to hand over cash on a phone screen has room
+    // for one line about how much the number is worth, and this is it.
+    const tierWord = { confident: 'Backed', low: 'Thin', none: 'No data' }[r.evidenceTier] || 'No data';
+    const evidence = `
+      <div class="snap-evidence snap-ev-${esc(r.evidenceTier || 'none')}">
+        <span class="snap-ev-pill">${esc(tierWord)}</span>
+        <span class="snap-ev-text">${esc(r.evidenceNote || `${r.compCount} sold comp${r.compCount === 1 ? '' : 's'}.`)}</span>
+      </div>`;
+
+    const warnings = (r.warnings || []).length
+      ? `<ul class="snap-warnings">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
+      : '';
+
+    // The name is an input, not a label. When the price is wrong the name is usually why, and the
+    // seller can see that faster than any confidence score can tell them.
+    const identity = r.identity
+      ? `<div class="snap-id-note">Read off the photo · ${esc(r.identity.certainty)} confidence${
+          r.identity.conditionNote ? ` · ${esc(r.identity.conditionNote)}` : ''}</div>`
+      : '';
+
+    el.innerHTML = `
+      <div class="snap-card">
+        <div class="snap-verdict ${call.cls}">
+          <div class="snap-call">${esc(r.callLabel || '')}</div>
+          <div class="snap-call-sub">${esc(call.sub)}</div>
+        </div>
+
+        <div class="snap-reason">${esc(r.reason || '')}</div>
+
+        <div class="snap-item">
+          ${r.imageUrl ? `<img class="snap-item-img" src="${esc(r.imageUrl)}" alt="" loading="lazy" />` : ''}
+          <div class="snap-item-body">
+            <label class="snap-item-label" for="snap-item-name">Priced as — fix it and snap again if it's wrong</label>
+            <input id="snap-item-name" class="snap-item-name" type="text" value="${esc(r.pricedAs || r.item || '')}" />
+            <div class="snap-item-meta">
+              ${esc(r.sourceLabel || '')}${r.categoryLabel ? ` · ${esc(r.categoryLabel)}` : ''}
+              ${r.elapsedMs ? ` · ${(r.elapsedMs / 1000).toFixed(1)}s` : ''}
+            </div>
+            ${identity}
+          </div>
+        </div>
+
+        ${money.length ? `<div class="snap-tiles">${money.join('')}</div>` : ''}
+        ${evidence}
+        ${warnings}
+
+        <div class="snap-actions">
+          <button class="btn btn-primary" type="button" onclick="snapRepriceFromCard()">Re-price this name</button>
+          ${r.soldSearchUrl ? `<a class="btn btn-ghost" href="${esc(r.soldSearchUrl)}" target="_blank" rel="noopener">See the sold listings</a>` : ''}
+          ${r.sourceUrl ? `<a class="btn btn-ghost" href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">Open the listing</a>` : ''}
+        </div>
+      </div>`;
+
+    setSnapStatus(r.compCount > 0
+      ? `Priced off ${r.compCount} sold comp${r.compCount === 1 ? '' : 's'}.`
+      : 'No sold comps matched.');
+
+    function tile(label, value, cls, foot) {
+      return `<div class="snap-tile ${cls}">
+                <div class="snap-tile-label">${esc(label)}</div>
+                <div class="snap-tile-value">${esc(value)}</div>
+                ${foot ? `<div class="snap-tile-foot">${esc(foot)}</div>` : ''}
+              </div>`;
+    }
+  }
+
+  // Corrected name, same photo. The photo is deliberately NOT re-sent: the seller has already told
+  // the app what it is, so paying for a second look at the picture would buy nothing and cost a
+  // wait — see the server's own guard on the same rule.
+  function snapRepriceFromCard() {
+    const name = $('snap-item-name')?.value.trim();
+    if (!name) return;
+    const box = $('snap-what');
+    if (box) box.value = name;
+    clearSnapPhoto();
+    runSnap();
+  }
+  window.snapRepriceFromCard = snapRepriceFromCard;
 
   // ── Where to Sell Highest ─────────────────────────────────────────────────
   // Off /api/where-to-sell. The whole screen is one comparison, so the rules it renders by are
