@@ -359,6 +359,7 @@
     bindSupplierAnalyzer();
     bindFacebookMarketplace();
     bindNegotiation();
+    bindCouponCheck();
     bindRollTheDice();
     bindPhotoLibrary();
     bindInventoryHealth();
@@ -1396,6 +1397,14 @@
       data.expiringTodayCount
         ? `<strong class="fb-arb-hit">${data.expiringTodayCount} of them gone today</strong> — free posts get claimed the same day`
         : '',
+      // The buy side of the retail rows. Framed as conditional on purpose: a public promo code is
+      // a claim, and this money is only real if the code is.
+      data.couponSavingsOnTheTable > 0
+        ? `<strong class="fb-arb-hit">${money(data.couponSavingsOnTheTable)} more</strong> if the codes work on ${data.couponedCount} of them`
+        : '',
+      data.couponRescuedCount
+        ? `<strong class="fb-arb-hit">${data.couponRescuedCount} only ${data.couponRescuedCount === 1 ? 'works' : 'work'} with a code</strong>`
+        : '',
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
       scanned +
@@ -1409,6 +1418,7 @@
       warn.classList.toggle('hidden', !data.dataWarning);
     }
 
+    renderCouponStores(data.couponStores);
     renderArbitrageRows();
     wrap.classList.remove('hidden');
   }
@@ -1550,6 +1560,7 @@
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
       ...liquidationMeta(row),
       ...freebieMeta(row),
+      ...couponMeta(row),
     ].filter(Boolean).join(' · ');
 
     // A free item has no cost basis, so its ROI is unbounded rather than zero.
@@ -1586,7 +1597,7 @@
         <td class="num">${buyCostCell(row)}</td>
         <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
-        <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}</td>
+        <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
         <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
         <td class="num">${roi}</td>
         <td class="num">${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
@@ -1671,6 +1682,184 @@
     ];
   }
 
+  // What a promo code does to this row. The code itself leads, because it is the thing the seller
+  // has to type — everything after it is the condition attached to it.
+  const COUPON_CONFIDENCE = {
+    high: { cls: 'ok', label: 'looks live' },
+    medium: { cls: 'maybe', label: 'unconfirmed' },
+    low: { cls: 'weak', label: 'lead only' },
+  };
+
+  function couponMeta(row) {
+    const coupons = row.coupons;
+    if (!coupons) return [];
+
+    const applied = (coupons.applied || []).filter(o => o.code);
+    const cashback = (coupons.applied || []).find(o => o.kind === 'cashback');
+    const grade = COUPON_CONFIDENCE[coupons.confidence] || COUPON_CONFIDENCE.low;
+
+    return [
+      // The saving, with everything that qualifies it one hover away. A code with no discount
+      // behind it still earns its place: the seller can go and try it.
+      coupons.discount > 0
+        ? `<span class="coupon-chip coupon-chip-${grade.cls}" title="${esc(coupons.note)}">🏷 ${applied.map(o => esc(o.code)).join(' + ')} — ${money(coupons.discount)} off · ${grade.label}</span>`
+        : (coupons.alsoFound || []).length
+          ? `<span class="coupon-chip coupon-chip-weak" title="${esc(coupons.note)}">🏷 ${coupons.alsoFound.length} code${coupons.alsoFound.length === 1 ? '' : 's'} for ${esc(row.retailer || 'this store')} — none counted</span>`
+          : '',
+      cashback
+        ? `<span class="coupon-cashback" title="Paid by the portal, not the store — so it stacks with a code. ${esc(coupons.note)}">${money(coupons.cashbackExpected)} back in ~${coupons.cashbackWaitDays}d</span>`
+        : '',
+      // The one that changes a decision rather than a number: without the code this row is a walk.
+      coupons.rescuesTheDeal
+        ? '<span class="coupon-rescue" title="At the shelf price this loses money. It only works if the code does.">only profits with the code</span>'
+        : '',
+    ];
+  }
+
+  // What the code is worth, under the profit it would be added to. Never merged into the figure
+  // above it: the row's own profit is the one the app stands behind, and a public code is a claim.
+  function couponProfitLine(row) {
+    const coupons = row.coupons;
+    if (!coupons || !(coupons.extraProfit > 0)) return '';
+
+    const verdict = coupons.verdictIfItWorks ? ARB_VERDICTS[coupons.verdictIfItWorks] : null;
+    return `<br /><span class="coupon-extra" title="${esc(coupons.note)}">+${money(coupons.extraProfit)} with the code` +
+      `${verdict ? ` → ${esc(verdict.label.toLowerCase())}` : ''}</span>`;
+  }
+
+  // Which stores were checked and what each one had — including the ones that had nothing, because
+  // "we checked Amazon and Amazon doesn't take codes" is an answer and an empty column isn't. The
+  // links are the point on the blocked lists: RetailMeNot and the cashback portals refuse automated
+  // reads, so the seller opening them is the feature working rather than a fallback.
+  function renderCouponStores(stores) {
+    const wrap = $('fb-arb-coupons');
+    if (!wrap) return;
+
+    const list = stores || [];
+    wrap.classList.toggle('hidden', list.length === 0);
+    if (!list.length) return;
+
+    wrap.innerHTML =
+      '<div class="coupon-stores-head">🏷 Codes checked on the buy side</div>' +
+      list.map(store => `
+        <div class="coupon-store">
+          <span class="coupon-store-name">${esc(store.merchantLabel)}</span>
+          <span class="coupon-store-count">${store.status === 'error'
+            ? 'couldn\'t be checked'
+            : `${store.offerCount} code${store.offerCount === 1 ? '' : 's'}`}${store.rowCount ? ` · ${store.rowCount} row${store.rowCount === 1 ? '' : 's'}` : ''}</span>
+          ${store.note ? `<span class="coupon-store-note">${esc(store.note)}</span>` : ''}
+          ${store.error ? `<span class="coupon-store-note">${esc(store.error)}</span>` : ''}
+          <span class="coupon-store-links">${(store.manualSites || []).map(site =>
+            `<a href="${esc(site.urlTemplate)}" target="_blank" rel="noopener" title="${esc(site.note)}">${esc(site.label)} ↗</a>`
+          ).join(' · ')}</span>
+        </div>`).join('');
+  }
+
+  // ── Coupon check ──────────────────────────────────────────────────────────
+  // The same lookup the scan runs per store, pointed at whatever the seller is looking at in
+  // another tab. Its own control because most buying happens outside this app, and a code found
+  // before checkout is worth exactly as much as one found on the board.
+  function bindCouponCheck() {
+    const btn = $('coupon-check-btn');
+    if (!btn) return;
+
+    btn.addEventListener('click', runCouponCheck);
+    ['coupon-store-input', 'coupon-price-input'].forEach(id =>
+      $(id)?.addEventListener('keydown', event => { if (event.key === 'Enter') runCouponCheck(); }));
+  }
+
+  async function runCouponCheck() {
+    const store = ($('coupon-store-input')?.value || '').trim();
+    const price = parseFloat($('coupon-price-input')?.value);
+    const status = $('coupon-check-status');
+    const results = $('coupon-check-results');
+    const btn = $('coupon-check-btn');
+    if (!status || !results) return;
+
+    if (!store) { status.textContent = 'Name the store you are buying from.'; return; }
+
+    results.classList.add('hidden');
+    status.textContent = `Reading the public code lists for ${store}…`;
+    if (btn) btn.disabled = true;
+
+    const params = new URLSearchParams({ store });
+    if (price > 0) params.set('price', price);
+    // The seller's own rate, shared with the scan above — a code lowers what the register rings up,
+    // so the tax it saves is part of what it saves.
+    const tax = parseFloat($('retail-tax-input')?.value);
+    if (tax >= 0) params.set('salesTax', tax);
+
+    const { data, error } = await localFetchJson(`/api/coupons?${params}`, 60000);
+    if (btn) btn.disabled = false;
+
+    if (!data) { status.textContent = error || 'The coupon lookup couldn\'t be completed.'; return; }
+
+    status.textContent = '';
+    renderCouponLookup(data);
+  }
+
+  function renderCouponLookup(data) {
+    const results = $('coupon-check-results');
+    if (!results) return;
+
+    const grade = COUPON_CONFIDENCE[data.stack?.confidence] || COUPON_CONFIDENCE.low;
+    const stack = data.stack;
+
+    // The answer, when there is a price to answer against: what this actually costs with the best
+    // legal combination applied, beside what it cost before.
+    const priced = stack && stack.hasSaving
+      ? `<div class="coupon-verdict coupon-verdict-${grade.cls}">
+           <strong>${money(stack.netCost)}</strong> all-in, from a ${money(stack.subtotal)} price
+           <span class="coupon-verdict-sub">${grade.label}</span>
+           <div class="coupon-verdict-note">${esc(stack.note)}</div>
+         </div>`
+      : stack
+        ? `<div class="coupon-verdict coupon-verdict-weak"><div class="coupon-verdict-note">${esc(stack.note)}</div></div>`
+        : '';
+
+    const offers = (data.offers || []).map(offer => `
+      <li class="coupon-offer">
+        ${offer.code ? `<code class="coupon-code">${esc(offer.code)}</code>` : '<span class="coupon-code coupon-code-none">no code</span>'}
+        <span class="coupon-offer-what">${esc(couponOfferText(offer))}</span>
+        <!-- The distinction that decides whether a code is worth anything on a different item.
+             Most codes on these lists are posted against one deal — see CouponOffer.AppliesToOrder. -->
+        <span class="coupon-offer-scope">${offer.appliesToOrder ? 'any order' : 'that deal only'}</span>
+        ${offer.minSpend > 0 ? `<span class="coupon-offer-min">on orders over ${money(offer.minSpend)}</span>` : ''}
+        ${offer.expiresUtc ? `<span class="coupon-offer-exp">until ${esc(shortDate(offer.expiresUtc))}</span>` : ''}
+        <span class="coupon-offer-grade coupon-chip-${(COUPON_CONFIDENCE[offer.confidence] || COUPON_CONFIDENCE.low).cls}"
+              title="${esc(offer.confidenceNote)}">${(COUPON_CONFIDENCE[offer.confidence] || COUPON_CONFIDENCE.low).label}</span>
+        ${offer.exclusionsNote ? `<span class="coupon-offer-excl">${esc(offer.exclusionsNote)}</span>` : ''}
+        <a class="coupon-offer-src" href="${esc(offer.url)}" target="_blank" rel="noopener">${esc(offer.sourceLabel)} ↗</a>
+      </li>`).join('');
+
+    results.innerHTML =
+      priced +
+      // Said out loud rather than left as an empty list: at some stores a code list is simply the
+      // wrong place to look, and silence there reads as "no discount available".
+      (data.merchantNote ? `<p class="coupon-merchant-note">${esc(data.merchantNote)}</p>` : '') +
+      (data.error ? `<p class="coupon-merchant-note">${esc(data.error)}</p>` : '') +
+      (offers
+        ? `<ul class="coupon-offers">${offers}</ul>`
+        : `<p class="coupon-merchant-note">No machine-readable codes found for ${esc(data.merchantLabel || data.query)} right now.</p>`) +
+      `<div class="coupon-store-links">${(data.manualSites || []).map(site =>
+        `<a href="${esc(site.urlTemplate)}" target="_blank" rel="noopener" title="${esc(site.note)}">${esc(site.label)} ↗</a>`
+      ).join(' · ')}</div>`;
+
+    results.classList.remove('hidden');
+  }
+
+  function couponOfferText(offer) {
+    if (offer.kind === 'percent_off') {
+      return offer.value > 0
+        ? `${offer.value}% off${offer.maxDiscount > 0 ? `, up to ${money(offer.maxDiscount)}` : ''}`
+        : offer.title;
+    }
+    if (offer.kind === 'amount_off') return offer.value > 0 ? `${money(offer.value)} off` : offer.title;
+    if (offer.kind === 'cashback') return `${offer.value}% back after the order`;
+    if (offer.kind === 'free_shipping') return 'free shipping';
+    return offer.title;
+  }
+
   // What actually leaves the wallet. On a private-party buy that is the asking price; on a retail
   // buy the register adds sales tax, and on an auction the house adds its premium first and the tax
   // sits on top of both. Every profit figure in the row was computed from the all-in number — so
@@ -1703,6 +1892,13 @@
     // pallet means nothing until you know it is $6.50 an item.
     if (lot && lot.isLot && lot.costPerSellableUnit > 0) {
       lines.push(`<span class="liq-per-unit">${money(lot.costPerSellableUnit)} per unit you can sell</span>`);
+    }
+
+    // What the same buy costs with a code typed in. Second, and marked as conditional, because the
+    // figure above it is the one every other number on the row was computed from.
+    if (row.coupons?.discount > 0) {
+      lines.push(`<span class="coupon-cost" title="${esc(row.coupons.note)}">` +
+        `${money(row.coupons.buyCostWithCoupons)} with the code</span>`);
     }
 
     return `${money(row.buyCostAllIn)}${lines.length ? `<br />${lines.join('<br />')}` : ''}`;

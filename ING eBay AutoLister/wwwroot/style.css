@@ -4522,6 +4522,213 @@ textarea {
   color: var(--warn, #b4530a);
 }
 
+/* ── Coupons, promo codes and cashback ──────────────────────────────────────
+   The buy side of a retail row. Everything here is deliberately quieter than the money columns it
+   sits beside: a public promo code is a claim rather than a price, and the visual weight has to say
+   so before the seller reads a word. */
+.coupon-chip {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0 5px;
+  cursor: help;
+}
+
+/* Fresh, dated, no conditions attached — the only grade that gets a solid border. */
+.coupon-chip-ok {
+  border: 1px solid rgba(31, 122, 69, 0.45);
+  color: #1f7a45;
+}
+
+.coupon-chip-maybe {
+  border: 1px dashed rgba(180, 83, 10, 0.5);
+  color: #b4530a;
+}
+
+/* A lead, not a price: an old code, a range, or one with conditions this app can't check. */
+.coupon-chip-weak {
+  border: 1px dashed var(--border, #d6d6d6);
+  color: var(--muted);
+}
+
+.coupon-cashback,
+.coupon-cost {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The row that only exists because of the code. Loud on purpose — at the shelf price the board is
+   telling the seller to walk away from it. */
+.coupon-rescue {
+  font-weight: 700;
+  color: #b4530a;
+  cursor: help;
+}
+
+/* Extra profit if the code works, under the profit that doesn't depend on one. Never the same
+   weight as the figure above it. */
+.coupon-extra {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #1f7a45;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Which stores were checked, under the scan summary. */
+.coupon-stores {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d6d6d6);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.coupon-stores-head {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.coupon-store {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.coupon-store-name { font-weight: 600; }
+.coupon-store-count,
+.coupon-store-note { color: var(--muted); }
+
+.coupon-store-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coupon-store-links a {
+  color: #b4530a;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(180, 83, 10, 0.45);
+}
+
+.coupon-store-links a:hover { border-bottom-style: solid; }
+
+/* The standalone lookup: the same check for something being bought outside this app. */
+.coupon-check {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d6d6d6);
+  border-radius: 6px;
+}
+
+.coupon-check-summary {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coupon-check-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.coupon-check-price input { width: 120px; }
+
+.coupon-check-status {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 16px;
+}
+
+.coupon-verdict {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d6d6d6);
+  margin-bottom: 8px;
+}
+
+.coupon-verdict-ok { border-color: rgba(31, 122, 69, 0.45); }
+.coupon-verdict-maybe { border-color: rgba(180, 83, 10, 0.45); }
+.coupon-verdict-weak { border-color: var(--border, #d6d6d6); }
+
+.coupon-verdict strong { font-size: 18px; }
+
+.coupon-verdict-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.coupon-verdict-note,
+.coupon-merchant-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.coupon-offers {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.coupon-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border, #eee);
+}
+
+.coupon-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px dashed var(--warn, #b4530a);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--warn, #b4530a);
+  user-select: all;   /* one double-click copies it into the checkout */
+}
+
+.coupon-code-none {
+  border-style: dotted;
+  border-color: var(--border, #d6d6d6);
+  color: var(--muted);
+}
+
+.coupon-offer-what { font-weight: 600; }
+
+.coupon-offer-min,
+.coupon-offer-exp,
+.coupon-offer-excl,
+.coupon-offer-scope { color: var(--muted); }
+
+.coupon-offer-grade {
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  cursor: help;
+}
+
+.coupon-offer-src {
+  margin-left: auto;
+  color: var(--muted);
+  text-decoration: none;
+}
+
 /* Sales tax field: only meaningful while a retail source is ticked, so it is hidden otherwise. */
 .retail-tax-row {
   display: flex;

@@ -202,6 +202,13 @@ builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<De
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<LiquidationSourceService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
 builder.Services.AddSingleton<LocalSupplySources>();
+// The buy side of the retail rows above: the public promo codes and cashback offers published for
+// whichever stores the board is buying from, so the cost basis can be cut before the profit is
+// computed against it. A dollar off the buy is worth more than a dollar on the sale — eBay takes
+// none of it. Read off the same public lists the deal feeds come from, cached per store, and never
+// folded into a row's own profit figure: a public code is a claim, not a price. See CouponService /
+// CouponStacker.
+builder.Services.AddSingleton<CouponService>();
 // Local sold-history lookup — read-only against the externally-maintained Marketplace.db at
 // C:\INGListing\Data\Marketplace.db (populated by a separate collector process). Feeds the
 // Opportunity Finder's Supplier File Analyzer with real local comps before falling back to
@@ -1757,12 +1764,12 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
 // ever runs when someone clicks the button that says so.
 app.MapGet("/api/local/arbitrage", async (
     string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
-    string? sources, string? craigslistSite, decimal? salesTax,
+    string? sources, string? craigslistSite, decimal? salesTax, bool? coupons,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log, CancellationToken ct) =>
 {
     try
     {
@@ -1776,7 +1783,11 @@ app.MapGet("/api/local/arbitrage", async (
             // else. Clamped rather than trusted — see RetailBuyCosts.
             RetailBuyCosts.Sanitize(salesTax),
             marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
-            profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+            profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
+            // On by default: the codes are free to look up, cached per store, and every dollar one
+            // takes off the buy is a dollar eBay never sees. Off is offered because a seller who
+            // wants the scan back a few seconds sooner is entitled to it.
+            coupons == false ? null : couponService);
 
         return Results.Ok(result);
     }
@@ -1799,6 +1810,50 @@ static LocalArbitrageResult FailedArbitrage(string q, string zip, int radius, st
 {
     Status = "error", Query = q, ZipCode = zip, RadiusMiles = radius, Error = error,
 };
+
+// ── Coupons, promo codes and cashback ─────────────────────────────────────────
+// The buy side, on its own: every public code this app can find for one store, and — when a price
+// is given — what the best legal stack of them leaves that item costing. The scan above does this
+// automatically for the stores on the board; this is the same lookup for the item a seller is
+// looking at right now, in a tab that isn't this app.
+//
+// Always answers 200 with a body the UI can render, including when every list refused: the manual
+// links (RetailMeNot and the cashback portals, which block automated reads) are part of the answer
+// and are worth returning even when nothing machine-readable could be.
+app.MapGet("/api/coupons", async (
+    string? store, decimal? price, decimal? salesTax, CouponService coupons, ActionLog log, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await coupons.LookupAsync(store, ct);
+
+        // Only priced when the caller said what the thing costs. A stack against an unstated price
+        // would have to invent a subtotal, and every figure in it would be about that invention.
+        if (price is > 0)
+        {
+            result.Stack = CouponStacker.Best(
+                result.Offers, price.Value, RetailBuyCosts.Sanitize(salesTax));
+        }
+
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Coupon lookup failed", ex.Message);
+        return Results.Ok(new CouponLookupResult
+        {
+            Status = "error", Query = store ?? "", CheckedUtc = DateTime.UtcNow,
+            Error = $"The coupon lookup couldn't be completed: {ex.Message}",
+            // Still the useful half of the answer: the lists a person can open in a browser.
+            ManualSites = CouponCatalog.Resolve(store) is { } merchant
+                ? CouponCatalog.ManualSitesFor(merchant) : [],
+        });
+    }
+});
 
 // The original Facebook-only route, kept working: it predates the source picker, and silently
 // changing what an existing URL searches would be worse than one line of aliasing.
@@ -3718,7 +3773,8 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct)
+    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct,
+    CouponService? couponService = null)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -3812,9 +3868,17 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             }
         }
 
+        // ── Coupons: cut the buy price before anything is judged against it ─────────────────────────
+        // The buy side of the retail rows. Bounded the same way everything else in this scan is:
+        // per STORE rather than per row (thirty Amazon deals are one lookup), and only for the
+        // handful of stores carrying the most money on this board — see CollectCouponsAsync.
+        var (couponsByStore, couponStores) = await CollectCouponsAsync(couponService, priceable, log, ct);
+        result.CouponStores = couponStores;
+
         // ── Rank ────────────────────────────────────────────────────────────────────────────────────
         var rows = groups
-            .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile, retailSalesTaxPercent)))
+            .SelectMany(g => g.Listings.Select(l =>
+                analyzer.Build(l, pricing[g.Key], feeProfile, retailSalesTaxPercent, CouponsForListing(couponsByStore, l))))
             .ToList();
 
         result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);
@@ -3854,6 +3918,25 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         // the list is worth reading now or at the weekend.
         result.ExpiringTodayCount = freebies.Count(r =>
             r.NetProfit is > 0 && r.Freebie!.Urgency is FreebieUrgency.Today or FreebieUrgency.FirstCome);
+
+        // The buy-side half of the retail rows, counted apart from the board's own totals and never
+        // added into them: a public code is a claim, and TotalPotentialProfit is a figure the app
+        // stands behind. Only rows that make money WITH the code are counted — extra profit on a
+        // flip that still loses money is not money.
+        var couponed = result.Items.Where(r => r.Coupons is { ExtraProfit: > 0, NetProfitWithCoupons: > 0 }).ToList();
+        result.CouponedCount = couponed.Count;
+        result.CouponSavingsOnTheTable = Math.Round(couponed.Sum(r => r.Coupons!.ExtraProfit!.Value), 2);
+        // The rows that only exist because of a code — a deal the board would otherwise have told
+        // the seller to walk away from.
+        result.CouponRescuedCount = couponed.Count(r => r.Coupons!.RescuesTheDeal);
+
+        // How many rows each checked store actually accounts for, so a store with one $12 row isn't
+        // presented with the same weight as the one behind half the board.
+        foreach (var store in result.CouponStores)
+        {
+            store.RowCount = result.Items.Count(r =>
+                r.IsRetail && CouponCatalog.Resolve(r.Retailer)?.Id == store.MerchantId);
+        }
 
         if (result.Items.All(r => r.EbayExpectedSale is null))
         {
@@ -3895,6 +3978,75 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         $"Sorted by: {LocalArbitrageAnalyzer.NormalizeSort(sort)}; Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;
+}
+
+// The public promo codes for the stores this board is buying from.
+//
+// Bounded on the only axis that matters: one lookup per STORE, not per row — thirty Amazon deals
+// are one read of a coupon list, and a board of thirty retail rows across seven stores costs at
+// most CouponService.MaxStoresPerScan lookups. Stores are checked biggest-money-first, so when the
+// cap bites it drops the store with $30 on it rather than the one with $900.
+//
+// Never fails the scan. A blocked list, a moved feed or a slow one arrives as a per-store status
+// beside real results, exactly like a source that couldn't be searched.
+static async Task<(Dictionary<string, List<CouponOffer>> ByStore, List<CouponStoreOutcome> Stores)>
+    CollectCouponsAsync(
+        CouponService? coupons, IReadOnlyList<LocalSupplyListing> listings, ActionLog log, CancellationToken ct)
+{
+    var byStore = new Dictionary<string, List<CouponOffer>>(StringComparer.OrdinalIgnoreCase);
+    var outcomes = new List<CouponStoreOutcome>();
+    if (coupons is null) return (byStore, outcomes);
+
+    // Only a till takes a promo code, and only a row with a price has anything to take it off.
+    var stores = listings
+        .Where(l => l.IsRetail && l.Price is > 0 && !string.IsNullOrWhiteSpace(l.Retailer))
+        .Select(l => (Merchant: CouponCatalog.Resolve(l.Retailer), l.Price))
+        .Where(x => x.Merchant is not null)
+        .GroupBy(x => x.Merchant!.Id, StringComparer.OrdinalIgnoreCase)
+        .Select(g => (Merchant: CouponCatalog.Resolve(g.First().Merchant!.Label)!, Money: g.Sum(x => x.Price ?? 0m)))
+        .OrderByDescending(x => x.Money)
+        .Take(CouponService.MaxStoresPerScan)
+        .ToList();
+
+    foreach (var (merchant, _) in stores)
+    {
+        var result = await coupons.LookupAsync(merchant.Label, ct);
+
+        if (result.Offers.Count > 0) byStore[merchant.Id] = result.Offers;
+
+        outcomes.Add(new CouponStoreOutcome
+        {
+            MerchantId = merchant.Id,
+            MerchantLabel = merchant.Label,
+            Status = result.Status,
+            OfferCount = result.Offers.Count,
+            // The stores where a code list is the wrong place to look say so, rather than coming
+            // back empty and reading as "no discount available".
+            Note = result.MerchantNote,
+            Error = result.Error,
+            ManualSites = result.ManualSites,
+        });
+    }
+
+    if (outcomes.Count > 0)
+    {
+        log.Add("Info", "Coupon check",
+            $"{outcomes.Count} store(s) checked — " +
+            string.Join(" · ", outcomes.Select(o => $"{o.MerchantLabel}: {o.OfferCount}")));
+    }
+
+    return (byStore, outcomes);
+}
+
+// The codes that apply to one row: its own store's, and nobody else's. A Home Depot code on a
+// Newegg row would be a discount the seller cannot get, printed under a profit figure.
+static IReadOnlyList<CouponOffer>? CouponsForListing(
+    Dictionary<string, List<CouponOffer>> byStore, LocalSupplyListing listing)
+{
+    if (!listing.IsRetail || byStore.Count == 0) return null;
+
+    var merchant = CouponCatalog.Resolve(listing.Retailer);
+    return merchant is not null && byStore.TryGetValue(merchant.Id, out var offers) ? offers : null;
 }
 
 // Where to sell highest: one item, priced on every venue this app can see, ranked by what the

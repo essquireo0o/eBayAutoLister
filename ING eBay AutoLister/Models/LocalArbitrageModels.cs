@@ -62,6 +62,14 @@ public class LocalArbitrageOpportunity
     // claimed the same day. See Services/FreebiePricer.cs.
     public FreebieEconomics? Freebie { get; set; }
 
+    // ── When a code cuts the buy price ───────────────────────────────────────
+    // Null on every non-retail row (nobody on Craigslist takes a promo code) and on any retail row
+    // no public code was found for. Non-null means the same flip costs less than LocalAsk if the
+    // code works — and every figure in it is a SECOND set of numbers, deliberately not folded into
+    // the ones above: a public code is a claim, not a price, and a dead one must never be able to
+    // move a row up the ranking. See Services/CouponStacker.cs.
+    public CouponSavings? Coupons { get; set; }
+
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
     // math actually used (MarketPriceEstimator's expected sale price).
@@ -190,4 +198,22 @@ public class LocalArbitrageResult
     // as soon as somebody drives over. The count that decides whether this list is read now or
     // tomorrow.
     public int ExpiringTodayCount { get; set; }
+
+    // ── What the coupon lists found on the buy side ──────────────────────────
+    // Counted separately from every other figure on this result, and never added into
+    // TotalPotentialProfit, because a public promo code is a claim rather than a price. What these
+    // say is "there is more money here if the codes work", which is worth acting on and is not the
+    // same statement as the board's own total.
+    public int CouponedCount { get; set; }
+    // Extra profit across the rows a code improves — the money on the buy side, which arrives with
+    // no eBay fee and nothing to ship. A ceiling, exactly like NegotiationUpside: nobody's every
+    // code works.
+    public decimal CouponSavingsOnTheTable { get; set; }
+    // Rows that make no money at the shelf price and do make money with a code. The most valuable
+    // count here: these are deals the board would otherwise have told the seller to walk away from.
+    public int CouponRescuedCount { get; set; }
+    // Which stores were checked, what each one had, and the code lists that have to be opened by
+    // hand. Present even when nothing was found — "we looked at Amazon and Amazon doesn't do codes"
+    // is an answer, and a silent empty column is not.
+    public List<CouponStoreOutcome> CouponStores { get; set; } = [];
 }

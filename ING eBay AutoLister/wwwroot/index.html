@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=51" />
+  <link rel="stylesheet" href="style.css?v=52" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -1130,6 +1130,29 @@
               <span id="manual-sites-links" class="manual-sites-links"></span>
             </div>
 
+            <!-- Coupon / promo-code stacker. The scan below does this by itself for every store on
+                 the board; this is the same lookup for the item a seller is looking at in another
+                 tab right now. A dollar off the buy is worth more than a dollar on the sale — eBay
+                 takes none of it, nothing has to ship for it, and it lands today. See
+                 CouponService / CouponStacker. -->
+            <details id="coupon-check" class="coupon-check">
+              <summary class="coupon-check-summary">🏷 Coupon check — cut the price before you buy</summary>
+              <p class="opp-hint">Name a store and this pulls the public promo codes and cashback offers published for it, then works out what the item actually costs with the best one applied. Add the price to see the number.</p>
+              <div class="coupon-check-form">
+                <div class="opp-field">
+                  <label for="coupon-store-input">Store</label>
+                  <input id="coupon-store-input" type="text" placeholder="e.g. Home Depot, Newegg, bestbuy.com" />
+                </div>
+                <div class="opp-field coupon-check-price">
+                  <label for="coupon-price-input">Item price</label>
+                  <input id="coupon-price-input" type="number" min="0" step="0.01" placeholder="optional" />
+                </div>
+                <button id="coupon-check-btn" class="btn btn-secondary" type="button">Find codes</button>
+              </div>
+              <div id="coupon-check-status" class="coupon-check-status"></div>
+              <div id="coupon-check-results" class="coupon-check-results hidden"></div>
+            </details>
+
             <div id="fb-status" class="mr-status"></div>
             <div id="local-source-status" class="local-source-status"></div>
 
@@ -1142,6 +1165,10 @@
             <div id="fb-arb-results" class="hidden">
               <div id="fb-arb-summary" class="opp-results-summary"></div>
               <div id="fb-arb-warning" class="fb-arb-warning hidden"></div>
+              <!-- Which stores had codes, what they had, and the lists that have to be opened by
+                   hand. Present even when nothing was found: "we checked Amazon and Amazon doesn't
+                   do codes" is an answer, and a silent empty column is not. -->
+              <div id="fb-arb-coupons" class="coupon-stores hidden"></div>
               <div class="fb-arb-controls">
                 <label for="fb-arb-sort">Sort by</label>
                 <select id="fb-arb-sort">
@@ -3835,6 +3862,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=60"></script>
+  <script src="app.js?v=61"></script>
 </body>
 </html>

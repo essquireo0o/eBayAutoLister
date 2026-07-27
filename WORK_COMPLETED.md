@@ -4194,3 +4194,177 @@ same feeds off the same sites. Two copies would eventually disagree about what a
 - **Product names containing "Free".** "Tide Free & Gentle" reaches the comp lookup as "Tide &
   Gentle". The hyphen guard fixed the large class (BPA-free, oil-free, aluminum-free); the
   space-separated case is rarer and unsolved.
+
+---
+
+## Coupon / Promo-Code Stacker — cutting the buy price before the profit is computed (autonomous session, 2026-07-27)
+
+### The money problem
+
+Every sourcing board in this app works the sell side: what an item resells for, what eBay takes, how
+fast the cash comes back. The buy side had exactly one tool — `NegotiationAdvisor`, which drafts an
+offer to a private seller — and it does not work on a retail row, because nobody at Walmart is
+reading your offer.
+
+That leaves the entire retail half of the Deal Scanner with no buy-side lever at all, and the buy
+side is where the cheaper dollar is:
+
+> **A dollar taken off the buy price is worth more than a dollar added to the sale price.** eBay
+> takes none of it, nothing has to ship for it, and it lands today rather than after a sale. On a
+> $200 clearance item flipped for $320, a 20% code is **$43** — the code's $40 plus the $3 of sales
+> tax that was sitting on top of it — and that $43 is the difference between "thin margin for the
+> drive" and a deal worth doing.
+
+Those codes are already published, for free, by the same aggregators this app already reads for
+clearance. Nothing in the app looked at them.
+
+### What was built
+
+A coupon lookup and a stacker, wired into the existing pipeline rather than beside it:
+
+| File | What it owns |
+|---|---|
+| `Services/CouponCatalog.cs` | Every store name, every list URL, the manual (blocked) sites. The only file to edit when one moves |
+| `Services/CouponSelectors.cs` | Every pattern, isolated for tuning — the same posture as `DealFeedSelectors` |
+| `Services/CouponParser.cs` | Feed entry to `CouponOffer`. Pure; the clock is passed in |
+| `Services/CouponStacker.cs` | The best legal combination at one price, and the cost basis it leaves. Pure |
+| `Services/CouponService.cs` | The HTTP half: per store, budgeted, cached 30 min, never throws for a site's benefit |
+| `LocalArbitrageAnalyzer.ApplyCoupons` | Re-runs the same flip through the same `ProfitCalculator` at the discounted cost |
+
+Three public lists are read (through `PublicFeedHttp`, so the headers, the block detection, the byte
+ceiling and the failure sentences are the ones already trusted): two Slickdeals store searches and
+the DealNews front page. **RetailMeNot, Coupons.com, Rakuten and TopCashback answer an automated
+request with a block page**, so they are offered as prefilled per-store links instead — the seller
+opening RetailMeNot is the feature working, not a fallback. The cashback portals are additionally
+link-only because their rates are account-specific and change daily; a rate read an hour ago and
+printed as money is a number nobody can be held to.
+
+### The rule the whole feature rests on: a public code is a claim, not a price
+
+The row's own `NetProfit`, `RoiPercent`, `BuyCostAllIn`, `Verdict` and `MaxBuyPrice` are **not
+touched**. The coupon numbers land in a separate `CouponSavings` block beside them.
+
+This is the difference between a useful feature and a dangerous one. A public code may be dead,
+regional, category-limited or new-customers-only, and nothing short of checking out can test it. If
+the row's own profit were quietly recomputed at the discounted cost, that claim would sit underneath
+the **ranking**, the **verdict badge**, the **goldmine count** and the board's **profit total** — so
+one dead code would promote a deal that does not exist to the top of the table. Pinned by a test
+(`ACouponCannotMoveARowUpTheTable`).
+
+What the seller gets is both numbers: what this makes at the shelf price, and what it makes if the
+code works — with the code, its conditions, its deadline and its confidence grade printed beside it.
+The same posture `NegotiationAdvisor` takes with an offer nobody has accepted yet.
+
+### The stacking rules, which are mostly refusals
+
+1. **One code per order.** Every checkout takes a single promo code, so two 20% codes are not 40%.
+   The best single one is applied; the rest are shown as alternatives. If the deal's advertised price
+   *already* needs its own code (`LocalSupplyListing.CouponCode`), **nothing stacks on it at all** —
+   the seller cannot type two.
+2. **A discount with no code is already in the shelf price.** A sitewide sale needing no code is what
+   the deal feed's price already reflects; subtracting it again would discount the item twice.
+3. **A code posted against one deal cannot discount a different item.** *The most important rule, and
+   it came from the live feeds rather than from imagination.* A "Newegg promo code" search returned
+   **22 of 25 entries carrying a code**, and nearly every one read `"$40 off when you apply promo
+   code LUSF2737 at checkout = $189.99"` — bound to that one motherboard. Only order-wide codes
+   ("sitewide", "your entire order", "$50 off $250") may cut a cost basis; item codes are surfaced in
+   the store lookup, labelled *that deal only*, and never reach a row's stack.
+4. **Cashback is a rebate, not a discount.** It is paid by a portal, on what was actually spent, weeks
+   later — so it stacks with a code, but 15% is held in reserve and the ~60-day wait is stated.
+   Shares `FreebiePricer.RebateReservePercent` rather than inventing a second opinion about the same
+   risk.
+5. **Tax follows the discount.** A retailer's code lowers what the register rings up, so it saves its
+   face value *plus* the tax that would have sat on top. The one place this file is generous, and it
+   is generous because it is true.
+6. **Credibility bounds.** Percent above 50% is a clearance headline, not a sitewide code. An ungated
+   "$100 off" beside a $120 item is "$100 off $1,000" with the threshold written somewhere the parser
+   couldn't reach. "Up to 40% off" is a range whose top applies to one item in one department, so it
+   carries no value at all.
+7. **Mentioning a store is not being sold by it.** Live, and it was *every* result for one store: a
+   Lenovo code search returned Amazon listings for "140W power bank for Lenovo", each with a working
+   Amazon code. Attribution now runs through `DealFeedParser.ReadRetailer` — the same reader the deal
+   board uses — so the two can never disagree about which shop a row is bought from.
+
+### Confidence, and where it shows
+
+Nothing public is graded `high` by default. A code earns it by naming no conditions, stating a
+deadline that hasn't passed, and having been published recently. Exclusions ("select styles", "new
+customers", "military only") hold a code at `low` — the seller's item may well qualify, and this app
+has no way to know which half of the catalogue it is in, so it says so instead of guessing. A stack
+is only as trustworthy as its weakest part, and a low-confidence stack prints *"Treat this as a lead
+rather than a price"* beside its own money.
+
+### Where it appears
+
+- **Every retail row on the Deal Scanner**: a code chip in the row meta, the discounted all-in cost
+  under "You pay", `+$43 with the code` under Net profit, and `only profits with the code` on a row
+  that loses money at the shelf price.
+- **The scan summary**: *"$128 more if the codes work on 3 of them · 1 only works with a code"*, kept
+  out of `TotalPotentialProfit` for the reason above.
+- **A per-store block**: which stores were checked, what each had, and the four manual links per
+  store. Present even when nothing was found, because *"we checked Amazon and Amazon doesn't take
+  typed codes"* is an answer and an empty column is not.
+- **Coupon check** — a standalone lookup in the same panel for the item a seller is looking at in
+  another tab, since most buying happens outside this app. `GET /api/coupons?store=&price=&salesTax=`.
+
+### Cost of one click
+
+One lookup per **store**, not per row — thirty Amazon deals are one read — capped at six stores per
+scan, biggest-money-first so the cap drops the store with $30 on it rather than the one with $900.
+Answers are cached 30 minutes per store, so re-running a scan with a different keyword costs nothing.
+Nothing is scheduled, crawled or stored; a promo code is somebody else's publication, not this app's
+data. `coupons=false` on the endpoint turns the whole thing off.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `Models/CouponModels.cs` | **New** — `CouponOffer`, `CouponStack`, `CouponSavings`, `CouponLookupResult`, `CouponStoreOutcome`, kinds and confidence |
+| `Services/CouponCatalog.cs` | **New** — 36 stores with aliases, 3 readable lists, 4 manual sites per store |
+| `Services/CouponSelectors.cs` | **New** — every pattern, isolated |
+| `Services/CouponParser.cs` | **New** — entry to offers, and the refusals |
+| `Services/CouponStacker.cs` | **New** — the stacking rules and the cost basis |
+| `Services/CouponService.cs` | **New** — per-store lookup, cache, per-list status |
+| `Services/LocalArbitrageAnalyzer.cs` | `Build` takes optional coupons; `ApplyCoupons` re-prices through the same `ProfitCalculator` |
+| `Services/DealFeedParser.cs` | `Decode`, `StripHtml`, `ReadDate` made public so the coupon parser reuses them rather than copying |
+| `Models/LocalArbitrageModels.cs` | `Coupons` on the row; `CouponedCount`, `CouponSavingsOnTheTable`, `CouponRescuedCount`, `CouponStores` on the result |
+| `Program.cs` | DI, `CollectCouponsAsync` / `CouponsForListing`, the board counts, `GET /api/coupons`, `coupons=` on the scan |
+| `wwwroot/index.html` | Coupon-check panel, per-store block. `app.js?v=61`, `style.css?v=52` |
+| `wwwroot/app.js` | `couponMeta`, `couponProfitLine`, coupon line in `buyCostCell`, `renderCouponStores`, `bindCouponCheck`, `renderCouponLookup`, summary headlines |
+| `wwwroot/style.css` | `.coupon-chip*`, `.coupon-extra`, `.coupon-cost`, `.coupon-rescue`, `.coupon-stores*`, `.coupon-check*`, `.coupon-offer*` |
+| `Tests/CouponParserTests.cs` | **New** — tests that mostly pin refusal, several taken from live entries |
+| `Tests/CouponStackerTests.cs` | **New** — the cost basis, rule by rule |
+| `Tests/CouponArbitrageTests.cs` | **New** — that the row's own numbers never move |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,571 passed**, 0 failed, 0 skipped (1,514 pre-existing + 57 new) |
+| `node --check app.js` | Syntax OK |
+| Live `GET /api/coupons?store=Kohls&price=250&salesTax=7.5` | `ok`, 12 offers, applied `GET20` 20% — **$250 to $200, $215.00 all-in against $268.75** — note states the $3.75 of tax saved *and* the "lead rather than a price" caveat |
+| Live `GET /api/coupons?store=Newegg` | 12 offers, **every one item-only, nothing banked** — the rule doing its job on the store that motivated it |
+| Live `GET /api/coupons?store=Amazon` | 8 offers plus the "Amazon almost never takes a typed code" note, discount 0 |
+| Live `GET /api/coupons?store=Lenovo` | 12 wrong-store offers **before** the attribution fix, 2 after |
+| Live `GET /api/local/arbitrage?q=dewalt&sources=dealfeeds` | 27 found, 12 priced, 4 stores checked (2/3/8/0 offers), per-row stacks attached, **0 fabricated discounts** |
+| Feed URLs probed live | Slickdeals store search OK; DealNews front page OK; DealNews `search.html?rss=1` **204** and `/s<id>/?rss=1` **301** — dead, replaced |
+| Served assets | `coupon-check`, `renderCouponStores`, `couponMeta` present at `v=61` / `v=52` |
+
+### Not verified
+
+- **The rendered board in a browser.** Endpoints and served assets are verified with live payloads;
+  the coupon chip, the `+$43 with the code` line and the coupon-check panel were not driven visually.
+- **A banked code end to end through the Deal Pipeline or the Budget Optimizer.** Both read the row's
+  own figures, which are deliberately unchanged, so a tracked deal is frozen at the shelf price. That
+  is the correct conservative behaviour, but a seller who *did* use the code will see a forecast that
+  understates what they made.
+- **An item-specific code matched to the row it belongs to.** The clearest remaining money: when a
+  coupon entry's code is bound to the same product a board row is for, that code is real and usable.
+  It is refused today because matching it needs the product matcher, and a wrong match here is a
+  fabricated discount. This is the obvious next pass.
+- **Cashback end to end.** The arithmetic (reserve, wait, applied to the discounted subtotal) is unit
+  tested, and the parser reads a rate when a list states one, but no live entry in this session
+  published a cashback percentage — the portals themselves are link-only by design.
+- **Whether an applied code actually works at checkout.** Untestable without checking out, which is
+  precisely why the row's own profit never depends on one.

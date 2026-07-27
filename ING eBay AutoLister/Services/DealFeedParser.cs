@@ -372,7 +372,10 @@ public static class DealFeedParser
         return img.Success ? img.Groups[1].Value : "";
     }
 
-    private static DateTime? ReadDate(params string[] candidates)
+    // Public because CouponParser reads the same three dialects out of the same feeds; two ideas of
+    // what an RSS date is would eventually disagree about a deadline, and a coupon's deadline is the
+    // whole of its value.
+    public static DateTime? ReadDate(params string[] candidates)
     {
         foreach (var raw in candidates)
         {
@@ -490,12 +493,12 @@ public static class DealFeedParser
         return trimmed.Length > OpeningLineChars ? trimmed[..OpeningLineChars] : trimmed;
     }
 
-    private static string StripHtml(string? html) =>
+    public static string StripHtml(string? html) =>
         DealFeedSelectors.HtmlTag.Replace(html ?? "", " ").Replace("  ", " ").Trim();
 
     // &nbsp; decodes to U+00A0, which survives Trim() and every word comparison downstream as a
     // character that merely looks like a space — so it becomes a real one here, once.
-    private static string Decode(string? text) =>
+    public static string Decode(string? text) =>
         System.Net.WebUtility.HtmlDecode(text ?? "").Replace(' ', ' ').Trim();
 
     private static string Titleize(string slug) =>

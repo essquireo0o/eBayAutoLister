@@ -111,9 +111,15 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     /// retail source (the deal feeds) — a private-party buy is cash, and defaulting the parameter
     /// keeps every caller that only ever sees local supply unchanged.
     /// </summary>
+    /// <param name="coupons">
+    /// Public promo codes and cashback offers published for this row's store, or null. Defaulted so
+    /// every caller that doesn't source from a till is unchanged. What they produce is a second set
+    /// of money figures beside the row's own — never a change to them; see <see cref="ApplyCoupons"/>.
+    /// </param>
     public LocalArbitrageOpportunity Build(
         LocalSupplyListing listing, ResalePricing? resale, FeeProfile fees,
-        decimal retailSalesTaxPercent = RetailBuyCosts.DefaultSalesTaxPercent)
+        decimal retailSalesTaxPercent = RetailBuyCosts.DefaultSalesTaxPercent,
+        IReadOnlyList<CouponOffer>? coupons = null)
     {
         var localAsk = listing.Price ?? 0m;
 
@@ -182,6 +188,10 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             row.VerdictNote = "No eBay sold history matched this title.";
             row.PricedAs = resale?.LookupTitle ?? "";
             ApplyDaysToCash(row, resale);
+            // A row nobody could price still buys cheaper with a code. There is no profit to
+            // recompute, so what the seller gets is the discount and the code itself — which is
+            // more than the dash in every money column beside it.
+            ApplyCoupons(row, coupons, resale, fees, taxPercent, baseProfit: null);
             return row;
         }
 
@@ -232,8 +242,106 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // What to actually say to the person selling it. Pure arithmetic on numbers already computed
         // above, so it costs nothing per row and can never disagree with the money columns beside it.
         ApplyNegotiation(row, resale);
+
+        // The buy side of a retail row, which has no negotiation: the codes and cashback published
+        // for the store, and the same flip re-costed at what they leave it costing.
+        ApplyCoupons(row, coupons, resale, fees, taxPercent, profit);
         return row;
     }
+
+    /// <summary>
+    /// Cuts the buy price with whatever public codes exist for this store, and re-runs the profit
+    /// against the discounted cost.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row's own numbers are left exactly as they were, and that is the whole design. A promo
+    /// code off a public list is a <b>claim</b>: it may be dead, regional, category-limited or
+    /// new-customers-only, and nothing short of checking out can test it. Recomputing
+    /// <see cref="LocalArbitrageOpportunity.NetProfit"/> at the discounted cost would put that claim
+    /// underneath the ranking, the verdict badge, the goldmine count and the board's profit total —
+    /// so one dead code would quietly promote a deal that doesn't exist.
+    /// </para>
+    /// <para>
+    /// What the seller gets instead is both numbers: what this makes at the shelf price, and what it
+    /// makes if the code works, with the code, its conditions and its deadline printed beside them.
+    /// The same posture <see cref="NegotiationAdvisor"/> takes with an opening offer nobody has
+    /// accepted yet.
+    /// </para>
+    /// </remarks>
+    private void ApplyCoupons(
+        LocalArbitrageOpportunity row, IReadOnlyList<CouponOffer>? coupons, ResalePricing? resale,
+        FeeProfile fees, decimal taxPercent, ProfitBreakdown? baseProfit)
+    {
+        if (coupons is null || coupons.Count == 0) return;
+
+        // Nobody selling a drill on Craigslist takes a promo code, an auctioneer takes bids rather
+        // than codes, and there is nothing to discount on an item that is already free.
+        if (!row.IsRetail || row.Liquidation is not null || row.Freebie is not null || row.LocalAsk <= 0) return;
+
+        var stack = CouponStacker.Best(
+            coupons, row.LocalAsk, taxPercent,
+            // The advertised price already needs this code, so a second one cannot stack on it.
+            existingCode: row.CouponCode, shipsFree: row.FreeShipping);
+
+        // Nothing usable and nothing worth reading. Attaching an empty block would put a coupon
+        // column on the row that says only "we looked".
+        if (!stack.HasSaving && stack.AlsoFound.Count == 0) return;
+
+        var savings = new CouponSavings
+        {
+            MerchantId = stack.Applied.Concat(stack.AlsoFound).Select(o => o.MerchantId).FirstOrDefault() ?? "",
+            MerchantLabel = row.Retailer,
+            Applied = stack.Applied,
+            AlsoFound = stack.AlsoFound,
+            Discount = stack.Discount,
+            DiscountedSubtotal = stack.DiscountedSubtotal,
+            SalesTax = stack.SalesTax,
+            CashbackExpected = stack.CashbackExpected,
+            CashbackReserve = stack.CashbackReserve,
+            CashbackWaitDays = stack.CashbackWaitDays,
+            BuyCostWithCoupons = stack.NetCost,
+            Confidence = stack.Confidence,
+            Note = stack.Note,
+        };
+
+        if (stack.HasSaving && baseProfit is not null && resale is not null && resale.HasPrice)
+        {
+            var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
+
+            // Identical to the row's own call in every argument but the cost basis — anything else
+            // would make the two figures incomparable, which is the only thing they are for.
+            var discounted = profitCalc.Calculate(
+                supplierUnitCost: stack.NetCost, quantity: 1, expectedSalePrice: expected,
+                quickSalePrice: resale.QuickSale ?? expected,
+                buyerPaidShipping: resale.AvgCompShipping, fees: fees,
+                actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
+
+            savings.NetProfitWithCoupons = discounted.NetProfitPerUnit;
+            savings.RoiPercentWithCoupons = discounted.RoiPercent;
+            savings.ExtraProfit = Math.Round(discounted.NetProfitPerUnit - baseProfit.NetProfitPerUnit, 2);
+            savings.RescuesTheDeal = baseProfit.NetProfitPerUnit <= 0 && discounted.NetProfitPerUnit > 0;
+
+            // The badge this row would wear if the code works, when that is better than the one it
+            // has. Judged by the same bars as everything else on the board — a coupon does not get
+            // its own, friendlier definition of a goldmine.
+            var (verdict, _) = Judge(
+                discounted.NetProfitPerUnit, discounted.RoiPercent, stack.NetCost,
+                resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
+
+            if (verdict != row.Verdict && VerdictRank(verdict) > VerdictRank(row.Verdict))
+                savings.VerdictIfItWorks = verdict;
+        }
+
+        row.Coupons = savings;
+    }
+
+    // Only an improvement is worth stating. A code that leaves the verdict where it was has already
+    // said everything it has to say in the money columns.
+    private static int VerdictRank(string verdict) => verdict switch
+    {
+        "goldmine" => 3, "solid" => 2, "thin" => 1, _ => 0,
+    };
 
     // The resale half of a row, which is a property of the product and identical however the buy
     // side is costed. Shared by the ordinary path and the liquidation one so the two can't drift.
