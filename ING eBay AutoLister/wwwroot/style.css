@@ -1282,8 +1282,9 @@ button { cursor: pointer; }
   transition: background var(--dur-1) var(--ease);
 }
 
-.listings-table tbody tr:hover td { background: var(--soft); }
-.listings-table tbody tr.active td { background: var(--warning-tint); }
+/* Hover and the active row are painted by the shared data-table grammar at
+   the foot of this file — on the row, not on each cell, so the money band
+   in the price column survives being hovered. */
 
 /* Money and counts read as columns only when they share a right edge. */
 .listings-table th:nth-child(3), .listings-table td:nth-child(3),
@@ -11205,4 +11206,368 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   .viz-meter-fill,
   .viz-seg-label,
   .viz-tip { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Data tables — one grammar for every dense grid in the app
+
+   Local Arbitrage, Listings, Inventory Health, Snipe, Shipping, Earnings
+   and the lot and ladder tables had each grown their own padding, their
+   own header treatment and their own idea of what a number column looks
+   like. Nine tables, nine rhythms. This is the one reading grammar all of
+   them now share:
+
+     · the header is a fixed rail — it sticks, it never scrolls away, and
+       it is the quietest type on the screen
+     · every figure is right-aligned on tabular figures, so a column of
+       money is a column and not a ragged list
+     · the row is the unit: a stripe to hold the eye on the line, a hover
+       to confirm which line, a left rail when the row means something
+     · the columns that answer "what does this make?" carry a gold band,
+       because that is the only question the seller opened the table to
+       answer
+
+   None of this changes what a table says. It changes how long it takes to
+   find the one row worth acting on.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --dt-pad-y: 10px;
+  --dt-pad-x: 12px;
+
+  /* Stripes and hovers are the brand teal at single-digit alpha: enough to
+     hold the eye on one line across fourteen columns, never enough to read
+     as a state. A zebra you can name the colour of is too strong. */
+  --dt-zebra: rgba(17, 80, 87, .028);
+  --dt-hover: rgba(17, 80, 87, .062);
+  --dt-rule: var(--line-soft);
+
+  /* The money band. Gold is the app's one accent, so the columns carrying
+     the answer — net profit, ROI, price — are the only columns tinted with
+     it, and the eye lands there before it reads anything else. */
+  --dt-money: rgba(199, 154, 54, .07);
+  --dt-money-edge: rgba(199, 154, 54, .3);
+
+  /* The header rail: a hair of light at the top edge so it reads as a
+     surface sitting above the rows, not as the first row painted grey. */
+  --dt-head: linear-gradient(180deg, #ffffff, var(--soft) 70%, var(--soft-2));
+  --dt-head-lift: 0 8px 12px -10px rgba(6, 27, 29, .55);
+}
+
+.listings-table,
+.fb-arb-table,
+.inv-table,
+.ship-table,
+.er-table,
+.opp-comp-table {
+  /* separate, not collapse. Collapsed borders drop out from under a sticky
+     header the moment it starts scrolling, and a collapsed table renders no
+     box-shadow on a row at all — which is where the state rail lives. The
+     spacing is zero, so the grid itself is unchanged. */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The header rail ──────────────────────────────────────────────────
+   Sticky on every table now, not just the listings one. Column meaning is
+   the first thing lost in a long scroll and the most expensive to go back
+   for. */
+.listings-table thead th,
+.fb-arb-table thead th,
+.inv-table thead th,
+.ship-table thead th,
+.er-table thead th,
+.opp-comp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 9px var(--dt-pad-x) 8px;
+  border: 0;
+  background-color: var(--soft);
+  background-image: var(--dt-head);
+  box-shadow: inset 0 -1px 0 var(--line-strong), var(--dt-head-lift);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  line-height: 1.3;
+  text-align: left;
+  text-transform: uppercase;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+/* ── The cells ────────────────────────────────────────────────────────── */
+.listings-table tbody td,
+.fb-arb-table tbody td,
+.inv-table tbody td,
+.ship-table tbody td,
+.er-table tbody td,
+.opp-comp-table tbody td {
+  padding: var(--dt-pad-y) var(--dt-pad-x);
+  border-bottom: 1px solid var(--dt-rule);
+}
+
+/* A totals row keeps the body's rhythm, so the figures in it stay in the
+   same columns they are summing. */
+.fb-arb-table tfoot td,
+.inv-table tfoot td,
+.er-table tfoot td { padding: var(--dt-pad-y) var(--dt-pad-x); }
+
+/* The last hairline is the one the shell's own border already draws. */
+.listings-table tbody tr:last-child > td,
+.fb-arb-table tbody tr:last-child > td,
+.inv-table tbody tr:last-child > td,
+.ship-table tbody tr:last-child > td,
+.er-table tbody tr:last-child > td,
+.opp-comp-table tbody tr:last-child > td { border-bottom: 0; }
+
+/* Ladders and comp lists are reference, not ranking — they stay compact
+   rather than inheriting the scanning rhythm of a results table. Written
+   at thead/tbody depth deliberately: at plain `th, td` they would lose the
+   specificity contest with the rule above and quietly get the tall one. */
+.opp-comp-table thead th, .opp-comp-table tbody td,
+.ad-ladder-table thead th, .ad-ladder-table tbody td,
+.neg-ladder-table thead th, .neg-ladder-table tbody td { padding: 7px 10px; }
+.rsc-ladder thead th, .rsc-ladder tbody td { padding: 5px 8px; }
+
+/* ── Figures ──────────────────────────────────────────────────────────
+   A shared right edge, tabular figures, and contextual alternates off so a
+   digit is never reshaped by the digit beside it. This is the whole reason
+   a comparison lives in a table instead of a card. */
+.listings-table .num,
+.fb-arb-table .num,
+.inv-table .num,
+.ship-table .num,
+.er-table .num,
+.opp-comp-table .num,
+.ship-table .ship-num,
+.listings-table tbody td:nth-child(3),
+.listings-table tbody td:nth-child(4),
+.listings-table tbody td:nth-child(10) {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "calt" 0;
+}
+
+/* ── The row ──────────────────────────────────────────────────────────
+   Zebra first, because it is the floor every state paints over. */
+.listings-table tbody tr,
+.fb-arb-table tbody tr,
+.inv-table tbody tr,
+.ship-table tbody tr,
+.er-table tbody tr,
+.opp-comp-table tbody tr { transition: background-color var(--dur-1) var(--ease); }
+
+.listings-table tbody tr:nth-child(even),
+.fb-arb-table tbody tr:nth-child(even),
+.inv-table tbody tr:nth-child(even),
+.ship-table tbody tr:nth-child(even),
+.er-table tbody tr:nth-child(even) { background-color: var(--dt-zebra); }
+
+/* A row that means something outranks the stripe: dead capital, or the one
+   goldmine on the board, must never be striped into the background. Each
+   takes a 3px rail as well as a wash, so the state survives the hover that
+   washes over it. */
+.fb-arb-table tbody tr.fb-arb-row-goldmine {
+  background-color: var(--gold-tint);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+.inv-table tbody tr.inv-row-dead {
+  background-color: var(--danger-tint);
+  box-shadow: inset 3px 0 0 var(--danger-600);
+}
+.ship-table tbody tr.ship-mode-pick {
+  background-color: var(--success-tint);
+  box-shadow: inset 3px 0 0 var(--success-600);
+}
+.listings-table tbody tr.active {
+  background-color: var(--warning-tint);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+/* Hover confirms which line the eye is on. It comes after the states so it
+   answers on every row, and the stateful rows deepen their own colour
+   rather than losing it. */
+.listings-table tbody tr:hover,
+.fb-arb-table tbody tr:hover,
+.inv-table tbody tr:hover,
+.ship-table tbody tr:hover,
+.er-table tbody tr:hover,
+.opp-comp-table tbody tr:hover { background-color: var(--dt-hover); }
+
+.fb-arb-table tbody tr.fb-arb-row-goldmine:hover { background-color: var(--gold-soft); }
+.inv-table tbody tr.inv-row-dead:hover           { background-color: var(--danger-soft); }
+.ship-table tbody tr.ship-mode-pick:hover        { background-color: var(--success-soft); }
+.listings-table tbody tr.active:hover            { background-color: var(--warning-soft); }
+
+/* An empty-state cell is a message, not a row — it takes neither. */
+.fb-arb-table tbody tr:hover > td.fb-arb-empty { background-color: var(--card); }
+
+/* ── The money columns ────────────────────────────────────────────────
+   The band is a background-image, not a background, so it layers over
+   whatever the row is doing — stripe, state or hover — instead of fighting
+   it. The two hairlines make it a column rather than a smudge. */
+.dt-money {
+  background-image: linear-gradient(var(--dt-money), var(--dt-money));
+  box-shadow: inset 1px 0 0 var(--dt-money-edge), inset -1px 0 0 var(--dt-money-edge);
+}
+
+.listings-table thead th.dt-money,
+.fb-arb-table thead th.dt-money {
+  background-image: linear-gradient(var(--dt-money), var(--dt-money)), var(--dt-head);
+  box-shadow:
+    inset 0 -1px 0 var(--line-strong),
+    inset 1px 0 0 var(--dt-money-edge),
+    inset -1px 0 0 var(--dt-money-edge),
+    var(--dt-head-lift);
+  color: var(--gold-dark);
+}
+
+/* One step up in size and weight from the columns around it. On a
+   fourteen-column board that single step is the difference between reading
+   the table and scanning it.
+
+   Size and weight only — deliberately no colour. This selector outranks
+   .fb-arb-profit.good/.bad, so a colour here would repaint every net-profit
+   figure a flat ink and take the green/red read off the one column the
+   whole board exists to answer. */
+.fb-arb-table tbody td.dt-money {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+.listings-table tbody td.dt-money { font-size: var(--fs-base); }
+
+/* ── Rank ─────────────────────────────────────────────────────────────
+   The board is sorted, so the first three rows are the answer. The numeral
+   says so on its own, without a badge. */
+.fb-arb-table thead th.fb-arb-th-rank { text-align: center; }
+.fb-arb-table tbody td.fb-arb-th-rank {
+  text-align: center;
+  color: var(--faint);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.fb-arb-table tbody tr:nth-child(-n+3) > td.fb-arb-th-rank {
+  color: var(--gold-dark);
+  font-weight: var(--fw-heavy);
+}
+
+/* ── The shell ────────────────────────────────────────────────────────
+   Every dense table now sits in the same frame: a hairline card that
+   scrolls in both axes, bounded in height so the sticky header has
+   something to stick to and the controls above it stay on screen.
+
+   The edge shadows are pure CSS: two white covers pinned to the content
+   (background-attachment: local) sit on top of two shadows pinned to the
+   frame, so a shadow only shows on a side that has more table to reach. No
+   scroll handler, nothing to keep in sync. */
+.table-wrap,
+.fb-arb-table-wrap,
+.ship-table-wrap,
+.opp-comp-panel,
+.er-ledger,
+.inv-results:has(> table) {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background-color: var(--card);
+  background-image:
+    linear-gradient(to right, var(--card) 40%, rgba(255, 255, 255, 0)),
+    linear-gradient(to left,  var(--card) 40%, rgba(255, 255, 255, 0)),
+    linear-gradient(to right, rgba(6, 27, 29, .13), rgba(6, 27, 29, 0)),
+    linear-gradient(to left,  rgba(6, 27, 29, .13), rgba(6, 27, 29, 0));
+  background-position: 0 0, 100% 0, 0 0, 100% 0;
+  background-repeat: no-repeat;
+  background-size: 44px 100%, 44px 100%, 16px 100%, 16px 100%;
+  background-attachment: local, local, scroll, scroll;
+  box-shadow: var(--e1);
+}
+
+/* Bounded, so the header rail has something to stick to. :has() keeps this
+   off the empty and resting states, which are messages and must not
+   scroll; a browser without it simply keeps today's unbounded table. */
+.inv-results:has(> table),
+.fb-arb-table-wrap { max-height: min(76vh, 900px); }
+
+/* ── Status chips inside a table ──────────────────────────────────────
+   Five components had invented five pill shapes at four sizes. One shape,
+   one scale, and a hairline ring so a soft fill still has an edge against
+   a striped row. */
+.fb-verdict,
+.inv-verdict,
+.speed-days,
+.speed-badge,
+.er-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
+  letter-spacing: .005em;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(6, 27, 29, .08);
+}
+
+/* ── Opportunity Finder rows ──────────────────────────────────────────
+   Not a table — a scored result is carried by its photo — but it is read
+   the same way, so it takes the same grammar: figures on a shared right
+   edge in tabular numerals, a rule under the line that totals, and the
+   profit line set as the answer it is. */
+.opp-result-row {
+  transition:
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-2) var(--ease);
+}
+.opp-result-row:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--e2);
+}
+
+.opp-cost-line { padding: 1px 0; }
+.opp-cost-line > span:first-child { color: var(--faint); }
+.opp-cost-line strong {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "calt" 0;
+}
+
+/* The two lines that are conclusions rather than inputs sit below a rule,
+   the way a total does on a receipt. */
+.opp-cost-line.total,
+.opp-cost-line.profit {
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+.opp-cost-line.profit strong {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-heavy);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listings-table tbody tr,
+  .fb-arb-table tbody tr,
+  .inv-table tbody tr,
+  .ship-table tbody tr,
+  .er-table tbody tr,
+  .opp-comp-table tbody tr,
+  .opp-result-row { transition: none; }
+}
+
+/* Where hue and shadow cannot be trusted, the grammar falls back to
+   structure: the header keeps a real border and the money columns keep
+   real edges, so the hierarchy survives with no colour at all. */
+@media (forced-colors: active) {
+  .listings-table thead th,
+  .fb-arb-table thead th,
+  .inv-table thead th,
+  .ship-table thead th,
+  .er-table thead th,
+  .opp-comp-table thead th { border-bottom: 2px solid CanvasText; }
+  .dt-money { border-left: 1px solid CanvasText; border-right: 1px solid CanvasText; }
 }

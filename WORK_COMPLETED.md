@@ -5208,3 +5208,107 @@ actually covers.
   browser run above is the only thing covering it, and it is not wired into CI.
 - `style.css?v=60`, `app.js?v=68`. No server code, no business logic, no pricing,
   key or credential touched.
+
+---
+
+## Data-table pass — make the dense tables scannable (autonomous session, 2026-07-27)
+
+The app ranks money in tables: Local Arbitrage, Listings, Inventory Health,
+Snipe, Budget Basket, Shipping, Earnings, the lot manifest and four ladders.
+Every one of them had been styled by the session that shipped the feature, so
+there were nine paddings, four header treatments and three different ideas of
+what a number column looks like. The board that answers "which deal is best"
+set Net profit in the same 12px regular as the seller's username.
+
+Nothing here changes a number, a sort, an endpoint or a rule. It changes how
+long it takes to find the one row worth acting on. **No server code, no
+business logic, no pricing, no key and no credential was touched.**
+
+### One reading grammar, shared by every table
+
+A new closing section in `style.css` that six table classes now opt into
+(`.listings-table`, `.fb-arb-table`, `.inv-table`, `.ship-table`, `.er-table`,
+`.opp-comp-table` — and through `.inv-table`, the `sn-`, `tr-`, `lot-`,
+`bud-`, `ad-ladder-` and `neg-ladder-` variants).
+
+| Piece | What it does |
+|---|---|
+| Header rail | `position: sticky` on **every** table, not just the listings one. 11px caps, `--muted`, a `--line-strong` hairline and a soft lift below it |
+| Figures | one right edge, `tabular-nums`, `calt` off so a digit is never reshaped by its neighbour |
+| Row | zebra at 2.8% teal, hover at 6.2%, and a 3px left rail wherever the row already meant something |
+| Money columns | a gold band with two hairline edges on Net profit, ROI and Price — set one step up in size and at 700 |
+| Shell | one hairline card per table: bounded height so the sticky header has something to stick to, scroll shadows on the sides |
+| Chips | five pill shapes at four sizes collapsed into one, with a hairline ring so a soft fill still has an edge on a striped row |
+
+### Decisions worth recording
+
+- **`border-collapse: separate`, spacing zero.** Collapsed borders drop out
+  from under a sticky header as it scrolls, and a collapsed table renders no
+  `box-shadow` on a `<tr>` at all — which is where the row-state rail lives.
+  The grid itself is unchanged.
+- **The money band is a `background-image`, not a `background`.** It layers
+  over whatever the row is doing — stripe, state or hover — instead of losing
+  to it. Verified: hovering a row keeps the band.
+- **The band carries size and weight but deliberately no colour.**
+  `.fb-arb-table tbody td.dt-money` outranks `.fb-arb-profit.good/.bad`, so a
+  colour there repaints every net-profit figure a flat ink and takes the
+  green/red read off the one column the board exists to answer. This was
+  caught in the browser, not in review.
+- **Row states outrank the zebra, and hover outranks both.** A goldmine row or
+  a dead-capital row deepens its own colour on hover rather than losing it.
+- **Ladders and comp lists stay compact,** and their padding overrides are
+  written at `thead th` / `tbody td` depth on purpose: at plain `th, td` they
+  lose the specificity contest with the shared rule and silently get the tall
+  results-table rhythm.
+- **`.inv-results:has(> table)`** is what bounds the scroll region, so the
+  empty and resting states — which are messages, not tables — never scroll. A
+  browser without `:has()` simply keeps today's unbounded table.
+- **Opportunity Finder is not a table** (a scored result is carried by its
+  photo) but is read like one, so it takes the same grammar: tabular figures,
+  a rule under Total cost and Est. profit the way a receipt totals, and a
+  hover lift.
+
+### Files
+
+| File | Change |
+|---|---|
+| `wwwroot/style.css` | new closing "Data tables" section (`--dt-*` tokens, shared header/cell/figure/row/money/shell/chip rules, reduced-motion and forced-colours fallbacks). Removed the two `.listings-table` cell-level hover/active rules the shared grammar replaces |
+| `wwwroot/app.js` | `dt-money` on the Net profit and ROI cells in `arbitrageRowHtml` (new `estRoi`, so ROI keeps its thin-evidence hedge), on the Price cell in `renderListingRow`, and on the Net profit / ROI columns and totals row of the Budget Basket table |
+| `wwwroot/index.html` | `dt-money` on the Net profit, ROI and Price headers. `style.css?v=61`, `app.js?v=69` |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are
+  the pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed.** No test added or changed; this is
+  entirely presentation.
+- **Real browser (Playwright/Chromium at 2× DPI, `wwwroot` served on 9421 with
+  a fixture page carrying the exact markup the four renderers emit).**
+  `border-collapse` resolves to `separate`; header computes `position: sticky`
+  with the hairline and lift; scrolling the arbitrage wrapper 200px moved the
+  rows and left the header at the same viewport y. Money band resolves on both
+  `th` and `td`, right-aligned, 13px/700, and survives hover
+  (`backgroundImage !== 'none'` under `tr:hover`). Profit green resolves to
+  `--success` and loss to `--danger`; the thin-evidence ROI cell keeps its
+  muted italic. Zebra alternates, the goldmine row holds `--gold-tint` plus
+  the 3px gold rail against it, ranks 1–3 are gold/800 and rank 5 is
+  faint/650. Inventory, Listings and Opportunity Finder screenshotted and
+  read. **No page errors, no console errors.**
+- The fixture page, its server and the screenshots were deleted after the run;
+  nothing from the harness ships.
+
+### Not verified / known limits
+
+- **The fixture page is not the live app.** It carries the renderers' exact
+  markup, but the tables were not driven through `/api` — the scan endpoints
+  need eBay credentials and live comps. Sort, filter and the Track button were
+  not exercised in this run.
+- **`:has()` gates the bounded scroll region on Inventory Health.** Every
+  current browser supports it; one that does not gets today's unbounded table
+  and an inert sticky header, which is the pre-existing behaviour.
+- **Horizontal scroll shadows were not seen firing.** The arbitrage table's
+  1040px min-width fits a 1560px viewport, so there was nothing to scroll
+  sideways to. The mechanism is pure CSS `background-attachment` and computes
+  correctly (`local, local, scroll, scroll`), but it was not observed.
+- **None of this is covered by `dotnet test`.** It is CSS and DOM appearance;
+  the browser run above is the only thing covering it, and it is not in CI.

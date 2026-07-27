@@ -1903,6 +1903,11 @@
     // would put a warning on the one row that already says plainly it couldn't be priced.
     const guessed = row.evidenceTier === 'low' && row.ebayExpectedSale != null;
     const est = guessed ? ` class="num fb-arb-estimate" title="${esc(row.evidenceNote)}"` : ' class="num"';
+    // ROI shares the hedging above but not the column: it is one of the two figures the board
+    // exists to answer, so it carries the money band Margin beside it does not.
+    const estRoi = guessed
+      ? ` class="num dt-money fb-arb-estimate" title="${esc(row.evidenceNote)}"`
+      : ' class="num dt-money"';
 
     const evidence = row.ebayExpectedSale == null
       ? '<span class="fb-arb-muted">no sold history</span>'
@@ -1938,9 +1943,9 @@
         <td class="num">${buyCostCell(row)}</td>
         <td class="num${guessed ? ' fb-arb-estimate' : ''}"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}${warrantyResaleLine(row)}${estimateFlag(row)}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
-        <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
+        <td class="num dt-money fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
         <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
-        <td${est}>${roi}</td>
+        <td${estRoi}>${roi}</td>
         <td${est}>${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
         <td class="num fb-arb-offer">${offerCell(row)}</td>
@@ -4416,8 +4421,8 @@
               <th class="fb-arb-th-rank">#</th>
               <th>Buy this</th>
               <th class="num">Pay</th>
-              <th class="num">Net profit</th>
-              <th class="num">ROI</th>
+              <th class="num dt-money">Net profit</th>
+              <th class="num dt-money">ROI</th>
               <th class="num">Days to cash</th>
               <th class="num">Spent so far</th>
               <th class="num">Profit so far</th>
@@ -4428,8 +4433,8 @@
             <tr>
               <td colspan="2">${plan.picks.length} deal${plan.picks.length === 1 ? '' : 's'}</td>
               <td class="num"><strong>${money(plan.capitalDeployed)}</strong></td>
-              <td class="num"><strong>${money(plan.totalNetProfit)}</strong></td>
-              <td class="num">${plan.blendedRoiPercent != null ? `${Math.round(plan.blendedRoiPercent)}%` : '—'}</td>
+              <td class="num dt-money"><strong>${money(plan.totalNetProfit)}</strong></td>
+              <td class="num dt-money">${plan.blendedRoiPercent != null ? `${Math.round(plan.blendedRoiPercent)}%` : '—'}</td>
               <td class="num">${plan.weightedDaysToCash != null ? `${plan.weightedDaysToCash}d avg` : '—'}</td>
               <td class="num">${money(plan.leftover)} left</td>
               <td class="num"></td>
@@ -4463,8 +4468,8 @@
           <div class="bud-why">${esc(pick.why)}</div>
         </td>
         <td class="num">${money(pick.spend)}${pick.targetOffer ? `<div class="bud-sub">offer ${money(pick.targetOffer)}</div>` : ''}</td>
-        <td class="num fb-arb-profit">${money(pick.totalNetProfit)}</td>
-        <td class="num">${pick.roiPercent != null ? `${Math.round(pick.roiPercent)}%` : '—'}</td>
+        <td class="num dt-money fb-arb-profit">${money(pick.totalNetProfit)}</td>
+        <td class="num dt-money">${pick.roiPercent != null ? `${Math.round(pick.roiPercent)}%` : '—'}</td>
         <td class="num">${pick.daysToCash != null
           ? `<span class="speed-days speed-${tier.cls}">${pick.daysToCash}d</span>${pick.profitPerDay ? `<span class="speed-rate">${perDay(pick.profitPerDay)}</span>` : ''}`
           : '<span class="fb-arb-muted">—</span>'}</td>
@@ -10749,7 +10754,7 @@
     row.innerHTML = `
       <td>${img}</td>
       <td><strong>${esc(listing.title || 'Untitled listing')}</strong></td>
-      <td>${money(listing.price)}</td>
+      <td class="dt-money">${money(listing.price)}</td>
       <td>${listing.quantity ?? 0}</td>
       <td>${esc(listing.sku || '-')}</td>
       <td>${esc(listing.listingId || '-')}</td>
