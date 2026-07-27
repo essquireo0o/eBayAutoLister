@@ -28,7 +28,7 @@ public static class LocalSupplyMerger
         IEnumerable<LocalSupplySearchResult> results, string query, string zip, int radiusMiles)
     {
         var list = results.ToList();
-        var items = LocalSupplyResults.Dedupe(list.SelectMany(r => r.Items));
+        var items = DedupeByUrl(LocalSupplyResults.Dedupe(list.SelectMany(r => r.Items)));
         items = [.. items.OrderBy(i => i.Price ?? 0m)];
 
         var (min, median, max) = LocalSupplyResults.Summarize(items);
@@ -46,6 +46,27 @@ public static class LocalSupplyMerger
             // and a whole-search error message over a table of real results reads as a failure.
             Error = list.Any(r => r.Status == "ok") ? null : list.Select(r => r.Error).FirstOrDefault(e => !string.IsNullOrWhiteSpace(e)),
         };
+    }
+
+    /// <summary>
+    /// Drops the same post found by two different sources.
+    ///
+    /// <see cref="LocalSupplyResults.Dedupe"/> keys on (source, id) and cannot see this: the same
+    /// craigslist post is one row from the for-sale board and another from the free-stuff board, and
+    /// the two arrive under different source ids. One post at one address is one thing to go and
+    /// collect, and showing it twice would double its weight in a ranking that is meant to be one
+    /// row per thing to buy. First source wins, which is registration order — see Program.cs.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the URL alone and nothing softer. Two listings that merely look alike are usually
+    /// two real items, and collapsing those would hide supply rather than tidy it.
+    /// </remarks>
+    public static List<LocalSupplyListing> DedupeByUrl(IEnumerable<LocalSupplyListing> items)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return items
+            .Where(i => string.IsNullOrWhiteSpace(i.Url) || seen.Add(i.Url.Trim()))
+            .ToList();
     }
 
     /// <summary>

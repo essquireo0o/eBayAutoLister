@@ -777,6 +777,9 @@
     // Sales tax only changes a clearance or auction row's numbers, so the field only appears when
     // one can appear.
     $('retail-tax-row')?.classList.toggle('hidden', !picked.some(chargesSalesTax));
+    // "Leave it blank" is only true advice while a source that means something by a blank search is
+    // ticked — on every other one an empty query is the whole classifieds section.
+    $('fb-blank-query-hint')?.classList.toggle('hidden', !picked.some(allowsBlankQuery));
     renderManualSites(picked);
     // Zip and radius mean nothing to a nationwide feed. Dimmed rather than hidden — untick the
     // online source and they matter again, and a field that vanishes is a field people hunt for.
@@ -800,6 +803,14 @@
   function chargesSalesTax(id) {
     const source = localSources.find(s => s.id === id);
     return source ? source.chargesSalesTax === true : false;
+  }
+
+  // Whether a blank keyword is a real search on this source. True only for the freebie board, where
+  // "everything being given away near me" is the best search there is — a seller shopping for free
+  // things does not care what they are. Read off the source rather than hard-coded here.
+  function allowsBlankQuery(id) {
+    const source = localSources.find(s => s.id === id);
+    return source ? source.allowsBlankQuery === true : false;
   }
 
   // The liquidation marketplaces this app deliberately doesn't scrape, offered as prefilled
@@ -1028,7 +1039,7 @@
 
     lastLocalRun = runLocalSearch;
 
-    if (!query) return setLocalStatus('Enter what you want to look for.');
+    if (!query && !sources.some(allowsBlankQuery)) return setLocalStatus('Enter what you want to look for.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
@@ -1296,7 +1307,8 @@
 
     lastLocalRun = runLocalArbitrage;
 
-    if (!query) return setLocalStatus('Enter what you want to look for.');
+    // Blank is a real search on the freebie board and nowhere else — see allowsBlankQuery.
+    if (!query && !sources.some(allowsBlankQuery)) return setLocalStatus('Enter what you want to look for.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
@@ -1373,6 +1385,16 @@
       // Wednesday is a deal the seller never had, so the deadline gets its own headline.
       data.closingSoonCount
         ? `<strong class="fb-arb-hit">${data.closingSoonCount} profitable auction${data.closingSoonCount === 1 ? '' : 's'} closing inside 48h</strong>`
+        : '',
+      // The money that costs nothing to make. Its own headline because it is the only figure on
+      // this board with nothing to lose behind it — no cost basis, so a row that doesn't sell costs
+      // an afternoon rather than money.
+      data.freeMoneyOnTheTable > 0
+        ? `<strong class="fb-arb-hit">${money(data.freeMoneyOnTheTable)} from ${data.freebieCount} free item${data.freebieCount === 1 ? '' : 's'}</strong> — nothing spent`
+        : (data.freebieCount ? `${data.freebieCount} free item${data.freebieCount === 1 ? '' : 's'} found, none worth the trip` : ''),
+      // And the half of that which is gone by tomorrow.
+      data.expiringTodayCount
+        ? `<strong class="fb-arb-hit">${data.expiringTodayCount} of them gone today</strong> — free posts get claimed the same day`
         : '',
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
@@ -1527,6 +1549,7 @@
       // A price that only exists with a code is not a price without it.
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
       ...liquidationMeta(row),
+      ...freebieMeta(row),
     ].filter(Boolean).join(' · ');
 
     // A free item has no cost basis, so its ROI is unbounded rather than zero.
@@ -1622,11 +1645,48 @@
     return hours > 0 && hours <= 48;
   }
 
+  // What a free row says about itself. The deadline leads, because it is the thing that actually
+  // decides whether this deal is real: a free classified post is claimed within hours, and a free
+  // price is pulled without notice. Everything else here is a cost the word "free" hides.
+  const FREE_URGENCY = {
+    today: { cls: 'now', label: 'gone today' },
+    first_come: { cls: 'now', label: 'first come, first served' },
+    this_week: { cls: 'soon', label: 'ends this week' },
+  };
+
+  function freebieMeta(row) {
+    const free = row.freebie;
+    if (!free) return [];
+
+    const clock = FREE_URGENCY[free.urgency];
+
+    return [
+      `<span class="free-kind">${esc(free.kindLabel)}</span>`,
+      clock ? `<span class="free-clock free-clock-${clock.cls}" title="${esc(free.urgencyNote)}">⏱ ${clock.label}${free.expiresText ? ` (${esc(free.expiresText)})` : ''}</span>` : '',
+      free.isPickup ? 'collect in person' : '',
+      // The code is the price. Without it this is a full-price item.
+      free.requiresCoupon && !row.couponCode ? '<span class="retail-code">needs the code</span>' : '',
+      // A cost the app could not see, large enough to change the answer — see FreebiePricer.CapReason.
+      free.cappedReason ? `<span class="free-caveat" title="${esc(free.cappedReason)}">⚠ read this</span>` : '',
+    ];
+  }
+
   // What actually leaves the wallet. On a private-party buy that is the asking price; on a retail
   // buy the register adds sales tax, and on an auction the house adds its premium first and the tax
   // sits on top of both. Every profit figure in the row was computed from the all-in number — so
   // showing the sticker alone would leave the arithmetic looking wrong.
   function buyCostCell(row) {
+    // A free row is the one place where the headline number and the money that leaves the wallet
+    // are genuinely different things: a rebate deal costs full price today and pays most of it back
+    // in eight weeks. Showing only the net would describe a deal the seller isn't being offered.
+    const free = row.freebie;
+    if (free && free.outOfPocketNow > 0) {
+      return `${money(row.buyCostAllIn || 0)}` +
+        `<br /><span class="retail-tax" title="${esc(free.costNote)}">${money(free.outOfPocketNow)} up front, ` +
+        `${money(free.refundExpected)} back${free.refundWaitDays ? ` in ~${free.refundWaitDays}d` : ''}</span>`;
+    }
+    if (free) return '<span class="free-price">Free</span>';
+
     if (!(row.buyCostAllIn > 0)) return row.localAsk > 0 ? money(row.localAsk) : 'Free';
 
     const lot = row.liquidation;
@@ -1658,6 +1718,12 @@
   // feature can do on a bad deal is fail to produce a message for it.
   function offerCell(row) {
     const plan = row.negotiation;
+
+    // Nothing to negotiate at zero. What this row needs instead is speed, so that is what the cell
+    // says — the whole of the buy-side decision on a free item is "get there before somebody else".
+    if (row.freebie) {
+      return `<span class="fb-arb-muted" title="${esc(row.freebie.urgencyNote)}">free — just be first</span>`;
+    }
 
     // Nobody at Amazon is reading your offer. The honest buy-side answer on a retail row is the
     // shelf price to stop at, which is already in the "Max to pay" column beside this one — so

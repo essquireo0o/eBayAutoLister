@@ -68,7 +68,7 @@ public sealed class DealFeedService(IHttpClientFactory httpFactory, ActionLog lo
 
         var http = httpFactory.CreateClient();
         http.Timeout = RequestTimeout;
-        ApplyBrowserHeaders(http);
+        PublicFeedHttp.ApplyBrowserHeaders(http);
 
         // The scan's own deadline, so six feeds can't add up to six times what one is allowed. The
         // caller's token is linked in and the two are told apart below: a seller who navigated away
@@ -93,7 +93,8 @@ public sealed class DealFeedService(IHttpClientFactory httpFactory, ActionLog lo
             }
 
             var url = DealFeedCatalog.BuildUrl(feed, query);
-            var (xml, error, feedRetryable) = await GetAsync(http, url, feed, budget.Token, ct);
+            var (xml, error, feedRetryable) = await PublicFeedHttp.GetAsync(
+                http, url, feed.Site, nameof(DealFeedCatalog), MaxFeedBytes, budget.Token, ct);
 
             if (xml is null)
             {
@@ -133,101 +134,6 @@ public sealed class DealFeedService(IHttpClientFactory httpFactory, ActionLog lo
             $"{(failures.Count > 0 ? $"; failed: {string.Join(" · ", failures)}" : "")}.");
 
         return result;
-    }
-
-    /// <summary>
-    /// These are feeds published for readers, so the request is shaped like a reader: a browser
-    /// asking for one document it was pointed at. A bare client with no user agent is the shape a
-    /// CDN refuses first, and a refusal parses to zero deals — which would reach the seller as
-    /// "nothing is on sale" rather than as a failure.
-    ///
-    /// No Accept-Encoding: this client isn't configured to decompress, and advertising gzip would
-    /// hand the parser a binary blob that reads as an empty feed. A silent wrong answer is worse
-    /// than a loud failure.
-    /// </summary>
-    private static void ApplyBrowserHeaders(HttpClient http)
-    {
-        http.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-        http.DefaultRequestHeaders.Accept.ParseAdd(
-            "application/rss+xml,application/xml;q=0.9,text/xml;q=0.9,*/*;q=0.8");
-        http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
-        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
-        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
-        http.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Site", "none");
-    }
-
-    /// <summary>
-    /// One feed, and every way it can go wrong turned into a sentence. Nothing here throws: a site
-    /// that refuses, stalls or answers with a challenge page has to arrive at the UI as a note
-    /// beside whatever the other feeds found, never as a failed response.
-    /// </summary>
-    private static async Task<(string? Body, string? Error, bool Retryable)> GetAsync(
-        HttpClient http, string url, DealFeed feed, CancellationToken budget, CancellationToken caller)
-    {
-        try
-        {
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, budget);
-            if (!response.IsSuccessStatusCode)
-            {
-                return (int)response.StatusCode switch
-                {
-                    // Backing off is the correct and only response. Retrying in a loop is how an
-                    // address gets blocked from a feed that was working fine a minute ago.
-                    403 or 429 => (null, "rate-limited right now — wait a minute and scan again", true),
-                    404 or 410 => (null, "that feed has moved — it needs updating in DealFeedCatalog", false),
-                    >= 500 => (null, $"the site is having trouble (HTTP {(int)response.StatusCode})", true),
-                    _ => (null, $"HTTP {(int)response.StatusCode}", false),
-                };
-            }
-
-            if (response.Content.Headers.ContentLength > MaxFeedBytes)
-                return (null, "that feed came back far larger than a feed should be", false);
-
-            var body = await ReadBoundedAsync(response, budget);
-            if (body is null) return (null, "that feed came back far larger than a feed should be", false);
-
-            // A 200 is not the same as an answer: a challenge page is served with a success status
-            // and parses to zero deals, which looks exactly like "nothing matched".
-            var blocked = DealFeedParser.DetectBlock(body, feed.Site);
-            return blocked is not null ? (null, blocked, true) : (body, null, false);
-        }
-        catch (OperationCanceledException) when (caller.IsCancellationRequested)
-        {
-            throw;   // the browser hung up; there is nothing left to report to
-        }
-        catch (OperationCanceledException)
-        {
-            return (null, "didn't respond in time", true);
-        }
-        catch (HttpRequestException ex)
-        {
-            return (null, $"couldn't be reached ({ex.Message})", true);
-        }
-        catch (Exception ex)
-        {
-            // Deliberately total. Whatever this was — DNS, a proxy, a TLS failure — it is one feed
-            // failing, and the scan's other feeds still have deals to show.
-            return (null, ex.Message, true);
-        }
-    }
-
-    // Reads the body without trusting the site to have declared its length. Returns null past the
-    // ceiling rather than growing a string until the process dies.
-    private static async Task<string?> ReadBoundedAsync(HttpResponseMessage response, CancellationToken ct)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var memory = new MemoryStream();
-
-        var buffer = new byte[64 * 1024];
-        int read;
-        while ((read = await stream.ReadAsync(buffer, ct)) > 0)
-        {
-            if (memory.Length + read > MaxFeedBytes) return null;
-            memory.Write(buffer, 0, read);
-        }
-
-        return System.Text.Encoding.UTF8.GetString(memory.ToArray());
     }
 
     private static LocalSupplySearchResult Fail(

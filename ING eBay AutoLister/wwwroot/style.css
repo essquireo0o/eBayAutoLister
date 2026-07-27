@@ -4405,6 +4405,43 @@ textarea {
 /* Liquidation auctions. Its own colour because the row behaves differently from every other one on
    the board: it has a deadline on it. */
 .local-badge-liquidation { background: #8a1c3d; }
+/* Free and free-after-coupon. Green, and the only badge on this board that is: nothing was spent,
+   so there is nothing on the row that can lose money. */
+.local-badge-freebies   { background: #1f7a45; }
+
+/* The free extras. Every one of these is either "what free still costs" or "how long you have",
+   which are the only two things about a free row a seller can get wrong. */
+.free-kind {
+  display: inline-block;
+  font-weight: 700;
+  border: 1px solid rgba(31, 122, 69, 0.4);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: #1f7a45;
+}
+
+.free-price {
+  font-weight: 700;
+  color: #1f7a45;
+}
+
+.free-clock { white-space: nowrap; }
+.free-clock-soon { color: var(--muted); }
+
+/* The deadline that is actually short. A free classified post is claimed the same day, which is a
+   tighter clock than most stated expiry dates. */
+.free-clock-now {
+  font-weight: 700;
+  color: #b4530a;
+}
+
+/* A cost the app couldn't see — unstated delivery on a $0 item, or freight-sized stock priced by
+   parcel comps. Deliberately loud: it is the one case where "free" overstates the deal. */
+.free-caveat {
+  font-weight: 700;
+  color: #b4530a;
+  cursor: help;
+}
 
 /* The liquidation extras. Everything here is about a row that expires or contains more than one
    thing — neither of which any other source on this board can do. */
@@ -4495,6 +4532,15 @@ textarea {
 }
 .retail-tax-row input { width: 72px; }
 .retail-tax-hint { color: var(--muted); }
+
+/* Shown only while the freebie board is ticked, because it is the only source where an empty
+   keyword box is a better search than a full one. */
+.fb-blank-query-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #1f7a45;
+}
 
 /* ── Facebook Marketplace local sourcing ──────────────────────────────────── */
 .fb-connect-banner { margin: 12px 0 4px; }

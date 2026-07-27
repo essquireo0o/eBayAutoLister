@@ -55,12 +55,33 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
     /// resolves to — craigslist is organised by metro, and a seller on a boundary knows their own
     /// board better than a prefix table does (see CraigslistSites).
     /// </summary>
-    public async Task<LocalSupplySearchResult> SearchAsync(
-        string query, string zip, int radiusMiles, string? siteId, CancellationToken ct = default)
+    public Task<LocalSupplySearchResult> SearchAsync(
+        string query, string zip, int radiusMiles, string? siteId, CancellationToken ct = default) =>
+        SearchCategoryAsync(CraigslistParser.ForSaleCategory, query, zip, radiusMiles, siteId, ct);
+
+    /// <summary>
+    /// The same search against a named craigslist board rather than the for-sale one.
+    ///
+    /// Exists for the freebie finder, which reads the free-stuff category — the best free supply
+    /// there is, and a board where posts carry no price at all. Everything else about the request is
+    /// identical, which is the point: the headers craigslist expects, the block detection, the RSS
+    /// fallback and the search budget are all shared rather than copied into a second service.
+    /// </summary>
+    /// <param name="freeBoard">
+    /// True for a category whose posts are free by construction, which changes two things and only
+    /// these two. Posts carry no price, so a missing one means free rather than unparseable — and
+    /// without this the parser drops every post that doesn't happen to say the word, which is most
+    /// of them ("Oak wall unit" on the free board is a free oak wall unit). And a blank query
+    /// becomes meaningful: "everything being given away near me" is the single most useful search
+    /// on that board, where on the for-sale board it is just the whole classifieds section.
+    /// </param>
+    public async Task<LocalSupplySearchResult> SearchCategoryAsync(
+        string category, string query, string zip, int radiusMiles, string? siteId,
+        CancellationToken ct = default, bool freeBoard = false)
     {
         var radius = Math.Clamp(radiusMiles, 1, 500);
 
-        if (string.IsNullOrWhiteSpace(query))
+        if (string.IsNullOrWhiteSpace(query) && !freeBoard)
             return Fail(query, zip, radius, "Enter something to search for.");
 
         var site = CraigslistSites.Resolve(zip, siteId);
@@ -83,9 +104,9 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
 
         var listings = new List<LocalSupplyListing>();
 
-        var searchUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, rss: false);
+        var searchUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, rss: false, category: category);
         var (html, transportError, retryable) = await GetAsync(http, searchUrl, budget.Token, ct);
-        if (html is not null) listings.AddRange(CraigslistParser.ParseStaticHtml(html));
+        if (html is not null) listings.AddRange(CraigslistParser.ParseStaticHtml(html, freeBoard));
 
         // A failed request is not an empty market, and the feed is served by the same host that
         // just refused us — so the fallback is only worth trying when the page itself came back
@@ -95,14 +116,14 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
 
         if (listings.Count == 0)
         {
-            var rssUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius);
+            var rssUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, category: category);
             // A 403 here is craigslist's normal answer on its current search stack, not a fault
             // worth reporting on top of an empty result — hence the discarded error.
             var (feed, _, _) = await GetAsync(http, rssUrl, budget.Token, ct);
-            if (feed is not null) listings.AddRange(CraigslistParser.ParseRss(feed));
+            if (feed is not null) listings.AddRange(CraigslistParser.ParseRss(feed, freeBoard));
         }
 
-        var result = CraigslistParser.BuildResult(listings, site, query, zip, radius);
+        var result = CraigslistParser.BuildResult(listings, site, query, zip, radius, category);
 
         if (result.Count > 0 && !CraigslistSites.IsExactZipMatch(zip) && string.IsNullOrWhiteSpace(siteId))
         {

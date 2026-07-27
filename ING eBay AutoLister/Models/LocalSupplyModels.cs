@@ -61,6 +61,14 @@ public class LocalSupplyListing
     // than an asking price, that a buyer's premium and sales tax sit on top of it, and that the row
     // may be several units of one product rather than one thing — see Models/LiquidationModels.cs.
     public LiquidationLotDetails? Liquidation { get; set; }
+
+    // ── Free / free-after-coupon supply ───────────────────────────────────────
+    // Null on every other source. Non-null means the cost basis is zero or nearly so — and that the
+    // row carries a deadline, because free things are claimed in hours and coupon prices are pulled
+    // without notice. What "free" actually costs (a rebate's sales tax, its wait, its risk of never
+    // being paid) is FreebiePricer's answer, not this field's. See Models/FreebieModels.cs.
+    public FreebieDetails? Freebie { get; set; }
+
     // "Just listed", "3 hours ago" — free text as the site rendered it.
     public string PostedAgo { get; set; } = "";
     // Craigslist's feed carries a real timestamp; Facebook only ever shows relative text.
@@ -166,6 +174,11 @@ public class LocalSupplySourceInfo
     // panel promising "within 40 miles" for a source that searched 250 — see
     // ILocalSupplySource.MinRadiusMiles.
     public int MinRadiusMiles { get; set; }
+    // Whether searching this source with no keyword at all is meaningful. True only for the freebie
+    // board, where "everything being given away near me" is the best search there is; on every other
+    // source a blank query is the whole classifieds section. Drives whether the panel lets the
+    // seller press the button with the keyword box empty.
+    public bool AllowsBlankQuery { get; set; }
 }
 
 // A site this app deliberately does not scrape, offered as a one-click search instead. UrlTemplate

@@ -58,11 +58,17 @@ public static class DaysToCashEstimator
     /// <paramref name="roiPercent"/> are the money for the specific buy being judged — pass the
     /// live buy's numbers where supply exists, and the target-price numbers where it doesn't.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="extraPipelineDays"/> adds a wait the fixed pipeline above doesn't cover. A
+    /// mail-in rebate holds the seller's money for weeks after the item itself has already sold, and
+    /// a board that ignored it would rank that flip as if the cash came back as fast as a cash
+    /// buy's. Zero for every caller that isn't one — see FreebiePricer.MailInRebateWaitDays.
+    /// </remarks>
     public static DaysToCashEstimate Estimate(
         int? estimatedDaysToSell, decimal estimatedMonthlySales,
-        decimal? netProfit = null, decimal? roiPercent = null)
+        decimal? netProfit = null, decimal? roiPercent = null, int extraPipelineDays = 0)
     {
-        var estimate = new DaysToCashEstimate { PipelineDays = PipelineDays };
+        var estimate = new DaysToCashEstimate { PipelineDays = PipelineDays + Math.Max(0, extraPipelineDays) };
 
         var toSell = DaysToSell(estimatedDaysToSell, estimatedMonthlySales);
         if (toSell is not int sellDays)
@@ -74,7 +80,7 @@ public static class DaysToCashEstimator
             return estimate;
         }
 
-        var days = sellDays + PipelineDays;
+        var days = sellDays + estimate.PipelineDays;
         estimate.DaysToSell = sellDays;
         estimate.DaysToCash = days;
         estimate.CapitalTurnsPerYear = Math.Round(365m / days, 1);

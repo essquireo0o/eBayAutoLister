@@ -28,7 +28,14 @@ public static class DealFeedParser
     /// changed shape has to degrade into "this one found nothing" beside the feeds that worked,
     /// never into a failed scan.
     /// </summary>
-    public static List<LocalSupplyListing> ParseFeed(string? xml, DealFeed feed, DateTime? nowUtc = null)
+    /// <param name="requirePrice">
+    /// True everywhere except the freebie finder. A deal with no readable price has no cost basis
+    /// and is dropped — unless the whole point of the scan is that the item is free, where a missing
+    /// price is the normal case rather than a parse failure (see <see cref="FreebieSourceService"/>,
+    /// which decides for itself whether "no price" means free).
+    /// </param>
+    public static List<LocalSupplyListing> ParseFeed(
+        string? xml, DealFeed feed, DateTime? nowUtc = null, bool requirePrice = true)
     {
         var listings = new List<LocalSupplyListing>();
         if (string.IsNullOrWhiteSpace(xml)) return listings;
@@ -46,7 +53,7 @@ public static class DealFeedParser
 
         foreach (var item in doc.Descendants().Where(e => e.Name.LocalName == "item"))
         {
-            var listing = ParseItem(item, feed, nowUtc ?? DateTime.UtcNow);
+            var listing = ParseItem(item, feed, nowUtc ?? DateTime.UtcNow, requirePrice);
             if (listing is not null) listings.Add(listing);
         }
 
@@ -57,7 +64,8 @@ public static class DealFeedParser
     /// One entry, or null when it isn't a priced, buyable product. Null is the common case and the
     /// correct one — see the class remarks.
     /// </summary>
-    public static LocalSupplyListing? ParseItem(XElement item, DealFeed feed, DateTime nowUtc)
+    public static LocalSupplyListing? ParseItem(
+        XElement item, DealFeed feed, DateTime nowUtc, bool requirePrice = true)
     {
         string Child(string name) =>
             item.Elements().FirstOrDefault(e => e.Name.LocalName == name)?.Value?.Trim() ?? "";
@@ -84,7 +92,7 @@ public static class DealFeedParser
         if (IsNotAProduct(rawTitle) || IsNotAProduct(FirstSentence(prose))) return null;
 
         var (price, originalPrice, priceText) = ReadPrice(item, rawTitle, prose);
-        if (price is null) return null;
+        if (price is null && requirePrice) return null;
 
         var retailer = ReadRetailer(item, description, body);
 

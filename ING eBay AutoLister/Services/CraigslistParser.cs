@@ -45,15 +45,31 @@ public static class CraigslistParser
     private static readonly Regex ImgSrcRx = new(@"<img[^>]+src=[""']([^""']+)[""']", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex TagRx = new(@"<[^>]+>", RegexOptions.Compiled);
 
+    /// <summary>Craigslist's "for sale" board — everything with a price on it, and the default.</summary>
+    public const string ForSaleCategory = "sss";
+
     /// <summary>
     /// Builds a craigslist search URL. <c>postal</c> + <c>search_distance</c> are craigslist's own
     /// radius filter, applied server-side, so the site only has to be the right metro — see
     /// CraigslistSites. Sorted newest-first: a sourcing search wants what appeared since the seller
     /// last looked, not the same aged posts every time.
     /// </summary>
-    public static string BuildSearchUrl(string site, string query, string zip, int radiusMiles, int offset = 0, bool rss = true)
+    /// <param name="category">
+    /// The board to search. Defaults to <see cref="ForSaleCategory"/>, which is what every caller
+    /// wanted until the freebie finder needed craigslist's free-stuff board — see
+    /// <see cref="FreebieCatalog.CraigslistFreeCategory"/>. A category code, never user input: it
+    /// goes into the path, and craigslist's own vocabulary is the only thing that belongs there.
+    /// </param>
+    public static string BuildSearchUrl(
+        string site, string query, string zip, int radiusMiles, int offset = 0, bool rss = true,
+        string category = ForSaleCategory)
     {
-        var url = $"https://{site}.craigslist.org/search/sss?query={Uri.EscapeDataString(query ?? "")}&sort=date";
+        // Anything that isn't one of craigslist's own short lowercase codes is not a category, and
+        // is certainly not something to splice into a URL path.
+        if (string.IsNullOrWhiteSpace(category) || !category.All(char.IsAsciiLetterLower))
+            category = ForSaleCategory;
+
+        var url = $"https://{site}.craigslist.org/search/{category}?query={Uri.EscapeDataString(query ?? "")}&sort=date";
 
         // Radius is only meaningful with a postal code to measure from; craigslist ignores one
         // without the other, so both are sent or neither is.
@@ -70,7 +86,12 @@ public static class CraigslistParser
     /// Parses a craigslist RSS/RDF feed. Returns an empty list rather than throwing on malformed
     /// XML — a feed that changed shape must degrade into "try the HTML page", not into a 500.
     /// </summary>
-    public static List<LocalSupplyListing> ParseRss(string xml)
+    /// <param name="freeBoard">
+    /// True when every post in this feed is free by construction (craigslist's free-stuff
+    /// category). A post with no price is then free rather than unpriceable — see
+    /// <see cref="ParseRssItem"/>.
+    /// </param>
+    public static List<LocalSupplyListing> ParseRss(string xml, bool freeBoard = false)
     {
         var listings = new List<LocalSupplyListing>();
         if (string.IsNullOrWhiteSpace(xml)) return listings;
@@ -88,14 +109,14 @@ public static class CraigslistParser
 
         foreach (var item in doc.Descendants().Where(e => e.Name.LocalName == "item"))
         {
-            var listing = ParseRssItem(item);
+            var listing = ParseRssItem(item, freeBoard);
             if (listing is not null) listings.Add(listing);
         }
 
         return listings;
     }
 
-    public static LocalSupplyListing? ParseRssItem(XElement item)
+    public static LocalSupplyListing? ParseRssItem(XElement item, bool freeBoard = false)
     {
         string Child(string name) => item.Elements().FirstOrDefault(e => e.Name.LocalName == name)?.Value?.Trim() ?? "";
 
@@ -128,7 +149,9 @@ public static class CraigslistParser
         if (priced.Price is null) priced = ExtractPrice(StripHtml(description));
         listing.Price = priced.Price;
         listing.PriceText = priced.Text;
-        listing.IsFree = priced.Price is null && LooksFree(rawTitle);
+        // On the free board a missing price means free, not unreadable: most of those posts never
+        // say the word at all, and requiring them to would throw away the best supply on the board.
+        listing.IsFree = priced.Price is null && (freeBoard || LooksFree(rawTitle));
 
         var (title, place) = CleanTitle(rawTitle);
         listing.Title = title;
@@ -156,7 +179,8 @@ public static class CraigslistParser
     /// postal/distance filter. A post here carries a title, a price and often a location — no
     /// timestamp and no thumbnail, which the RSS path has and this one doesn't.
     /// </summary>
-    public static List<LocalSupplyListing> ParseStaticHtml(string html)
+    /// <param name="freeBoard">See <see cref="ParseRss"/> — a missing price is "free", not "unreadable".</param>
+    public static List<LocalSupplyListing> ParseStaticHtml(string html, bool freeBoard = false)
     {
         var listings = new List<LocalSupplyListing>();
         if (string.IsNullOrWhiteSpace(html)) return listings;
@@ -197,7 +221,7 @@ public static class CraigslistParser
                 Title = cleanTitle,
                 Price = price,
                 PriceText = text,
-                IsFree = price is null && LooksFree(title),
+                IsFree = price is null && (freeBoard || LooksFree(title)),
                 Location = location.Length > 0 ? location : place,
             };
 
@@ -214,7 +238,8 @@ public static class CraigslistParser
     /// across feed pages), padding filtered out, ask spread summarised.
     /// </summary>
     public static LocalSupplySearchResult BuildResult(
-        IEnumerable<LocalSupplyListing> listings, CraigslistSite site, string query, string zip, int radiusMiles)
+        IEnumerable<LocalSupplyListing> listings, CraigslistSite site, string query, string zip, int radiusMiles,
+        string category = ForSaleCategory)
     {
         var items = LocalSupplyResults.Dedupe(listings);
         items = LocalSupplyResults.FilterByRelevance(items, query);
@@ -230,7 +255,7 @@ public static class CraigslistParser
             Query = query,
             ZipCode = zip,
             RadiusMiles = radiusMiles,
-            SearchUrl = BuildSearchUrl(site.Id, query, zip, radiusMiles, rss: false),
+            SearchUrl = BuildSearchUrl(site.Id, query, zip, radiusMiles, rss: false, category: category),
             ScopeLabel = $"{site.Label} craigslist ({site.State})",
             Items = items,
             Min = min, Median = median, Max = max,

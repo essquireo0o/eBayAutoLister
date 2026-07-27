@@ -117,11 +117,27 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     {
         var localAsk = listing.Price ?? 0m;
 
+        // A free item's cost basis is not its price — it is what surviving the word "free" costs:
+        // a rebate's unrefundable sales tax, the slice of the claim held in reserve, and nothing at
+        // all on a curb pickup. Computed first because everything below is measured against it.
+        var freebie = listing.Freebie is { } details
+            ? FreebiePricer.Cost(details, retailSalesTaxPercent)
+            : null;
+
         // The register's cut. Zero for every non-retail row, which is what makes this change
         // invisible to Craigslist and Facebook: taxPercent 0 ⇒ buyCost == localAsk exactly.
         var taxPercent = listing.IsRetail ? RetailBuyCosts.Sanitize(retailSalesTaxPercent) : 0m;
         var salesTax = RetailBuyCosts.TaxOn(localAsk, taxPercent);
         var buyCost = localAsk + salesTax;
+
+        // On a freebie the pricer has already done both, and it is the only one that can: a rebate's
+        // tax is charged against a price the seller gets back, which this row's LocalAsk (zero)
+        // knows nothing about.
+        if (freebie is not null)
+        {
+            salesTax = freebie.SalesTax;
+            buyCost = freebie.NetCost;
+        }
 
         var row = new LocalArbitrageOpportunity
         {
@@ -141,10 +157,15 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             Retailer = listing.Retailer,
             FreeShipping = listing.FreeShipping,
             CouponCode = listing.CouponCode,
+            Freebie = freebie,
             // Only stated where it is a real, separate cost — carrying a $0 tax line on a
-            // Craigslist row would imply the app had checked, and it hasn't.
-            SalesTax = listing.IsRetail ? salesTax : null,
-            BuyCostAllIn = listing.IsRetail ? buyCost : null,
+            // Craigslist row would imply the app had checked, and it hasn't. A freebie states both
+            // whenever there is anything to state: on a rebate the seller is genuinely out of pocket
+            // for weeks, and a board showing that row at $0 would be describing a different deal.
+            SalesTax = freebie is not null ? (freebie.SalesTax > 0m ? freebie.SalesTax : null)
+                : listing.IsRetail ? salesTax : null,
+            BuyCostAllIn = freebie is not null ? (buyCost > 0m ? buyCost : null)
+                : listing.IsRetail ? buyCost : null,
         };
 
         // An auction lot is a different arithmetic on the same pipeline: the price is a bid rather
@@ -195,12 +216,16 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         // How long that profit takes to become money again. Computed from THIS row's net profit, so
         // two listings of the same product at different asks correctly differ in profit-per-day
-        // even though they share a velocity.
-        ApplyDaysToCash(row, resale);
+        // even though they share a velocity. A rebate adds its own wait: the cash is out of the
+        // seller's hands from the till to the cheque, exactly the way inventory is.
+        ApplyDaysToCash(row, resale, freebie?.RefundWaitDays ?? 0);
 
         // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay.
         var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, buyCost,
             resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
+
+        if (freebie is not null) (verdict, note) = JudgeFreebie(verdict, note, freebie, profit.NetProfitPerUnit);
+
         row.Verdict = verdict;
         row.VerdictNote = note;
 
@@ -306,6 +331,44 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         return row;
     }
 
+    /// <summary>
+    /// The verdict on a free row, which the ordinary tiering gets wrong in one specific and
+    /// expensive way: a $0 cost basis makes ROI unbounded, so <b>every free row clears the goldmine
+    /// bar on return alone</b> and the badge stops distinguishing a free 65" television from a free
+    /// mouse mat.
+    /// </summary>
+    /// <remarks>
+    /// Three corrections, in the order they matter. All of them lower a verdict; none raises one,
+    /// because "free" is already the most flattering cost basis there is and nothing here should
+    /// make it more so.
+    /// </remarks>
+    public static (string Verdict, string Note) JudgeFreebie(
+        string verdict, string note, FreebieEconomics freebie, decimal? netProfit)
+    {
+        // Already worthless or unpriceable: nothing to hold back.
+        if (verdict is "pass" or "no_data") return (verdict, $"{note} {freebie.UrgencyNote}".Trim());
+
+        // Free does not make a $6 flip worth a Saturday. Fetching it, photographing it, listing it
+        // and packing it costs the same hour whatever it cost to buy.
+        if (FreebiePricer.NotWorthCollecting(netProfit))
+        {
+            return ("thin",
+                $"{netProfit:C} after fees and shipping — free, but not worth the trip and the packing " +
+                $"once you've fetched it, photographed it and listed it. {freebie.UrgencyNote}".Trim());
+        }
+
+        // A cost the app couldn't see, large enough to change the answer: unstated delivery on a $0
+        // item, or freight-sized stock priced by parcel comps. Said out loud rather than folded in.
+        if (freebie.CappedReason is { } reason && verdict == "goldmine")
+            return ("solid", $"{note} {reason} {freebie.UrgencyNote}".Trim());
+
+        // The cost sentence only earns its place when there IS a cost. On a curb pickup it says
+        // "nothing" at length, identically, on every row — which is noise in front of the deadline,
+        // and the deadline is the part the seller has to act on.
+        var cost = freebie.NetCost > 0m ? $"{freebie.CostNote} " : "";
+        return (verdict, $"{note} {cost}{freebie.UrgencyNote}".Trim());
+    }
+
     // The buy side of the same row. Every dollar this saves is profit with no fee, no shipping and
     // no wait attached — see NegotiationAdvisor.
     private static void ApplyNegotiation(LocalArbitrageOpportunity row, ResalePricing resale)
@@ -320,6 +383,11 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // seller does get is MaxBuyPrice above: the shelf price to stop at, which on retail is the
         // whole of the buy-side decision.
         if (row.IsRetail) return;
+
+        // Nothing to haggle over at zero. Drafting an offer for a free item would be the app's most
+        // absurd output, and counting its "upside" would put money on the board that was never on
+        // it. What this row needs instead is speed — see FreebieEconomics.UrgencyNote.
+        if (row.Freebie is not null) return;
 
         row.Negotiation = NegotiationAdvisor.Build(
             askPrice: row.LocalAsk,
@@ -342,11 +410,12 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         return days < 0 ? null : days;
     }
 
-    private static void ApplyDaysToCash(LocalArbitrageOpportunity row, ResalePricing? resale)
+    private static void ApplyDaysToCash(
+        LocalArbitrageOpportunity row, ResalePricing? resale, int extraPipelineDays = 0)
     {
         var estimate = DaysToCashEstimator.Estimate(
             resale?.EstimatedDaysToSell, resale?.EstimatedMonthlySales ?? 0m,
-            row.NetProfit, row.RoiPercent);
+            row.NetProfit, row.RoiPercent, extraPipelineDays);
 
         row.DaysToSell = estimate.DaysToSell;
         row.CashPipelineDays = estimate.PipelineDays;
@@ -375,8 +444,17 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     public static (string Verdict, string Note) Judge(
         decimal netProfit, decimal? roiPercent, decimal localAsk, int compCount, int confidenceScore)
     {
+        // Nothing was spent, so there is no ROI to quote — it is unbounded, not enormous. The
+        // sentinel below stands in for that in the comparisons; it must never reach a sentence,
+        // where it prints as a 29-digit percentage and reads as a bug in every number beside it.
+        var costsNothing = localAsk <= 0m && roiPercent is null;
+
         if (netProfit <= 0)
-            return ("pass", $"Sells for less than the ${localAsk:0.##} ask once fees are paid.");
+        {
+            return ("pass", costsNothing
+                ? "Even at nothing, this doesn't clear eBay's cut and the cost of shipping it."
+                : $"Sells for less than the ${localAsk:0.##} ask once fees are paid.");
+        }
 
         var roi = roiPercent ?? (localAsk <= 0 ? decimal.MaxValue : 0m);
 
@@ -385,10 +463,18 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         if (roi >= GoldmineRoiPercent && netProfit >= GoldmineProfit
             && compCount >= GoldmineMinComps && confidenceScore >= GoldmineMinConfidence)
-            return ("goldmine", $"${netProfit:0.##} net on a ${localAsk:0.##} buy, backed by {compCount} sold comps.");
+        {
+            return ("goldmine", costsNothing
+                ? $"${netProfit:0.##} net for nothing spent, backed by {compCount} sold comps."
+                : $"${netProfit:0.##} net on a ${localAsk:0.##} buy, backed by {compCount} sold comps.");
+        }
 
         if (roi >= SolidRoiPercent && netProfit >= SolidProfit)
-            return ("solid", $"${netProfit:0.##} net after fees ({roi:0}% ROI).");
+        {
+            return ("solid", costsNothing
+                ? $"${netProfit:0.##} net after fees, and it cost nothing to buy."
+                : $"${netProfit:0.##} net after fees ({roi:0}% ROI).");
+        }
 
         return ("thin", confidenceScore < GoldmineMinConfidence
             ? $"${netProfit:0.##} net, but the sold data behind it is weak."

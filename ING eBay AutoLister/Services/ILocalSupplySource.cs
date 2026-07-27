@@ -75,6 +75,17 @@ public interface ILocalSupplySource
     int MinRadiusMiles => 0;
 
     /// <summary>
+    /// Whether searching this source with no keyword is meaningful.
+    ///
+    /// False for everything that existed before the freebie finder, and a default so none of them
+    /// had to say so: a blank search of craigslist's for-sale board is the entire classifieds
+    /// section, and a blank deal-feed scan is every discount in the country. On the free board it is
+    /// the opposite — "show me everything being given away near me" is the single most useful search
+    /// there is, because a seller shopping for free things does not care what they are.
+    /// </summary>
+    bool AllowsBlankQuery => false;
+
+    /// <summary>
     /// One user-initiated search. Implementations must not retry, schedule, or authenticate as a
     /// side effect: an expired session is reported (status <c>session_expired</c>), never silently
     /// re-established.
@@ -116,6 +127,6 @@ public sealed class LocalSupplySources(IEnumerable<ILocalSupplySource> sources)
         Id = s.Id, Label = s.Label, RequiresConnection = s.RequiresConnection,
         Available = s.IsAvailable, Note = s.AvailabilityNote, LocationBased = s.IsLocationBased,
         ChargesSalesTax = s.ChargesSalesTax, ManualSites = s.ManualSites.ToList(),
-        MinRadiusMiles = s.MinRadiusMiles,
+        MinRadiusMiles = s.MinRadiusMiles, AllowsBlankQuery = s.AllowsBlankQuery,
     }).ToList();
 }

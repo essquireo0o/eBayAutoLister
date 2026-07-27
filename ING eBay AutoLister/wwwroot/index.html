@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=50" />
+  <link rel="stylesheet" href="style.css?v=51" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -1048,8 +1048,8 @@
                DealFeedService); Facebook needs a one-time login to their own account because it
                publishes no search API. All three arrive as the same LocalSupplyListing. -->
           <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Deal Scanner — classifieds, clearance &amp; liquidation</h3>
-            <p class="opp-hint">Search local classifieds near you, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off — store closings, overstock, customer returns and surplus. Every price is compared against real eBay sold prices. Buy cheap, list on eBay. <strong>Only Facebook needs a login.</strong></p>
+            <h3 class="opp-supplier-heading">📍 Deal Scanner — free stuff, classifieds, clearance &amp; liquidation</h3>
+            <p class="opp-hint">Search what's being given away near you, local classifieds, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off — store closings, overstock, customer returns and surplus. Every price is compared against real eBay sold prices. Buy cheap — or free — and list on eBay. <strong>Only Facebook needs a login.</strong></p>
 
             <!-- Source picker, rendered from /api/local/sources so a new source appears here
                  without touching this markup. -->
@@ -1069,6 +1069,9 @@
               <div class="opp-field fb-field-keyword">
                 <label for="fb-query-input">What to look for</label>
                 <input id="fb-query-input" type="text" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
+                <!-- Only shown while a source that means something by a blank search is ticked —
+                     which is the freebie board and nothing else. See ILocalSupplySource.AllowsBlankQuery. -->
+                <span id="fb-blank-query-hint" class="fb-blank-query-hint hidden">Leave blank to see <strong>everything</strong> being given away near you.</span>
               </div>
               <div class="opp-field fb-field-zip">
                 <label for="fb-zip-input">Zip code</label>
@@ -3832,6 +3835,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=59"></script>
+  <script src="app.js?v=60"></script>
 </body>
 </html>

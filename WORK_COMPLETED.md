@@ -3975,3 +3975,222 @@ the board's existing 5-comp bar — i.e. no bar at all. Fixed rather than kept a
   "S1 - DeWALT POWER TOOLS (G17?)" at $249.99 on 2 comps. It errs conservative (badged `thin`, no
   goldmines claimed), but auction titles carry lot codes and abbreviations that classifieds do not,
   and it is worth its own pass.
+
+## Free / Free-after-coupon Finder — the flip with nothing on the line (autonomous session, 2026-07-27)
+
+### The money problem
+
+Every sourcing board in this app ranks by the gap between what an item costs and what it sells for.
+All of them assume the first number is greater than zero: the Deal Scanner buys clearance, the
+Liquidation finder bids on pallets, Local Deals haggles with a stranger. Each one asks the seller to
+put money at risk before they make any.
+
+There is supply that doesn't. Craigslist's free-stuff board in **one metro, verified live this
+session, carried 186 posts** — a 65" LG smart TV, a Craftsman tool chest, a DeWalt circular saw, a
+Yamaha grand piano, a Proform treadmill, a Samsung washer/dryer — all at $0, all collected in person.
+Alongside it, retailers publish items that reach $0 after a coupon or a rebate. None of it was
+visible to this app, and it is the only stock a seller with no cash at all can buy.
+
+A free item cannot lose money. Its ROI has no ceiling. The only questions left are **whether it is
+worth the trip** and **whether it is still there** — and both are answered on the row.
+
+### What was built
+
+`FreebieSourceService` — a fifth `ILocalSupplySource`, ticked on in the same picker, ranked in the
+same table, priced by the same sold-comps → `ProfitCalculator` → `FeeProfile` stack. **Nothing
+downstream changed**: grouping, comp lookups, `LocalSupplyMerger.TakeBalanced`, `Rank`, the Deal
+Pipeline and the Budget Optimizer were already written against `LocalSupplyListing`, so a free oak
+wall unit lands in one ranked list beside the Craigslist and clearance rows.
+
+Two legs, because free supply lives in two very different places:
+
+| Leg | What it contributes |
+|---|---|
+| **Craigslist free-stuff board** (`/search/zip`) | The best free supply there is: furniture, appliances, tools, exercise equipment. Local pickup, genuinely $0 |
+| **Slickdeals × 5 slices** | The seller's own words + free, free-after-rebate, free-after-coupon, freebies, 100% off — nationwide, shipped |
+
+The local leg is read **through `CraigslistService`**, not a second copy of it, so the headers
+craigslist expects, the block detection, the RSS fallback and the search budget are the ones already
+trusted. `CraigslistParser.BuildSearchUrl` gained a `category` parameter (defaulted to the existing
+`sss`, so every existing caller is byte-identical) and rejects anything that isn't one of
+craigslist's own short lowercase codes, because it goes into the URL path.
+
+**The one board where a blank search is the best search.** `AllowsBlankQuery` (a new **default**
+interface member, so no existing source was edited) lets the seller press the button with the
+keyword box empty and get *everything being given away near them* — a seller shopping for free
+things does not care what they are. On every other source a blank query is the whole classifieds
+section, and they all still refuse it.
+
+### The parser's real job is refusal, and here the bar is highest in the app
+
+A $0 cost basis makes ROI unbounded, which means **anything the classifier lets through lands at the
+very top of the profit ranking**. There is no board where a wrong answer is more visible.
+
+`FreebieClassifier` is therefore almost entirely refusal, and every rule was **measured against live
+data** — 186 craigslist free posts and 81 Slickdeals titles pulled this session — not imagined:
+
+- **"Free" is usually attached to something other than the item.** Free *shipping* is the single
+  commonest phrase on any deal feed; free *gift with purchase*, free *trial*, free *credit*, free
+  *checked bag* and buy-one-get-one all followed. These are **stripped before** the free test runs
+  rather than refused, because "Free 65in TV + free shipping" is a genuine freebie whose title
+  happens to contain both.
+- **Hyphenated compounds are not giveaways.** Found live and fixed: `BPA-free jugs` was read as free
+  **and had the word cut out of its own title**, reaching the comp matcher as "BPA- jugs". Oil-free
+  face wash and aluminum-free deodorant did the same. Every "free" pattern now carries a
+  `(?<![A-Za-z]-)` guard.
+- **Free because it is broken.** `FreeBecauseBroken` is deliberately wider than
+  `LiquidationSelectors.ForPartsOnly`, which was tuned narrow against auction catalogues. A free
+  board is the opposite: damage is the commonest *reason* something is being given away and people
+  say so plainly — "Damaged panel/screen", "good for parts", "Repair or Project", "Scrap
+  Metal/Parts", all live. The first is a **75" television that would otherwise have been priced
+  against sold comps for televisions that work**.
+- **A pile is not a product.** "Cleaning out garage and have a lot of free stuff", "Free stuff pile",
+  "Curb Alert — Help Yourself", and a post titled just "Free". All genuinely worth driving to, none
+  of them priceable: there is no one item to comp, so the row would be a confident number about
+  nothing.
+- **Free and worthless.** Bulk materials and haul-away were the largest single slice of the live free
+  board — firewood, dirt, drywall, scrap metal, pallets, moving boxes, railroad ties, used tires.
+  Plus groceries and toiletries from the deal feeds (a scan came back with mustard, deodorant, cat
+  litter liners and peanuts), digital goods eBay won't let anyone resell, livestock, and replicas
+  ("Free knock off yeezy", live — priced against genuine comps it reads as the best flip on the
+  board).
+- **"Giveaway" is not "sweepstakes".** Refusing the word would have deleted "Giveaway
+  instruments — Charles Walter Piano". The refusal is on *entering something* ("enter to win",
+  "sweepstakes", "raffle"), not on giving something away.
+- **An expired offer is not an offer.** Expiry dates are parsed out of the title — "exp 7/19/26",
+  "ex 7/11", "(Valid 7/10 Only)" were all live — and a dead one is dropped. A year-less date resolves
+  to whichever side of today it is nearer, which is what makes an already-dead offer detectable.
+- **The free-stuff board's posts are free without saying so.** "Oak wall unit" on that board is a
+  free oak wall unit; most of those 186 posts never used the word. `freeBoard: true` makes a missing
+  price mean free rather than unreadable — without it the parser threw away most of the best supply
+  this feature has.
+
+### Free is not free, and the three costs that survive the word
+
+`FreebiePricer` writes the cost basis. Passing zero would have been easy and wrong:
+
+- **Sales tax survives a rebate.** A $49.99 item with a $49.99 mail-in rebate is **not free**: the
+  register charged tax on the full $49.99 and the cheque only ever covers the price. At 7.5% that is
+  $3.75 gone for good. A test pins that the identical item is worth exactly **$11.25 less** bought on
+  rebate than found on a kerb.
+- **A rebate is a claim, not a discount.** 15% of it is held back as a **reserve, not a forecast** —
+  stated as policy rather than as an invented denial statistic: the row only earns its verdict if it
+  still works when roughly one claim in seven is never paid.
+- **The wait is real.** A mail-in rebate holds the money ~8 weeks after the item has already sold, so
+  it is added to the days-to-cash figure the whole board ranks by (`DaysToCashEstimator.Estimate`
+  gained an optional `extraPipelineDays`; every existing caller passes nothing and is unchanged).
+  An app-paid rebate (Venmo, PayPal, Ibotta — named on the listing) waits days instead.
+- **Fronting too much isn't a freebie.** Above $100 out of pocket it is a loan, and it belongs on a
+  board that ranks by capital at risk. Refused.
+
+### Two verdicts the arithmetic alone would have got wrong
+
+Because ROI is unbounded, **every unflagged free row clears the goldmine bar on return alone** and
+the badge would stop distinguishing a free 65" television from a free mouse mat. `JudgeFreebie`
+lowers verdicts and never raises one:
+
+- **An unstated delivery cost on a $0 item is the entire cost basis.** A "free" thing with $18
+  shipping is an $18 item, and the listing didn't say. Capped, with the reason on the row.
+- **Freight-sized stock priced by parcel comps.** The sold history behind a free sofa was set by
+  people who did not post it in a box. Kept — a free treadmill is real money — but capped, and told
+  to sell it locally.
+- **Free does not make a $6 flip worth a Saturday.** Fetching, photographing, listing and packing
+  cost the same hour whatever the item cost to buy.
+
+### A bug this board turned from rare into normal
+
+Live output read: `$736.46 net after fees (79228162514264337593543950335% ROI)`. That is
+`decimal.MaxValue` — the sentinel standing in for "no cost basis" — leaking out of the comparison it
+exists for and into a sentence. Pre-existing (a free Craigslist row could always hit it), but this
+board makes the zero-cost case the normal one rather than the rare one. `Judge` now says
+"it cost nothing to buy" and "Even at nothing, this doesn't clear eBay's cut", and a test pins that
+the 29-digit number never reaches a sentence again.
+
+### One post, one row
+
+A free craigslist post is on the for-sale board **and** the free-stuff board, and the two arrive
+under different source ids — which the per-source `(source, id)` dedupe cannot see. `LocalSupplyMerger`
+gained a cross-source URL dedupe: one post at one address is one thing to go and collect. Verified
+live on a mixed scan — freebies returned 4 rows, 2 survived, zero duplicate URLs on the board.
+
+### Shared rather than copied
+
+`PublicFeedHttp` was extracted from `DealFeedService` when this became the second source reading the
+same feeds off the same sites. Two copies would eventually disagree about what a 403 means.
+
+### Honesty rules kept
+
+- **Never inflated.** Every ambiguity resolves toward a higher cost or no row at all.
+- **A leg that fails, fails alone.** No zip? The local board is skipped with one sentence and the
+  nationwide feeds still answer — verified live, `status=ok`.
+- **Never dead-ends.** Per-feed errors, a scan budget returning partial results, block-page
+  detection, bounded reads.
+- **Nothing is bought, and nothing is haggled.** A free row carries no negotiation plan and
+  contributes nothing to the board's `negotiationUpside` — there is nothing to talk down. What it
+  gets instead is the deadline.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/FreebieCatalog.cs` | **New** — the craigslist free category, five Slickdeals slices, two manual sites. The one file to edit when one moves |
+| `Services/FreebieSelectors.cs` | **New** — every pattern, isolated for tuning: the four kinds of fake "free", the broken detector, bulk/consumable/digital refusals, expiry, bulky, offer noise |
+| `Services/FreebieClassifier.cs` | **New** — is it free, what kind, how long is left, and the title cleanup. Pure |
+| `Services/FreebiePricer.cs` | **New** — unrefundable tax, the rebate reserve, the refund wait, the verdict caps |
+| `Services/FreebieSourceService.cs` | **New** — the `ILocalSupplySource`: two legs, per-leg failure isolation, scan budget |
+| `Services/PublicFeedHttp.cs` | **New** — one GET against a public feed, extracted from `DealFeedService` and now shared |
+| `Models/FreebieModels.cs` | **New** — `FreebieKinds`, `FreebieUrgency`, `FreebieDetails`, `FreebieEconomics` |
+| `Services/ILocalSupplySource.cs` | `AllowsBlankQuery` default member + carried into `Describe()` |
+| `Services/CraigslistParser.cs` | `category` on `BuildSearchUrl`/`BuildResult` (defaulted, validated); `freeBoard` on both parsers |
+| `Services/CraigslistService.cs` | `SearchCategoryAsync`; the existing `SearchAsync` delegates to it |
+| `Services/DealFeedParser.cs` | `requirePrice` (defaulted true) — a freebie has no price |
+| `Services/DealFeedService.cs` | ~90 lines of HTTP replaced by `PublicFeedHttp` |
+| `Services/DaysToCashEstimator.cs` | `extraPipelineDays` (defaulted 0) for the rebate wait |
+| `Services/LocalArbitrageAnalyzer.cs` | Freebie branch: real cost basis, `JudgeFreebie` caps, no negotiation plan; unbounded-ROI wording fixed in `Judge` |
+| `Services/LocalSupplyMerger.cs` | `DedupeByUrl` across sources |
+| `Models/LocalSupplyModels.cs` | `Freebie`, `AllowsBlankQuery` |
+| `Models/LocalArbitrageModels.cs` | `Freebie`, `FreebieCount`, `FreeMoneyOnTheTable`, `ExpiringTodayCount` |
+| `Program.cs` | DI registration (ahead of the paid sources) + the three board counts |
+| `wwwroot/index.html` | Panel retitled, blank-query hint. `app.js?v=60`, `style.css?v=51` |
+| `wwwroot/app.js` | `allowsBlankQuery`, blank-query gates, `freebieMeta`, freebie branches in `buyCostCell` / `offerCell`, free-money headlines |
+| `wwwroot/style.css` | `.local-badge-freebies`, `.free-kind`, `.free-price`, `.free-clock*`, `.free-caveat`, `.fb-blank-query-hint` |
+| `ING eBay AutoLister.Tests/FreebieClassifierTests.cs` | **New** — tests that mostly pin refusal, mostly on live titles |
+| `ING eBay AutoLister.Tests/FreebieMoneyTests.cs` | **New** — what free still costs and what the board may claim |
+| `ING eBay AutoLister.Tests/FreebieSourceTests.cs` | **New** — the source, the craigslist category and the dedupe |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,514 passed**, 0 failed, 0 skipped (1,416 pre-existing + 98 new) |
+| `node --check app.js` | Syntax OK |
+| Live `GET /api/local/sources` | `freebies` present, `available=true`, `locationBased=true`, `chargesSalesTax=true`, `allowsBlankQuery=true`, 2 manual sites |
+| Live blank-query scan (89101, 40mi) | `status=ok`, **137 free items** — 127 local pickups + 10 online |
+| Live priced board (`/api/local/arbitrage`, blank query) | 134 found, 25 priced, **$1,364.57 of free money**, **18 gone today**, **0 goldmines** (every candidate capped or gated) |
+| Live verdict notes | "$160.46 net after fees, and it cost nothing to buy. First come, first served — …" — no sentinel, deadline on every row |
+| Live bulky cap | Free dresser/sofa/toilet rows carry "the eBay comps behind this price assume it fits in a box" and are held at `solid` |
+| Live no-zip scan | `status=ok`, local leg skipped with "no zip code, so the local free-stuff board wasn't searched" |
+| Live mixed scan (`craigslist,freebies`) | 163 rows, **zero duplicate URLs** — the cross-source dedupe holding |
+| Live refusals confirmed absent from results | damaged TV, firewood, dirt, pallets, curb alerts, rooster, free food, knock-off yeezys, Kindle books, BOGO footlong, mustard/deodorant |
+| Served assets | `freebieMeta`, `local-badge-freebies` present at `v=60` / `v=51` |
+
+### Not verified
+
+- **The rendered board in a browser.** The endpoints are verified live with real request/response
+  payloads and the assets were verified as served, but the free row (the kind chip, the ⏱ clock, the
+  ⚠ caveat, the rebate "up front / back in ~56d" line) was not driven in the UI against a live scan.
+- **A rebate row end to end from a live scan.** The rebate arithmetic is covered by unit tests and a
+  live scan did classify a real free-after-rebate deal, but no rebate row was carried through to a
+  tracked deal or a budget basket.
+- **Comp-match quality on short free-board titles.** A live scan priced a free "Dresser" against an
+  **$850** sold comp — pre-existing `ComparableMatcher` behaviour shared with every other board.
+  Short classifieds titles ("Dresser", "tool box", "Fridge") give the matcher almost nothing to work
+  with, and this board has more of them than any other. It errs toward caution here — the row was
+  capped to `solid` by the bulky rule and told to sell locally — but it is worth its own pass.
+- **A misspelled refusal word gets through**, by design and pinned by a test: the live post said
+  "Railroad Tries". The row survives, finds no comp for a misspelling, and is reported as "no sold
+  history" rather than becoming a fabricated goldmine — the honest failure mode.
+- **Product names containing "Free".** "Tide Free & Gentle" reaches the comp lookup as "Tide &
+  Gentle". The hyphen guard fixed the large class (BPA-free, oil-free, aluminum-free); the
+  space-separated case is rarer and unsolved.

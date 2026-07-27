@@ -185,11 +185,19 @@ builder.Services.AddSingleton<DealFeedService>();
 // own grade and max-bid arithmetic. See LiquidationSourceService / LiquidationLotPricer.
 builder.Services.AddSingleton<LiquidationSourceService>();
 builder.Services.AddSingleton<LiquidationLotPricer>();
+// Free supply: craigslist's free-stuff board near the seller, plus free-after-coupon and
+// free-after-rebate deals nationwide. The one board where the cost basis is zero, so the margin is
+// the whole sale price — and the one that expires fastest, which every row says out loud. Reads
+// craigslist through CraigslistService rather than a second copy of it. See FreebieSourceService.
+builder.Services.AddSingleton<FreebieSourceService>();
 // Every source behind one interface, so the arbitrage pipeline (grouping → comp lookup → profit →
 // ranking) never learns which site a listing came from and a fifth source is a registration.
 // Order matters: no-login sources first, so a seller who has connected nothing still gets
 // results from a default search. See ILocalSupplySource / LocalSupplySources.
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<CraigslistService>());
+// Ahead of the paid sources on purpose: a free item cannot lose money, so it is the first thing
+// worth looking at and the first thing the analysis cap should be spent on.
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FreebieSourceService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<DealFeedService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<LiquidationSourceService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
@@ -3834,6 +3842,18 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         result.LiquidationCount = result.Items.Count(r => r.Liquidation is not null);
         result.ClosingSoonCount = result.Items.Count(r =>
             r.NetProfit is > 0 && r.Liquidation is { } lot && LiquidationLotPricer.ClosingSoon(lot, now));
+
+        // The free half of the board, counted separately because it is the only money on it that
+        // risks nothing: nothing was spent, so a row that doesn't sell costs the seller an afternoon
+        // rather than a cost basis. A seller with no cash at all can work this column and no other.
+        var freebies = result.Items.Where(r => r.Freebie is not null).ToList();
+        result.FreebieCount = freebies.Count;
+        result.FreeMoneyOnTheTable = Math.Round(freebies.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
+        // And the half of THAT which is gone by tomorrow. A free post is claimed the same day and a
+        // stated one-day coupon is exactly what it says, so this is the number that decides whether
+        // the list is worth reading now or at the weekend.
+        result.ExpiringTodayCount = freebies.Count(r =>
+            r.NetProfit is > 0 && r.Freebie!.Urgency is FreebieUrgency.Today or FreebieUrgency.FirstCome);
 
         if (result.Items.All(r => r.EbayExpectedSale is null))
         {

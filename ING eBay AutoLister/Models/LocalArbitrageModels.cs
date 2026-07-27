@@ -55,6 +55,13 @@ public class LocalArbitrageOpportunity
     // See Services/LiquidationLotPricer.cs.
     public LiquidationLotEconomics? Liquidation { get; set; }
 
+    // ── When the buy is free, or nearly ──────────────────────────────────────
+    // Null on every other source. Non-null means LocalAsk is zero (or nearly) and the interesting
+    // number is not the margin — it is what "free" still costs and how long there is to act. A
+    // rebate's sales tax is never refunded, a claim can go unpaid, and a free classified post is
+    // claimed the same day. See Services/FreebiePricer.cs.
+    public FreebieEconomics? Freebie { get; set; }
+
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
     // math actually used (MarketPriceEstimator's expected sale price).
@@ -170,4 +177,17 @@ public class LocalArbitrageResult
     public int LiquidationCount { get; set; }
     // Profitable liquidation rows whose auction closes inside LiquidationLotPricer.ClosingSoonHours.
     public int ClosingSoonCount { get; set; }
+
+    // ── What the free half of the board found ────────────────────────────────
+    // Counted separately because it is the one kind of row where the money is all upside: nothing
+    // was spent, so there is nothing to lose and no ROI to compare. A seller with no cash at all can
+    // work this column and nothing else on the board.
+    public int FreebieCount { get; set; }
+    // Everything the profitable free rows would make. Not "potential profit less what it cost" —
+    // on these there is nothing to subtract, which is the entire point of the board.
+    public decimal FreeMoneyOnTheTable { get; set; }
+    // Profitable free rows with a stated deadline inside the day, or a local post that will be gone
+    // as soon as somebody drives over. The count that decides whether this list is read now or
+    // tomorrow.
+    public int ExpiringTodayCount { get; set; }
 }
