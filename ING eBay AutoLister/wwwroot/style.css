@@ -4880,6 +4880,130 @@ textarea {
   cursor: help;
 }
 
+/* ── Categories, vehicles and where a price came from ───────────────────────
+   Three related things, and the weighting between them is the message. What KIND of thing a row is
+   is a quiet label. What the app READ off a vehicle title — the year, make, model and odometer — is
+   the loudest thing in the row's meta line, because it is the whole basis on which somebody decides
+   to drive across town. And what VALUED the row sits with the evidence, where a source and a
+   confidence always travel together: a source with no confidence beside it invites the number to be
+   read as a fact, and a confidence with no source invites it to be read as eBay's. */
+.cat-chip {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2xs);
+  padding: 0 5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* "2011 Toyota Tundra" — the identity, pulled out of the ad copy it was buried in. */
+.veh-chip {
+  display: inline-block;
+  font-weight: 700;
+  border: 1px solid rgba(19, 78, 116, 0.35);
+  border-radius: var(--r-2xs);
+  padding: 0 5px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.veh-wear {
+  font-size: var(--fs-3xs);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The row is costed with no shipping and, on a vehicle, no percentage fee. Stated rather than
+   implied: a profit computed under different rules from the row above it has to say so. */
+.cat-pickup {
+  font-size: var(--fs-3xs);
+  color: var(--muted);
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* Title and transport, under the fees rather than inside them — eBay doesn't charge you to
+   register a truck, and merging the two would make the stated fee basis uncheckable. */
+.cat-extra {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Which source put the price on this row, graded by how far to believe it. */
+.val-src {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  border-radius: var(--r-2xs);
+  padding: 0 5px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+.val-src-ok {
+  border: 1px solid rgba(31, 122, 69, 0.45);
+  color: var(--success);
+}
+
+.val-src-weak {
+  border: 1px dashed rgba(180, 83, 10, 0.5);
+  color: var(--warning-600);
+}
+
+.val-src-none {
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}
+
+/* A row the app refused to price. Deliberately not styled as a failure — it is an answer, and the
+   link beside it is what the row has instead of a number. */
+.val-manual {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-2xs);
+  padding: 0 5px;
+  color: var(--muted);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.val-manual-price {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--muted);
+  cursor: help;
+}
+
+.val-lookup { font-size: var(--fs-3xs); }
+
+/* What the chosen category is about to do, said before the two-minute scan rather than after it. */
+.fb-category-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.fb-category-scope,
+.fb-category-manual { font-size: var(--fs-3xs); }
+
+/* The one sentence in this block a seller can act on: this app cannot price these, and here is
+   what it will show instead. */
+.fb-category-manual { color: var(--warning-600); }
+
 /* ── Coupons, promo codes and cashback ──────────────────────────────────────
    The buy side of a retail row. Everything here is deliberately quieter than the money columns it
    sits beside: a public promo code is a claim rather than a price, and the visual weight has to say
@@ -5117,9 +5241,12 @@ textarea {
   align-items: flex-end;
   margin-top: 12px;
 }
-.fb-field-keyword { flex: 2 1 260px; }
-.fb-field-zip     { flex: 0 1 130px; }
-.fb-field-radius  { flex: 0 1 150px; }
+.fb-field-keyword  { flex: 2 1 260px; }
+/* Wider than the zip and radius beside it: the option labels are words rather than numbers, and a
+   truncated "Motorcycles & powers…" is the one control on this row a seller has to read. */
+.fb-field-category { flex: 1 1 190px; }
+.fb-field-zip      { flex: 0 1 130px; }
+.fb-field-radius   { flex: 0 1 150px; }
 .fb-search-row .opp-search-submit { flex: 0 0 auto; }
 
 /* Cards, not table rows: a Marketplace result is carried by its photo and its price —

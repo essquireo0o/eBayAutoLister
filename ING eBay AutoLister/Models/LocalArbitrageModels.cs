@@ -1,3 +1,5 @@
+using ING_eBay_AutoLister.Services;
+
 namespace ING_eBay_AutoLister.Models;
 
 // ── Local arbitrage ("buy local, resell on eBay") ─────────────────────────────
@@ -77,6 +79,27 @@ public class LocalArbitrageOpportunity
     // the ones above: a public code is a claim, not a price, and a dead one must never be able to
     // move a row up the ranking. See Services/CouponStacker.cs.
     public CouponSavings? Coupons { get; set; }
+
+    // ── What kind of thing this is ───────────────────────────────────────────
+    // Set on every row, including the ordinary parcel ones. It decides all three of the answers
+    // below it: what was allowed to value it (Valuation), what selling it costs (Category), and
+    // which filter it sits under on the board. See Services/ResaleCategoryCatalog.cs.
+    public string CategoryId { get; set; } = "";
+    public string CategoryLabel { get; set; } = "";
+    // Year / make / model / mileage, on the rows that have them. Null everywhere else.
+    public VehicleDetails? Vehicle { get; set; }
+
+    // How the money below was costed, in words: the fee basis, whether anything ships, and the
+    // title and transport a parcel row has no line for. Never null on a priced row — a net profit
+    // computed with no eBay fee and no shipping is a good number and a misleading one if the row
+    // doesn't say that is what happened. See Services/CategoryCosts.cs.
+    public CategoryEconomics? Category { get; set; }
+
+    // Where the resale price came from, or the reason there isn't one. The rule it carries: this
+    // app never invents a resale price for a category it can't value. A refused row keeps its
+    // listing, its ask and a prefilled sold-listings search, and shows dashes where the money
+    // would be. See Services/ResaleValuation.cs.
+    public ResaleValuation? Valuation { get; set; }
 
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
@@ -176,6 +199,21 @@ public class LocalArbitrageResult
 
     // What each site contributed, including the ones that couldn't answer and why.
     public List<LocalSupplySourceOutcome> Sources { get; set; } = [];
+
+    // ── What was searched for, and what came back ────────────────────────────
+    // The category the seller pointed the scan at — "anything" unless they picked one. Echoed back
+    // because it changes what was searched (a craigslist board rather than the for-sale board), not
+    // just how the results are shown.
+    public string CategoryId { get; set; } = ResaleCategoryCatalog.AnythingId;
+    public string CategoryLabel { get; set; } = "Anything";
+    // Every category actually on this board, with its row count — the data behind the board's
+    // category filter. A scan for "anything" routinely comes back with six of these.
+    public List<ResaleCategoryTally> Categories { get; set; } = [];
+    // Rows the app deliberately refused to price, because nothing it can read values that kind of
+    // thing. Counted and surfaced rather than hidden: on a scan of the cars board this is most of
+    // the board, and a column of dashes with no explanation reads as a broken feature instead of as
+    // the honest answer it is. See Services/ResaleValuation.cs.
+    public int ManualValuationCount { get; set; }
 
     public List<LocalArbitrageOpportunity> Items { get; set; } = [];
     public int Count => Items.Count;

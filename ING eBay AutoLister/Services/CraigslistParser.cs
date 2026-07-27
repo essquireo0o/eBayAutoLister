@@ -242,13 +242,22 @@ public static class CraigslistParser
     /// Turns parsed posts into a search result: duplicates dropped (craigslist repeats posts
     /// across feed pages), padding filtered out, ask spread summarised.
     /// </summary>
+    /// <param name="categoryId">
+    /// This app's category id for the board that was searched, stamped onto every post. Craigslist
+    /// is the one source that can state a category as fact rather than infer it — it searched one
+    /// board — and that fact outranks anything a title parser could work out downstream. Empty when
+    /// the board doesn't map to a category (the free-stuff board carries anything).
+    /// </param>
     public static LocalSupplySearchResult BuildResult(
         IEnumerable<LocalSupplyListing> listings, CraigslistSite site, string query, string zip, int radiusMiles,
-        string category = ForSaleCategory)
+        string category = ForSaleCategory, string categoryId = "")
     {
         var items = LocalSupplyResults.Dedupe(listings);
         items = LocalSupplyResults.FilterByRelevance(items, query);
         items = [.. items.OrderBy(i => i.Price ?? 0m)];
+
+        if (categoryId.Length > 0)
+            foreach (var item in items) item.CategoryId = categoryId;
 
         var (min, median, max) = LocalSupplyResults.Summarize(items);
 

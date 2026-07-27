@@ -92,6 +92,21 @@ public class LocalSupplyListing
     [JsonIgnore]
     public string DetailText { get; set; } = "";
 
+    // ── What kind of thing this is ────────────────────────────────────────────
+    // Empty until the scan classifies it (ResaleCategoryCatalog.ClassifyAll), and set BEFORE
+    // anything is priced — because the category decides all three of the answers that follow: which
+    // board was searched, what is allowed to value it, and what selling it costs. A source that
+    // already knows fills it in itself: craigslist searches one board at a time, so a row off the
+    // cars board is a car whatever its title says. See Services/ResaleCategoryCatalog.cs.
+    public string CategoryId { get; set; } = "";
+    public string CategoryLabel { get; set; } = "";
+
+    // Year / make / model / mileage, on the rows where that means something. Null on everything
+    // else — which is most listings, and all of the parcel goods this app was built around. It is
+    // what lets two ads for the same truck share one lookup, and what a manual valuation searches
+    // for. See Services/VehicleTitleParser.cs.
+    public VehicleDetails? Vehicle { get; set; }
+
     // "Just listed", "3 hours ago" — free text as the site rendered it.
     public string PostedAgo { get; set; } = "";
     // Craigslist's feed carries a real timestamp; Facebook only ever shows relative text.
@@ -197,6 +212,12 @@ public class LocalSupplySourceInfo
     // panel promising "within 40 miles" for a source that searched 250 — see
     // ILocalSupplySource.MinRadiusMiles.
     public int MinRadiusMiles { get; set; }
+    // Whether this source can be pointed at one category's own board rather than searched by
+    // keyword alone. True for craigslist, which has a board per category; false for the sources that
+    // only take a search box. The picker uses it to say so, because "Cars & trucks" meaning "the
+    // cars board" on one site and "the word car" on another is exactly the kind of quiet difference
+    // that makes a scan look broken. See ILocalSupplySource.SupportsCategoryBoards.
+    public bool SupportsCategoryBoards { get; set; }
     // Whether searching this source with no keyword at all is meaningful. True only for the freebie
     // board, where "everything being given away near me" is the best search there is; on every other
     // source a blank query is the whole classifieds section. Drives whether the panel lets the

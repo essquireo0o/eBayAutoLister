@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=63" />
+  <link rel="stylesheet" href="style.css?v=64" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1209,6 +1209,16 @@
                      which is the freebie board and nothing else. See ILocalSupplySource.AllowsBlankQuery. -->
                 <span id="fb-blank-query-hint" class="fb-blank-query-hint hidden">Leave blank to see <strong>everything</strong> being given away near you.</span>
               </div>
+              <!-- What KIND of thing to look for. Not a filter on the results: it changes the
+                   craigslist board that is searched, what is allowed to value each row, and what
+                   selling it costs (a car has no shipping and a flat eBay Motors fee). Filled in
+                   from /api/local/categories so the list lives in ResaleCategoryCatalog. -->
+              <div class="opp-field fb-field-category">
+                <label for="fb-category-select">Category</label>
+                <select id="fb-category-select">
+                  <option value="anything">Anything</option>
+                </select>
+              </div>
               <div class="opp-field fb-field-zip">
                 <label for="fb-zip-input">Zip code</label>
                 <input id="fb-zip-input" type="text" inputmode="numeric" maxlength="10" placeholder="89101" />
@@ -1246,6 +1256,11 @@
               </select>
               <span class="cl-site-hint">Only needed if the auto-picked board is the wrong metro.</span>
             </div>
+
+            <!-- What the chosen category actually does, and — the part worth saying out loud —
+                 whether this app can price it at all. A seller who picks Boats should find that out
+                 here, not from a table of dashes after a two-minute scan. -->
+            <div id="fb-category-note" class="fb-category-note hidden"></div>
 
             <!-- Retail and auction buys are taxed and private-party buys aren't. Shown only while a
                  source that charges it is ticked, because it changes nothing on a Craigslist scan.
@@ -1315,6 +1330,13 @@
                   <option value="margin">Margin %</option>
                   <option value="distance">Distance</option>
                   <option value="ask">Local price</option>
+                </select>
+                <!-- One scan for "anything" routinely comes back as six kinds of thing in one
+                     ranking. Filled in from the scan's own tallies, so an empty option can't
+                     appear. -->
+                <label for="fb-arb-category">Category</label>
+                <select id="fb-arb-category">
+                  <option value="">All categories</option>
                 </select>
                 <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
@@ -4185,6 +4207,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=71"></script>
+  <script src="app.js?v=72"></script>
 </body>
 </html>

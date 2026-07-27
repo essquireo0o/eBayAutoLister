@@ -1257,8 +1257,87 @@
     picker.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
       localStorage.setItem('localSources', selectedSourceIds().join(','));
       refreshLocalSearchButtons();
+      // The category note names which of the ticked sites can search a board rather than a keyword,
+      // so it has to be redrawn when that set changes.
+      renderCategoryNote();
     }));
     refreshLocalSearchButtons();
+    renderCategoryNote();
+  }
+
+  // ── Categories ────────────────────────────────────────────────────────────
+  // What KIND of thing to look for, which is three decisions rather than a filter: which craigslist
+  // board is searched, what is allowed to put a resale price on a row, and what selling it costs.
+  // Rendered from /api/local/categories so the list lives in ResaleCategoryCatalog on the server.
+  let localCategories = [];
+
+  function selectedCategoryId() {
+    return $('fb-category-select')?.value || 'anything';
+  }
+
+  async function loadLocalCategories() {
+    const sel = $('fb-category-select');
+    if (!sel) return;
+
+    const { data } = await localFetchJson('/api/local/categories', 20000);
+    // A failed load is survivable in a way a failed source load isn't: the picker keeps its single
+    // "Anything" option, which is exactly what the scanner did before categories existed.
+    if (!Array.isArray(data) || !data.length) return;
+
+    localCategories = data;
+
+    // Grouped, because "Cars & trucks" and "Tools" are not the same kind of choice — one changes
+    // the fee model and the valuation, the other changes neither.
+    const groups = [...new Set(localCategories.map(c => c.group))];
+    sel.innerHTML = groups.map(group => {
+      const inGroup = localCategories.filter(c => c.group === group);
+      const options = inGroup.map(c =>
+        `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('');
+      // The default group holds one entry and needs no heading above it.
+      return inGroup.length === 1 && group === 'Anything' ? options : `<optgroup label="${esc(group)}">${options}</optgroup>`;
+    }).join('');
+
+    const saved = localStorage.getItem('localCategory');
+    if (saved && localCategories.some(c => c.id === saved)) sel.value = saved;
+
+    sel.addEventListener('change', () => {
+      localStorage.setItem('localCategory', sel.value);
+      renderCategoryNote();
+    });
+    renderCategoryNote();
+  }
+
+  // What the chosen category does, said before the scan rather than after it. The part that matters
+  // is the refusal: a seller who picks Boats is told here that this app has no sold-comp source for
+  // them, instead of waiting two minutes to be shown a column of dashes.
+  function renderCategoryNote() {
+    const note = $('fb-category-note');
+    if (!note) return;
+
+    const category = localCategories.find(c => c.id === selectedCategoryId());
+    if (!category || category.id === 'anything') {
+      note.classList.add('hidden');
+      note.innerHTML = '';
+      return;
+    }
+
+    // Craigslist is the only source with a board per category. Saying so stops "Cars & trucks"
+    // looking broken when Facebook returns a floor mat: it was searched by keyword, because that is
+    // all Facebook offers.
+    const boardSources = (localSources || []).filter(s => s.supportsCategoryBoards).map(s => s.label);
+    const others = (localSources || []).filter(s => !s.supportsCategoryBoards).map(s => s.label);
+
+    note.innerHTML =
+      `<strong>${esc(category.label)}</strong> — ${esc(category.hint)}` +
+      (boardSources.length
+        ? `<span class="fb-category-scope">${esc(boardSources.join(' + '))} searches that board directly` +
+          `${others.length ? `; ${esc(others.join(', '))} can only be searched by keyword, so their results are sorted into categories afterwards` : ''}.</span>`
+        : '') +
+      (category.valuedByHand
+        ? '<span class="fb-category-manual">This app has no sold-price source it trusts for these, so rows it can\'t ' +
+          'check come back marked <em>estimate unavailable</em> with a link to the eBay sold listings — never a made-up number.</span>'
+        : '');
+    note.classList.remove('hidden');
   }
 
   // Craigslist's metro list is ~230 entries and only matters if the auto-picked board is wrong,
@@ -1292,6 +1371,7 @@
     on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-arb-sort', 'change', renderArbitrageRows);
+    on('fb-arb-category', 'change', renderArbitrageRows);
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
     on('fb-arb-fast-only', 'change', renderArbitrageRows);
     on('fb-arb-warranty-only', 'change', renderArbitrageRows);
@@ -1316,6 +1396,7 @@
     const sources = selectedSourceIds();
     const site = $('cl-site-select')?.value || '';
     const salesTax = $('retail-tax-input')?.value ?? '';
+    const category = selectedCategoryId();
 
     localStorage.setItem('fbZip', zip);
     localStorage.setItem('fbRadius', radius);
@@ -1323,12 +1404,24 @@
 
     const qs = `q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}` +
       `&sources=${encodeURIComponent(sources.join(','))}` +
+      // Sent on every scan. Not a filter — it picks the craigslist board, the valuation provider and
+      // the fee model server-side. See ResaleCategoryCatalog.
+      `&category=${encodeURIComponent(category)}` +
       (site ? `&craigslistSite=${encodeURIComponent(site)}` : '') +
       // Sent on every scan; the server ignores it for every non-retail row. Clamped server-side —
       // see RetailBuyCosts.Sanitize.
       (salesTax !== '' ? `&salesTax=${encodeURIComponent(salesTax)}` : '');
 
-    return { query, zip, radius, sources, qs };
+    return { query, zip, radius, sources, category, qs };
+  }
+
+  // Whether "no keyword at all" is a real search this time. It is when a category board is being
+  // searched by a source that has boards: "everything on the cars board within 40 miles" is exactly
+  // what picking a category means, and demanding a keyword on top of it would make the picker
+  // useless for the one job it is best at.
+  function isBoardSearch(category, sources) {
+    if (!category || category === 'anything') return false;
+    return sources.some(id => localSources.find(s => s.id === id)?.supportsCategoryBoards);
   }
 
   function sourceLabelsFor(ids) {
@@ -1419,12 +1512,13 @@
   }
 
   async function runLocalSearch() {
-    const { query, zip, radius, sources, qs } = localSearchParams();
+    const { query, zip, radius, sources, category, qs } = localSearchParams();
     const btn = $('fb-search-btn');
 
     lastLocalRun = runLocalSearch;
 
-    if (!query && !sources.some(allowsBlankQuery)) return setLocalStatus('Enter what you want to look for.');
+    if (!query && !sources.some(allowsBlankQuery) && !isBoardSearch(category, sources))
+      return setLocalStatus('Enter what you want to look for, or pick a category to browse its whole board.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
@@ -1563,6 +1657,10 @@
         item.location ? esc(item.location) : '',
         item.distanceMiles != null ? `${item.distanceMiles} mi away` : '',
         item.postedAgo ? esc(item.postedAgo) : '',
+        // Year, make, model and the odometer, where the listing said them — the facts a vehicle ad
+        // buries in the middle of its own title. See VehicleTitleParser.
+        item.vehicle?.label ? `<span class="veh-chip">${esc(item.vehicle.label)}</span>` : '',
+        item.vehicle?.wearText ? `<span class="veh-wear">${esc(item.vehicle.wearText)}</span>` : '',
       ].filter(Boolean).join(' · ');
       return `
         <div class="fb-card" data-title="${esc(item.title)}" data-price="${item.price ?? 0}">
@@ -1696,13 +1794,15 @@
   }
 
   async function runLocalArbitrage() {
-    const { query, zip, radius, sources, qs } = localSearchParams();
+    const { query, zip, radius, sources, category, qs } = localSearchParams();
     const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
 
     lastLocalRun = runLocalArbitrage;
 
-    // Blank is a real search on the freebie board and nowhere else — see allowsBlankQuery.
-    if (!query && !sources.some(allowsBlankQuery)) return setLocalStatus('Enter what you want to look for.');
+    // Blank is a real search on the freebie board (see allowsBlankQuery) and on any category board:
+    // "price everything on the cars board near me" is the search this whole feature is for.
+    if (!query && !sources.some(allowsBlankQuery) && !isBoardSearch(category, sources))
+      return setLocalStatus('Enter what you want to look for, or pick a category to price its whole board.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
@@ -1811,6 +1911,12 @@
       data.asIsRiskCount
         ? `<strong class="fb-arb-hit">${data.asIsRiskCount} sold as-is with no returns</strong> — test before you pay`
         : '',
+      // The rows the app refused to value. Said in the headline rather than left to be discovered a
+      // row at a time: on a scan of the cars board this is most of the board, and it is a limit of
+      // the data rather than of the deals.
+      data.manualValuationCount
+        ? `${data.manualValuationCount} could not be valued from sold data — priced by hand, with a search link on each`
+        : '',
     ].filter(Boolean).join(' · ');
     // How many of the priced rows are guesses. Said in the summary as well as on the rows, because
     // a board where most of the percentages are estimates is a different board from one where two
@@ -1832,8 +1938,30 @@
     }
 
     renderCouponStores(data.couponStores);
+    renderArbitrageCategoryFilter(data.categories);
     renderArbitrageRows();
     wrap.classList.remove('hidden');
+  }
+
+  // The category filter above the table, built from the scan's own tallies so an option that
+  // matches nothing can never appear. A scan for "anything" routinely returns six kinds of thing in
+  // one ranking, and until it says so the seller has to read every row to find the truck.
+  function renderArbitrageCategoryFilter(categories) {
+    const sel = $('fb-arb-category');
+    if (!sel) return;
+
+    const list = (categories || []).filter(c => c.count > 0);
+    // One category is not a choice — hide the control rather than offer a filter that does nothing.
+    sel.classList.toggle('hidden', list.length < 2);
+    if (list.length < 2) { sel.value = ''; return; }
+
+    const previous = sel.value;
+    sel.innerHTML = '<option value="">All categories</option>' + list.map(c =>
+      // The priced count is the useful half: "Cars & trucks (14, 2 priced)" says at a glance that
+      // this app could put a number on two of them and the rest need a look by hand.
+      `<option value="${esc(c.id)}">${esc(c.label)} (${c.count}${c.pricedCount < c.count ? `, ${c.pricedCount} priced` : ''})</option>`
+    ).join('');
+    if (list.some(c => c.id === previous)) sel.value = previous;
   }
 
   // Re-sorting and filtering are pure client-side views over the response already in hand —
@@ -1846,8 +1974,13 @@
     const hideLosers = !!$('fb-arb-hide-losers')?.checked;
     const fastOnly = !!$('fb-arb-fast-only')?.checked;
     const warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
+    const category = $('fb-arb-category')?.value || '';
 
     let rows = arbitrageData.items.slice();
+    // What KIND of thing, applied first: it is the widest cut and the one the seller picked most
+    // deliberately. Server-side ids, so the filter and the fee model can't disagree about what a
+    // row is.
+    if (category) rows = rows.filter(r => (r.categoryId || 'anything') === category);
     if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
     // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
     if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
@@ -1891,7 +2024,9 @@
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
       : `<tr><td colspan="14" class="fb-arb-empty">${
-          warrantyOnly && arbitrageData.items.length
+          category && arbitrageData.items.length
+            ? 'Nothing in that category once the other filters were applied. Set the category back to all to see the rest of what this scan found.'
+            : warrantyOnly && arbitrageData.items.length
             ? 'Nothing in this search said it still carries a warranty. Untick the filter to see everything it did find — most classifieds listings never mention cover either way, so this is as often silence as it is a no.'
             : fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
               ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
@@ -1982,6 +2117,7 @@
       row.isRetail && row.freeShipping ? 'ships free' : '',
       // A price that only exists with a code is not a price without it.
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
+      ...categoryMeta(row),
       ...liquidationMeta(row),
       ...freebieMeta(row),
       ...warrantyMeta(row),
@@ -2006,13 +2142,19 @@
       : ' class="num dt-money"';
 
     const evidence = row.ebayExpectedSale == null
-      ? '<span class="fb-arb-muted">no sold history</span>'
+      // A refused valuation is not "no sold history" — it is "the sold history was for the wrong
+      // kind of thing", and the two send a seller to do completely different things next. The
+      // provider's own sentence says which, and the link is what the row has instead of a number.
+      ? valuationCell(row)
       : [
+          // Where the price came from and how far to believe it — the two things a figure someone
+          // is about to spend money against has to carry.
+          valuationSourceLabel(row),
           // The count that priced it leads, with the count the search returned behind it — they are
           // routinely very different, and only the first one backs the money columns.
           compsCell(row),
           row.terapeakCompCount ? `${row.terapeakCompCount} Terapeak` : '',
-          // Which sold-comps source answered, named rather than implied.
+          // Which sold-comps database answered, named rather than implied.
           ARB_SOURCES[row.resaleSource] || '',
           row.confidenceLevel ? esc(row.confidenceLevel) : '',
           row.liquidityLevel ? esc(row.liquidityLevel) : '',
@@ -2037,8 +2179,8 @@
         </td>
         <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
         <td class="num">${buyCostCell(row)}</td>
-        <td class="num${guessed ? ' fb-arb-estimate' : ''}"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}${warrantyResaleLine(row)}${estimateFlag(row)}</td>
-        <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
+        <td class="num${guessed ? ' fb-arb-estimate' : ''}"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : manualResaleCell(row)}${warrantyResaleLine(row)}${estimateFlag(row)}</td>
+        <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}${categoryCostLine(row)}</td>
         <td class="num dt-money fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
         <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
         <td${estRoi}>${roi}</td>
@@ -2048,6 +2190,75 @@
         <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
         <td class="fb-arb-track">${trackCell(row)}</td>
       </tr>`;
+  }
+
+  // ── Category, vehicle and valuation ───────────────────────────────────────
+  // What kind of thing this row is, and — where it isn't a parcel — how that changed the money. The
+  // category chip is only worth showing when it is not the default: labelling every row "Anything"
+  // is noise, and labelling the truck "Cars & trucks" is the whole point.
+  function categoryMeta(row) {
+    const out = [];
+
+    if (row.categoryId && row.categoryId !== 'anything' && row.categoryLabel)
+      out.push(`<span class="cat-chip">${esc(row.categoryLabel)}</span>`);
+
+    // The identity the app read off the title, plus the wear. Shown because "2011 Toyota Tundra ·
+    // 137,000 miles" is the entire basis on which a seller decides whether to drive to it, and it
+    // is buried in the middle of the ad copy in the title beside it.
+    // The wear stands on its own: plenty of ads state an odometer and never say what the thing is,
+    // and "100,000 miles" is worth reading whether or not the year and make came with it.
+    const vehicle = row.vehicle;
+    if (vehicle?.label) out.push(`<span class="veh-chip">${esc(vehicle.label)}</span>`);
+    if (vehicle?.wearText) out.push(`<span class="veh-wear">${esc(vehicle.wearText)}</span>`);
+
+    // The departures from the parcel model, said on the row. A net profit with no shipping and no
+    // percentage fee in it is a good number and a misleading one if the row doesn't say so.
+    const cat = row.category;
+    if (cat && cat.shipsToBuyer === false)
+      out.push(`<span class="cat-pickup" title="${esc(cat.note || '')}">buyer collects · ${esc(cat.feeBasis || '')}</span>`);
+
+    return out;
+  }
+
+  // The costs a parcel row has no line for: the title transfer, and transport when it is ever
+  // costed. Under the fees rather than inside them — eBay doesn't charge you to register a truck,
+  // and folding the two together would make the row's stated fee basis uncheckable.
+  function categoryCostLine(row) {
+    const cat = row.category;
+    if (!cat || !(cat.extraCostTotal > 0) || row.netProfit == null) return '';
+    return `<br /><span class="cat-extra" title="${esc(cat.note || '')}">-${money(cat.extraCostTotal)} title &amp; transport</span>`;
+  }
+
+  // Where the price came from and how far to believe it, in one phrase. Two facts that always
+  // travel together: a source with no confidence beside it invites the number to be read as a
+  // fact, and a confidence with no source invites it to be read as eBay's.
+  function valuationSourceLabel(row) {
+    const val = row.valuation;
+    if (!val || !val.sourceLabel) return '';
+    const tier = val.confidence === 'confident' ? 'ok' : val.confidence === 'low' ? 'weak' : 'none';
+    return `<span class="val-src val-src-${tier}" title="${esc(val.note || '')}">${esc(val.sourceLabel)}</span>`;
+  }
+
+  // A row the app refused to price. Everything here is deliberately not a number: the sentence
+  // saying why, and the search that answers it. Inventing a resale price for a category with no comp
+  // data would put a fabricated profit on a board somebody spends money from — see
+  // Services/ResaleValuation.cs.
+  function valuationCell(row) {
+    const val = row.valuation;
+    if (!val) return '<span class="fb-arb-muted">no sold history</span>';
+
+    const link = val.lookupUrl
+      ? ` <a class="link-ext val-lookup" href="${esc(val.lookupUrl)}" target="_blank" rel="noopener">check sold listings ↗</a>`
+      : '';
+    return `<span class="val-manual" title="${esc(val.note || '')}">${esc(val.sourceLabel || 'estimate unavailable')}</span>${link}`;
+  }
+
+  // What sits where the resale price would be on a refused row. "Estimate unavailable" rather than a
+  // dash, because a dash reads as a bug and this is an answer.
+  function manualResaleCell(row) {
+    const val = row.valuation;
+    if (!val || val.status !== 'manual') return '—';
+    return `<span class="val-manual-price" title="${esc(val.note || '')}">estimate<br />unavailable</span>`;
   }
 
   // How many comps actually set this price, out of how many the search returned. The gap between
@@ -2965,6 +3176,7 @@
     // Also loaded on its own, not only off the back of the Facebook status call: Craigslist is
     // searchable whether or not that call succeeds.
     loadLocalSources();
+    loadLocalCategories();
     loadHighSellThrough();
     loadLowCompetition();
     loadPricingRecommendations();

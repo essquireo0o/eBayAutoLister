@@ -5572,3 +5572,190 @@ Running the palette through a contrast checker rather than looking at it:
 - **None of this is covered by `dotnet test`.** It is CSS, DOM and one small
   controller; the browser run above is the only thing covering it, and it is not
   wired into CI.
+
+---
+
+## Category-agnostic sourcing — cars, boats, RVs and everything else that isn't a parcel (autonomous session, 2026-07-27)
+
+### The problem
+
+The whole local-arbitrage stack assumed **one shape of flip**: something you can
+box and post, priced against eBay sold comps and costed with eBay's percentage
+final value fee plus a shipping label. That assumption is wrong in three
+independent ways for the categories where the biggest local money actually is —
+cars, boats, RVs, trailers, powersports, tractors, appliances, furniture — and
+every one of them costs real money:
+
+1. **Sourcing.** Those things live on their own craigslist boards. A keyword
+   search of the for-sale board finds four posts that happen to contain the word
+   "truck"; `search/cta` is the local truck market.
+2. **Valuation.** The hosted sold-comps database is electronics-heavy. Asked
+   what a 2011 Tundra sells for, it finds tow hitches, tail lights and floor
+   mats, agrees with itself across a dozen of them, and hands back a confident
+   $180. That is not thin evidence — it is evidence about a *different kind of
+   thing*, and the existing evidence tiering cannot see the difference.
+3. **The money.** eBay charges a **flat** successful-listing fee on a vehicle,
+   not the percentage one. On an $8,500 truck the gap between the two models is
+   over **$1,000** of fee that is never charged. There is no shipping (the buyer
+   drives it away) and there is a title to transfer, which the parcel model has
+   no line for.
+
+Verified live against the Las Vegas cars board during this session: a **2006
+Hyundai Sonata at $500** matched sold comps at **$93** — a parts match, caught
+and refused rather than published.
+
+### What was built
+
+**Sourcing — the right board, and the facts in a vehicle title**
+
+- `Services/ResaleCategoryCatalog.cs` — 11 categories (Anything, Cars & trucks,
+  RVs, Boats, Motorcycles & powersports, Trailers, Tractors & heavy equipment,
+  Appliances, Furniture, Tools, Electronics), each carrying its craigslist board
+  code, its sale channel, its valuation provider and its keywords. Plus the one
+  job nothing else can do: deciding which category a listing belongs to.
+- `ILocalSupplySource.SearchAsync(…, ResaleCategory, …)` as a **default
+  interface member**, and `SupportsCategoryBoards`. Craigslist overrides it and
+  searches the board; every other source ignores it and its results are
+  classified per listing afterwards. No existing source needed editing.
+- **A blank query is now a real search** when a category board is picked:
+  "everything on the cars board within 40 miles" is the search this feature is
+  for, and it is a different request from a blank search of the whole for-sale
+  section.
+- `Services/VehicleTitleParser.cs` — year / make / model / mileage / engine
+  hours, ~120 makes, "137k miles" and "137,000 miles" and "1,240 hours" alike.
+  Feeds three things: the row's identity chip, the **group key** (the generic
+  product signature keys a classifieds title on the brand, which would put a
+  2011 Tundra and a 2003 Camry in one group and price them off one lookup), and
+  the search query on a refused row.
+- **The parts check**, which is the most expensive misread available:
+  "2024 Ford F-150 tailgate" and "Toyota trailer hitch" both carry a year or a
+  make, and costing either as a vehicle turns an ordinary $180 parcel flip into
+  a loss the board would tell the seller to walk away from.
+
+**Valuation — pluggable per category, and never invented**
+
+- `Services/ResaleValuation.cs` — `IResaleValuationProvider`, three
+  implementations, and a DI-registered `ResaleValuationRegistry` (with a static
+  default so the pure paths need no container). A real eBay Motors feed or a
+  book-value service drops in as a fourth provider with no other file changing.
+  - `EbayCompsValuationProvider` — the original behaviour, unchanged, for
+    everything the database is actually full of.
+  - `GuardedCompsValuationProvider` — comps that must **earn** the right to
+    price a big-ticket item. Refuses on an unverified identity, on under three
+    comps, on a resale below `ask x 0.4` (a parts match), on a resale above
+    `ask x 5` (a comp for a different vehicle), and on **an ad with no price at
+    all** — that last one found on live data, where a dealer ad shouting "FREE
+    SHIPPING!" parses as free, and a $0 cost basis makes ROI unbounded.
+  - Two instances: `ebay_motors` for titled goods (the strictest bounds) and
+    `bulky_local` for appliances/furniture/tractors (looser — a $150 dresser
+    reselling for $600 is an ordinary flip).
+- A refused row **keeps its listing, its ask, its category and its identity**,
+  shows `estimate unavailable` where the money would be, and carries a prefilled
+  eBay sold-listings search (`&_sacat=6001` for Motors) built from the parsed
+  identity rather than the seller's ad copy. **Never a number.**
+
+**The money — category-aware fees and costs**
+
+- `Services/CategoryCosts.cs` maps a category onto arguments for the *existing*
+  `ProfitCalculator`, rather than teaching it about vehicles: a cloned
+  `FeeProfile` with the percentage rates zeroed and the flat fee in the fixed
+  slot, zero shipping on both sides, and title + transport as `otherCosts`. One
+  fee engine, one break-even solver, one set of rounding rules.
+  - `EbayParcel` (default) — hands back the seller's **own** profile instance
+    and the comp shipping, untouched. Every pre-existing row prices to the cent
+    as it did before.
+  - `EbayLocalPickup` — eBay's percentage fee still applies; no shipping, no
+    packaging. Appliances, furniture, tractors.
+  - `EbayMotors` — flat $125 (cars/RVs) or $60 (bikes/boats/trailers), no
+    shipping, $85 title transfer. Transport is **$0 and says so**: inventing a
+    tow bill would be a made-up number in the middle of a checkable sum.
+- `row.EstimatedFees` is now the marketplace's cut **only** — the title shows on
+  its own line, because eBay doesn't charge you to register a truck and folding
+  the two together would make the row's stated fee basis uncheckable.
+
+**The board**
+
+- Category picker in the search row (grouped, from `/api/local/categories`) with
+  a note that says, *before* the two-minute scan, whether this app can price the
+  category at all and which of the ticked sources can search a board rather than
+  a keyword.
+- Category filter above the ranking, built from the scan's own tallies so an
+  option that matches nothing can never appear — labelled
+  `Cars & trucks (14, 2 priced)`.
+- Per row: the category chip, the vehicle identity and its wear, `buyer
+  collects · $125 flat vehicle fee`, the title cost under the fees, and — in the
+  Evidence column — **the valuation source and its confidence together**, since
+  a source with no confidence invites the number to be read as a fact and a
+  confidence with no source invites it to be read as eBay's.
+- `dataWarning` no longer blames the seller's setup for a limit the app knows
+  about: when every row was *refused*, connecting Terapeak would change nothing,
+  and the warning says so instead.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/ResaleCategoryModels.cs` | **New** — `VehicleDetails`, `CategoryEconomics`, `ResaleValuation`, `ValuationStatuses`, `LocalArbitrageEvidence`, the picker/tally DTOs |
+| `Services/ResaleCategoryCatalog.cs` | **New** — the 11 categories, whole-word keyword detection with vetoes, `Classify`/`ClassifyAll`/`Tally`/`Describe` |
+| `Services/VehicleTitleParser.cs` | **New** — year/make/model/mileage/hours, the parts check, `GroupKey`, `SearchQuery`, `ContainsWord` |
+| `Services/ResaleValuation.cs` | **New** — the provider interface, three providers, the registry, the sold-search link builder |
+| `Services/CategoryCosts.cs` | **New** — the three sale channels as `ProfitCalculator` arguments |
+| `Services/LocalArbitrageAnalyzer.cs` | Resolves the category, runs the valuation gate, costs through `CategoryCosts`; optional registry ctor param so every existing caller is unchanged |
+| `Services/ILocalSupplySource.cs` | `SupportsCategoryBoards` + the category `SearchAsync` overload, both defaults |
+| `Services/CraigslistService.cs` / `CraigslistParser.cs` | Searches a category board, allows a blank query on one, stamps its own answer onto every post |
+| `Models/LocalSupplyModels.cs` / `LocalArbitrageModels.cs` | `CategoryId`/`CategoryLabel`/`Vehicle` on a listing; category, economics and valuation on a row; category tallies and the manual count on a result |
+| `Program.cs` | Provider + registry registration, `/api/local/categories`, `category=` on both search endpoints, classification at the pipeline edge, vehicle-aware group key, tallies, category-aware `dataWarning` |
+| `wwwroot/index.html` | Category picker, category note, category filter; `app.js?v=72`, `style.css?v=64` |
+| `wwwroot/app.js` | `loadLocalCategories`, `renderCategoryNote`, `isBoardSearch`, `categoryMeta`, `categoryCostLine`, `valuationSourceLabel`, `valuationCell`, `manualResaleCell`, `renderArbitrageCategoryFilter`, category filtering and the summary line |
+| `wwwroot/style.css` | Category / vehicle / valuation chips, the category note, the picker field width |
+| `Tests/CategoryArbitrageTests.cs` | **New** — 51 cases |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1764 passed, 0 failed** (1713 before this session; every
+  pre-existing test still passes untouched).
+- **The app was run and driven against live craigslist** on a dev port:
+  - `/api/local/categories` and `/api/local/sources` serve the picker, with
+    `supportsCategoryBoards: true` on Craigslist alone.
+  - `/api/local/search?category=cars` with **a blank query** searched
+    `search/cta`, returned **266 posts**, and stamped `categoryId: "cars"` on
+    every one; `"$777/OBO - 2009 Kia Rondo"` parsed to `2009 Kia Rondo`.
+  - `/api/local/arbitrage?category=cars` priced 6: **5 refused, 1 priced**. The
+    refusals read as sentences — including the $500 Sonata against $93 of comps
+    — each with its own `_sacat=6001` sold-listings link.
+  - The one that passed (`2009 Volkswagen CC 2.0T *MECHANIC SPECIAL*`, 7 comps)
+    came back with **`$125` fees, `$0` shipping, `$85` title**, net `-$651`,
+    ROI `-72.3%`, max-to-pay `$249`, `eBay Motors · buyer collects`, valuation
+    source `eBay Motors sold comps` at `low` confidence.
+- `node --check` on `app.js`.
+- The wording of every refusal was read on live output and corrected — the
+  provider's "kind" is carried in two grammatical forms, because "that isn't a
+  cheap a vehicle" makes a real warning read as a bug.
+
+### Not verified / known limits
+
+- **The fee and cost constants are estimates**, of exactly the same kind as the
+  13.25% final value fee already in `FeeProfile`: $125/$60 flat vehicle fee,
+  $85 title transfer. They are stated on every row they touch so they can be
+  argued with, but they are **not** configurable from the Fees & Costs screen
+  yet, and they are not fetched from eBay (there is no API for a seller's
+  actual rates). Transport is $0 by design and says so.
+- **Only craigslist can search a category board.** Facebook, the deal feeds and
+  the liquidation sources take a keyword and nothing else; their results are
+  sorted into categories after the fact. The picker says this rather than
+  implying every source narrowed.
+- **Classification is keyword-based and will be wrong sometimes.** The bar for
+  a vehicle is deliberately high (a year *and* a make, unless a board said so),
+  which errs toward leaving a vehicle in the parcel model rather than costing a
+  hubcap as a car — the safe direction, since only the second one invents money.
+- **The guard's bounds are judgement calls** (0.4x / 5x / 3 comps for titled
+  goods). They will occasionally refuse a genuine deal. Every refusal costs the
+  seller a click on the sold-listings link; the alternative costs them a
+  fabricated profit on a four-figure buy.
+- **No UI test covers any of this.** The browser side is DOM and CSS, verified
+  by reading the live JSON the page renders from, not by driving the page.
+- `queue_forever.py` was already untracked at the start of the session and is
+  unrelated to this work; it was **left untracked** rather than swept into this
+  commit.

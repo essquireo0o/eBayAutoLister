@@ -101,8 +101,15 @@ public sealed class LocalArbitrageGroup
 /// <see cref="ProfitCalculator"/>/<see cref="FeeProfile"/> so a local flip is costed by exactly
 /// the same rules as a dropship or supplier-file item.
 /// </summary>
-public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, LiquidationLotPricer liquidationPricer)
+public sealed class LocalArbitrageAnalyzer(
+    ProfitCalculator profitCalc, LiquidationLotPricer liquidationPricer,
+    ResaleValuationRegistry? valuations = null)
 {
+    // What is allowed to put a resale price on a row, per category. Defaulted rather than required
+    // so every caller that constructs this by hand — and every test that does — is unchanged, while
+    // the container still injects the registered providers. See Services/ResaleValuation.cs.
+    private readonly ResaleValuationRegistry _valuations = valuations ?? ResaleValuationRegistry.Default;
+
     // A "goldmine" has to be earned on both axes — a big multiple AND enough sold history to
     // believe it. Thin data gets the honest label instead of the green badge.
     //
@@ -127,9 +134,10 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     // ── Evidence tiers ───────────────────────────────────────────────────────────────────────
     // What the money columns are allowed to claim. Public because the UI dims on them and the
     // tests assert on them, and because "confident" has to mean one thing across the app.
-    public const string EvidenceConfident = "confident";
-    public const string EvidenceLow = "low";
-    public const string EvidenceNone = "none";
+    // Spelled once, in Models, so a ResaleValuation can name a tier without depending on this class.
+    public const string EvidenceConfident = LocalArbitrageEvidence.Confident;
+    public const string EvidenceLow = LocalArbitrageEvidence.Low;
+    public const string EvidenceNone = LocalArbitrageEvidence.None;
 
     /// <summary>
     /// How much to believe this row's resale price, and therefore its ROI and margin.
@@ -195,6 +203,11 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         row.EvidenceTier = tier;
         row.EvidenceNote = note;
+        // One grading, read two ways: the row dims its percentages on this, and the valuation chip
+        // beside the resale price states the same word. Two independent gradings of the same
+        // evidence is how a board ends up calling one number confident in two places and thin in a
+        // third.
+        if (row.Valuation is { } valuation) valuation.Confidence = tier;
     }
 
     /// <summary>
@@ -213,6 +226,19 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         IReadOnlyList<CouponOffer>? coupons = null)
     {
         var localAsk = listing.Price ?? 0m;
+
+        // What KIND of thing this is, decided upstream by the scan and merely read here — see
+        // ResaleCategoryCatalog. Everything below reads it twice: once to decide what may value it,
+        // and once to decide what selling it costs. An unclassified listing resolves to "anything",
+        // which is the parcel model this board has always used.
+        var category = ResaleCategoryCatalog.Resolve(listing.CategoryId);
+
+        // The gate that stops this board publishing a made-up number. The comps lookup upstream will
+        // answer for anything it is asked about, including a truck it has only ever seen tow hitches
+        // for; the provider for this category decides whether that answer is a price for THIS kind
+        // of thing, and hands back nothing at all when it isn't.
+        var valued = _valuations.Value(category, listing, resale);
+        resale = valued.Pricing;
 
         // What the listing says about cover. A source that already knows (a refurb outlet publishing
         // its own programme terms) wins; everything else is read here rather than in each parser, so
@@ -261,6 +287,10 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             Retailer = listing.Retailer,
             FreeShipping = listing.FreeShipping,
             CouponCode = listing.CouponCode,
+            CategoryId = category.Id,
+            CategoryLabel = category.Label,
+            Vehicle = listing.Vehicle,
+            Valuation = valued.Valuation,
             Freebie = freebie,
             // Only stated where it is a real, separate cost — carrying a $0 tax line on a
             // Craigslist row would imply the app had checked, and it hasn't. A freebie states both
@@ -272,18 +302,34 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
                 : listing.IsRetail ? buyCost : null,
         };
 
+        // How this category is costed: which fees apply, whether anything ships, and what a title
+        // and a tow add. On the default category this hands back the seller's own profile and the
+        // comp shipping, unchanged — every parcel row prices exactly as it did before categories
+        // existed. See CategoryCosts.
+        var quote = CategoryCosts.For(category, fees, resale?.AvgCompShipping ?? 0m);
+        row.Category = quote.Economics;
+
         // An auction lot is a different arithmetic on the same pipeline: the price is a bid rather
         // than an ask, a buyer's premium sits on top of it, and the row may be several units of one
         // product. It gets its own branch rather than a pile of conditionals through this one — see
         // LiquidationLotPricer, which does the money through the Liquidation Lot Analyzer's own
         // grade, cost and max-bid arithmetic.
+        //
+        // Costed on the seller's own profile rather than the category's: a pallet is a pallet of
+        // parcels whatever is in it, and the lot pricer already has its own premium, tax and
+        // per-unit arithmetic that a vehicle fee model would have nothing to say to.
         if (listing.Liquidation is { } lot)
             return BuildLiquidation(row, lot, warranty, resale, fees, retailSalesTaxPercent);
 
         if (resale is null || !resale.HasPrice)
         {
             row.Verdict = "no_data";
-            row.VerdictNote = "No eBay sold history matched this title.";
+            // The reason, from whatever refused to price it. "No sold history matched this title" and
+            // "the comps for this truck are tow hitches" are different problems with different next
+            // steps, and the row is the only place the seller finds out which one they have.
+            row.VerdictNote = valued.Valuation.Note.Length > 0
+                ? valued.Valuation.Note
+                : "No eBay sold history matched this title.";
             row.PricedAs = resale?.LookupTitle ?? "";
             if (resale is not null) ApplyEvidence(row, resale);
             // No price to add a premium to, and still worth saying out loud: "this one is under
@@ -295,7 +341,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             // A row nobody could price still buys cheaper with a code. There is no profit to
             // recompute, so what the seller gets is the discount and the code itself — which is
             // more than the dash in every money column beside it.
-            ApplyCoupons(row, coupons, resale, fees, taxPercent, baseProfit: null);
+            ApplyCoupons(row, coupons, resale, quote, taxPercent, baseProfit: null);
             return row;
         }
 
@@ -332,13 +378,22 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // The cost basis is what actually leaves the wallet, which on a retail row includes the
         // sales tax. ROI comes back measured against that same figure — money spent is money spent,
         // whether it went to the retailer or to the state.
+        //
+        // Which fee profile, which shipping and which extra costs is the category's answer, not
+        // this method's: a truck pays a flat eBay Motors fee and no postage at all, a fridge pays
+        // eBay's percentage and is collected, and everything else pays exactly what it always did.
+        // One calculator either way — the category only decides what it is handed.
         var profit = profitCalc.Calculate(
             supplierUnitCost: buyCost, quantity: 1, expectedSalePrice: expected,
             quickSalePrice: resale.QuickSale ?? expected,
-            buyerPaidShipping: resale.AvgCompShipping, fees: fees,
-            actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
+            buyerPaidShipping: quote.BuyerPaidShipping, fees: quote.Fees,
+            actualShippingCostOverride: quote.ShippingOverride,
+            otherCosts: quote.OtherCosts);
 
-        row.EstimatedFees = profit.MarketplaceFeeTotal;
+        // The marketplace's cut, and only that. A title transfer is a real cost and it is not a fee
+        // eBay charges — folding it into this column would misattribute it and make the row's own
+        // fee basis unverifiable against the number beside it. It shows on its own line instead.
+        row.EstimatedFees = Math.Round(profit.MarketplaceFeeTotal - profit.OtherCosts, 2);
         row.EstimatedShipCost = profit.FulfilmentCostTotal;
         row.NetProfit = profit.NetProfitPerUnit;
         row.RoiPercent = profit.RoiPercent;
@@ -376,7 +431,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         // The buy side of a retail row, which has no negotiation: the codes and cashback published
         // for the store, and the same flip re-costed at what they leave it costing.
-        ApplyCoupons(row, coupons, resale, fees, taxPercent, profit);
+        ApplyCoupons(row, coupons, resale, quote, taxPercent, profit);
         return row;
     }
 
@@ -402,7 +457,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     /// </remarks>
     private void ApplyCoupons(
         LocalArbitrageOpportunity row, IReadOnlyList<CouponOffer>? coupons, ResalePricing? resale,
-        FeeProfile fees, decimal taxPercent, ProfitBreakdown? baseProfit)
+        CategoryCosts.CategoryQuote quote, decimal taxPercent, ProfitBreakdown? baseProfit)
     {
         if (coupons is null || coupons.Count == 0) return;
 
@@ -445,8 +500,9 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             var discounted = profitCalc.Calculate(
                 supplierUnitCost: stack.NetCost, quantity: 1, expectedSalePrice: expected,
                 quickSalePrice: resale.QuickSale ?? expected,
-                buyerPaidShipping: resale.AvgCompShipping, fees: fees,
-                actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
+                buyerPaidShipping: quote.BuyerPaidShipping, fees: quote.Fees,
+                actualShippingCostOverride: quote.ShippingOverride,
+                otherCosts: quote.OtherCosts);
 
             savings.NetProfitWithCoupons = discounted.NetProfitPerUnit;
             savings.RoiPercentWithCoupons = discounted.RoiPercent;

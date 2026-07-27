@@ -47,8 +47,27 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
     public bool IsAvailable => true;
     public string AvailabilityNote => "Public search — no login needed.";
 
+    // The reason this source is worth having for the high-value categories at all: craigslist files
+    // cars, boats, RVs, trailers, heavy equipment, appliances and furniture on their own boards, and
+    // searching the right board is the difference between finding the local truck market and finding
+    // four for-sale posts that happened to contain the word "truck".
+    public bool SupportsCategoryBoards => true;
+
     public Task<LocalSupplySearchResult> SearchAsync(string query, string zip, int radiusMiles, CancellationToken ct = default) =>
         SearchAsync(query, zip, radiusMiles, siteId: null, ct);
+
+    /// <summary>
+    /// The same search against this category's own board. A blank query is allowed here and only
+    /// here: "everything on the cars board within 40 miles" is the whole point of picking a category,
+    /// where a blank search of the for-sale board is the entire classifieds section.
+    /// </summary>
+    public Task<LocalSupplySearchResult> SearchAsync(
+        string query, string zip, int radiusMiles, ResaleCategory category, CancellationToken ct = default) =>
+        SearchCategoryAsync(
+            category.CraigslistBoard, query, zip, radiusMiles, siteId: null, ct,
+            // "Anything" is not a fact about a listing, it is the absence of one — stamping it would
+            // freeze every row at the default and stop the per-listing classifier ever running.
+            categoryId: category.IsDefault ? "" : category.Id, allowBlankQuery: !category.IsDefault);
 
     /// <summary>
     /// Searches one craigslist regional site. <paramref name="siteId"/> overrides the site the ZIP
@@ -75,13 +94,25 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
     /// becomes meaningful: "everything being given away near me" is the single most useful search
     /// on that board, where on the for-sale board it is just the whole classifieds section.
     /// </param>
+    /// <param name="categoryId">
+    /// This app's own category id (see ResaleCategoryCatalog), stamped onto every listing the board
+    /// returns. It is the strongest classification available anywhere in the pipeline: a post off
+    /// the cars board is a car whatever its title says, and a title parser reading "CLEAN TITLE RUNS
+    /// GREAT MUST SEE" would never get there. Empty for the freebie board, whose posts are anything.
+    /// </param>
+    /// <param name="allowBlankQuery">
+    /// True when the board itself is the search. "Everything on the cars board within 40 miles" is
+    /// the point of picking a category, and it is a different request from a blank search of the
+    /// whole for-sale section, which is the entire classifieds.
+    /// </param>
     public async Task<LocalSupplySearchResult> SearchCategoryAsync(
         string category, string query, string zip, int radiusMiles, string? siteId,
-        CancellationToken ct = default, bool freeBoard = false)
+        CancellationToken ct = default, bool freeBoard = false,
+        string categoryId = "", bool allowBlankQuery = false)
     {
         var radius = Math.Clamp(radiusMiles, 1, 500);
 
-        if (string.IsNullOrWhiteSpace(query) && !freeBoard)
+        if (string.IsNullOrWhiteSpace(query) && !freeBoard && !allowBlankQuery)
             return Fail(query, zip, radius, "Enter something to search for.");
 
         var site = CraigslistSites.Resolve(zip, siteId);
@@ -123,7 +154,7 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
             if (feed is not null) listings.AddRange(CraigslistParser.ParseRss(feed, freeBoard));
         }
 
-        var result = CraigslistParser.BuildResult(listings, site, query, zip, radius, category);
+        var result = CraigslistParser.BuildResult(listings, site, query, zip, radius, category, categoryId);
 
         if (result.Count > 0 && !CraigslistSites.IsExactZipMatch(zip) && string.IsNullOrWhiteSpace(siteId))
         {

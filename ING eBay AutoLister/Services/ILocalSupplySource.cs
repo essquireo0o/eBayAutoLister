@@ -86,11 +86,34 @@ public interface ILocalSupplySource
     bool AllowsBlankQuery => false;
 
     /// <summary>
+    /// Whether this source can be pointed at one category's own board rather than searched by
+    /// keyword alone.
+    /// </summary>
+    /// <remarks>
+    /// True for craigslist, which files cars, boats, RVs, trailers, appliances and furniture on
+    /// separate boards — searching the right one is the difference between finding the local truck
+    /// market and finding four listings that happened to contain the word "truck". False everywhere
+    /// else, and a default so no existing source had to say so. The UI reads it to be honest about
+    /// what a category actually did on each site, rather than implying every source narrowed.
+    /// </remarks>
+    bool SupportsCategoryBoards => false;
+
+    /// <summary>
     /// One user-initiated search. Implementations must not retry, schedule, or authenticate as a
     /// side effect: an expired session is reported (status <c>session_expired</c>), never silently
     /// re-established.
     /// </summary>
     Task<LocalSupplySearchResult> SearchAsync(string query, string zip, int radiusMiles, CancellationToken ct = default);
+
+    /// <summary>
+    /// The same search, narrowed to a category. Defaults to ignoring the category entirely, which is
+    /// the honest behaviour for a source that only has a search box — the scan still classifies what
+    /// comes back per listing, so a keyword-only site contributes its cars to a cars board even
+    /// though it couldn't be asked for them.
+    /// </summary>
+    Task<LocalSupplySearchResult> SearchAsync(
+        string query, string zip, int radiusMiles, ResaleCategory category, CancellationToken ct = default) =>
+        SearchAsync(query, zip, radiusMiles, ct);
 }
 
 /// <summary>
@@ -128,5 +151,6 @@ public sealed class LocalSupplySources(IEnumerable<ILocalSupplySource> sources)
         Available = s.IsAvailable, Note = s.AvailabilityNote, LocationBased = s.IsLocationBased,
         ChargesSalesTax = s.ChargesSalesTax, ManualSites = s.ManualSites.ToList(),
         MinRadiusMiles = s.MinRadiusMiles, AllowsBlankQuery = s.AllowsBlankQuery,
+        SupportsCategoryBoards = s.SupportsCategoryBoards,
     }).ToList();
 }

@@ -271,6 +271,14 @@ builder.Services.AddSingleton<CrossListingExporter>();
 // logic over the seller's own fee profile, the published off-eBay rates, and whatever live supply
 // the local sources can see; the searching is orchestrated in WhereToSellAsync below.
 builder.Services.AddSingleton<WhereToSellAnalyzer>();
+// What is allowed to put a resale price on a row, per category — and, just as importantly, what
+// says "I can't value this" instead of inventing one. The sold-comps database this app reads is
+// electronics-heavy: ask it what a 2011 Tundra sells for and it will answer with the median of four
+// tow hitches, confidently. Registered as a set so a real eBay Motors feed or a book-value service
+// drops in as a fourth provider and nothing else changes. See Services/ResaleValuation.cs.
+foreach (var provider in ResaleValuationRegistry.BuildDefaults())
+    builder.Services.AddSingleton(provider);
+builder.Services.AddSingleton<ResaleValuationRegistry>();
 // Local arbitrage — prices each Facebook Marketplace result against the sold-comps database and
 // Terapeak, then ranks by net profit after fees. Pure ranking/verdict logic plus ProfitCalculator;
 // the pricing lookups themselves are orchestrated in FindLocalArbitrageAsync below.
@@ -1812,6 +1820,14 @@ app.MapGet("/api/local/sources", (LocalSupplySources sources, ActionLog log) =>
     }
 });
 
+// What kinds of thing the scanner can be pointed at, for the category picker.
+//
+// A category is not a filter on the results — it changes what is searched (a craigslist board
+// rather than the whole for-sale section), what is allowed to value each row, and what selling it
+// costs. Which is why the picker states, per category, whether this app can price it at all: a
+// seller who picks Boats should learn that here rather than from a column of dashes.
+app.MapGet("/api/local/categories", () => Results.Ok(ResaleCategoryCatalog.Describe()));
+
 // One local search across every selected site, merged into a single list. `sources` is a
 // comma-separated list of ids (craigslist,facebook); omitted means everything available now.
 //
@@ -1819,11 +1835,12 @@ app.MapGet("/api/local/sources", (LocalSupplySources sources, ActionLog log) =>
 // renders per-source status and whatever results did arrive off that body; a 500 with an HTML
 // error page would reach it as a rejected fetch instead, with no results and nothing to say.
 app.MapGet("/api/local/search", async (
-    string q, string? zip, int? radius, string? sources, string? craigslistSite,
+    string q, string? zip, int? radius, string? sources, string? craigslistSite, string? category,
     LocalSupplySources registry, ActionLog log, CancellationToken ct) =>
 {
     var radiusMiles = radius ?? 40;
     var results = new List<LocalSupplySearchResult>();
+    var wanted = ResaleCategoryCatalog.Resolve(category);
 
     try
     {
@@ -1832,9 +1849,14 @@ app.MapGet("/api/local/search", async (
         // Sequential, not parallel: one of these sites is searched by driving a real browser, and
         // running that alongside anything else is how a slow search becomes a stuck one.
         foreach (var source in picked)
-            results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, ct));
+            results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, wanted, ct));
 
-        return Results.Ok(LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles));
+        var merged = LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles);
+        // What each row actually IS, worked out once for the whole search. The plain list only uses
+        // it to show the vehicle it read off a title — but classifying here rather than in the
+        // arbitrage pipeline means both boards agree about what a row is.
+        ResaleCategoryCatalog.ClassifyAll(merged.Items, wanted);
+        return Results.Ok(merged);
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested)
     {
@@ -1868,13 +1890,28 @@ static LocalSupplyMultiResult FailedLocalSearch(
 //
 // LocalSupplyGuard is what makes the loop above safe to write as a plain foreach: it bounds each
 // source in time and turns any failure into a result, so one site can never fail the search.
+//
+// The category is the second knob, and craigslist is the only source that can do anything with it:
+// it files cars, boats, RVs, trailers, appliances and furniture on separate boards, so a category
+// there is a different URL rather than a different word in the search box. Every other source gets
+// the category anyway (the interface default ignores it) and its results are classified per listing
+// afterwards — see ResaleCategoryCatalog.ClassifyAll.
 static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
-    ILocalSupplySource source, string q, string zip, int radius, string? craigslistSite, CancellationToken ct) =>
+    ILocalSupplySource source, string q, string zip, int radius, string? craigslistSite,
+    ResaleCategory category, CancellationToken ct) =>
     LocalSupplyGuard.RunAsync(
         source,
-        token => source is CraigslistService craigslist && !string.IsNullOrWhiteSpace(craigslistSite)
-            ? craigslist.SearchAsync(q, zip, radius, craigslistSite, token)
-            : source.SearchAsync(q, zip, radius, token),
+        token => source is CraigslistService craigslist
+            ? craigslist.SearchCategoryAsync(
+                category.CraigslistBoard, q, zip, radius, craigslistSite, token,
+                // "Anything" is the absence of a classification, not one — stamping it would stop
+                // the per-listing classifier ever running on craigslist rows.
+                categoryId: category.IsDefault ? "" : category.Id,
+                // A named board IS the search: "everything on the cars board within 40 miles" is
+                // exactly what picking a category means, where a blank for-sale search is the whole
+                // classifieds section.
+                allowBlankQuery: !category.IsDefault)
+            : source.SearchAsync(q, zip, radius, category, token),
         q, zip, radius, ct: ct);
 
 // The local-arbitrage ranking: the same zip/radius/keyword search as above, across every selected
@@ -1884,7 +1921,7 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
 // ever runs when someone clicks the button that says so.
 app.MapGet("/api/local/arbitrage", async (
     string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
-    string? sources, string? craigslistSite, decimal? salesTax, bool? coupons,
+    string? sources, string? craigslistSite, decimal? salesTax, bool? coupons, string? category,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -1907,7 +1944,10 @@ app.MapGet("/api/local/arbitrage", async (
             // On by default: the codes are free to look up, cached per store, and every dollar one
             // takes off the buy is a dollar eBay never sees. Off is offered because a seller who
             // wants the scan back a few seconds sooner is entitled to it.
-            coupons == false ? null : couponService);
+            coupons == false ? null : couponService,
+            // What kind of thing to look for. Changes the craigslist board that is searched, what is
+            // allowed to value each row, and what selling it costs — see ResaleCategoryCatalog.
+            ResaleCategoryCatalog.Resolve(category));
 
         return Results.Ok(result);
     }
@@ -3894,21 +3934,28 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct,
-    CouponService? couponService = null)
+    CouponService? couponService = null, ResaleCategory? category = null)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
+    var wanted = category ?? ResaleCategoryCatalog.Anything;
 
     // Sequential: one of these sources drives a real browser, and running that concurrently with
     // anything else turns a slow search into a stuck one.
     var searches = new List<LocalSupplySearchResult>();
     foreach (var source in sources)
-        searches.Add(await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, ct));
+        searches.Add(await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, wanted, ct));
 
     var search = LocalSupplyMerger.Merge(searches, q, zip, radius);
+
+    // What each row IS, decided once and before anything is priced — because the category chooses
+    // what may value the row and what selling it costs, and both of those are wrong by default for
+    // anything that isn't a small parcel. See ResaleCategoryCatalog.
+    ResaleCategoryCatalog.ClassifyAll(search.Items, wanted);
 
     var result = new LocalArbitrageResult
     {
         Status = search.Status, Query = search.Query, ZipCode = search.ZipCode,
+        CategoryId = wanted.Id, CategoryLabel = wanted.Label,
         // Echoed from the response rather than the request: Facebook snaps a radius to its own
         // dropdown values, so this reports what was actually searched.
         RadiusMiles = searches.FirstOrDefault()?.RadiusMiles ?? radius,
@@ -3938,8 +3985,14 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 
         // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
         // differently-worded tiles for the same product share both the group and the cached scrape.
+        // On a vehicle the identity is the year, make and model, and the generic product signature
+        // cannot see any of them: it keys a classifieds title on the brand, which would put a 2011
+        // Tundra and a 2003 Camry in one group and price them off one lookup. Everything else keys
+        // exactly as it always has. See VehicleTitleParser.GroupKey.
         var groups = LocalArbitrageAnalyzer.GroupByProduct(
-            priceable, l => TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
+            priceable, l => VehicleTitleParser.GroupKey(l.Vehicle) is { Length: > 0 } key
+                ? key
+                : TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
         result.ProductsPriced = groups.Count;
 
         async Task<ResalePricing> PriceAsync(LocalArbitrageGroup group, bool allowScrape)
@@ -4002,6 +4055,14 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             .ToList();
 
         result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);
+        // What kinds of thing this board is made of, for the category filter above the table. A scan
+        // for "anything" routinely comes back as six categories in one ranking, and until it says so
+        // a seller filtering for the truck has to read every row.
+        result.Categories = ResaleCategoryCatalog.Tally(result.Items);
+        // And the rows the app deliberately refused to price. Surfaced rather than buried: on a scan
+        // of the cars board this can be most of the board, and a column of dashes with no
+        // explanation reads as a broken feature instead of as the honest answer it is.
+        result.ManualValuationCount = result.Items.Count(r => r.Valuation is { Status: ValuationStatuses.Manual });
         result.GoldmineCount = result.Items.Count(r => r.Verdict == "goldmine");
         // The rows a seller working off a fixed pot of cash can actually run: profitable AND back in
         // the bank inside three weeks.
@@ -4076,12 +4137,24 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         if (result.Items.All(r => r.EbayExpectedSale is null))
         {
             result.SoldCompsConfigured = await SoldCompsReachableAsync(marketplace, ct);
-            result.DataWarning = (result.SoldCompsConfigured, terapeak.IsConnected) switch
-            {
-                (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these locally.",
-                (true, _) => "The sold-comps database had no history for any of these titles. Connecting Terapeak would add a second source.",
-                (false, true) => "Terapeak is connected but returned no sold history for these titles.",
-            };
+
+            // A board of unpriced rows has two completely different explanations, and telling a
+            // seller the wrong one sends them to fix something that isn't broken. If the app REFUSED
+            // to price these — because nothing it reads values cars — then connecting Terapeak and
+            // configuring a comps database would change nothing at all, and saying otherwise would
+            // be the app blaming its own setup for a limit it knows about.
+            var allRefused = result.Items.Count > 0 && result.ManualValuationCount == result.Items.Count;
+
+            result.DataWarning = allRefused
+                ? $"None of these could be valued from sold data — {wanted.Label.ToLowerInvariant()} isn't something " +
+                  "this app's sold-comps database can price. Every row still shows what it costs and links to the " +
+                  "eBay sold listings for it, so you can put a number on the ones worth chasing."
+                : (result.SoldCompsConfigured, terapeak.IsConnected) switch
+                {
+                    (false, false) => "No eBay sold-price source is available — connect Terapeak in Settings, or configure the sold-comps database, to price these locally.",
+                    (true, _) => "The sold-comps database had no history for any of these titles. Connecting Terapeak would add a second source.",
+                    (false, true) => "Terapeak is connected but returned no sold history for these titles.",
+                };
         }
         else
         {
@@ -4105,8 +4178,9 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 
     sw.Stop();
     log.Add("Info", "Local arbitrage scan",
-        $"\"{q}\" within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")} " +
+        $"\"{q}\" in {wanted.Label} within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")} " +
         $"on {string.Join(" + ", sources.Select(s => s.Id))}; " +
+        $"Valued by hand (no comp source for the category): {result.ManualValuationCount}; " +
         $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
         $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +
         $"Goldmines: {result.GoldmineCount}; Fast cash (<={DaysToCashEstimator.FastCashDays}d): {result.FastCashCount}; " +
@@ -4225,7 +4299,9 @@ static async Task<WhereToSellReport> WhereToSellAsync(
 
     foreach (var source in sources)
     {
-        var search = await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, ct);
+        // No category: this screen is comparing one named product's price across venues, so there is
+        // no board to narrow to and nothing here reads a listing's category.
+        var search = await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, ResaleCategoryCatalog.Anything, ct);
         outcomes.Add(LocalSupplySourceOutcome.From(search));
         evidence.Add(new LocalVenueEvidence
         {
@@ -4513,7 +4589,12 @@ static async Task<JackpotResult> RollTheDiceAsync(
         {
             foreach (var source in localSources)
             {
-                var search = await SearchLocalSourceAsync(source, query, zip, radius, craigslistSite, ct);
+                // The sweep picks its own products, so there is no category to search by — but what
+                // comes back still has to be classified, because these rows are costed by the same
+                // LocalArbitrageAnalyzer as the local board and a truck must not be costed as a parcel.
+                var search = await SearchLocalSourceAsync(
+                    source, query, zip, radius, craigslistSite, ResaleCategoryCatalog.Anything, ct);
+                ResaleCategoryCatalog.ClassifyAll(search.Items);
 
                 // Rolled up across every product searched, so the board can say which sites were
                 // actually reachable — an empty option list has to be distinguishable from a site
