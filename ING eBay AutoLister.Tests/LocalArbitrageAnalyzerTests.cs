@@ -435,4 +435,51 @@ public class LocalArbitrageAnalyzerTests
     [InlineData(" perday ", "profit_per_day")]
     public void NormalizeSort_UnknownSortsFallBackToMoneyFirst(string? input, string expected) =>
         Assert.Equal(expected, LocalArbitrageAnalyzer.NormalizeSort(input));
+
+    // ── The buy side ───────────────────────────────────────────────────────────
+    // Paying less is the cheapest margin there is — no fee, no shipping, no wait — so every priced
+    // row carries the plan for asking. See NegotiationAdvisorTests for the advice itself.
+
+    [Fact]
+    public void Build_EveryPricedRowCarriesANegotiationPlanBuiltOnItsOwnBreakEven()
+    {
+        var row = Analyzer.Build(Listing(50m), Pricing(expected: 200m), Fees);
+
+        Assert.NotNull(row.Negotiation);
+        // The plan negotiates against the row's own max-buy price, not a second opinion of it.
+        Assert.Equal(row.MaxBuyPrice, row.Negotiation!.BreakEvenPrice);
+        Assert.Equal(row.LocalAsk, row.Negotiation.AskPrice);
+        Assert.Equal(row.NetProfit, row.Negotiation.NetAtAsk);
+    }
+
+    [Fact]
+    public void Build_AnUnpricedRowHasNothingToNegotiateAgainst()
+    {
+        var row = Analyzer.Build(Listing(50m), resale: null, Fees);
+
+        // An offer with no sold history behind it is a guess with a dollar sign on it.
+        Assert.Null(row.Negotiation);
+    }
+
+    [Fact]
+    public void Build_ThePlanSeesTheSellersOwnPriceCutAndTheDistance()
+    {
+        var listing = Listing(180m, miles: 8);
+        listing.OriginalPrice = 260m;
+
+        var row = Analyzer.Build(listing, Pricing(expected: 400m, soldComps: 12), Fees);
+
+        Assert.Contains(row.Negotiation!.Signals, s => s.Contains("$260"));
+        Assert.Contains("8 miles away", row.Negotiation.Messages[0].Text);
+    }
+
+    [Fact]
+    public void Build_AListingWithNoPublishedDateMakesNoStalenessClaim()
+    {
+        // Facebook doesn't publish a post date. A missing date has to mean "no argument made",
+        // never "this listing is fresh".
+        var row = Analyzer.Build(Listing(180m), Pricing(expected: 400m, soldComps: 12), Fees);
+
+        Assert.DoesNotContain(row.Negotiation!.Signals, s => s.Contains("Listed"));
+    }
 }

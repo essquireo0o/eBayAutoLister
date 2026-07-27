@@ -7337,6 +7337,192 @@ td.skeleton-cell { padding: 0 !important; }
   line-height: 1.6;
 }
 
+/* ── Buy-side negotiation ──────────────────────────────────────────────────
+   The cell on the local board, and the modal behind it. Colour carries one
+   meaning only: gold is "act on this number", red is "do not pay this". A row
+   we would walk away from is deliberately the dullest thing on the table —
+   the point of the walk badge is that nobody clicks it. */
+.fb-arb-offer { white-space: nowrap; }
+
+.neg-offer {
+  display: block;
+  font-weight: 700;
+  color: var(--gold-dark);
+}
+.neg-upside { display: block; font-size: 10px; color: var(--success); }
+
+.neg-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  cursor: help;
+}
+.neg-buynow   { background: var(--success-soft); color: var(--success); }
+.neg-haggle   { background: var(--gold-soft); color: var(--gold-dark); }
+.neg-must     { background: var(--warning-soft); color: var(--warning); }
+.neg-longshot { background: var(--soft-2); color: var(--ink-2); }
+.neg-walk     { background: var(--danger-soft); color: var(--danger); }
+.neg-nodata   { background: #f1f4f5; color: var(--muted); }
+
+.fb-arb-neg-btn { display: block; margin-top: 5px; }
+
+/* ── The modal ─────────────────────────────────────────────────────────── */
+.neg-box {
+  width: min(760px, 100%);
+  padding: 22px;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.neg-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.neg-head h3 { margin: 2px 0 0; }
+
+.neg-headline {
+  margin: 12px 0 16px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--line-strong);
+  background: var(--soft-2);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.neg-headline-buynow { border-left-color: var(--success); background: var(--success-soft); }
+.neg-headline-haggle { border-left-color: var(--gold); }
+.neg-headline-must   { border-left-color: var(--warning); background: var(--warning-soft); }
+.neg-headline-walk   { border-left-color: var(--danger); background: var(--danger-soft); }
+
+/* The four numbers in the order they get used: open here, stop here, never past here. */
+.neg-numbers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.neg-tile {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.neg-tile-open { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.neg-tile-stop { border-style: dashed; }
+.neg-tile-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.neg-tile-value { display: block; font-size: 20px; line-height: 1.3; }
+.neg-tile-open .neg-tile-value { color: var(--gold-dark); }
+.neg-tile-stop .neg-tile-value { color: var(--ink-2); }
+.neg-tile-sub { display: block; font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+
+.neg-signals-head {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+.neg-signals ul { margin: 0; padding-left: 18px; }
+.neg-signals li { font-size: 12px; line-height: 1.6; color: var(--ink-2); }
+
+.neg-ladder-table { font-size: 12.5px; }
+.neg-ladder-table td, .neg-ladder-table th { padding: 6px 10px; }
+.neg-rung-great td { background: var(--success-soft); }
+.neg-rung-loss td  { color: var(--muted); background: var(--danger-soft); }
+.neg-rung-net { font-weight: 700; }
+.neg-rung-great .neg-rung-net { color: var(--success); }
+.neg-rung-loss .neg-rung-net  { color: var(--danger); }
+.neg-rung-label { font-size: 11px; color: var(--muted); }
+
+.neg-tone {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.neg-tone-great { background: var(--success); color: #fff; }
+.neg-tone-good  { background: var(--success-soft); color: var(--success); }
+.neg-tone-thin  { background: var(--warning-soft); color: var(--warning); }
+.neg-tone-loss  { background: var(--danger); color: #fff; }
+
+.neg-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--soft-2);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+/* Drafts are editable in place: a message that reads like a form letter gets
+   treated like one, so the box invites a rewrite rather than presenting a
+   finished artefact. Copy takes whatever is in the box at the time. */
+.neg-message {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+.neg-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.neg-message-when { display: block; font-size: 10.5px; color: var(--muted); }
+.neg-message-text {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.neg-nomessage {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.neg-evidence {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 /* ── The strip under the price field in both editors ───────────────────── */
 .th-ads { margin-top: var(--s2); }
 

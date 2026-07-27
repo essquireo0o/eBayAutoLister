@@ -98,8 +98,11 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
     public const decimal GoldmineProfit = 75m;
     public const int GoldmineMinComps = 5;
     public const int GoldmineMinConfidence = 50;
-    private const decimal SolidRoiPercent = 30m;
-    private const decimal SolidProfit = 25m;
+    // The "worth the drive" bar. Public for the same reason the goldmine bar is: NegotiationAdvisor
+    // quotes it back as the ceiling to stop bidding at, and a negotiation that walked at a different
+    // number than the board judges by would be two definitions of "worth doing".
+    public const decimal SolidRoiPercent = 30m;
+    public const decimal SolidProfit = 25m;
     // Below this the sold history is too sparse to call anything, however good the arithmetic.
     private const int ThinCompCount = 3;
 
@@ -177,7 +180,36 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
         row.Verdict = verdict;
         row.VerdictNote = note;
+
+        // What to actually say to the person selling it. Pure arithmetic on numbers already computed
+        // above, so it costs nothing per row and can never disagree with the money columns beside it.
+        ApplyNegotiation(row, resale);
         return row;
+    }
+
+    // The buy side of the same row. Every dollar this saves is profit with no fee, no shipping and
+    // no wait attached — see NegotiationAdvisor.
+    private static void ApplyNegotiation(LocalArbitrageOpportunity row, ResalePricing resale)
+    {
+        row.Negotiation = NegotiationAdvisor.Build(
+            askPrice: row.LocalAsk,
+            breakEvenBuyPrice: row.MaxBuyPrice ?? 0m,
+            resalePrice: row.EbayExpectedSale ?? row.EbayResaleMedian,
+            compCount: resale.SoldCompCount + resale.TerapeakCompCount,
+            daysListed: DaysListed(row.PostedUtc),
+            daysToCash: row.DaysToCash,
+            originalPrice: row.OriginalPrice,
+            distanceMiles: row.DistanceMiles);
+    }
+
+    // Only the sources that publish a real timestamp can answer this (Craigslist does, Facebook
+    // doesn't). A missing date means the staleness argument simply isn't made — never that the
+    // listing is fresh.
+    private static int? DaysListed(DateTime? postedUtc)
+    {
+        if (postedUtc is not DateTime posted) return null;
+        var days = (int)Math.Floor((DateTime.UtcNow - posted).TotalDays);
+        return days < 0 ? null : days;
     }
 
     private static void ApplyDaysToCash(LocalArbitrageOpportunity row, ResalePricing? resale)

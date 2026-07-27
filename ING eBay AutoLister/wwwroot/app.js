@@ -358,6 +358,7 @@
     bindOpportunitySearch();
     bindSupplierAnalyzer();
     bindFacebookMarketplace();
+    bindNegotiation();
     bindRollTheDice();
     bindPhotoLibrary();
     bindInventoryHealth();
@@ -1116,6 +1117,24 @@
     unknown:    { cls: 'unknown', short: '' },
   };
 
+  // The buy side, on the row. Server-side verdicts (NegotiationAdvisor) so the badge, the number
+  // and the drafted message can never tell three different stories.
+  const NEG_VERDICTS = {
+    buy_now:        { label: 'Take it', cls: 'buynow', hint: 'Already under your great-buy price — ask once, take it either way.' },
+    negotiate:      { label: 'Haggle', cls: 'haggle', hint: 'Profitable at their ask. Everything you talk off is free money.' },
+    must_negotiate: { label: 'Only at your price', cls: 'must', hint: 'Not worth their ask — this one only works if they come down.' },
+    long_shot:      { label: 'Long shot', cls: 'longshot', hint: 'A polite offer barely clears the fees. One message, then let it go.' },
+    walk:           { label: 'Walk', cls: 'walk', hint: 'No offer here both makes money and gets answered.' },
+    no_data:        { label: '—', cls: 'nodata', hint: 'No sold history to negotiate against.' },
+  };
+
+  const NEG_TONES = {
+    great: { cls: 'great', label: 'great buy' },
+    good:  { cls: 'good',  label: 'worth doing' },
+    thin:  { cls: 'thin',  label: 'thin' },
+    loss:  { cls: 'loss',  label: 'you lose money' },
+  };
+
   // "$1.85/day" — the profit spread over the wait. Sub-dollar rates keep their cents, because
   // that is exactly the range where two flips are being compared.
   function perDay(value) {
@@ -1204,6 +1223,11 @@
       // own headline next to the total, which says nothing about when any of it arrives.
       data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
       `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
+      // The buy side, said plainly: this is the money that costs nothing to earn. Framed as a
+      // ceiling, because nobody accepts every opening offer.
+      data.negotiationUpside > 0
+        ? `<strong class="fb-arb-hit">${money(data.negotiationUpside)} more</strong> if all ${data.negotiableCount} sellers took your opening offer`
+        : '',
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
       scanned +
@@ -1269,9 +1293,20 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : `<tr><td colspan="12" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
+      : `<tr><td colspan="13" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
           ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
           : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
+
+    // Re-bound after every render: the table body is replaced wholesale by the sort and filter
+    // controls, so listeners attached to the previous rows are gone with them.
+    body.querySelectorAll('.fb-arb-neg-btn').forEach(btn =>
+      btn.addEventListener('click', () => openNegotiation(btn.dataset.key)));
+  }
+
+  // Rows have no id of their own that survives across sources, so the key is source + the site's
+  // own listing id, with the title as a last resort.
+  function arbRowKey(row) {
+    return `${row.source}::${row.itemId || row.url || row.title}`;
   }
 
   function arbitrageRowHtml(row, index) {
@@ -1322,8 +1357,157 @@
         <td class="num">${roi}</td>
         <td class="num">${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
+        <td class="num fb-arb-offer">${offerCell(row)}</td>
         <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
       </tr>`;
+  }
+
+  // The buy-side cell: what to open at, what saying it is worth, and the way into the drafts.
+  // A row we'd walk away from gets the walk badge and no button — the most useful thing this
+  // feature can do on a bad deal is fail to produce a message for it.
+  function offerCell(row) {
+    const plan = row.negotiation;
+    if (!plan || plan.verdict === 'no_data') {
+      return '<span class="fb-arb-muted" title="No sold history matched this, so there is no honest number to negotiate against.">—</span>';
+    }
+
+    const v = NEG_VERDICTS[plan.verdict] || NEG_VERDICTS.no_data;
+    if (plan.openingOffer == null) {
+      return `<span class="neg-badge neg-${v.cls}" title="${esc(plan.headline)}">${v.label}</span>`;
+    }
+
+    return `
+      <span class="neg-offer" title="${esc(plan.headline)}">${money(plan.openingOffer)}</span>
+      ${plan.upside > 0 ? `<span class="neg-upside">saves ${money(plan.upside)}</span>` : ''}
+      <span class="neg-badge neg-${v.cls}">${v.label}</span>
+      <button class="btn btn-secondary small fb-arb-neg-btn" type="button" data-key="${esc(arbRowKey(row))}">What to say</button>`;
+  }
+
+  // ── Buy-side negotiation ─────────────────────────────────────────────────
+  // The other half of every deal on the board above. A dollar talked off the buy price is worth
+  // more than a dollar added to the sale price — it arrives now, eBay takes none of it, and nothing
+  // has to ship for it. This is where that dollar gets asked for.
+  function bindNegotiation() {
+    const close = () => $('neg-overlay')?.classList.add('hidden');
+    on('neg-close', 'click', close);
+    on('neg-close-x', 'click', close);
+    $('neg-overlay')?.addEventListener('click', e => {
+      if (e.target.id === 'neg-overlay') close();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !$('neg-overlay')?.classList.contains('hidden')) close();
+    });
+  }
+
+  function openNegotiation(key) {
+    const row = (arbitrageData?.items || []).find(r => arbRowKey(r) === key);
+    const plan = row?.negotiation;
+    if (!plan) return;
+
+    const v = NEG_VERDICTS[plan.verdict] || NEG_VERDICTS.no_data;
+    $('neg-title').textContent = row.title;
+    const headline = $('neg-headline');
+    headline.className = `neg-headline neg-headline-${v.cls}`;
+    headline.textContent = plan.headline;
+
+    // The four numbers, in the order they get used: open here, stop here, never past here.
+    $('neg-numbers').innerHTML = [
+      tile('Their ask', money(plan.askPrice), row.postedAgo ? `listed ${esc(row.postedAgo)}` : ''),
+      plan.openingOffer != null
+        ? tile('Open at', money(plan.openingOffer),
+               plan.upside > 0 ? `${plan.openingDiscountPercent}% off — ${money(plan.upside)} straight to you` : 'their price', 'open')
+        : '',
+      plan.ceilingPrice != null
+        ? tile('Stop at', money(plan.ceilingPrice),
+               // When the ceiling IS their ask, "above this it stops being worth the drive" reads as
+               // a warning about a price nobody is being asked to pay.
+               plan.ceilingPrice >= plan.askPrice
+                 ? 'their price is already inside your limit'
+                 : 'above this it stops being worth the drive', 'stop') : '',
+      tile('Break-even', money(plan.breakEvenPrice), 'pay this and you worked for free', 'stop'),
+    ].filter(Boolean).join('');
+
+    $('neg-signals').innerHTML = (plan.signals || []).length
+      ? `<div class="neg-signals-head">Your leverage</div><ul>${
+          plan.signals.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`
+      : '';
+
+    // The counter-offer table: they name a number mid-conversation, and this says yes or no without
+    // any arithmetic happening in a driveway.
+    $('neg-ladder').innerHTML = (plan.ladder || []).length
+      ? `<div class="neg-signals-head">If you end up paying…</div>
+         <table class="inv-table neg-ladder-table">
+           <thead><tr><th class="num">Price</th><th class="num">You keep</th><th class="num">ROI</th><th>What that is</th></tr></thead>
+           <tbody>${plan.ladder.map(negRungHtml).join('')}</tbody>
+         </table>`
+      : '';
+
+    $('neg-messages').innerHTML = (plan.messages || []).length
+      ? `<div class="neg-signals-head">What to say</div>${plan.messages.map(negMessageHtml).join('')}`
+      : '<p class="neg-nomessage">No message drafted for this one on purpose — there is no offer here that both makes you money and gets a reply. Sending one anyway is how a bad deal gets talked into.</p>';
+
+    $('neg-evidence').textContent = plan.evidenceNote
+      ? `${plan.evidenceNote} Read the draft before you send it and make it sound like you — this app never messages anyone on your behalf.`
+      : '';
+
+    $('neg-messages').querySelectorAll('.neg-copy').forEach(btn =>
+      btn.addEventListener('click', () => negCopy(btn)));
+
+    $('neg-overlay')?.classList.remove('hidden');
+  }
+
+  function tile(label, value, sub, cls) {
+    return `<div class="neg-tile${cls ? ` neg-tile-${cls}` : ''}">
+        <span class="neg-tile-label">${esc(label)}</span>
+        <strong class="neg-tile-value">${value}</strong>
+        ${sub ? `<span class="neg-tile-sub">${sub}</span>` : ''}
+      </div>`;
+  }
+
+  function negRungHtml(rung) {
+    const tone = NEG_TONES[rung.tone] || NEG_TONES.thin;
+    const tags = [rung.isOpening ? 'your opener' : '', rung.isCeiling ? 'your ceiling' : '',
+                  rung.isAsk ? 'their ask' : ''].filter(Boolean)
+      .map(t => `<span class="neg-tag">${t}</span>`).join('');
+
+    return `
+      <tr class="neg-rung neg-rung-${tone.cls}">
+        <td class="num"><strong>${moneyExact(rung.price)}</strong>${tags}</td>
+        <td class="num neg-rung-net">${moneyExact(rung.netProfit)}</td>
+        <td class="num">${rung.roiPercent != null ? `${Math.round(rung.roiPercent)}%` : '∞'}</td>
+        <td><span class="neg-tone neg-tone-${tone.cls}">${tone.label}</span> <span class="neg-rung-label">${esc(rung.label)}</span></td>
+      </tr>`;
+  }
+
+  // Editable on purpose. A message that reads like a form letter gets treated like one, and the
+  // seller's own wording closes deals that a template doesn't.
+  function negMessageHtml(msg) {
+    const rows = Math.min(12, Math.max(4, (msg.text || '').split('\n').length + 2));
+    return `
+      <div class="neg-message">
+        <div class="neg-message-head">
+          <div>
+            <strong>${esc(msg.label)}</strong>
+            <span class="neg-message-when">${esc(msg.when)}</span>
+          </div>
+          <button class="btn btn-secondary small neg-copy" type="button" data-id="${esc(msg.id)}">Copy</button>
+        </div>
+        <textarea class="neg-message-text" rows="${rows}" spellcheck="true">${esc(msg.text)}</textarea>
+      </div>`;
+  }
+
+  // Copies whatever is in the box now, not the original draft — an edited message is the one being
+  // sent, so it is the one that has to end up on the clipboard.
+  async function negCopy(btn) {
+    const text = btn.closest('.neg-message')?.querySelector('.neg-message-text')?.value || '';
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = 'Copied ✓';
+    } catch {
+      btn.textContent = 'Select and copy';
+    }
+    setTimeout(() => { btn.textContent = original; }, 2000);
   }
 
   // ── Roll the Dice ────────────────────────────────────────────────────────

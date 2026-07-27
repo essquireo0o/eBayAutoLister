@@ -2541,3 +2541,150 @@ Screenshot: `docs/screenshots/days-to-cash.png`.
   identical for every item; it is not read from the seller's actual handling time or eBay payout
   history (neither is available here). It shifts every row equally, so it cannot change a ranking —
   only the absolute number.
+
+---
+
+## 26. Buy-side negotiation — what to offer, and what to actually say (autonomous session, 2026-07-26)
+
+Every pricing screen in this app worked the **sell** side: what to list at, when to cut, what to
+offer a watcher. On a local pickup there is no sell-side lever at all — the flip is decided the
+moment money changes hands in a driveway — and the app went quiet at exactly that moment. It would
+tell a seller a drill was worth buying at $180 and then leave them to invent a number and a sentence
+on their own.
+
+Now every priced row on **Local Deals** carries the buy side: the number to open at, the number to
+stop at, the counter-offer ladder, and three drafted messages anchored on the same sold comps that
+priced the flip.
+
+### Why the buy side is the cheap side
+
+A dollar talked off the ask and a dollar added to the sale price are not worth the same thing:
+
+| | Talk $55 off the buy | Add $55 of profit on the sell |
+|---|---|---|
+| What it takes | one polite message | raise the sale price **$63.40** (eBay's 13.25% takes the rest) |
+| eBay's cut | **none** | $8.40 |
+| When it lands | at the handover | after it sells, ships and pays out |
+| Effect on how fast it sells | none | a higher price sells **slower** |
+
+From the live run: a DeWalt DCD996 kit asking **$180**, netting **$114.55** after fees. Open at
+**$125** and that becomes **$169.55** — the same flip, **+48% profit**, for one message.
+
+Across a four-row board the summary line now reads *"**$279 more** if all 3 sellers took your
+opening offer"* — stated as a ceiling, because nobody accepts every opening offer.
+
+### The four numbers
+
+Every number is borrowed, never re-derived. The break-even is the row's own `MaxBuyPrice`, already
+costed by the shared `ProfitCalculator`/`FeeProfile`, and net profit at any other price is
+break-even minus that price — **exact**, because net profit falls one dollar for every extra dollar
+paid. So a whole ladder of counter-offers costs one subtraction each and cannot drift away from the
+money columns beside it.
+
+| | On a $180 ask, $295 break-even |
+|---|---|
+| **Open at** | $125 — low enough to leave room, high enough to get a reply |
+| **A great buy** | $168.31 — `LocalArbitrageAnalyzer`'s own goldmine bar (75% ROI / $75 cash) |
+| **Stop at** | $180 — the "worth the drive" bar (30% ROI / $25 cash), capped at their ask |
+| **Break-even** | $295 — pay this and you worked for free |
+
+The great-buy and worth-doing bars are the *same constants the board judges by* (`GoldmineProfit`,
+`GoldmineRoiPercent`, and `SolidProfit`/`SolidRoiPercent`, promoted to public for this). A price this
+calls "great buy" is a price that board would have badged a goldmine — there is not a second,
+friendlier definition for the feature that does the talking.
+
+### The rules that keep it from losing money
+
+- **A lowball has a floor, and the floor is politeness.** Past 35% off, a stranger's offer stops
+  reading as a negotiation and starts reading as an insult — and an insult gets **ignored, not
+  countered**, which costs the whole deal rather than the difference. When the number that makes the
+  deal work sits below that floor, the plan says so instead of drafting a message nobody will answer.
+- **A deal that can't be made drafts nothing.** If even 35% off is above break-even, the verdict is
+  `walk`, there is no offer price, and there is **no message and no button** on the row. A message
+  you shouldn't send is worse than no message, because sending it is how a bad deal gets talked into.
+- **On an already-great deal, the ask is made risk-free.** When the ask is already under the
+  great-buy price the danger is losing it to the next person over $20, not overpaying. So the
+  discount is asked for *and the asking price is accepted in the same message* — "would you do $100?
+  If not, no problem, I'll take it at your $120 either way." There is no version of that where a
+  $180 flip is lost over $20.
+- **Concede once, in the middle.** The counter message steps halfway, not to the ceiling. Going
+  straight to your maximum teaches the other side that your numbers move when pushed, and leaves
+  nothing to give when they push again.
+- **When the ceiling is their own ask, the last message is a yes.** Telling someone "$180 is as far
+  as I can go" about their own $180 listing loses a deal that was already worth doing, for nothing.
+  (Caught by the live browser run, not by a test.)
+- **Thin sold history quotes no figure at a stranger.** Under 3 comps the draft cites nothing and
+  leads on cash-and-pickup, and the opener is capped at 12% — without evidence there is no argument
+  for a low number, only an assertion.
+- **The ceiling is one number.** Said out loud rounded down ($230, not $230.76) and carried at that
+  value through the tiles and the ladder. A table showing $230.76 beside a draft saying $230 is two
+  limits on one screen, and the seller has to work out which is real.
+- **A missing post date makes no staleness claim.** Craigslist publishes one, Facebook doesn't. No
+  date means the argument simply isn't made — never that the listing is fresh.
+
+### The drafts
+
+The persuasive part is not the number, it's the **reason** for the number — and the reason is true:
+
+> I've been looking at these for a while. Similar ones sell for around **$340**, but by the time fees
+> and shipping come out that's roughly **$294.55** in hand, and it's **2 months or so** before that
+> money actually turns up. So I have to be careful about what I pay up front.
+>
+> Would you take **$125**? That's cash, picked up, no messing you around.
+
+Every figure there is real and already on the row. The drafts never invent urgency or a deadline,
+never disparage the item to justify the number, and never mention noticing the seller's own price cut
+(that stays in "your leverage", where it belongs — pointing it out is how a negotiation starts badly).
+Short waits are left out entirely: "it takes about twelve days" is a detail, not an argument, and
+padding the draft with it makes the parts that *are* arguments read like padding too.
+
+Drafts render in editable text boxes and **Copy takes whatever is in the box now**, not the original.
+A message that reads like a form letter gets treated like one. Nothing is ever sent for the seller.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/NegotiationModels.cs` | **New** — `NegotiationPlan`, `NegotiationRung`, `NegotiationMessage`, `NegotiationRequest` |
+| `Services/NegotiationAdvisor.cs` | **New** — pure/static: `BuyPriceAt`, `NetAt`/`RoiAt`/`ToneAt`, `RoundOffer`, the opening ladder, the five verdicts and every draft |
+| `Services/LocalArbitrageAnalyzer.cs` | `ApplyNegotiation` on every priced row; `SolidProfit`/`SolidRoiPercent` made public |
+| `Models/LocalArbitrageModels.cs` | `Negotiation` on the row; `NegotiableCount` + `NegotiationUpside` on the result |
+| `Program.cs` | Board totals; new `POST /api/local/negotiate` for a deal found off-app |
+| `wwwroot/index.html` | "Offer them" column, the negotiation modal, footnote. `app.js?v=50` |
+| `wwwroot/app.js` | `NEG_VERDICTS`/`NEG_TONES`, `offerCell`, `openNegotiation`, the ladder and draft renderers, clipboard |
+| `wwwroot/style.css` | The offer cell, the modal, tiles, ladder tones, message boxes |
+| `ING eBay AutoLister.Tests/NegotiationAdvisorTests.cs` | **New** — 31 tests |
+| `ING eBay AutoLister.Tests/LocalArbitrageAnalyzerTests.cs` | +5 tests (wiring, the unpriced row, the signals) |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **923 passed**, 0 failed, 0 skipped (887 pre-existing + 36 new) |
+| Live `POST /api/local/negotiate` | 200, full plan: verdict, four numbers, 5-rung ladder, 3 drafts, all figures consistent with the fee profile |
+| Live, walk case ($620 ask on a $400 item) | verdict `walk`, **0 messages**, no offer price |
+| Real browser (Playwright, stubbed scan, **real server-built plans**) | Offer column renders `$690 / saves $210 / Take it`, `$125 / saves $55 / Haggle`, and `— / Walk` with **no button**; modal shows tiles, leverage, 4-rung ladder and 3 editable drafts; Esc closes; **no console errors** |
+| Board summary | "$279 more if all 3 sellers took your opening offer" — the walk row correctly excluded |
+
+Screenshot: `docs/screenshots/buy-side-negotiation.png`.
+
+Two wording bugs were found by the live run and fixed in the code, both in the case where the ceiling
+equals the seller's own asking price: the headline said "stop at $180" about a $180 listing, and the
+final message refused a price that was already worth paying.
+
+### Not verified
+
+- **Against a real Craigslist/Facebook scan.** The plans in the browser check are real server output
+  from the live endpoint, but the rows carrying them are stubbed — a real scan needs a logged-in
+  Facebook session and minutes of scraping. The wiring from `LocalArbitrageAnalyzer.Build` is covered
+  by unit tests against the same `MaxBuyPrice` the board displays.
+- **Whether these drafts actually close deals.** The price ladder is arithmetic and is verified; the
+  *wording* is a judgement call. The 15% base opener, the 35% politeness floor and the concession
+  step are reasoned defaults, not measured conversion rates, and the app cannot see whether a message
+  was answered.
+- **The drafts are transparent about resale economics** ("by the time fees and shipping come out…").
+  A savvy seller reading that knows they are dealing with a reseller. That is deliberate — it is the
+  entire persuasive force behind the number, and the alternative is a draft that either lies or gives
+  no reason at all — but it is a trade-off, and a seller who would rather not say it can edit the box
+  before sending.

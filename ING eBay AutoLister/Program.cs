@@ -1768,6 +1768,40 @@ app.MapGet("/api/facebook/arbitrage", async (
     }
 });
 
+// ── Buy-side negotiation ──────────────────────────────────────────────────────────────────────
+// Every row on the local board already carries its own negotiation plan. This is the same advice
+// for a deal the seller found somewhere this app doesn't scan — paste the ask and what it sells
+// for, and get the opening offer, the ceiling and the drafted message back.
+//
+// Pure arithmetic and string building: no network, no scraping, nothing sent anywhere. The message
+// is drafted for the seller to read, edit and send themselves.
+app.MapPost("/api/local/negotiate", (
+    NegotiationRequest req, JackpotHunter hunter, FeeProfile feeProfile, ActionLog log) =>
+{
+    // Prefer a break-even the caller already costed; derive it from the resale price otherwise, via
+    // exactly the profit calculator every other screen uses, so both routes end at one number.
+    var breakEven = req.BreakEvenBuyPrice ?? (req.ResalePrice is > 0m
+        ? hunter.BreakEvenBuyPrice(new ResalePricing
+        {
+            ExpectedSale = req.ResalePrice, Median = req.ResalePrice, QuickSale = req.ResalePrice,
+            SoldCompCount = req.SoldCompCount,
+        }, feeProfile)
+        : 0m);
+
+    var plan = NegotiationAdvisor.Build(
+        askPrice: req.AskPrice, breakEvenBuyPrice: breakEven, resalePrice: req.ResalePrice,
+        // A hand-entered deal has no comp count to check, so a stated resale price is taken at its
+        // word — the seller typed it, and the draft says "similar ones sell for" either way.
+        compCount: req.SoldCompCount > 0 ? req.SoldCompCount : (req.ResalePrice is > 0m ? NegotiationAdvisor.MinCompsToCite : 0),
+        daysListed: req.DaysListed, daysToCash: req.DaysToCash,
+        originalPrice: req.OriginalPrice, distanceMiles: req.DistanceMiles);
+
+    log.Add("Negotiation", "Drafted a buy-side offer",
+        $"\"{req.Title}\": asking {req.AskPrice:C}, open at {plan.OpeningOffer:C} ({plan.Verdict})");
+
+    return Results.Ok(plan);
+});
+
 // ── Roll the Dice ─────────────────────────────────────────────────────────────────────────────
 // The one money feature that needs nothing from the seller — no keyword, no supplier file, no idea
 // what to look for. It sweeps several CATEGORIES of the sold-comps database at once, keeps the
@@ -2667,6 +2701,14 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         // What the whole board is worth if every profitable listing on it were bought and flipped —
         // an upper bound on the search, not a forecast.
         result.TotalPotentialProfit = Math.Round(result.Items.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
+
+        // What is on the table on the BUY side. Counted only on rows with an offer actually worth
+        // sending — a "walk" row has no upside, and a long shot isn't money anyone should bank on.
+        var negotiable = result.Items
+            .Where(r => r.Negotiation is { Verdict: "buy_now" or "negotiate" or "must_negotiate" } n && n.Upside > 0)
+            .ToList();
+        result.NegotiableCount = negotiable.Count;
+        result.NegotiationUpside = Math.Round(negotiable.Sum(r => r.Negotiation!.Upside), 2);
 
         if (result.Items.All(r => r.EbayExpectedSale is null))
         {

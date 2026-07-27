@@ -87,6 +87,12 @@ public class LocalArbitrageOpportunity
     // goldmine | solid | thin | pass | no_data
     public string Verdict { get; set; } = "no_data";
     public string VerdictNote { get; set; } = "";
+
+    // ── The buy side ─────────────────────────────────────────────────────────
+    // What to open at, where to stop, and the message to send — anchored on the same comps that
+    // produced the numbers above. Null on rows that couldn't be priced: there is nothing honest to
+    // negotiate against without sold history. See Services/NegotiationAdvisor.cs.
+    public NegotiationPlan? Negotiation { get; set; }
 }
 
 public class LocalArbitrageResult
@@ -125,4 +131,11 @@ public class LocalArbitrageResult
     // count a seller with limited cash actually shops from.
     public int FastCashCount { get; set; }
     public decimal TotalPotentialProfit { get; set; }
+
+    // ── What haggling is worth on this board ─────────────────────────────────
+    // Rows with a drafted offer worth sending, and the total gap between those asking prices and
+    // those opening offers. A ceiling on the buy-side saving, not a forecast — nobody accepts every
+    // opening offer — but every dollar of it is profit with no fee and no wait attached.
+    public int NegotiableCount { get; set; }
+    public decimal NegotiationUpside { get; set; }
 }

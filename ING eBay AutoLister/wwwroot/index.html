@@ -1080,6 +1080,7 @@
                       <th class="num">ROI</th>
                       <th class="num">Margin</th>
                       <th class="num">Max to pay</th>
+                      <th class="num">Offer them</th>
                       <th>Evidence</th>
                     </tr>
                   </thead>
@@ -1087,6 +1088,13 @@
                 </table>
               </div>
               <p class="fb-arb-footnote">
+                <strong>Offer them</strong> is the buy side. Every dollar you talk off the asking price is
+                profit with no eBay fee, no shipping and no wait attached to it — which is why it is worth
+                more than a dollar added to your sale price. Open at that number, stop at your ceiling, and
+                use the drafted message: it explains your offer with the real reason (what these sell for,
+                what fees and shipping take out of it, and how long the money is tied up) rather than just
+                being a low number. Nothing is sent for you — read it, make it sound like you, then send it.
+                <br /><br />
                 <strong>Days to cash</strong> is how long the buy price stays spent: the sold-history
                 velocity for that product, plus the fixed 8 days it takes to pack, ship and be paid out.
                 The <strong>$/day</strong> beneath it is the net profit spread over that wait — sorting by
@@ -1643,6 +1651,30 @@
           </p>
         </div>
       </section>
+
+      <!-- The buy side of one local deal: what to open at, where to stop, and what to actually say.
+           Every number here is already in the row behind it — this is arithmetic and wording, not a
+           second opinion, and nothing is sent anywhere on the seller's behalf. -->
+      <div id="neg-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box neg-box">
+          <div class="neg-head">
+            <div>
+              <div class="eyebrow">Buy-side negotiation</div>
+              <h3 id="neg-title">Make them an offer</h3>
+            </div>
+            <button id="neg-close-x" class="modal-close" type="button" title="Close">✕</button>
+          </div>
+          <p id="neg-headline" class="neg-headline"></p>
+          <div id="neg-numbers" class="neg-numbers"></div>
+          <div id="neg-signals" class="neg-signals"></div>
+          <div id="neg-ladder" class="neg-ladder"></div>
+          <div id="neg-messages" class="neg-messages"></div>
+          <p id="neg-evidence" class="neg-evidence"></p>
+          <div class="inv-confirm-actions">
+            <button id="neg-close" class="btn btn-secondary" type="button">Close</button>
+          </div>
+        </div>
+      </div>
 
       <!-- The tradeoff, one listing at a time: every rate, what it costs, what it has to buy back. -->
       <div id="ad-ladder-overlay" class="modal-overlay hidden">
@@ -2781,6 +2813,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=49"></script>
+  <script src="app.js?v=50"></script>
 </body>
 </html>
