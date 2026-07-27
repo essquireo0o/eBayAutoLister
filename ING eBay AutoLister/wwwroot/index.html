@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=61" />
+  <link rel="stylesheet" href="style.css?v=62" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -30,6 +30,9 @@
       <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6"/><path d="M7 9h10v3a5 5 0 01-10 0z"/><path d="M12 17v4"/></symbol>
       <symbol id="i-money" viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19V3"/><path d="M3 21h18"/></symbol>
       <symbol id="i-pipeline" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="10" rx="1"/><rect x="9.5" y="4" width="5" height="16" rx="1"/><rect x="16" y="4" width="5" height="7" rx="1"/></symbol>
+      <!-- Roll the Dice. The 🎲 emoji renders as an OS-coloured picture at its own
+           weight; beside two stroke icons on the dashboard it read as a sticker. -->
+      <symbol id="i-dice" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.15" fill="currentColor" stroke="none"/></symbol>
     </defs>
   </svg>
 
@@ -219,106 +222,179 @@
           </div>
         </div>
 
-        <div class="hero-panel">
-          <div>
+        <!-- ── Masthead ──────────────────────────────────────────────────────────
+             The hero and the three action cards below it are one block. The hero's
+             deep bottom padding exists to hold those cards, which sit up over its
+             lower edge; they are separate elements only because a gold card has to
+             sit on the page, not on the dark panel — on deep teal it loses the one
+             contrast that says "press this first". -->
+        <header class="hero-panel dash-hero">
+          <div class="dash-hero-copy">
             <p class="eyebrow">ING Mining LLC — Official Product</p>
-            <h1>ING Listing Engine™</h1>
-            <p class="hero-copy">The official eBay listing automation platform by ING Mining LLC. Manage inventory, auto-fill listings with AI, remove backgrounds, and publish directly to eBay — all in one place.</p>
+            <h1>ING Listing Engine<span class="dash-hero-tm">™</span></h1>
+            <p class="hero-copy">Source it, price it against real sold comps, let AI write it, and publish straight to eBay — the whole flip, in one place.</p>
           </div>
-          <div class="hero-actions">
-            <button id="btn-import-listings" class="btn btn-primary" type="button">Import Listings</button>
-            <button id="btn-new-ai-listing" class="btn btn-secondary" type="button">Create New AI Listing</button>
-            <button id="btn-refresh-dashboard" class="btn btn-ghost light" type="button">Refresh Listings</button>
+          <!-- The account in three chips. The dashboard used to report connection state
+               only through a badge in the top bar and a checklist that hides itself once
+               setup is done, so the front page said nothing at all about whether the app
+               was actually wired to anything. Written by renderDashStatus(). -->
+          <div class="dash-status" role="status" aria-live="polite">
+            <span id="dash-chip-ebay" class="dash-chip"><span class="dash-chip-dot"></span><span class="dash-chip-text">Checking eBay…</span></span>
+            <span id="dash-chip-ai" class="dash-chip"><span class="dash-chip-dot"></span><span class="dash-chip-text">Checking AI key…</span></span>
+            <span class="dash-chip dash-chip--beta"><span class="dash-chip-text">Free beta · every feature unlocked</span></span>
+          </div>
+          <div class="hero-actions dash-hero-actions">
+            <button id="btn-import-listings" class="btn btn-ghost light" type="button">Import Listings</button>
+            <button id="btn-refresh-dashboard" class="btn btn-ghost light" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <!-- The three things worth doing on open, at the size of that importance. Two of
+             them were a button in the hero row and one was a whole band of its own; as
+             cards they read as one set of choices, which is what they are. The ids are
+             the ones app.js already binds — Roll the Dice keeps btn-roll-dice, so its
+             busy state and the dice board behind it are untouched. -->
+        <div class="dash-quick">
+          <button id="dash-act-goldmines" class="dash-act dash-act--gold" type="button">
+            <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-opportunity"/></svg></span>
+            <span class="dash-act-title">Find Goldmines</span>
+            <span class="dash-act-sub">Search what's for sale near you, priced against real sold comps — net profit after fees on every row.</span>
+            <span class="dash-act-go">Open the finder<span class="dash-act-arrow" aria-hidden="true">→</span></span>
+          </button>
+          <button id="btn-new-ai-listing" class="dash-act dash-act--ai" type="button">
+            <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-ai"/></svg></span>
+            <span class="dash-act-title">New AI Listing</span>
+            <span class="dash-act-sub">Name a product or paste a link. AI finds the photos, specs and sold prices and writes the whole listing.</span>
+            <span class="dash-act-go">Start a draft<span class="dash-act-arrow" aria-hidden="true">→</span></span>
+          </button>
+          <button id="btn-roll-dice" class="dash-act dash-act--dice" type="button">
+            <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-dice"/></svg></span>
+            <span class="dash-act-title">Roll the Dice</span>
+            <span class="dash-act-sub">No idea what to sell? Sweeps whole categories of sold history for what's making money, then finds where to buy it.</span>
+            <span class="dash-act-go">No keyword needed<span class="dash-act-arrow" aria-hidden="true">→</span></span>
+          </button>
+        </div>
+
+        <!-- The money bands. Each is hidden until there is a real figure behind it — a
+             "$0 earned" band on a fresh install is a worse first impression than no band
+             at all — so this row is empty and takes no height on day one, and fills out
+             as the seller's account does. -->
+        <div class="dash-money-row">
+          <!-- The running total. Never a placeholder for money that hasn't been made. -->
+          <div id="dash-earnings" class="dash-earnings hidden">
+            <div class="dash-earnings-main">
+              <p class="eyebrow">Money made with ING</p>
+              <p id="dash-earnings-figure" class="dash-earnings-figure">$0</p>
+              <p id="dash-earnings-sub" class="dash-earnings-sub"></p>
+            </div>
+            <div class="dash-earnings-side">
+              <div id="dash-earnings-spark" class="dash-earnings-spark" aria-hidden="true"></div>
+              <button id="dash-earnings-open" class="btn btn-secondary" type="button">See the breakdown</button>
+            </div>
+          </div>
+
+          <!-- Money in motion. A projection is never allowed to be the headline figure. -->
+          <div id="dash-pipeline" class="dash-earnings dash-pipeline hidden">
+            <div class="dash-earnings-main">
+              <p class="eyebrow">Money in motion</p>
+              <p id="dash-pipeline-figure" class="dash-earnings-figure">$0</p>
+              <p id="dash-pipeline-sub" class="dash-earnings-sub"></p>
+            </div>
+            <div class="dash-earnings-side">
+              <div id="dash-pipeline-next" class="dash-pipeline-next"></div>
+              <button id="dash-pipeline-open" class="btn btn-secondary" type="button">Open the pipeline</button>
+            </div>
+          </div>
+
+          <!-- What's closing soon, from the last sniper scan. Hidden until a scan has
+               actually run: inventing one on page load would mean hitting eBay for every
+               seller who opens the app. -->
+          <div id="dash-snipe" class="dash-earnings dash-snipe hidden">
+            <div class="dash-earnings-main">
+              <p class="eyebrow">Closing soon, under market</p>
+              <p id="dash-snipe-figure" class="dash-earnings-figure">$0</p>
+              <p id="dash-snipe-sub" class="dash-earnings-sub"></p>
+            </div>
+            <div class="dash-earnings-side">
+              <div id="dash-snipe-next" class="dash-pipeline-next"></div>
+              <button id="dash-snipe-open" class="btn btn-secondary" type="button">Open the sniper</button>
+            </div>
           </div>
         </div>
 
-        <!-- The running total, on the front page. Hidden until there is a real number to show:
-             a "$0 earned" band on a fresh install is a worse first impression than no band, and
-             this must never be a placeholder for money that hasn't been made. -->
-        <div id="dash-earnings" class="dash-earnings hidden">
-          <div class="dash-earnings-main">
-            <p class="eyebrow">Money made with ING</p>
-            <p id="dash-earnings-figure" class="dash-earnings-figure">$0</p>
-            <p id="dash-earnings-sub" class="dash-earnings-sub"></p>
-          </div>
-          <div class="dash-earnings-side">
-            <div id="dash-earnings-spark" class="dash-earnings-spark" aria-hidden="true"></div>
-            <button id="dash-earnings-open" class="btn btn-secondary" type="button">See the breakdown</button>
-          </div>
-        </div>
-
-        <!-- Money in motion. Same rule as the band above: hidden until there is real money behind
-             it, and a projection is never allowed to be the headline figure. -->
-        <div id="dash-pipeline" class="dash-earnings dash-pipeline hidden">
-          <div class="dash-earnings-main">
-            <p class="eyebrow">Money in motion</p>
-            <p id="dash-pipeline-figure" class="dash-earnings-figure">$0</p>
-            <p id="dash-pipeline-sub" class="dash-earnings-sub"></p>
-          </div>
-          <div class="dash-earnings-side">
-            <div id="dash-pipeline-next" class="dash-pipeline-next"></div>
-            <button id="dash-pipeline-open" class="btn btn-secondary" type="button">Open the pipeline</button>
-          </div>
-        </div>
-
-        <!-- What's closing soon, from the last sniper scan. Hidden until a scan has actually run:
-             this band is a countdown on real listings, and inventing one on page load would mean
-             hitting eBay for every seller who opens the app. -->
-        <div id="dash-snipe" class="dash-earnings dash-snipe hidden">
-          <div class="dash-earnings-main">
-            <p class="eyebrow">Closing soon, under market</p>
-            <p id="dash-snipe-figure" class="dash-earnings-figure">$0</p>
-            <p id="dash-snipe-sub" class="dash-earnings-sub"></p>
-          </div>
-          <div class="dash-earnings-side">
-            <div id="dash-snipe-next" class="dash-pipeline-next"></div>
-            <button id="dash-snipe-open" class="btn btn-secondary" type="button">Open the sniper</button>
-          </div>
-        </div>
-
-        <!-- Roll the Dice. The only money feature on this page that asks the seller for nothing:
-             no keyword, no supplier file, no idea what to look for. It sweeps whole categories of
-             real sold data and comes back with what to buy and where. Given its own band rather
-             than a button in the hero row because for a seller who doesn't know what to sell, this
-             is the front door (see /api/opportunities/roll-the-dice). -->
-        <div class="dice-band">
-          <div class="dice-band-copy">
-            <p class="eyebrow">Don't know what to sell?</p>
-            <h2>🎲 Roll the Dice</h2>
-            <p class="dice-band-sub">
-              Sweeps whole categories of real eBay sold prices for the highest-profit products
-              selling right now, then goes and finds where you can buy them — with net profit after
-              fees, how fast it turns into cash, and how much sold history is behind the number.
-            </p>
-          </div>
-          <div class="dice-band-actions">
-            <button id="btn-roll-dice" class="btn btn-dice" type="button">🎲 Find the Money</button>
-            <span class="dice-band-note">No keyword needed · Free beta</span>
-          </div>
-        </div>
-
-        <div class="stats-grid">
+        <div class="stats-grid dash-stats">
           <article class="stat-card">
-            <span class="stat-label">Active Listings</span>
+            <span class="stat-top">
+              <span class="stat-label">Active Listings</span>
+              <span class="stat-icon" aria-hidden="true"><svg><use href="#i-listings"/></svg></span>
+            </span>
             <strong id="stat-active">0</strong>
             <span class="stat-note">Imported from eBay</span>
           </article>
           <article class="stat-card">
-            <span class="stat-label">Inventory Qty</span>
+            <span class="stat-top">
+              <span class="stat-label">Inventory Qty</span>
+              <span class="stat-icon" aria-hidden="true"><svg><use href="#i-inbox"/></svg></span>
+            </span>
             <strong id="stat-quantity">0</strong>
             <span class="stat-note">Available units</span>
           </article>
           <article class="stat-card">
-            <span class="stat-label">Catalog Value</span>
+            <span class="stat-top">
+              <span class="stat-label">Catalog Value</span>
+              <span class="stat-icon" aria-hidden="true"><svg><use href="#i-inventory"/></svg></span>
+            </span>
             <strong id="stat-value">$0</strong>
             <span class="stat-note">Price x quantity</span>
           </article>
           <article class="stat-card">
-            <span class="stat-label">Needs Review</span>
+            <span class="stat-top">
+              <span class="stat-label">Needs Review</span>
+              <span class="stat-icon" aria-hidden="true"><svg><use href="#i-alert"/></svg></span>
+            </span>
             <strong id="stat-review">0</strong>
             <span class="stat-note">Drafts or missing data</span>
           </article>
         </div>
+
+        <!-- Market pulse. Rising Now draws this shape at full size after a scan; this is
+             the same measurement on the front page, so "is the market moving, and which
+             way" is answerable without opening anything. It is drawn from the scan the
+             seller has already run (renderDashPulse), never from a fetch on page load —
+             a radar sweep is a minute of eBay and comps calls and must stay a deliberate
+             click. Until then it says so and offers the click. -->
+        <section id="dash-pulse" class="viz-panel viz-dark dash-pulse">
+          <div class="viz-panel-head">
+            <div>
+              <p class="eyebrow">Market pulse</p>
+              <h3>Which way prices are moving</h3>
+              <p id="dash-pulse-sub" class="viz-panel-sub">Median sold price per product, this window against the one before — measured from real sold history, not listings.</p>
+            </div>
+            <button id="dash-pulse-open" class="btn btn-ghost" type="button">Open Rising Now</button>
+          </div>
+
+          <!-- The resting state takes the same two-column shape as the reading that
+               replaces it, so the panel does not change size or layout under the seller
+               when a scan lands. -->
+          <div id="dash-pulse-rest" class="dash-pulse-rest">
+            <div class="dash-pulse-rest-copy">
+              <p class="dash-pulse-rest-title">Nothing scanned yet</p>
+              <p class="dash-pulse-rest-body">One scan reads a few thousand sold comps across several categories, splits each product's sales into two windows and prices only the ones that moved.</p>
+              <button id="dash-pulse-scan" class="btn btn-primary btn-large" type="button">Scan the market</button>
+              <p class="dash-pulse-rest-note">Takes about a minute · nothing is listed or bought</p>
+            </div>
+            <!-- Decorative only, and deliberately monochrome, unlabelled and faded out:
+                 a placeholder chart with plausible-looking bars would be indistinguishable
+                 from a real reading of the market, which is the one thing this panel must
+                 never be. -->
+            <div class="dash-pulse-art" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+
+          <div id="dash-pulse-live" class="dash-pulse-live hidden"></div>
+        </section>
 
         <section class="content-grid">
           <div id="listings-section" class="panel listings-panel">
@@ -4073,6 +4149,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=69"></script>
+  <script src="app.js?v=70"></script>
 </body>
 </html>

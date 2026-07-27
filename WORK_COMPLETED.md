@@ -5312,3 +5312,111 @@ A new closing section in `style.css` that six table classes now opt into
   correctly (`local, local, scroll, scroll`), but it was not observed.
 - **None of this is covered by `dotnet test`.** It is CSS and DOM appearance;
   the browser run above is the only thing covering it, and it is not in CI.
+
+---
+
+## Dashboard redesign — one front page instead of six bands (autonomous session, 2026-07-27)
+
+The dashboard had grown by accretion: every feature session that wanted the front
+page took a full-width band on it. Hero, Money made, Money in motion, Closing
+soon, Roll the Dice, then the four stat tiles — six blocks of the same width,
+roughly the same weight, stacked. Nothing on it was first, the four numbers a
+seller actually checks were below the fold, and the market data the app measures
+was not on it at all.
+
+**No number, endpoint, rule or business logic changed here.** Server side is
+untouched, and every id app.js binds is still on the element it was bound to.
+
+### The order the page is read in now
+
+| Block | What changed |
+|---|---|
+| Masthead | The hero at `--s8`/`--s10` padding with two lit corners and a 34px grid at 2.8%, the lockup set on the gold gradient, and three status chips (eBay, AI key, free beta) |
+| Quick actions | Find Goldmines / New AI Listing / Roll the Dice as three cards lifted `--s9` over the hero's bottom edge |
+| Money | The three money bands side by side in an auto-fit row instead of stacked full-width |
+| Counts | The four stat tiles, with an icon chip each and the figure at `--fs-4xl` |
+| Market pulse | New. The Rising Now measurement, on the front page |
+| Listings + Activity | Unchanged |
+
+### Decisions worth recording
+
+- **The action cards overlap the hero on purpose.** The hero's bottom padding
+  (`--s10 + --s6`) is the landing pad and the cards' negative margin (`--s9`) is
+  the overlap; the two have to move together. They are separate elements rather
+  than hero children because a gold card on deep teal loses the contrast that
+  makes it the thing you press.
+- **Roll the Dice lost its band and gained a card.** Its band was one of six
+  competing blocks; as one of three cards it is a bigger target with the same
+  copy. `btn-roll-dice` is unchanged, so the busy state and the dice board behind
+  it are untouched. The dead `.dice-band*` rules were removed; `.btn-dice` stays,
+  because the Opportunity Finder still uses it.
+- **The money row costs nothing when empty.** Each card keeps its "hidden until
+  there is a real figure" rule, and the row's margin is behind
+  `:has(> :not(.hidden))`, so a fresh install renders no row and no gap.
+- **The dashboard never fetches the radar.** A sweep is a minute of eBay and comp
+  lookups; putting one behind page load would spend it for every seller who opens
+  the app. `renderDashPulse()` draws only from a scan already in hand, and the
+  resting state offers the click instead — `#dash-pulse-scan` opens Rising Now
+  *first*, then starts the scan, so the seller watches it fill.
+- **The resting watermark is deliberately not a chart.** Monochrome, unlabelled,
+  masked to fade out, at 16%. A placeholder with plausible bars would be
+  indistinguishable from a real reading of the market, which is the one thing
+  this panel must never be.
+- **The pulse meter is polarity, not a score.** 30% of products climbing is a
+  market, not a failure, so it takes `--viz-up` rather than the good/mid/low
+  ramp — which is a light-mode ramp whose track and fill land two steps apart on
+  a dark panel.
+- **A `#i-dice` symbol replaces the 🎲 in the card.** Beside two stroke icons the
+  emoji read as a sticker. The dice board's own buttons keep their emoji.
+
+### Fixed while verifying: every meter in the app drew an empty track
+
+`vizMeter()` emits the fill as a `<span>` and sets its width as an inline style.
+`.viz-meter-track` is a flex *item* but is not itself a flex container, so the
+fill stayed `display: inline`, ignored both width and height, and rendered at
+**0px** — measured in the browser, not read off the CSS. Every meter shipped by
+the visualisation pass has been drawing an empty track since. One
+`display: block` on `.viz-meter-fill` repairs all of them; the dashboard's own
+meter then measured 147.28px of a 220.81px track for 16 of 24 (66.7%).
+
+### Files
+
+| File | Change |
+|---|---|
+| `wwwroot/index.html` | Dashboard section restructured (hero + status chips, `.dash-quick`, `.dash-money-row`, stat tiles with icons, `#dash-pulse`); `#i-dice` symbol; `style.css?v=62`, `app.js?v=70` |
+| `wwwroot/style.css` | New closing "The Dashboard" section; `display:block` on `.viz-meter-fill`; `.dice-band*` removed |
+| `wwwroot/app.js` | `renderDashStatus()`/`setDashChip()`, `dash-act-goldmines` binding, `renderDashPulse()` + `dashPulseChart()` + `setDashPulseScanning()`, and the four `renderDashPulse()` calls on the scan's own paths |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed.** Nothing here is testable by it; it
+  is CSS and DOM.
+- **Real browser (Playwright/Chromium at 2× DPI)**, against a throwaway static
+  server serving the real `wwwroot` with fixture `/api` responses: disconnected
+  and connected states (87 listings), 1560 / 1280 / 980 widths, and the market
+  pulse driven end to end — clicking `#dash-pulse-scan` opened Rising Now, ran
+  the scan, and the dashboard panel came back with 24 columns and the right
+  headline. Probed rather than eyeballed: hero actions resolve to grid column 2,
+  the cards overlap the hero by exactly 56px, and the meter fill measures 66.7%
+  of its track. **No page errors, no console errors.**
+- The fixture server, the drive scripts and the screenshots were deleted after
+  the run; nothing from the harness ships.
+
+### Not verified / known limits
+
+- **The live pulse was driven from a fixture radar response**, not a real sweep —
+  that needs eBay credentials and live comps. The shape of the response is the
+  one `/api/trends/radar` returns, and the panel is fed by the same
+  `trendScan` object the full-size band reads.
+- **The meter fix is only seen on the dashboard.** Its other consumers (Where to
+  Sell, Inventory Health and the insight cards) need scans this harness cannot
+  run; they take the same one-line repair and could not be watched doing it.
+- **The setup checklist above the hero is untouched.** On a fresh install it is
+  still the first thing on the page, which is correct — but it is a taller block
+  than the masthead under it, and that is worth a session of its own.
+- **`:has()` gates the money row's margin.** A browser without it renders the row
+  with no bottom margin when a card is visible; every current browser has it.
+- **None of this is covered by `dotnet test`.** The browser run above is the only
+  thing covering it, and it is not wired into CI.

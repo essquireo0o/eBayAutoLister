@@ -7511,56 +7511,14 @@ td.skeleton-cell { padding: 0 !important; }
 
 /* ── Roll the Dice ─────────────────────────────────────────────────────────────
    The one feature a seller with no idea what to sell can use, so it gets the loudest
-   surface in the app: a full-width band on the dashboard and a gold-lit board in the
-   Opportunity Finder. Everything below still reads money in the same colours the rest
-   of the app uses — success/danger for profit, gold for a jackpot — because the point
-   is that these numbers are the same numbers, not a louder set of them. */
-.dice-band {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s6);
-  flex-wrap: wrap;
-  margin-bottom: var(--s5);
-  padding: var(--s6) var(--s7);
-  border-radius: var(--r-lg);
-  border: 1px solid var(--teal-700);
-  background:
-    radial-gradient(1200px 240px at 88% -40%, rgba(224, 187, 99, .28), transparent 60%),
-    linear-gradient(135deg, var(--teal-900), var(--teal-700));
-  box-shadow: var(--e3);
-  color: #fff;
-}
+   surface in the app: a card in the dashboard's quick actions (.dash-act--dice) and a
+   gold-lit board in the Opportunity Finder. Everything below still reads money in the
+   same colours the rest of the app uses — success/danger for profit, gold for a
+   jackpot — because the point is that these numbers are the same numbers, not a
+   louder set of them.
 
-.dice-band-copy { max-width: 720px; }
-.dice-band .eyebrow { color: var(--gold-light); }
-
-.dice-band h2 {
-  margin: var(--s1) 0 var(--s2);
-  font-size: var(--fs-2xl);
-  line-height: 1.15;
-  color: #fff;
-}
-
-.dice-band-sub {
-  margin: 0;
-  font-size: var(--fs-base);
-  line-height: 1.6;
-  color: rgba(255, 255, 255, .82);
-}
-
-.dice-band-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--s2);
-}
-
-.dice-band-note {
-  font-size: var(--fs-xs);
-  text-align: center;
-  color: rgba(255, 255, 255, .7);
-}
+   The full-width .dice-band that used to carry this on the dashboard is gone: it was
+   one of six bands competing there, and it is now one of the three action cards. */
 
 /* The one button in the app that should look like a lever worth pulling. */
 .btn-dice {
@@ -7793,8 +7751,6 @@ td.skeleton-cell { padding: 0 !important; }
 .local-badge-ebay { background: var(--src-ebay); }
 
 @media (max-width: 900px) {
-  .dice-band { padding: var(--s5); }
-  .dice-band-actions { width: 100%; }
   .dice-play { flex-wrap: wrap; }
   .dice-play-thumb { flex-basis: 64px; width: 64px; height: 64px; }
 }
@@ -10903,7 +10859,12 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   overflow: hidden;
 }
 
+/* display:block is load-bearing, not tidiness. vizMeter() emits the fill as a
+   <span> and sets its width as an inline style; the track around it is a flex
+   ITEM but is not itself a flex container, so the fill stayed inline, ignored
+   both width and height, and every meter in the app drew an empty track. */
 .viz-meter-fill {
+  display: block;
   height: 100%;
   border-radius: var(--r-pill);
   background: var(--viz-flat);
@@ -11570,4 +11531,571 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   .er-table thead th,
   .opp-comp-table thead th { border-bottom: 2px solid CanvasText; }
   .dt-money { border-left: 1px solid CanvasText; border-right: 1px solid CanvasText; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The Dashboard
+   The front page had become a stack of equal bands — hero, three money
+   bands, a dice band, then the tiles — each the full width of the page and
+   each about as loud as the one above it. Nothing was first. This gives it
+   one order to read in: masthead, the three things worth doing, the money,
+   the counts, then the market.
+
+   Everything here is scoped to the dashboard's own classes. .stat-card and
+   .dash-earnings are used on other screens and keep their base rules.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.dash-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--s5) var(--s7);
+  /* The bottom padding is the landing pad for .dash-quick, which sits up over
+     this edge by --s9. What is left of it is the air under the status chips,
+     so the two have to move together. */
+  padding: var(--s8) var(--s8) calc(var(--s10) + var(--s6));
+  margin-bottom: 0;
+  border-radius: var(--r-2xl);
+  box-shadow: var(--e5);
+}
+
+/* Two lit corners and a fine grid. The panel was a flat gradient, which at
+   this size reads as a coloured rectangle; the light has to come from
+   somewhere for it to read as a surface. The grid is 1px lines at under 3%
+   — invisible as lines, but it stops the large dark area looking empty. */
+.dash-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38rem 24rem at 88% -20%, rgba(224, 187, 99, .22), transparent 68%),
+    radial-gradient(30rem 20rem at 6% 120%, rgba(42, 139, 147, .30), transparent 70%),
+    linear-gradient(rgba(246, 251, 251, .028) 1px, transparent 1px) 0 0 / 100% 34px,
+    linear-gradient(90deg, rgba(246, 251, 251, .028) 1px, transparent 1px) 0 0 / 34px 100%;
+  mask-image: linear-gradient(180deg, #000 40%, transparent);
+}
+
+/* Everything the hero holds sits above that wash. */
+.dash-hero > * { position: relative; z-index: 1; }
+
+.dash-hero-copy { max-width: 62ch; }
+
+.dash-hero h1 {
+  margin-top: var(--s3);
+  font-size: clamp(var(--fs-4xl), 4.4vw, var(--fs-display));
+  font-weight: var(--fw-bold);
+  /* The lockup catches the light the way every other gold surface in the
+     app does, rather than being white text on a dark panel. */
+  background: linear-gradient(96deg, #ffffff 22%, var(--gold-pale) 62%, var(--gold-light));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The trademark is a mark, not a word — set at the size a mark is set. */
+.dash-hero-tm {
+  font-size: .34em;
+  font-weight: var(--fw-semibold);
+  vertical-align: super;
+  letter-spacing: 0;
+}
+
+.dash-hero .hero-copy {
+  max-width: 54ch;
+  margin-top: var(--s4);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+  color: rgba(246, 251, 251, .78);
+}
+
+/* Top-right, level with the eyebrow. These are the housekeeping actions — an
+   import and a refresh — and putting them anywhere lower puts them in
+   competition with the three cards below, which are the actual offer. */
+.dash-hero-actions {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  justify-self: end;
+}
+
+/* ── Status chips ──────────────────────────────────────────────────────
+   Three facts about the account, on the front page: connected or not, key
+   or no key, and what this costs. The dot carries the state and the word
+   repeats it, so a chip is never colour alone. */
+.dash-status {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.dash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 5px var(--s3) 5px var(--s2);
+  border: 1px solid rgba(246, 251, 251, .16);
+  border-radius: var(--r-pill);
+  background: rgba(246, 251, 251, .07);
+  color: var(--on-dark-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-snug);
+}
+
+.dash-chip-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: var(--s1);
+  border-radius: var(--r-pill);
+  background: var(--on-dark-3);
+  box-shadow: 0 0 0 3px rgba(246, 251, 251, .07);
+}
+
+.dash-chip.is-on { color: var(--on-dark); border-color: rgba(63, 189, 139, .38); }
+.dash-chip.is-on .dash-chip-dot { background: #3fbd8b; box-shadow: 0 0 0 3px rgba(63, 189, 139, .18); }
+.dash-chip.is-off { border-color: rgba(224, 187, 99, .38); }
+.dash-chip.is-off .dash-chip-dot { background: var(--gold-light); box-shadow: 0 0 0 3px rgba(224, 187, 99, .16); }
+
+.dash-chip--beta {
+  padding-left: var(--s3);
+  border-color: rgba(224, 187, 99, .30);
+  background: rgba(224, 187, 99, .12);
+  color: var(--gold-pale);
+}
+
+/* ── Quick actions ─────────────────────────────────────────────────────
+   Lifted over the hero's bottom edge, which is what makes them read as the
+   point of the masthead rather than as the next band down. */
+.dash-quick {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s4);
+  margin: calc(var(--s9) * -1) 0 var(--s6);
+  padding: 0 var(--s5);
+}
+
+.dash-act {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: var(--s3);
+  overflow: hidden;
+  padding: var(--s5) var(--s5) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e3);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease),
+              border-color var(--dur-2) var(--ease);
+}
+
+/* These lift on hover where the rest of the app does not: they are targets,
+   not content, and there is nothing beneath them for the movement to shift. */
+.dash-act:hover { transform: translateY(-3px); box-shadow: var(--e4); border-color: var(--line-strong); }
+.dash-act:active { transform: translateY(-1px); }
+.dash-act:disabled { opacity: .55; cursor: progress; transform: none; box-shadow: var(--e2); }
+
+.dash-act-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--teal-100);
+  background: var(--teal-50);
+  color: var(--teal-700);
+  font-size: var(--fs-xl);
+  line-height: 1;
+}
+
+.dash-act-icon svg {
+  width: 20px; height: 20px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+
+.dash-act-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--teal-900);
+}
+
+.dash-act-sub {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--ink-2);
+}
+
+.dash-act-go {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-heavy);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--teal-700);
+}
+
+.dash-act-arrow { transition: transform var(--dur-2) var(--ease-spring); }
+.dash-act:hover .dash-act-arrow { transform: translateX(4px); }
+
+/* The primary of the three. Gold ink and a gold rail rather than a gold
+   fill: a fully gold card beside two white ones stops being a card and
+   becomes a banner, and the app already spends its gold on buttons. */
+.dash-act--gold {
+  border-color: rgba(199, 154, 54, .40);
+  background: linear-gradient(168deg, var(--gold-tint), var(--card) 46%);
+  box-shadow: var(--e3), inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+
+.dash-act--gold::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--grad-gold-flat);
+}
+
+.dash-act--gold:hover { border-color: var(--gold); box-shadow: var(--e4), var(--glow-gold); }
+.dash-act--gold .dash-act-icon { border-color: rgba(199, 154, 54, .28); background: var(--gold-soft); color: var(--gold-dark); }
+.dash-act--gold .dash-act-go { border-top-color: rgba(199, 154, 54, .22); color: var(--gold-dark); }
+
+.dash-act--ai .dash-act-icon { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.dash-act--ai .dash-act-go { color: var(--accent); }
+.dash-act--dice .dash-act-icon { border-color: var(--info-line); background: var(--info-soft); }
+
+/* ── The money row ─────────────────────────────────────────────────────
+   Three bands stacked full-width was three headline figures each claiming
+   the page. Side by side they read as one answer with three parts, and the
+   row costs nothing on a fresh install because every card in it stays
+   hidden until a real figure exists. */
+.dash-money-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--s4);
+  align-items: stretch;
+}
+
+.dash-money-row:has(> :not(.hidden)) { margin-bottom: var(--s6); }
+
+.dash-money-row .dash-earnings {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: 0;
+  padding: var(--s5);
+  border-radius: var(--r-lg);
+  border-color: var(--line);
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--success-tint), transparent 62%),
+    var(--card);
+}
+
+.dash-money-row .dash-earnings-figure {
+  font-family: var(--font-display);
+  font-size: var(--fs-4xl);
+  letter-spacing: var(--tracking-display);
+}
+
+.dash-money-row .dash-earnings-side {
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+}
+
+.dash-money-row .dash-earnings-spark { width: 130px; }
+.dash-money-row .dash-earnings .btn { flex-shrink: 0; }
+
+/* Each card keeps the colour its own screen uses, so the front page and the
+   page behind it agree about what kind of money this is. */
+.dash-money-row .dash-pipeline {
+  background: radial-gradient(120% 90% at 0% 0%, var(--info-tint), transparent 62%), var(--card);
+}
+.dash-money-row .dash-snipe {
+  background: radial-gradient(120% 90% at 0% 0%, var(--warning-tint), transparent 62%), var(--card);
+}
+
+/* ── Stat tiles ────────────────────────────────────────────────────────
+   The same four numbers, with an icon to sort by, room to breathe, and a
+   figure set at the size of the thing being reported. */
+.dash-stats {
+  gap: var(--s4);
+  margin-bottom: var(--s6);
+}
+
+.dash-stats .stat-card {
+  padding: var(--s5) var(--s5) var(--s4);
+  border-radius: var(--r-lg);
+  transition: transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease),
+              border-color var(--dur-2) var(--ease);
+}
+
+.dash-stats .stat-card:hover { transform: translateY(-2px); }
+
+.dash-stats .stat-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.dash-stats .stat-label { font-size: var(--fs-xs); }
+
+.dash-stats .stat-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  background: var(--soft-2);
+  color: var(--teal-600);
+}
+
+.dash-stats .stat-icon svg {
+  width: 16px; height: 16px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* One tinted tile per measure, matched to the rail already on its top edge. */
+.dash-stats .stat-card:nth-child(3) .stat-icon { background: var(--gold-soft); color: var(--gold-dark); }
+.dash-stats .stat-card:nth-child(4) .stat-icon { background: var(--warning-soft); color: var(--warning); }
+
+.dash-stats .stat-card strong {
+  margin: var(--s4) 0 var(--s2);
+  font-size: var(--fs-4xl);
+}
+
+.dash-stats .stat-note { font-size: var(--fs-xs); color: var(--muted); }
+
+/* ── Market pulse ──────────────────────────────────────────────────────
+   The same measurement Rising Now draws at full size, on the front page. */
+.dash-pulse {
+  margin-bottom: var(--s6);
+  padding: var(--s6);
+  border-radius: var(--r-xl);
+}
+
+.dash-pulse .viz-panel-head { margin-bottom: var(--s5); }
+.dash-pulse .viz-panel-head h3 { font-size: var(--fs-xl); }
+
+/* The resting state. The art behind it is a watermark, at an opacity where
+   it cannot be read as a measurement of anything. */
+.dash-pulse-rest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  align-items: center;
+  gap: var(--s7);
+  padding: var(--s2) 0 var(--s3);
+}
+
+.dash-pulse-art {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s2);
+  height: 132px;
+  opacity: .16;
+  /* Fades out upward: it is a texture where the chart will be, not a chart. */
+  mask-image: linear-gradient(180deg, transparent, #000 72%);
+  pointer-events: none;
+}
+
+.dash-pulse-art span {
+  flex: 1;
+  border-radius: var(--r-3xs) var(--r-3xs) 0 0;
+  background: var(--on-dark);
+}
+
+.dash-pulse-art span:nth-child(1)  { height: 22%; }
+.dash-pulse-art span:nth-child(2)  { height: 46%; }
+.dash-pulse-art span:nth-child(3)  { height: 34%; }
+.dash-pulse-art span:nth-child(4)  { height: 62%; }
+.dash-pulse-art span:nth-child(5)  { height: 40%; }
+.dash-pulse-art span:nth-child(6)  { height: 78%; }
+.dash-pulse-art span:nth-child(7)  { height: 52%; }
+.dash-pulse-art span:nth-child(8)  { height: 30%; }
+.dash-pulse-art span:nth-child(9)  { height: 58%; }
+.dash-pulse-art span:nth-child(10) { height: 36%; }
+.dash-pulse-art span:nth-child(11) { height: 68%; }
+.dash-pulse-art span:nth-child(12) { height: 26%; }
+
+.dash-pulse-rest-copy {
+  display: grid;
+  justify-items: start;
+  gap: var(--s3);
+  max-width: 56ch;
+}
+
+.dash-pulse-rest-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--on-dark);
+}
+
+.dash-pulse-rest-body {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--on-dark-2);
+}
+
+.dash-pulse-rest-note { font-size: var(--fs-xs); color: var(--on-dark-3); }
+
+/* The read, once a scan exists: the headline on the left, the distribution
+   on the right. The sentence is the answer; the columns are why. */
+.dash-pulse-live {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: center;
+}
+
+.dash-pulse-figure {
+  font-family: var(--font-display);
+  font-size: var(--fs-5xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-display);
+  color: var(--on-dark);
+}
+
+.dash-pulse-figure-of { font-size: .46em; font-weight: var(--fw-semibold); color: var(--on-dark-3); }
+
+/* The share climbing is polarity, not a score — 30% climbing is a market, not
+   a failure — so the meter takes the app's up-colour rather than the
+   good/mid/low ramp. The ramp is also a light-mode one: on this panel its
+   track and fill land two steps apart and the fill disappears. */
+.dash-pulse .viz-meter-track { background: var(--viz-up-soft); }
+.dash-pulse .viz-meter-fill  { background: var(--viz-up); }
+.dash-pulse .viz-meter-value { color: var(--on-dark-2); }
+
+.dash-pulse-label {
+  margin: var(--s2) 0 var(--s4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--on-dark-2);
+}
+
+.dash-pulse-movers {
+  display: grid;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--dark-line);
+}
+
+.dash-pulse-mover {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: var(--fs-xs);
+  color: var(--on-dark-2);
+}
+
+.dash-pulse-mover-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-pulse-mover-pct {
+  flex-shrink: 0;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-pulse-mover-pct.up { color: var(--viz-up); }
+.dash-pulse-mover-pct.down { color: var(--viz-down); }
+
+/* ── Entrance ──────────────────────────────────────────────────────────
+   The blocks arrive in the order they are meant to be read, ~40-60ms
+   apart. Short enough that it never delays a click; long enough that the
+   page assembles rather than appearing. */
+.dashboard-section > .dash-hero,
+.dashboard-section > .dash-quick,
+.dashboard-section > .dash-money-row,
+.dashboard-section > .dash-stats,
+.dashboard-section > .dash-pulse,
+.dashboard-section > .content-grid { animation: dash-rise var(--dur-4) var(--ease-out) both; }
+
+.dashboard-section > .dash-quick     { animation-delay: .06s; }
+.dashboard-section > .dash-money-row { animation-delay: .12s; }
+.dashboard-section > .dash-stats     { animation-delay: .16s; }
+.dashboard-section > .dash-pulse     { animation-delay: .20s; }
+.dashboard-section > .content-grid   { animation-delay: .24s; }
+
+@keyframes dash-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Narrower windows ────────────────────────────────────────────────── */
+@media (max-width: 1240px) {
+  .dash-quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-pulse-live { grid-template-columns: minmax(0, 1fr); }
+  /* The watermark is the first thing to go: it is texture, and the copy beside
+     it is the whole point of the resting state. */
+  .dash-pulse-rest { grid-template-columns: minmax(0, 1fr); }
+  .dash-pulse-art { display: none; }
+}
+
+@media (max-width: 1024px) {
+  .dash-hero { grid-template-columns: minmax(0, 1fr); padding: var(--s7) var(--s6) var(--s9); }
+  /* Back into the single column with everything else. Left at `grid-column: 2`
+     it would open an implicit second track and sit off to the side of a hero
+     that no longer has a right-hand side. */
+  .dash-hero-actions { grid-row: auto; grid-column: 1; justify-self: start; }
+  .dash-quick { margin-top: calc(var(--s8) * -1); padding: 0 var(--s4); }
+  .dash-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* One per row only once two of them would be narrower than their own copy. */
+@media (max-width: 760px) {
+  .dash-quick { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The shared .stats-grid rule drops to one column here; .dash-stats is later in
+   the sheet, so it has to say so itself or the two-up above would outrank it. */
+@media (max-width: 640px) {
+  .dash-stats { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-section > .dash-hero,
+  .dashboard-section > .dash-quick,
+  .dashboard-section > .dash-money-row,
+  .dashboard-section > .dash-stats,
+  .dashboard-section > .dash-pulse,
+  .dashboard-section > .content-grid { animation: none; }
+  .dash-act:hover,
+  .dash-stats .stat-card:hover { transform: none; }
+  .dash-act:hover .dash-act-arrow { transform: none; }
+}
+
+/* With hue and shadow untrustworthy, the cards still need edges and the
+   primary action still has to be the one that looks different. */
+@media (forced-colors: active) {
+  .dash-act { border: 1px solid CanvasText; }
+  .dash-act--gold { border-width: 2px; }
+  .dash-chip { border: 1px solid CanvasText; }
+  .dash-pulse-art { display: none; }
 }

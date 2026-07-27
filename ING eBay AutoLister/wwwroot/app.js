@@ -438,6 +438,16 @@
     on('btn-back-dashboard', 'click', showDashboard);
     on('global-search', 'input', renderListings);
 
+    // The gold card on the front page. It opens the board and puts the caret in the field the
+    // board needs filled — the search runs on a keyword, so landing on the screen with nothing
+    // focused is one wasted click on the most important action the dashboard offers.
+    on('dash-act-goldmines', 'click', () => {
+      navigateTo('opportunity');
+      // navigateTo routes through hashchange, so the board is still hidden on this tick and a
+      // focus() on a hidden field does nothing at all. One frame later it is on screen.
+      setTimeout(() => { const box = $('fb-query-input'); if (box) { box.focus(); box.select(); } }, 60);
+    });
+
     // The search box advertises Ctrl+K; this is what makes the label true.
     // Escape clears and re-renders, so a filtered grid is one key from whole.
     document.addEventListener('keydown', e => {
@@ -6854,6 +6864,11 @@
   function bindTrendRadar() {
     on('tr-scan-btn', 'click', () => runTrendScan({ nextSeed: false }));
     on('tr-scan-again', 'click', () => runTrendScan({ nextSeed: true }));
+    // The dashboard's market-pulse panel. Its scan button is the same scan, started from the
+    // front page: open the board first so the seller can watch it fill rather than waiting a
+    // minute on a dashboard that looks like nothing happened.
+    on('dash-pulse-open', 'click', () => navigateTo('trends'));
+    on('dash-pulse-scan', 'click', () => { navigateTo('trends'); runTrendScan({ nextSeed: false }); });
     on('tr-close', 'click', closeTrendsSection);
     on('tr-home', 'click', goHome);
     on('tr-pulse-table-toggle', 'click', () => toggleDisclosure('tr-pulse-table', 'tr-pulse-table-toggle', 'Show as table', 'Hide table'));
@@ -6887,6 +6902,7 @@
 
     if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
     if (again) again.disabled = true;
+    setDashPulseScanning(true);
     setTrendStatus('Reading sold history across several categories…');
     $('tr-results').innerHTML = '<p class="opportunity-empty">Sweeping sold comps, splitting each product\'s sales into two windows, then pricing only the ones that moved. This takes a moment.</p>';
 
@@ -6905,9 +6921,26 @@
       $('tr-more-bar')?.classList.add('hidden');
       $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
       setTrendStatus('');
+      renderDashPulse();
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '📈 Find What\'s Climbing'; }
       if (again) again.disabled = false;
+      setDashPulseScanning(false);
+    }
+  }
+
+  // The front-page panel while its own button is what started the scan. The seller has been sent
+  // to the board by then, so this is only what they come back to if they navigate home mid-scan.
+  function setDashPulseScanning(on) {
+    const btn = $('dash-pulse-scan');
+    if (!btn) return;
+    if (on) {
+      btn.dataset.restLabel = btn.dataset.restLabel || btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Scanning the market…';
+    } else {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.restLabel || 'Scan the market';
     }
   }
 
@@ -6919,6 +6952,7 @@
       $('tr-more-bar')?.classList.add('hidden');
       $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(trendScan.error || 'The scan failed.')}</p>`;
       setTrendStatus('');
+      renderDashPulse();
       return;
     }
 
@@ -6938,6 +6972,7 @@
       $('tr-summary')?.classList.add('hidden');
       $('tr-pulse')?.classList.add('hidden');
       $('tr-results').innerHTML = '<p class="opportunity-empty">Nothing can be read as a trend until the sold-comps data above is sorted out.</p>';
+      renderDashPulse();
       renderTrendMoreBar();
       setTrendStatus('');
       return;
@@ -6945,6 +6980,7 @@
 
     renderTrendSummary();
     renderTrendPulse();
+    renderDashPulse();
     renderTrendRows();
     renderTrendMoreBar();
 
@@ -7145,6 +7181,114 @@
       </table>`;
 
     panel.classList.remove('hidden');
+  }
+
+  // ── Market pulse, on the dashboard ────────────────────────────────────────
+  // The same measurement as the band above, at the size the front page can carry: the headline
+  // sentence, the share climbing, the three biggest movers, and the distribution those numbers
+  // came out of. It is only ever drawn from a scan the seller has already run — the dashboard
+  // never fetches the radar, because a sweep is a minute of eBay and comp lookups and nobody
+  // asked for it by opening the app.
+  const DASH_PULSE_MAX_COLUMNS = 44;
+
+  function renderDashPulse() {
+    const rest = $('dash-pulse-rest');
+    const live = $('dash-pulse-live');
+    if (!live) return;
+
+    const measured = (trendScan?.rows || [])
+      .map(r => ({ row: r, pct: Number(r.trend?.priceChangePercent) }))
+      .filter(m => Number.isFinite(m.pct))
+      .sort((a, b) => b.pct - a.pct);
+
+    // Same floor as the full-size band: two columns are not a distribution, and a headline
+    // fraction off two products is not a market.
+    if (measured.length < 3) {
+      live.classList.add('hidden');
+      live.innerHTML = '';
+      rest?.classList.remove('hidden');
+      return;
+    }
+
+    const dropped = Math.max(0, measured.length - DASH_PULSE_MAX_COLUMNS);
+    const shown = dropped
+      ? [...measured].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+          .slice(0, DASH_PULSE_MAX_COLUMNS).sort((a, b) => b.pct - a.pct)
+      : measured;
+
+    const rising = measured.filter(m => m.pct > 0).length;
+    const w = trendScan.windowDays;
+    const share = (rising / measured.length) * 100;
+
+    // The three furthest from flat in either direction — a mover is a mover whichever way it
+    // went, and a board where the biggest news is a 40% collapse should say so on the front page.
+    const movers = [...measured].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
+    const moverRows = movers.map(({ row: r, pct }) => `
+      <div class="dash-pulse-mover">
+        <span class="dash-pulse-mover-name">${esc(r.product)}</span>
+        <span class="dash-pulse-mover-pct ${pct >= 0 ? 'up' : 'down'}">${pct > 0 ? '+' : ''}${pct.toFixed(1)}%</span>
+      </div>`).join('');
+
+    live.innerHTML = `
+      <div class="dash-pulse-side">
+        <p class="dash-pulse-figure">${rising}<span class="dash-pulse-figure-of">/${measured.length}</span></p>
+        <p class="dash-pulse-label">products sold for more than they did a window ago — median sold
+          price over the last ${w} days against the ${w} before.</p>
+        ${vizMeter(share, { tone: 'solo', valueText: `${Math.round(share)}%`, label: `${rising} of ${measured.length} products climbing` })}
+        <div class="dash-pulse-movers">${moverRows}</div>
+      </div>
+      <div class="dash-pulse-chart">${dashPulseChart(shown, dropped, measured.length)}</div>`;
+
+    live.classList.remove('hidden');
+    rest?.classList.add('hidden');
+  }
+
+  // One column per product from a shared zero line, as on Rising Now: position carries the sign
+  // before colour does. No y-axis here — the front page is answering "which way and how spread
+  // out", and the panel it links to carries every value.
+  function dashPulseChart(shown, dropped, measuredCount) {
+    const W = 720, H = 168, padT = 16, padB = 22;
+    const plotH = H - padT - padB;
+
+    const values = shown.map(m => m.pct);
+    const maxV = Math.max(0, ...values);
+    const minV = Math.min(0, ...values);
+    const span = (maxV - minV) || 1;
+    const y = v => padT + plotH - ((v - minV) / span) * plotH;
+    const zeroY = y(0);
+
+    const band = W / shown.length;
+    const barW = Math.max(2, Math.min(16, band - 3));
+
+    const columns = shown.map((m, i) => {
+      const v = m.pct, r = m.row;
+      const x = i * band + (band - barW) / 2;
+      const top = v >= 0 ? y(v) : zeroY;
+      const h = Math.max(v === 0 ? 0 : 1.5, Math.abs(y(v) - zeroY));
+      const rad = Math.min(3, barW / 2, h);
+      const path = v >= 0
+        ? `M${x} ${top + h} L${x} ${top + rad} Q${x} ${top} ${x + rad} ${top} L${x + barW - rad} ${top} Q${x + barW} ${top} ${x + barW} ${top + rad} L${x + barW} ${top + h} Z`
+        : `M${x} ${top} L${x} ${top + h - rad} Q${x} ${top + h} ${x + rad} ${top + h} L${x + barW - rad} ${top + h} Q${x + barW} ${top + h} ${x + barW} ${top + h - rad} L${x + barW} ${top} Z`;
+
+      const sig = TREND_SIGNALS[r.trend?.signal] || TREND_SIGNALS.unreadable;
+      const tip = `${r.product}\n${v > 0 ? '+' : ''}${v.toFixed(1)}% median sold price\n${sig.label}`;
+      return `<g class="viz-band" tabindex="0" role="img"
+          aria-label="${esc(tip.replaceAll('\n', '. '))}" data-viz-tip="${esc(tip)}">
+        <rect class="viz-hit" x="${(i * band).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}" />
+        <path d="${path}" class="${v >= 0 ? 'tr-pulse-up' : 'tr-pulse-down'}" />
+      </g>`;
+    }).join('');
+
+    const foot = dropped
+      ? `the ${shown.length} biggest movers of ${measuredCount} measured`
+      : `each column is one of ${shown.length} products measured`;
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="viz-svg" role="img"
+        aria-label="Change in median sold price per product, sorted by how far it moved. Open Rising Now for the values.">
+      ${columns}
+      <line x1="0" y1="${zeroY.toFixed(1)}" x2="${W}" y2="${zeroY.toFixed(1)}" class="viz-zero" />
+      <text x="0" y="${H - 6}" class="viz-axis">${esc(foot)} · sorted by how far it moved</text>
+    </svg>`;
   }
 
   function renderTrendMoreBar() {
@@ -11686,6 +11830,30 @@
     } else {
       checklist.classList.remove('hidden');
     }
+
+    renderDashStatus();
+  }
+
+  /**
+   * The three chips in the hero. Once setup is finished the checklist hides itself and the only
+   * remaining report on the front page was a badge in the top bar, so a seller who had never
+   * connected eBay saw a dashboard that said nothing about it. State is read off what is already
+   * on the page rather than kept in a second variable that can drift from it.
+   */
+  function renderDashStatus() {
+    setDashChip('dash-chip-ebay', isConnected,
+      'Connected to eBay', 'eBay not connected');
+    setDashChip('dash-chip-ai', isSetupStepDone('step1'),
+      'AI key saved', 'AI key needed');
+  }
+
+  function setDashChip(id, on, onText, offText) {
+    const chip = $(id);
+    if (!chip) return;
+    chip.classList.toggle('is-on', !!on);
+    chip.classList.toggle('is-off', !on);
+    const text = chip.querySelector('.dash-chip-text');
+    if (text) text.textContent = on ? onText : offText;
   }
 
   function isSetupStepDone(prefix) {
