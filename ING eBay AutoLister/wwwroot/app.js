@@ -348,6 +348,7 @@
   }
 
   async function init() {
+    initTheme();              // the theme is already ON the page from the head script; this wires the switch to it
     initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
     initOverlayMotion();      // before anything can open a modal, so the first close animates too
     initVizTooltips();        // one delegated tooltip layer, so any chart drawn later opts in with an attribute
@@ -425,6 +426,91 @@
 
     // Navigate to whatever section the URL hash specifies (supports reload + deep links)
     if (location.hash) handleNav(location.hash.slice(1));
+  }
+
+  // ── Theme ─────────────────────────────────────────────────────────────────────
+  //
+  // Three choices, two outcomes. 'light' and 'dark' are the seller's decision and
+  // persist; 'system' is the default and defers to the OS live — change the Windows
+  // app mode with this open and the page follows, no reload.
+  //
+  // The resolved theme is already on <html> before any of this runs: the inline
+  // script in the head applies it ahead of the first paint, because doing it here
+  // would mean a white flash on every load for anyone who chose dark. This owns the
+  // switch, the persistence and the OS listener. It does not own the first paint.
+  const THEME_KEY = 'ingTheme';
+  const THEME_ORDER = ['light', 'dark', 'system'];
+  let systemDarkQuery = null;
+  let themeFadeTimer = null;
+
+  function initTheme() {
+    const group = $('theme-switch');
+    if (!group) return;
+
+    systemDarkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    // Only acts while the choice is 'system'. A seller who picked a side keeps it,
+    // even if the OS changes underneath them.
+    systemDarkQuery?.addEventListener('change', () => {
+      if (readThemeChoice() === 'system') applyTheme('system');
+    });
+
+    group.querySelectorAll('[data-theme-choice]').forEach(btn => {
+      btn.addEventListener('click', () => applyTheme(btn.dataset.themeChoice));
+      // A radiogroup is one tab stop with arrow keys inside it, not three tab stops.
+      btn.addEventListener('keydown', e => {
+        const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1
+          : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const i = THEME_ORDER.indexOf(readThemeChoice());
+        const next = THEME_ORDER[(i + step + THEME_ORDER.length) % THEME_ORDER.length];
+        applyTheme(next);
+        group.querySelector(`[data-theme-choice="${next}"]`)?.focus();
+      });
+    });
+
+    renderThemeSwitch(readThemeChoice());
+  }
+
+  function readThemeChoice() {
+    const choice = document.documentElement.getAttribute('data-theme-choice');
+    return THEME_ORDER.includes(choice) ? choice : 'system';
+  }
+
+  function applyTheme(choice) {
+    if (!THEME_ORDER.includes(choice)) choice = 'system';
+    const root = document.documentElement;
+    const dark = choice === 'dark' || (choice === 'system' && !!systemDarkQuery?.matches);
+
+    // The cross-fade is worn only for the length of the change. Leaving a global
+    // transition on the document would put one on every hover in the app.
+    root.classList.add('theme-switching');
+    clearTimeout(themeFadeTimer);
+    themeFadeTimer = setTimeout(() => root.classList.remove('theme-switching'), 360);
+
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    root.setAttribute('data-theme-choice', choice);
+    // 'system' is the absence of a choice, so it is stored as the absence of a key —
+    // which is also what the head script reads it back as.
+    try {
+      if (choice === 'system') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, choice);
+    } catch { /* private mode: the choice lasts the session */ }
+
+    renderThemeSwitch(choice);
+  }
+
+  function renderThemeSwitch(choice) {
+    const group = $('theme-switch');
+    if (!group) return;
+    // The gold pill's position is one number the CSS animates; the buttons only
+    // carry state. Nothing here measures or writes a pixel offset.
+    group.style.setProperty('--theme-i', String(Math.max(0, THEME_ORDER.indexOf(choice))));
+    group.querySelectorAll('[data-theme-choice]').forEach(btn => {
+      const on = btn.dataset.themeChoice === choice;
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.tabIndex = on ? 0 : -1;
+    });
   }
 
   function bindDashboard() {

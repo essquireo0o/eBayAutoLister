@@ -5420,3 +5420,155 @@ meter then measured 147.28px of a 220.81px track for 16 of 24 (66.7%).
   with no bottom margin when a card is visible; every current browser has it.
 - **None of this is covered by `dotnet test`.** The browser run above is the only
   thing covering it, and it is not wired into CI.
+
+---
+
+## Light and dark themes — one design system, two lightings (autonomous session, 2026-07-27)
+
+The app had one theme. It was a light theme with dark chrome — deep-teal
+masthead band, deep-teal sidebar, deep-teal hero panels on a near-white page —
+and there was no `prefers-color-scheme` rule, no `data-theme` hook and no
+`color-scheme` declaration anywhere in 12,100 lines of CSS. This adds a dark
+theme built from the same tokens, fixes what measuring found wrong in the light
+one, and puts a three-state control in the masthead.
+
+**No number, endpoint, rule or business logic changed.** Server side is
+untouched, every id `app.js` binds is on the element it was bound to, and
+`dotnet test` is unchanged at 1713 passing.
+
+### How it is built
+
+Not as a second stylesheet and not as an inversion filter. The existing `:root`
+stays the light theme; one `:root[data-theme="dark"]` block at the end of
+`style.css` re-declares the ~70 tokens that are lighting-dependent. Everything
+else — type scale, space, radius, motion, the gold ramp, the brand teal ramp —
+is shared, because none of it changes when the lights go off.
+
+That only works if components consume *roles* rather than palette entries, and
+in several places they were not. The pass that made the dark theme possible:
+
+| Was | Now | Why |
+|---|---|---|
+| `color: var(--gold-dark)` x44 | `var(--gold-ink)` | `--gold-dark` is also a gradient stop. Gold as *ink* and gold as a *surface* are different colours and only one of them flips |
+| `color: var(--teal-600/700/800/900/950)` x49 | `--brand-ink` / `--brand-ink-2` / `--brand-ink-strong` | same split for brand teal |
+| `color: #fff` on a filled semantic swatch x8 | `var(--on-solid)` | in dark the fills are the bright end of the hue, so the label has to flip to near-black |
+| `background: #ffffff` x26 | `var(--card)` | a hardcoded white card is a hole in a dark page |
+| `color: var(--gold-soft)` x8, `--*-line` as text x4 | `--gold-note`, `--pale-pos/neg/warn/accent` | these sit on the *permanently* dark panels and must not follow the theme |
+| `rgba(255,255,255,...)` chrome, scrollbars, skeleton sheen, table stripes | `--search-*`, `--ghost-*`, `--scroll-thumb*`, `--skeleton-sheen`, `--dt-*` | one role each, two values each |
+
+### Decisions worth recording
+
+- **The dark theme is not an inversion.** Every surface, ink and semantic step
+  was re-picked at a lightness that works on a dark panel and then measured.
+  An inverted palette drops a light-mode mid-tone onto near-black, where it
+  either glows or disappears.
+- **Gold does not flip.** The one accent is the same gold in both themes — a
+  gold button is the thing a seller recognises the app by. What flips is the
+  gold *callout surface* (`--gold-soft`), because #fff4d7 on a dark page is a
+  lamp; `--gold-ink` reads 9.4:1 on its dark replacement, better than the light
+  theme manages.
+- **The permanently-dark surfaces do not move at all.** Sidebar, masthead band,
+  hero panels, drawer and overlay headers, the sold-comps strip: deep teal in
+  both themes, verified identical (same 90deg teal-900 gradient, white text, in
+  both). That is why their type had to move onto the constant `--gold-note` /
+  `--pale-*` roles first — a themed token on a fixed panel is invisible in
+  exactly one theme, which is the bug nobody catches.
+- **Three states, not two.** Light / Dark / **Auto**, as a segmented radiogroup
+  in the topbar. "Follow the OS" is a real answer and a two-way toggle cannot
+  express it. Auto is the default, is stored as the *absence* of a key, and
+  tracks `prefers-color-scheme` live — change the Windows app mode with this
+  open and the page follows without a reload. Pick a side and the OS stops
+  mattering.
+- **The theme is applied by an inline script in the head, not by `app.js`.**
+  Doing it after `DOMContentLoaded` would flash a full white page on every
+  single load for anyone who chose dark. The script is six lines and owns only
+  the first paint; `initTheme()` owns the switch, the persistence and the OS
+  listener.
+- **The switch animates one number.** `--theme-i` is 0/1/2 and CSS slides the
+  gold pill; nothing measures or writes a pixel offset. A moving object says
+  where the selection went — three crossfades do not.
+- **The cross-fade is worn, not owned.** `html.theme-switching` carries a
+  colour-only transition for 360 ms and is removed. A permanent global
+  transition would put one on every hover in the app, and it sits behind
+  `prefers-reduced-motion: no-preference` so the existing reduced-motion block
+  is not fighting a later `!important`.
+- **Product photography stays on white.** `.pl-photo img` and `.inv-thumb` keep
+  a literal white matte in dark. A themed matte would show every JPEG's own
+  white background as a bright rectangle inside a dark tile.
+
+### Fixed while measuring: the light theme was under AA in three places
+
+Running the palette through a contrast checker rather than looking at it:
+
+- **`--muted` (#6c7a80) was 4.44:1 on white, 3.99:1 on `--soft-2`.** That is the
+  app's most-used secondary colour — 266 rules — and it was under 4.5 on every
+  surface it lands on. Now #606e74 (5.28 / 4.75).
+- **`--faint` (#96a3a8) was 2.59:1 on white.** Every placeholder in the app.
+  Now #6b797f (4.50 / 4.29), still a visible step lighter than `--muted`.
+- **`--gold-dark` as text on `--gold-soft` was 4.29:1** — gold type in a gold
+  callout. `--gold-ink` at #805d15 reads 5.49:1 there and 6.01:1 on white.
+- Two rules were also painting white text on `--gold-light` (1.9:1) and on
+  `--gold` (2.5:1); both now take `--on-gold`.
+
+### Files
+
+| File | Change |
+|---|---|
+| `wwwroot/style.css` | Role tokens added to `:root`; ~120 rules retargeted from palette entries to roles; `--muted`/`--faint` corrected; new closing "Themes" section (dark token block, 4 dark corrections, the switch, the cross-fade); `style.css?v=63` |
+| `wwwroot/index.html` | Inline pre-paint theme script in the head; `#i-sun` / `#i-moon` / `#i-auto` symbols; the `#theme-switch` radiogroup in `.topbar-actions`; `app.js?v=71` |
+| `wwwroot/app.js` | `initTheme()`, `readThemeChoice()`, `applyTheme()`, `renderThemeSwitch()` and one line in `init()` |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed.**
+- **Real browser (Playwright/Chromium at 2x DPI)**, against a throwaway static
+  server serving the real `wwwroot` with fixture `/api` responses:
+  - Cold load with the OS in light gives `light`, choice `system`. Cold load
+    with the OS in dark gives `dark`, choice still `system`.
+  - Clicking Dark sets `data-theme="dark"`, moves the pill to
+    `matrix(1,0,0,1,30,0)`, stores `ingTheme=dark`, and sets `aria-checked` on
+    exactly one segment. Reload comes back dark with no white frame.
+  - Clicking Auto **removes** the stored key; emulating an OS switch to dark
+    then flips the page live, no reload.
+  - Token resolution probed, not assumed: `--page` #eef2f3 to #061518,
+    `--card` #ffffff to #0e2327, `--ink` #131c20 to #ecf5f5,
+    `--gold-ink` #805d15 to #e7c47e, `body` background `rgb(6,21,24)`.
+  - The permanently-dark surfaces resolve **identically** in both themes, and
+    `--gold-note` / `--pale-pos` hold their constant values in both.
+  - The scrim deepens in dark (`rgba(3,19,22,.58)` to `rgba(2,12,14,.74)`).
+  - **A contrast audit run inside the page**, not read off the stylesheet: every
+    visible text element, composited against its real resolved background,
+    checked at 4.5:1 (3:1 for large text). **12 sweeps — the dashboard in both
+    themes plus ten screens in dark — 1,144 elements measured, 0 under AA.**
+  - **No page errors, no console errors** in any run.
+- The fixture server, the drive scripts and the screenshots were deleted after
+  the run; nothing from the harness ships.
+
+### Not verified / known limits
+
+- **The audit can only measure text whose background resolves to an opaque
+  colour.** Anything sitting directly on a gradient — the hero headline, the
+  gold buttons, the masthead chips — returns "unknowable" and is skipped. Those
+  were set by hand against the same targets and checked in the screenshots, not
+  measured.
+- **`editor.html` is not themed.** The photo editor carries its own inline copy
+  of the tokens and is a permanently dark tool, which is consistent — but it
+  does not respond to the switch, and its token copy will now drift from
+  `style.css`. That is worth a session of its own.
+- **Tables were audited empty.** The fixture listings do not match the shape
+  `renderListings()` expects, so the dark `--dt-*` stripe, hover and money-band
+  values were verified as computed token values rather than watched on a full
+  grid.
+- **No JS means no theme.** The head script is the only thing that applies
+  `data-theme`; there is no CSS-only `prefers-color-scheme` fallback, because
+  duplicating the 90-line token block to serve a page that renders nothing
+  without `app.js` buys nothing.
+- **`--muted` and `--faint` moved for every screen at once.** They are darker
+  than they were. That is the correct fix for a failing ratio, but it is a
+  visible change to secondary type everywhere in the light theme, not only where
+  it was failing.
+- **None of this is covered by `dotnet test`.** It is CSS, DOM and one small
+  controller; the browser run above is the only thing covering it, and it is not
+  wired into CI.

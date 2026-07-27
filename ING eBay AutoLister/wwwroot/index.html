@@ -5,7 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=62" />
+  <link rel="stylesheet" href="style.css?v=63" />
+  <!--
+    Theme, resolved before the first paint. This has to be inline and it has to be
+    in the head: if the choice were applied from app.js after DOMContentLoaded, a
+    seller who picked dark would get a full white page first and then a flash to
+    dark on every single load. Stored choice wins; "system" (the default) reads
+    the OS. app.js takes it from here — see initTheme().
+  -->
+  <script>
+    (function () {
+      var stored = null;
+      try { stored = localStorage.getItem('ingTheme'); } catch (e) { /* private mode */ }
+      var choice = (stored === 'light' || stored === 'dark') ? stored : 'system';
+      var dark = choice === 'dark' || (choice === 'system' && window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme-choice', choice);
+    })();
+  </script>
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -33,6 +51,12 @@
       <!-- Roll the Dice. The 🎲 emoji renders as an OS-coloured picture at its own
            weight; beside two stroke icons on the dashboard it read as a sticker. -->
       <symbol id="i-dice" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.15" fill="currentColor" stroke="none"/></symbol>
+      <!-- The three theme states. Drawn on the same 24-grid and the same stroke weight
+           as the nav set, so the switch reads as part of the app rather than as three
+           borrowed glyphs. -->
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.1"/><path d="M12 2.7v2.3M12 19v2.3M2.7 12H5M19 12h2.3M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.3 14.6A8.5 8.5 0 019.4 3.7a8.5 8.5 0 1010.9 10.9z"/></symbol>
+      <symbol id="i-auto" viewBox="0 0 24 24"><rect x="2.8" y="4.3" width="18.4" height="12.4" rx="2"/><path d="M8.6 20.3h6.8M12 16.7v3.6"/></symbol>
     </defs>
   </svg>
 
@@ -131,6 +155,18 @@
           <button id="btn-connect" class="btn btn-primary" type="button">Log into eBay</button>
           <span id="auth-status" class="badge badge-on hidden">Connected to eBay</span>
           <button id="btn-disconnect" class="btn btn-ghost hidden" type="button">Disconnect</button>
+          <!--
+            Light / Dark / Auto. A radiogroup rather than a toggle because there are three
+            real answers, and "follow the OS" is one of them. Wired by initTheme() in app.js;
+            the state it shows is already on <html> before this element exists, set by the
+            inline script in the head.
+          -->
+          <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Colour theme">
+            <span class="theme-switch-thumb" aria-hidden="true"></span>
+            <button class="theme-switch-opt" type="button" role="radio" aria-checked="false" data-theme-choice="light" title="Light theme" aria-label="Light theme"><svg aria-hidden="true"><use href="#i-sun"/></svg></button>
+            <button class="theme-switch-opt" type="button" role="radio" aria-checked="false" data-theme-choice="dark" title="Dark theme" aria-label="Dark theme"><svg aria-hidden="true"><use href="#i-moon"/></svg></button>
+            <button class="theme-switch-opt" type="button" role="radio" aria-checked="false" data-theme-choice="system" title="Match system theme" aria-label="Match system theme"><svg aria-hidden="true"><use href="#i-auto"/></svg></button>
+          </div>
           <button id="btn-settings" class="btn btn-ghost btn-icon" type="button" title="Settings" aria-label="Settings"><svg aria-hidden="true"><use href="#i-settings"/></svg></button>
         </div>
       </header>
@@ -4149,6 +4185,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=70"></script>
+  <script src="app.js?v=71"></script>
 </body>
 </html>
