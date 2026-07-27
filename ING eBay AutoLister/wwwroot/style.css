@@ -8512,3 +8512,165 @@ a.dp-card-title:hover { color: var(--teal-600); text-decoration: underline; }
   .dp-action-money { text-align: left; }
   .dash-pipeline-next { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The Undervalued-Auction Sniper
+   One thing on this board moves while you look at it, and it is the only
+   thing that decides whether any of the money is still available: the
+   clock. So the clock is the only element allowed to shout — it goes red
+   inside the hour and grey the moment it runs out. Everything else stays
+   quiet, including the profit, because a profit figure is worth nothing
+   on a listing that closed forty seconds ago.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.sn-field-wide { flex: 1 1 320px; min-width: 240px; }
+
+.sn-table { table-layout: auto; min-width: 1100px; }
+
+.sn-row-snipe { background: linear-gradient(90deg, var(--success-soft) 0%, transparent 55%); }
+
+.sn-item { max-width: 380px; }
+
+.sn-name {
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+  line-height: 1.35;
+  display: block;
+}
+
+.sn-name:hover { text-decoration: underline; }
+
+.sn-sub {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.sn-note {
+  margin-top: 5px;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.sn-strong { font-weight: 700; color: var(--ink); }
+.sn-max    { color: var(--ink); }
+.sn-profit { color: var(--success); }
+.sn-over   { color: var(--danger); }
+
+.sn-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--ink-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+}
+
+/* Why it might be cheap. Rendered in full on every row rather than folded into
+   a score — a score hides exactly the thing the bidder needs to go and look at. */
+.sn-risks {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.sn-risks li {
+  font-size: var(--fs-xs);
+  color: var(--warning);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+/* ── The clock ───────────────────────────────────────────────────────────── */
+
+.sn-time { min-width: 120px; }
+
+.sn-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+}
+
+.sn-clock-closing { color: var(--danger); }
+.sn-clock-today   { color: var(--warning); }
+.sn-clock-open    { color: var(--ink-2); }
+.sn-clock-none,
+.sn-clock-ended   { color: var(--muted); font-weight: 600; }
+
+.sn-snipe-at { color: var(--ink-2); font-weight: 600; }
+
+/* ── Verdicts ────────────────────────────────────────────────────────────── */
+
+.sn-verdict {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sn-v-snipe { background: var(--success-soft); color: var(--success); }
+.sn-v-early { background: var(--gold-soft);    color: var(--gold-dark); }
+.sn-v-watch { background: var(--soft);         color: var(--ink-2); }
+.sn-v-thin  { background: #fdf1dc;             color: var(--warning); }
+.sn-v-pass  { background: var(--soft);         color: var(--muted); }
+
+/* ── What was searched, and why ──────────────────────────────────────────── */
+
+.sn-terms-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s3) 0;
+}
+
+.sn-terms-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sn-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  color: var(--ink);
+}
+
+.sn-chip-quiet { opacity: .6; }
+.sn-chip-sub { color: var(--muted); font-size: var(--fs-2xs); }
+
+/* ── The caveats, rendered rather than buried ────────────────────────────── */
+
+.sn-honesty {
+  margin: var(--s4) 0 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.sn-honesty li {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .sn-item { max-width: none; }
+  .sn-risks { display: none; }
+  .dash-snipe .dash-pipeline-next { display: none; }
+}

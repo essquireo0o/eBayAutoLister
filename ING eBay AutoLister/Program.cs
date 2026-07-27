@@ -265,6 +265,12 @@ builder.Services.AddSingleton<EarningsCalculator>();
 // realized figure comes from Money Made, so the two can be compared without either being fudged.
 builder.Services.AddSingleton<DealStore>();
 builder.Services.AddSingleton<DealPipelineCalculator>();
+// The Auction Sniper — the one sourcing service that buys on the same marketplace it sells on.
+// Prices live eBay auctions and Buy It Nows against the sold comps, and answers the only question a
+// bidder has: the most to bid. Shares JackpotHunter's break-even and LocalArbitrageAnalyzer's
+// "worth doing" bars, so a flip won at auction is judged by the same arithmetic as one bought off
+// Craigslist. The sweep itself is orchestrated in ScanSnipesAsync below.
+builder.Services.AddSingleton<AuctionSniperAnalyzer>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -1903,6 +1909,56 @@ app.MapGet("/api/trends/radar", async (
         return Results.Ok(new TrendRadarResult
         {
             Status = "error", Seed = seed ?? 0, NextSeed = CategorySweep.NextSeed(seed ?? 0),
+            Error = $"The scan couldn't be completed: {ex.Message}",
+        });
+    }
+});
+
+// ── The Auction Sniper ────────────────────────────────────────────────────────────────────────
+// Every other sourcing screen sends the seller somewhere else to buy. This one buys on eBay and
+// sells on eBay: live auctions and Buy It Nows priced BELOW what the same item's sold comps settle
+// at, with the most to bid and what winning at that price is worth after fees.
+//
+// With no keyword it hunts the seller's OWN completed sales — the products they have already
+// proven they can move — which is the difference between a search box and a board that is worth
+// opening on a Tuesday morning.
+//
+// Read-only against eBay: this searches, and nothing else. No bid is placed, ever. The max bid is a
+// number for the seller to type into eBay's own bid box.
+app.MapGet("/api/snipes", async (
+    string? q, string? mode, string? sort, int? terms, int? perTerm, int? recheck, int? terapeakBudget,
+    EarningsStore earnings, EbayService ebay, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket,
+    AuctionSniperAnalyzer sniper, ActionLog log, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await ScanSnipesAsync(
+            q, mode, sort,
+            // Each bound caps a fan-out: one eBay search per term per format, one comp lookup per
+            // term, then one more lookup per row re-priced off its own title.
+            Math.Clamp(terms ?? 5, 1, 8), Math.Clamp(perTerm ?? 25, 5, 50),
+            Math.Clamp(recheck ?? 6, 0, 15), Math.Clamp(terapeakBudget ?? 3, 0, 10),
+            earnings, ebay, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+            feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, sniper, log, ct);
+
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        // A scan spans eBay's Browse API, the comps database and Terapeak. Whatever breaks comes
+        // back as a sentence on the board rather than a rejected fetch after a long wait.
+        log.Add("Error", "Auction sniper scan failed", ex.Message);
+        return Results.Ok(new SnipeScanResult
+        {
+            Status = "error",
+            PriceIsRealHours = AuctionSniperAnalyzer.PriceIsRealHours,
             Error = $"The scan couldn't be completed: {ex.Message}",
         });
     }
@@ -4272,6 +4328,267 @@ static async Task<LotAnalysisResult> AnalyzeLotAsync(
 
     return result;
 }
+
+// The Auction Sniper's sweep: live eBay listings priced against real sold comps, ranked by what is
+// still winnable. Four phases, ordered so the expensive work is only ever spent on rows that are
+// already worth spending it on:
+//
+//   1. TERMS   — what to hunt. Typed keywords, or (the default, and the point of the feature) the
+//                seller's own completed sales, grouped by product.
+//   2. PRICE   — one comp lookup per TERM, not per listing. Every result of a keyword search is
+//                nominally the same product, and 25 lookups for one answer is 24 wasted.
+//   3. SWEEP   — eBay's Browse API per term: auctions soonest-ending, Buy It Nows cheapest-first.
+//                Every listing passes the same identity guard the rest of the app uses before a
+//                cent of profit is booked against it, and every rejection is logged with its reason.
+//   4. RECHECK — the handful of rows carrying real money are re-priced against their OWN title,
+//                because the number the seller is about to bid should come from the item they are
+//                bidding on rather than the keyword that found it.
+//
+// Read-only against eBay: item_summary/search and nothing else. Nothing bids, lists or spends.
+static async Task<SnipeScanResult> ScanSnipesAsync(
+    string? q, string? mode, string? sort, int maxTerms, int perTerm, int recheckBudget, int terapeakBudget,
+    EarningsStore earnings, EbayService ebay, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket,
+    AuctionSniperAnalyzer sniper, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var nowUtc = DateTime.UtcNow;
+
+    var scanMode = (mode ?? "").Trim().ToLowerInvariant() switch
+    {
+        "bins" or "fixed" or "fixed_price" => "bins",
+        "both" or "all" => "both",
+        _ => "auctions",
+    };
+
+    var result = new SnipeScanResult
+    {
+        Mode = scanMode,
+        Sort = AuctionSniperAnalyzer.NormalizeSort(sort),
+        PriceIsRealHours = AuctionSniperAnalyzer.PriceIsRealHours,
+        TermsWereTyped = !string.IsNullOrWhiteSpace(q),
+        Honesty = SnipeHonesty(),
+    };
+
+    // ── 1: what to hunt ─────────────────────────────────────────────────────────────────────────
+    result.Terms = result.TermsWereTyped
+        ? AuctionSniperAnalyzer.ParseTypedTerms(q, maxTerms)
+        : AuctionSniperAnalyzer.WatchTermsFromSales(earnings.GetAll(), maxTerms);
+
+    if (result.Terms.Count == 0)
+    {
+        // Not an error, and not an empty board either — there is nothing to look for yet, and the
+        // fix is one sentence long.
+        result.Status = "no_terms";
+        result.DataWarning = "Type what you're hunting for, or import your eBay sales in Money Made — " +
+            "this hunts the products you've already sold, because those are the ones you know you can move.";
+        result.Summary.ScannedUtc = nowUtc;
+        return result;
+    }
+
+    var terapeakUsed = 0;
+
+    // The scrape budget, spent the same way the Opportunity Finder spends it: a cache hit is free
+    // and never consumes it, and this function never decides on its own to pay for a scrape.
+    async Task<bool> AllowScrapeAsync(string title)
+    {
+        var cached = await terapeakMarket.GetAsync(
+            normalizer.Normalize(title), title, allowRealScrape: false, ct: ct) is not null;
+        if (cached) return true;
+        if (terapeakUsed >= terapeakBudget) return false;
+        terapeakUsed++;
+        return true;
+    }
+
+    // Resale is valued as a FIXED_PRICE listing on purpose: the seller buys at auction and relists
+    // at a Buy It Now price, so the comps that should carry the most weight are the fixed-price ones.
+    async Task<ResalePricing?> PriceAsync(string title, List<EbayOpportunityItem>? competition)
+    {
+        var analysis = await AnalyzeProductAsync(
+            title, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: competition, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: await AllowScrapeAsync(title),
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+
+        var resale = ResalePricing.From(analysis, title);
+        return resale.HasPrice ? resale : null;
+    }
+
+    // Every surviving row, with the listing and the term that found it, so the recheck below can
+    // rebuild a row from a better price without re-running the search.
+    var built = new List<(EbayOpportunityItem Item, SnipeWatchTerm Term, ResalePricing Resale, SnipeCandidate Row)>();
+    var seenItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var term in result.Terms)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var listings = new List<EbayOpportunityItem>();
+        try
+        {
+            if (scanMode is "auctions" or "both")
+                listings.AddRange(await ebay.SearchEndingSoonAsync(
+                    term.Term, minFeedback: 0, limit: perTerm, listingType: "AUCTION"));
+
+            // Cheapest first, shipping included: an underpriced Buy It Now is by definition at the
+            // bottom of that order, while "newly listed" would return the most recent 50 whatever
+            // they cost.
+            if (scanMode is "bins" or "both")
+                listings.AddRange(await ebay.SearchEndingSoonAsync(
+                    term.Term, minFeedback: 0, limit: perTerm, listingType: "FIXED_PRICE",
+                    sortOverride: "price"));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            term.Error = ex.Message;
+            log.Add("Warning", "Auction sniper search failed", $"\"{term.Term}\": {ex.Message}");
+            continue;
+        }
+
+        term.ListingsFound = listings.Count;
+        if (listings.Count == 0) continue;
+
+        // ── 2: one comp lookup for the whole term ───────────────────────────────────────────────
+        ResalePricing? resale;
+        try
+        {
+            resale = await PriceAsync(term.LookupTitle, listings);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            term.Error = ex.Message;
+            log.Add("Warning", "Auction sniper pricing failed", $"\"{term.LookupTitle}\": {ex.Message}");
+            continue;
+        }
+
+        if (resale is null)
+        {
+            log.Add("Info", "Auction sniper term dropped",
+                $"\"{term.LookupTitle}\" — no sold history matched, so nothing found under it can be priced.");
+            continue;
+        }
+        term.Priced = true;
+
+        // ── 3: the identity guard, then the money ───────────────────────────────────────────────
+        var priceFloor = JackpotHunter.SupplyPriceFloor(resale);
+
+        foreach (var item in listings)
+        {
+            if (string.IsNullOrWhiteSpace(item.Title) || item.Price <= 0) continue;
+
+            // The same listing can come back under two terms, and under both formats when a seller
+            // runs an auction with a Buy It Now on it. Counting it twice doubles it in every total.
+            var key = string.IsNullOrWhiteSpace(item.ItemId) ? item.Url : item.ItemId;
+            if (!string.IsNullOrWhiteSpace(key) && !seenItems.Add(key)) continue;
+
+            var (plausible, reason) = AuctionSniperAnalyzer.IsPlausibleSnipe(
+                item, normalizer.Normalize(item.Title), term.LookupTitle, priceFloor);
+            if (!plausible)
+            {
+                term.ListingsRejected++;
+                log.Add("Info", "Auction sniper listing rejected",
+                    $"\"{item.Title}\" ({item.Price:C}) — {reason}.");
+                continue;
+            }
+
+            term.Kept++;
+            built.Add((item, term, resale, sniper.Build(item, resale, feeProfile, nowUtc, term)));
+        }
+    }
+
+    // ── 4: re-price what money actually hangs on ────────────────────────────────────────────────
+    // Ranked by profit at the ceiling rather than by discount: the deepest discount on the board is
+    // routinely a $9 item, and a recheck spent there is a recheck not spent on the $200 one.
+    var recheckTargets = built
+        .Where(b => b.Row.Verdict is AuctionSniperAnalyzer.VerdictSnipe
+                        or AuctionSniperAnalyzer.VerdictTooEarly
+                        or AuctionSniperAnalyzer.VerdictThin
+                        or AuctionSniperAnalyzer.VerdictWatch)
+        .OrderByDescending(b => b.Row.ProfitAtMaxBid ?? 0m)
+        .Take(recheckBudget)
+        .ToList();
+
+    foreach (var target in recheckTargets)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var itemResale = await PriceAsync(target.Item.Title, null);
+            if (itemResale is null) continue;
+
+            var rebuilt = sniper.Build(target.Item, itemResale, feeProfile, nowUtc, target.Term);
+            rebuilt.PricedPerItem = true;
+
+            var index = built.IndexOf(target);
+            if (index >= 0) built[index] = (target.Item, target.Term, itemResale, rebuilt);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Auction sniper recheck failed", $"\"{target.Item.Title}\": {ex.Message}");
+        }
+    }
+
+    // ── The board ───────────────────────────────────────────────────────────────────────────────
+    var rows = built.Select(b => b.Row).ToList();
+    result.Candidates = AuctionSniperAnalyzer.Rank(rows, result.Sort);
+    result.Summary = AuctionSniperAnalyzer.Summarize(result.Candidates, nowUtc);
+    result.Summary.TermsScanned = result.Terms.Count(t => t.Priced);
+    result.Summary.ListingsScanned = result.Terms.Sum(t => t.ListingsFound);
+    result.Summary.ListingsRejected = result.Terms.Sum(t => t.ListingsRejected);
+
+    if (result.Candidates.Count == 0)
+    {
+        // Three different failures wearing one empty board, and the seller can only fix the one
+        // they're actually looking at. Naming the wrong one — "no sold history" over a search that
+        // simply returned nothing live — sends them to mend a database that was never broken.
+        var searched = result.Terms.Count(t => t.ListingsFound > 0);
+
+        result.DataWarning = searched == 0
+            ? "eBay has nothing live for these searches right now. Auctions come and go by the hour — scan again later."
+            : result.Summary.TermsScanned == 0
+                ? $"eBay returned listings, but none of the {searched} search{(searched == 1 ? "" : "es")} that found " +
+                  "any could be priced — the sold-comps database has no history for them yet."
+                : "Nothing live right now is priced under what these sell for. That is the normal answer most of the " +
+                  "time, and it is the answer that keeps the board worth reading when it isn't.";
+    }
+    else if (result.Summary.SnipeCount == 0 && result.Summary.TooEarlyCount > 0)
+    {
+        result.DataWarning = $"Nothing is closing soon enough to bid on yet. {result.Summary.TooEarlyCount} " +
+            $"auction{(result.Summary.TooEarlyCount == 1 ? " is" : "s are")} worth coming back to — their prices " +
+            "aren't real until they're near the end.";
+    }
+
+    sw.Stop();
+    log.Add("Info", "Auction sniper scan",
+        $"Terms: {result.Terms.Count} ({(result.TermsWereTyped ? "typed" : "from your own sales")}); " +
+        $"Mode: {scanMode}; Listings: {result.Summary.ListingsScanned}; " +
+        $"Rejected: {result.Summary.ListingsRejected}; Rows: {result.Candidates.Count}; " +
+        $"Snipes: {result.Summary.SnipeCount}; Too early: {result.Summary.TooEarlyCount}; " +
+        $"Profit at ceilings: {result.Summary.ProfitAtCeilings:C}; Rechecks: {recheckTargets.Count}; " +
+        $"Terapeak scrapes: {terapeakUsed}; Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
+
+// What the numbers on the snipe board do and don't mean. Returned with every scan, including the
+// empty ones — the caveats are part of the feature, not a footnote for the good days.
+static List<string> SnipeHonesty() =>
+[
+    "Nothing here places a bid. The max bid is a number for you to type into eBay yourself — the app " +
+        "never spends your money.",
+    $"An auction's current price is not its closing price. Anything more than {AuctionSniperAnalyzer.PriceIsRealHours} " +
+        "hours out is listed as too early to price, however cheap it looks right now.",
+    "Profit is what's left at YOUR ceiling after eBay's fees, shipping both ways, packaging and the " +
+        "return/testing reserves in your fee profile — not the gap between the bid and the median.",
+    "The board total assumes you win every row at your ceiling. You won't. It's an upper bound on what " +
+        "is on the board right now, and it falls every time somebody bids.",
+];
 
 // The single shared entry point for "analyze this one product" — used by both the Opportunity
 // Finder's per-item recheck and the Supplier File Analyzer, so there's exactly one implementation

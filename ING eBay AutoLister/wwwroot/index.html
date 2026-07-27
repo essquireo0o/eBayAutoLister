@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=43" />
+  <link rel="stylesheet" href="style.css?v=44" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -58,6 +58,10 @@
 
         <p class="nav-group-label">Grow</p>
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
+        <!-- The only sourcing screen that buys on the same marketplace it sells on. Sits directly
+             under the Opportunity Finder because it answers the same question with a clock on it:
+             not "what could I sell" but "what closes in forty minutes for less than it's worth". -->
+        <button class="nav-item" type="button" data-page="snipe"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Auction Sniper</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
         <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
@@ -218,6 +222,21 @@
           <div class="dash-earnings-side">
             <div id="dash-pipeline-next" class="dash-pipeline-next"></div>
             <button id="dash-pipeline-open" class="btn btn-secondary" type="button">Open the pipeline</button>
+          </div>
+        </div>
+
+        <!-- What's closing soon, from the last sniper scan. Hidden until a scan has actually run:
+             this band is a countdown on real listings, and inventing one on page load would mean
+             hitting eBay for every seller who opens the app. -->
+        <div id="dash-snipe" class="dash-earnings dash-snipe hidden">
+          <div class="dash-earnings-main">
+            <p class="eyebrow">Closing soon, under market</p>
+            <p id="dash-snipe-figure" class="dash-earnings-figure">$0</p>
+            <p id="dash-snipe-sub" class="dash-earnings-sub"></p>
+          </div>
+          <div class="dash-earnings-side">
+            <div id="dash-snipe-next" class="dash-pipeline-next"></div>
+            <button id="dash-snipe-open" class="btn btn-secondary" type="button">Open the sniper</button>
           </div>
         </div>
 
@@ -1823,6 +1842,79 @@
         </div>
       </section>
 
+      <!-- The Undervalued-Auction Sniper. Buys on eBay, sells on eBay: live auctions and Buy It Nows
+           priced under what the same item's sold comps settle at, with the most to bid on each.
+           Read-only — it searches, and nothing else. No bid is ever placed by the app. -->
+      <section id="snipe-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="sn-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Undervalued Auction Sniper</div>
+              <h2>🎯 Buy It Under Market — On eBay Itself</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="sn-scan-btn" class="btn btn-primary" type="button">🎯 Find Underpriced Auctions</button>
+            <button id="sn-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">
+              The shortest flip there is: <strong>buy it at auction, relist it at market</strong>, same
+              marketplace, days apart. This prices live eBay auctions and Buy It Nows against the
+              <strong>real sold comps</strong> for the same item and gives you the only number a bidder
+              needs — <strong>the most to bid</strong>, and what winning at that price actually pays after
+              fees. Leave the box empty and it hunts the products <strong>you have already sold</strong>.
+            </p>
+
+            <div class="inv-controls">
+              <div class="opp-field sn-field-wide">
+                <label for="sn-terms">What to hunt</label>
+                <input id="sn-terms" type="text" placeholder="Leave blank to hunt what you've already sold — or type: dyson v11, antminer s19j" />
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="sn-mode">Look at</label>
+                <select id="sn-mode">
+                  <option value="auctions" selected>Auctions ending soonest</option>
+                  <option value="bins">Buy It Nows, cheapest first</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+              <div class="opp-field inv-field-small">
+                <label for="sn-sort">Order by</label>
+                <select id="sn-sort">
+                  <option value="urgency" selected>What closes first</option>
+                  <option value="profit">Biggest profit</option>
+                  <option value="discount">Furthest under market</option>
+                </select>
+              </div>
+              <span id="sn-status" class="inv-status"></span>
+            </div>
+          </div>
+
+          <div id="sn-warning" class="inv-warning hidden"></div>
+          <div id="sn-summary" class="inv-summary hidden"></div>
+          <div id="sn-terms-bar" class="sn-terms-bar hidden"></div>
+
+          <div id="sn-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-opportunity"/></svg></div>
+              <div class="state-title">Somewhere on eBay right now, one of the things you sell is closing for less than you sold it for.</div>
+              <p class="state-body">This finds it: live auctions and Buy It Nows priced under the sold-comp median for the same item, each one carrying the highest bid that still leaves a profit worth having — after eBay's fees, shipping and your own cost assumptions.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('sn-scan-btn')?.click()">Find underpriced auctions</button>
+              </div>
+              <p class="state-hint">Read-only. The app never places a bid — the max bid is a number you type into eBay yourself.</p>
+            </div>
+          </div>
+
+          <ul id="sn-honesty" class="sn-honesty hidden"></ul>
+        </div>
+      </section>
+
       <!-- Liquidation Lot / Manifest Analyzer. One decision, a lot of money on it: pay the ask or
            walk. Read-only end to end — nothing here lists, publishes or sends anything. -->
       <section id="lots-section" class="opportunity-overlay hidden">
@@ -3252,6 +3344,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>

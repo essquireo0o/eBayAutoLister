@@ -263,6 +263,11 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
     private static readonly string[] CompatibilityMarkers =
         ["fits", "compatible", "replacement", "replaces", "aftermarket", "for use with"];
 
+    // The same claim written as a bare verb — "Cooling Fan 4 pin fit Bitmain Antminer S19". Matched
+    // as a WORD rather than as a substring, because "benefit " ends in "fit " and a substring test
+    // here would reject half the listings on eBay.
+    private static readonly string[] CompatibilityWords = ["fit", "fitment", "fitting"];
+
     // Component nouns. A listing that names one of these when the product itself doesn't is a
     // listing FOR that component — "Dirty Water Tank to iRobot Roomba Combo 10 Max" names the same
     // brand and model number as the machine and is a $40 plastic tank. Compared against the
@@ -276,6 +281,24 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
         "nozzle", "remote", "dock", "base", "lid", "door", "gasket", "seal", "roller", "motor",
         "pump", "screen", "bezel", "knob", "handle", "bumper", "sensor", "board", "pcb", "psu",
         "cover", "case", "sleeve", "strap", "band", "clip", "bracket", "screw", "screws",
+        // Found by pointing the auction sniper at a real market: a keyword search for a $148 miner
+        // returns fans, fan-speed controllers, fan-simulator plugs and rubber standoffs, all of them
+        // naming the brand AND the model number, all of them $15, and every one of them priced as a
+        // spectacular flip until it is rejected here.
+        "fan", "fans", "controller", "simulator", "emulator", "standoff", "standoffs",
+        "hashboard", "hashboards", "riser", "shroud", "duct", "harness", "supply",
+    ];
+
+    // Words that mean the listing is a SERVICE, a licence or a job rather than a thing in a box.
+    // A live keyword search on eBay returns these mixed in with the real items, and they are the
+    // most dangerous rows on a sourcing board: "ASIC Miner Hosting Europe — Antminer S21" costs
+    // $1.00, names the brand and the model exactly, and cannot be resold at all. Compared against
+    // the product's own title like the component nouns above, so a seller who really does flip
+    // service plans isn't locked out of their own market.
+    private static readonly string[] ServiceWords =
+    [
+        "hosting", "hosted", "rental", "rent", "lease", "firmware", "overclock", "unlock",
+        "repair", "service", "servicing", "installation", "consultation", "tutorial", "ebook",
     ];
 
     // Fraction of the sold-comp floor below which a listing is not credibly the same item. Set
@@ -346,6 +369,10 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
             return (false, $"listed as an item for a {identityTokens[0]}, not the {identityTokens[0]}");
 
         var words = MarketplaceMatcher.Words(normalized);
+
+        if (CompatibilityWords.Any(w => words.Contains(w, StringComparer.Ordinal)))
+            return (false, "sold as a fit-for accessory");
+
         var missing = identityTokens.Where(t => !words.Contains(t, StringComparer.Ordinal)).ToList();
         if (missing.Count > 0) return (false, $"doesn't name {string.Join('/', missing)}");
 
@@ -353,6 +380,10 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
         var component = ComponentNouns.FirstOrDefault(n =>
             words.Contains(n, StringComparer.Ordinal) && !productWords.Contains(n, StringComparer.Ordinal));
         if (component is not null) return (false, $"a {component}, not the product");
+
+        var service = ServiceWords.FirstOrDefault(w =>
+            words.Contains(w, StringComparer.Ordinal) && !productWords.Contains(w, StringComparer.Ordinal));
+        if (service is not null) return (false, $"a {service} listing, not an item you can resell");
 
         if (priceFloor > 0 && buyPrice < priceFloor)
             return (false, $"{buyPrice:C} is below the {priceFloor:C} floor for a real one");

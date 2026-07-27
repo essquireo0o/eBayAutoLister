@@ -2973,3 +2973,153 @@ cost-basis rows and 0 deals — exactly as found.
 "Apply what you paid" button end-to-end in the browser — its endpoint was exercised live and returned
 the correct message, and the rule behind it is covered by tests, but the connected account had only
 one sale available to close and it was consumed by the lifecycle run above.
+
+---
+
+## 29. The Auction Sniper — buying on eBay to sell on eBay (autonomous session, 2026-07-26)
+
+Every sourcing screen built so far sends the seller somewhere else to buy: Craigslist, Facebook
+Marketplace, a pallet auction, a supplier file. Each one costs a drive, a negotiation, or a wait on
+a stranger to answer a message. Meanwhile eBay's own auction format regularly closes items below
+what the same item's fixed-price comps settle at, and the app already knew what those comps were.
+
+`GET /api/snipes` → the new **🎯 Auction Sniper** board, plus a **Closing soon, under market** band
+on the dashboard and a **＋ Track** button that hands the deal straight to the Deal Pipeline.
+
+### Why this makes the seller money
+
+1. **It is the shortest flip there is.** Buy at auction, relist at market — same marketplace, days
+   apart, no drive, no haggling, no waiting on a reply. The resale side is priced by the very
+   marketplace the buy happens on.
+2. **It hunts what the seller already sells.** With no keyword, the watch list is built from their
+   own completed sales in `EarningsStore`, grouped by product: *"You've sold 18 of these."* Those
+   are the only products on eBay whose demand, shipping cost, condition grading and buyer the seller
+   has first-hand knowledge of — and the ones where "I could have bought that for half of what I
+   got" is money they have demonstrably left on the table before.
+3. **It answers the only question a bidder has.** Not "is this a good deal" but **"what is the most
+   I can bid"** — one number, entered once into eBay's own max-bid box, walked away from. It comes
+   from `JackpotHunter.BreakEvenBuyPrice` and `LocalArbitrageAnalyzer`'s own "worth doing" bars, so
+   a flip won at auction is judged by exactly the same arithmetic as one bought off Craigslist.
+4. **Shipping comes out of the bid, not out of the profit.** Winning costs the bid *plus* the
+   shipping, so a $40-shipping miner's ceiling is $40 lower. On the live run this was the difference
+   between a $97 ceiling and a $32 one on two listings of the same machine.
+
+### The rule the whole feature is built on
+
+**A current bid is not a closing price.** A $12 auction with three days left is not a $12 item — it
+is an auction that hasn't happened yet. Rows more than `PriceIsRealHours` (24) out are marked
+`too_early` however good the arithmetic looks, contribute **nothing** to any total on the board, and
+carry the ceiling forward as the number to come back with. This is the single defect that makes
+naive "underpriced auction finders" useless, and refusing to score those rows is the reason the rest
+of the board can be believed. A fixed-price listing is never too early: its price does not move.
+
+The hero figures are deliberately the least flattering honest ones — *profit if you won every row at
+your ceiling*, labelled in the tile itself as an upper bound that falls every time somebody bids,
+next to the cash it would take to win them all.
+
+### What the analyzer refuses to do
+
+| Rule | Why |
+|---|---|
+| An auction more than 24h out is **not priced** | Its current price is not a price. See above. |
+| The ceiling is **truncated to the cent, never rounded up** | $173.10 / 1.30 is $133.1538. Rounding it to $133.16 — or, as the UI first did, to a whole `$134` — gives away the last cent of the margin the ceiling exists to protect. Both the server and the max-bid column now use exact cents. |
+| Profit at the ceiling sits **beside** profit at the current bid | Winning at your ceiling is the worst case of a bid you would actually place. Leading with profit at a current bid advertises money on a price that will move. |
+| **Unstated shipping is not free shipping** | eBay's Browse API omits `shippingOptions` entirely on some listings. `ShippingStated` now carries that separately, the row is flagged, and the seller is told what an unknown $20 would do to the ceiling. |
+| The **price floor does not apply to auctions** | "Nothing this cheap is the real thing" is right for a Buy It Now and exactly backwards for an auction, which legitimately opens at $0.99. Auctions are guarded on identity alone; a suspiciously cheap one is flagged to go and read the description, not silently dropped. |
+| A row that has already **passed the ceiling** shows the overshoot | "$17 past it" in red, not a headroom clamped at zero. |
+| Nothing is **auto-bid** | `EbayService.PlaceMaxBidAsync` exists and is called from nowhere in this feature. The app never spends the seller's money. |
+| Only `snipe` rows reach the totals | A too-early row's apparent $161 of profit must not be added to anything. |
+| Urgency, not profit, is the default sort | The biggest margin on the board is worth nothing if it closes while the seller is reading about a different row. A Buy It Now with no clock sorts *after* everything on one, never as "ending now". |
+| The evidence bars are the **same ones the rest of the app uses** | `GoldmineMinComps` / `GoldmineMinConfidence`. Thin data cannot wear the snipe badge however large the arithmetic. |
+| Risks are **listed, never scored** | A score hides the exact thing the bidder needs to go and look at. |
+
+### Four defects the live run caught
+
+The scan was pointed at the seller's real connected account and the live eBay Browse API rather than
+reasoned about in the abstract. Three of the four were in the app's **shared** buy-side identity
+guard (`JackpotHunter.IsPlausibleSupply`), which Roll the Dice uses too:
+
+1. **"fit" as a bare verb walked straight through.** `CompatibilityMarkers` knew "fits" but not
+   "fit", so *"Cooling Fan 4 pin **fit** Bitmain Antminer S19"* — $15, naming the brand and the
+   model — was priced against a $148 machine. Now matched as a word rather than a substring, because
+   "benefit " ends in "fit ".
+2. **A whole class of component nouns was missing.** A keyword search for a miner returns fans, fan
+   *speed controllers*, fan *simulators*, rubber *standoffs* and *hashboards* — all around $15, all
+   naming the model. `fan/fans/controller/simulator/emulator/standoff/hashboard/riser/shroud/duct/
+   harness/supply` joined the list. Rejections on one live scan went from 48 to 58 of 71 listings.
+3. **Services were being priced as machines.** *"ASIC Miner Hosting Europe — Antminer S21"* costs
+   **$1.00**, names the product exactly, and cannot be resold at all; nor can an *"Overclock Antminer
+   S21 — adds 10-20%"* firmware listing. A `ServiceWords` check now rejects hosting/rental/firmware/
+   overclock/repair/service listings, compared against the product's own title so a seller who really
+   does flip service plans isn't locked out of their own market.
+4. **An empty board blamed the wrong thing.** With no live auctions for a term, the warning read
+   *"the sold-comps database has no history for them yet"* — sending the seller to mend a database
+   that was never broken. The three failures (nothing live / nothing priceable / nothing underpriced)
+   are now told apart and named separately.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/SnipeModels.cs` | **New** — `SnipeCandidate` (the listing, the money, the clock, the verdict, the risks), `SnipeWatchTerm`, `SnipeSummary`, `SnipeScanResult` |
+| `Services/AuctionSniperAnalyzer.cs` | **New** — the ceiling (`MaxBidFor`), the clock bands, `PriceIsRealFor`, the auction-aware identity guard, the verdicts, the risks, ranking, and the watch list built from the seller's own sales. Pure except `Build`, which routes every dollar through `ProfitCalculator` via `JackpotHunter` |
+| `Services/JackpotHunter.cs` | The three identity-guard fixes above — shared, so Roll the Dice gets them too |
+| `Services/EbayService.cs` | `SearchEndingSoonAsync` gains a `sortOverride` (BIN sweeps go cheapest-first, which is where an underpriced fixed-price listing actually is) and now reads `feedbackPercentage`, `legacyItemId`, `condition` and **whether shipping was stated at all** |
+| `Models/ListingData.cs` | `ShippingStated`, `SellerFeedbackPercent`, `ItemId`, `Condition` on `EbayOpportunityItem` |
+| `Program.cs` | DI + `GET /api/snipes`, `ScanSnipesAsync` (terms → one comp lookup per term → the guard → a budgeted per-item recheck), `SnipeHonesty` |
+| `wwwroot/index.html` | `#snipe-section`, the `Auction Sniper` nav entry, `#dash-snipe` band. `app.js?v=53`, `style.css?v=44` |
+| `wwwroot/app.js` | `bindSniper`, `runSnipeScan`, `renderSnipe*`, `snipeRowHtml`, the one-second countdown ticker, `trackSnipeRow`, `renderDashboardSnipes` |
+| `wwwroot/style.css` | `.sn-*` and `.dash-snipe` |
+| `ING eBay AutoLister.Tests/AuctionSniperAnalyzerTests.cs` | **New** — 69 tests |
+| `ING eBay AutoLister.Tests/JackpotHunterTests.cs` | +5 tests pinning the guard fixes the live run found |
+
+### What one click costs
+
+Bounded on every axis, because a keyword board fans out fast: ≤8 terms, ≤50 listings per term per
+format, **one** comp lookup per term (every result of a keyword search is nominally the same
+product — 25 lookups for one answer is 24 wasted), ≤15 per-item rechecks, ≤10 real Terapeak scrapes,
+and a cache hit never consumes the scrape budget. The recheck is ranked by profit at the ceiling
+rather than by discount: the deepest discount on the board is routinely a $9 item, and a recheck
+spent there is one not spent on the $200 one.
+
+### Safety
+
+- **Read-only against eBay.** `item_summary/search` and nothing else. Nothing lists, relists,
+  reprices, publishes, messages or bids.
+- Tracking writes only to the app's own SQLite, through the existing `/api/deals` endpoint.
+- The same listing arriving under two terms — or as both an auction and a Buy It Now — is
+  deduplicated on item id, so it cannot be counted twice in any total.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,121 passed**, 0 failed, 0 skipped (1,047 pre-existing + 74 new) |
+| Live scan, no keyword (dev port 9381, real account) | Watch list built from **real sales**: "antminer s19 95th…" *(You've sold 18 of these)*, "…s19k pro 120th" *(7)*, "…ks5 pro 21th" *(3)* |
+| Live scan, typed terms | 121 live listings across 3 searches, 48 rejected by the guard, every surviving row priced and judged. After the guard fixes: 71 listings, 58 rejected, and **no accessory or service row left on the board** |
+| Live money check | Two listings of the same miner correctly carried different ceilings ($97.03 / $57.03 / $31.85) purely from their own shipping cost; one row's ceiling came back **$0** because shipping alone exceeded the resale value — `pass`, which is the right answer |
+| Real browser, real scan (Playwright) | Section, tiles, term chips, 8 rows, live clocks, 4 honesty lines, **no console errors** |
+| Real browser, synthetic rows (Playwright) | All four verdict states, the risks lists, exact-cent ceilings, the red overshoot, Track on snipe/too-early rows only, bid-at times, and the dashboard band |
+| The countdown | Ticks every second (`0m 42s → 0m 40s`) and flips to **ended** when a row runs out under the seller's eyes; the dashboard band drops the expired row |
+| Track → Deal Pipeline (live endpoint) | Posts the ceiling as the ask with the basis frozen, the card lands in Sourced, and the status line reports `$133.15` to the cent |
+
+Screenshots: `docs/screenshots/auction-sniper.png` (all verdict states) and
+`auction-sniper-live.png` (a real scan).
+
+**Test data cleaned up.** The one deal created by the Track check was deleted from the dev database;
+`/api/deals` is back to 0 deals and $0 capital at risk.
+
+### Not verified
+
+- **A live `snipe` row.** Three real scans across six terms produced no auction priced under its own
+  comps — every live miner was *above* comp value, which the board reported as `pass` rather than
+  inventing a deal. That is the feature working, but it means the bid-worthy path is verified against
+  the analyzer's own arithmetic (69 tests) and a synthetic browser payload, not against a real
+  underpriced auction.
+- **Whether a sniped buy actually wins.** The app cannot see the bidding and does not try to: it
+  never places a bid, so the 20-second snipe time is advice about eBay's mechanics, not a scheduled
+  action.
+- **Non-ASIC categories.** The hosted comps database is this seller's own niche, so consumer terms
+  price thinly or not at all. The watch list is built from whatever the seller has actually sold, so
+  the board follows their inventory rather than needing new data.

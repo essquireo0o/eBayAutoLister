@@ -366,6 +366,7 @@
     bindLotAnalyzer();
     bindPromoted();
     bindTrendRadar();
+    bindSniper();
     bindEarnings();
     bindPipeline();
     bindHomeButtons();
@@ -472,6 +473,7 @@
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
+    if (page !== 'snipe') closeSnipeSection({ back: false });
     if (page !== 'earnings') $('earnings-section')?.classList.add('hidden');
     if (page !== 'pipeline') $('pipeline-section')?.classList.add('hidden');
     if (page === 'earnings') {
@@ -526,6 +528,10 @@
       showTrendsSection();
       return;
     }
+    if (page === 'snipe') {
+      showSnipeSection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -535,7 +541,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -4452,6 +4458,441 @@
       box.value = query;
       box.scrollIntoView({ behavior: 'smooth', block: 'center' });
       box.focus();
+    }
+  }
+
+  // ── The Undervalued-Auction Sniper ────────────────────────────────────────
+  // Every other sourcing screen sends the seller somewhere else to buy. This one buys on eBay and
+  // sells on eBay, hours apart, off /api/snipes — which prices live listings against the same sold
+  // comps the rest of the app uses and returns the one number a bidder needs: the most to bid.
+  //
+  // Three things this UI must never do, all of which would make it a slot machine:
+  //   * show profit at a current bid as though it were profit. The board leads with the ceiling and
+  //     what winning THERE pays, because that is the worst case of a bid you'd actually place;
+  //   * let a "too early" row look like a live one. Their prices aren't real yet, they carry no
+  //     money into any total, and the badge says so;
+  //   * hide the reasons something is cheap. The risks list is rendered in full on every row.
+  let snipeScan = null;
+  let snipeTicker = null;
+
+  function showSnipeSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('snipe-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'snipe'));
+    startSnipeTicker();
+  }
+
+  function closeSnipeSection({ back = true } = {}) {
+    $('snipe-section')?.classList.add('hidden');
+    stopSnipeTicker();
+    if (back) showDashboard();
+  }
+
+  function bindSniper() {
+    on('sn-scan-btn', 'click', () => runSnipeScan());
+    on('sn-close', 'click', () => closeSnipeSection());
+    on('sn-home', 'click', () => closeSnipeSection());
+    on('dash-snipe-open', 'click', () => { location.hash = 'snipe'; });
+    // Ranking is the server's, so re-ordering means asking it again rather than re-implementing the
+    // rules here — two sort orders that disagree is two answers to "what should I bid on first".
+    on('sn-sort', 'change', () => { if (snipeScan) runSnipeScan(); });
+    on('sn-mode', 'change', () => { if (snipeScan) runSnipeScan(); });
+    on('sn-terms', 'keydown', e => { if (e.key === 'Enter') runSnipeScan(); });
+  }
+
+  function setSnipeStatus(text) {
+    const el = $('sn-status');
+    if (el) el.textContent = text || '';
+  }
+
+  async function runSnipeScan() {
+    const btn = $('sn-scan-btn');
+    const terms = ($('sn-terms')?.value || '').trim();
+    const mode = $('sn-mode')?.value || 'auctions';
+    const sort = $('sn-sort')?.value || 'urgency';
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    setSnipeStatus(terms ? 'Searching eBay and pricing what comes back…' : 'Working out what you already sell, then searching eBay…');
+    $('sn-results').innerHTML = '<p class="opportunity-empty">Searching live listings, then pricing each one against real sold comps. This takes a moment.</p>';
+
+    try {
+      const q = terms ? `&q=${encodeURIComponent(terms)}` : '';
+      const res = await fetch(`/api/snipes?mode=${encodeURIComponent(mode)}&sort=${encodeURIComponent(sort)}${q}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      snipeScan = data;
+      renderSnipeScan();
+    } catch (err) {
+      snipeScan = null;
+      ['sn-summary', 'sn-warning', 'sn-terms-bar', 'sn-honesty'].forEach(id => $(id)?.classList.add('hidden'));
+      $('sn-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setSnipeStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Underpriced Auctions'; }
+    }
+  }
+
+  function renderSnipeScan() {
+    if (!snipeScan) return;
+
+    if (snipeScan.status === 'error') {
+      ['sn-summary', 'sn-terms-bar'].forEach(id => $(id)?.classList.add('hidden'));
+      $('sn-results').innerHTML = `<p class="opportunity-empty">${esc(snipeScan.error || 'The scan failed.')}</p>`;
+      renderSnipeHonesty();
+      setSnipeStatus('');
+      return;
+    }
+
+    const warn = $('sn-warning');
+    if (snipeScan.dataWarning) {
+      warn.textContent = snipeScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    // Nothing to hunt for is not an empty board — it is a board that hasn't been told what to look
+    // at, and the fix is one sentence long. Zeroed tiles above it would read as "we looked".
+    if (snipeScan.status === 'no_terms') {
+      $('sn-summary')?.classList.add('hidden');
+      $('sn-terms-bar')?.classList.add('hidden');
+      $('sn-results').innerHTML = '<p class="opportunity-empty">Type what you\'re hunting for above, or import your eBay sales in Money Made — this hunts the products you\'ve already sold.</p>';
+      renderSnipeHonesty();
+      setSnipeStatus('');
+      return;
+    }
+
+    renderSnipeSummary();
+    renderSnipeTerms();
+    renderSnipeRows();
+    renderSnipeHonesty();
+    renderDashboardSnipes();
+    startSnipeTicker();
+
+    const s = snipeScan.summary || {};
+    setSnipeStatus(
+      `${s.listingsScanned || 0} live listing${s.listingsScanned === 1 ? '' : 's'} across ${s.termsScanned || 0} ` +
+      `search${s.termsScanned === 1 ? '' : 'es'} · ${s.listingsRejected || 0} dropped as not the same item · ` +
+      `${s.snipeCount || 0} worth bidding on`);
+  }
+
+  function renderSnipeSummary() {
+    const el = $('sn-summary');
+    if (!el) return;
+    const s = snipeScan.summary || {};
+
+    const tiles = [
+      { label: 'Worth bidding on now', value: String(s.snipeCount || 0),
+        sub: s.snipeCount ? 'Priced under market, and close enough to the end that the price is real' : 'Nothing live cleared the bar this scan',
+        tone: s.snipeCount > 0 ? 'good' : '' },
+      { label: 'If you won them all at your ceiling', value: money(s.profitAtCeilings),
+        sub: 'An upper bound on what is on the board right now — it falls every time somebody bids',
+        tone: s.profitAtCeilings > 0 ? 'good' : '' },
+      { label: 'Best single row', value: money(s.bestProfit),
+        sub: 'Net profit at that row\'s max bid, after every fee' },
+      { label: 'Cash to win all of them', value: money(s.capitalToWinAll),
+        sub: 'What bidding to every ceiling would cost, shipping included' },
+      { label: 'Closing within the hour', value: String(s.closingWithinTheHour || 0),
+        sub: s.nextEndUtc ? `Soonest closes ${snipeClock(s.nextEndUtc)}` : 'Nothing on the clock right now',
+        tone: s.closingWithinTheHour > 0 ? 'warn' : '' },
+      { label: 'Too early to price', value: String(s.tooEarlyCount || 0),
+        sub: `Auctions more than ${snipeScan.priceIsRealHours}h out — their prices aren't real yet` },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  // What was actually searched, and why. When the terms came from the seller's own sales this is
+  // the most persuasive line on the page — the board is hunting things they have already sold.
+  function renderSnipeTerms() {
+    const el = $('sn-terms-bar');
+    if (!el) return;
+    const terms = snipeScan.terms || [];
+    if (terms.length === 0) { el.classList.add('hidden'); return; }
+
+    const chips = terms.map(t => {
+      const detail = t.error
+        ? `couldn't be searched: ${t.error}`
+        : !t.priced ? 'no sold history to price it'
+        : `${t.kept} kept${t.listingsRejected ? `, ${t.listingsRejected} dropped` : ''}`;
+      return `<span class="sn-chip ${t.error || !t.priced ? 'sn-chip-quiet' : ''}" title="${esc(detail)}">
+        <strong>${esc(t.term)}</strong><span class="sn-chip-sub">${esc(t.reason)} · ${esc(detail)}</span></span>`;
+    }).join('');
+
+    el.innerHTML = `<span class="sn-terms-label">${snipeScan.termsWereTyped ? 'Searched' : 'Hunting what you\'ve already sold'}</span>${chips}`;
+    el.classList.remove('hidden');
+  }
+
+  function renderSnipeHonesty() {
+    const el = $('sn-honesty');
+    if (!el) return;
+    const lines = snipeScan?.honesty || [];
+    if (lines.length === 0) { el.classList.add('hidden'); return; }
+    el.innerHTML = lines.map(l => `<li>${esc(l)}</li>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const SNIPE_VERDICTS = {
+    snipe:     { label: '🎯 Bid on it',   cls: 'sn-v-snipe' },
+    too_early: { label: '⏳ Too early',   cls: 'sn-v-early' },
+    watch:     { label: '👀 Watch',       cls: 'sn-v-watch' },
+    thin:      { label: '⚠️ Thin data',   cls: 'sn-v-thin' },
+    pass:      { label: '✕ Pass',         cls: 'sn-v-pass' },
+    ended:     { label: '· Ended',        cls: 'sn-v-pass' },
+    no_data:   { label: '? No comps',     cls: 'sn-v-pass' },
+  };
+
+  function renderSnipeRows() {
+    const el = $('sn-results');
+    const rows = snipeScan.candidates || [];
+
+    if (rows.length === 0) {
+      el.innerHTML = `<p class="opportunity-empty">${esc(
+        snipeScan.dataWarning ||
+        'Nothing live is priced under what these sell for right now. That is the normal answer most of the time.')}</p>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table sn-table">
+        <thead>
+          <tr>
+            <th>Listing</th>
+            <th>Closes</th>
+            <th class="num">Price now</th>
+            <th class="num">Sells for</th>
+            <th class="num">Your max bid</th>
+            <th class="num">If you win there</th>
+            <th>Verdict</th>
+            <th>Track</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(snipeRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.sn-track-btn').forEach(btn =>
+      btn.addEventListener('click', () => trackSnipeRow(btn.dataset.itemId, btn)));
+    updateSnipeClocks();
+  }
+
+  function snipeRowHtml(row) {
+    const v = SNIPE_VERDICTS[row.verdict] || SNIPE_VERDICTS.no_data;
+    const comps = (row.soldCompCount || 0) + (row.terapeakCompCount || 0);
+    const speed = SPEED_TIERS[row.speedTier] || SPEED_TIERS.unknown;
+
+    const risks = (row.risks || []).length
+      ? `<ul class="sn-risks">${row.risks.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : '';
+
+    // The countdown is the only thing on this board that changes while you look at it, so it ticks
+    // in the browser rather than being frozen at whatever the server said a minute ago.
+    const clock = row.endUtc
+      ? `<div class="sn-clock sn-clock-${esc(row.timeTier)}" data-ends="${esc(row.endUtc)}">${esc(snipeClock(row.endUtc))}</div>`
+      : '<div class="sn-clock sn-clock-none">Buy It Now</div>';
+
+    const bids = row.buyingOption === 'AUCTION'
+      ? `<div class="sn-sub">${row.bidCount || 0} bid${row.bidCount === 1 ? '' : 's'}</div>` : '';
+
+    const snipeAt = row.snipeAtUtc && row.verdict === 'snipe'
+      ? `<div class="sn-sub sn-snipe-at">bid at ${esc(snipeLocalTime(row.snipeAtUtc))}</div>` : '';
+
+    const headroom = row.bidHeadroom != null && row.buyingOption === 'AUCTION'
+      ? `<div class="sn-sub ${row.bidHeadroom >= 0 ? '' : 'sn-over'}">${row.bidHeadroom >= 0
+          ? `${money(row.bidHeadroom)} of room left`
+          : `${money(Math.abs(row.bidHeadroom))} past it`}</div>`
+      : '';
+
+    const discount = row.discountPercent != null
+      ? `<div class="sn-sub">${row.discountPercent > 0
+          ? `${Number(row.discountPercent).toFixed(0)}% under market`
+          : `${Number(Math.abs(row.discountPercent)).toFixed(0)}% over market`}</div>`
+      : '';
+
+    const shipping = row.shippingCost > 0
+      ? `<div class="sn-sub">+ ${money(row.shippingCost)} shipping</div>`
+      : row.shippingStated ? '<div class="sn-sub">free shipping</div>' : '<div class="sn-sub sn-over">shipping not stated</div>';
+
+    // Only rows with a real price and real evidence are worth freezing a forecast against — see
+    // the Deal Pipeline, which grades every forecast it is given against what actually happened.
+    const track = row.verdict === 'snipe' || row.verdict === 'too_early'
+      ? `<button class="btn btn-secondary small sn-track-btn" type="button" data-item-id="${esc(row.itemId)}">＋ Track</button>`
+      : '<span class="sn-sub">—</span>';
+
+    return `
+      <tr class="sn-row ${row.verdict === 'snipe' ? 'sn-row-snipe' : ''}">
+        <td class="sn-item">
+          <a class="sn-name" href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.title)}</a>
+          <div class="sn-sub">${esc(row.condition || 'condition not stated')} · seller ${esc(row.sellerUsername || '—')} (${row.sellerFeedbackScore || 0})</div>
+          <div class="sn-sub">priced as “${esc(row.pricedAs)}” · ${comps} sold comp${comps === 1 ? '' : 's'} · ${esc(row.confidenceLevel)}${row.pricedPerItem ? ' · <span class="sn-tag">priced off this listing</span>' : ''}</div>
+          <div class="sn-note">${esc(row.verdictNote)}</div>
+          ${risks}
+        </td>
+        <td class="sn-time">${clock}${bids}${snipeAt}</td>
+        <td class="num">
+          <div class="sn-strong">${money(row.currentPrice)}</div>
+          ${shipping}
+        </td>
+        <td class="num">
+          <div class="sn-strong">${money(row.expectedSale ?? row.marketMedian)}</div>
+          ${discount}
+        </td>
+        <td class="num">
+          ${row.maxBid > 0
+            // To the cent, deliberately. money() rounds to whole dollars, which would print a
+            // $133.65 ceiling as $134 — a number above the ceiling, in the one column somebody
+            // copies straight into a bid box. The server truncates for the same reason.
+            ? `<div class="sn-strong sn-max">${moneyExact(row.maxBid)}</div>${headroom}`
+            : '<span class="sn-sub">—</span>'}
+        </td>
+        <td class="num">
+          ${row.profitAtMaxBid > 0
+            ? `<div class="sn-strong sn-profit">${money(row.profitAtMaxBid)}</div>` +
+              (row.daysToCash != null
+                ? `<div class="sn-sub"><span class="speed-days speed-${speed.cls}" title="${esc(row.speedNote || '')}">${row.daysToCash}d to cash</span></div>`
+                : '<div class="sn-sub">speed unknown</div>')
+            : '<span class="sn-sub">—</span>'}
+        </td>
+        <td><span class="sn-verdict ${v.cls}">${esc(v.label)}</span></td>
+        <td>${track}</td>
+      </tr>`;
+  }
+
+  // ── The clock ─────────────────────────────────────────────────────────────
+
+  function snipeClock(endUtc) {
+    const ms = new Date(endUtc).getTime() - Date.now();
+    if (!Number.isFinite(ms)) return '—';
+    if (ms <= 0) return 'ended';
+
+    const s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60), sec = s % 60;
+
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+    // Inside the hour the seconds matter — that is the whole window a snipe happens in.
+    return `${m}m ${String(sec).padStart(2, '0')}s`;
+  }
+
+  function snipeLocalTime(utc) {
+    const d = new Date(utc);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  }
+
+  function updateSnipeClocks() {
+    document.querySelectorAll('#sn-results [data-ends]').forEach(el => {
+      const text = snipeClock(el.dataset.ends);
+      el.textContent = text;
+      const ms = new Date(el.dataset.ends).getTime() - Date.now();
+      // A row that runs out under the seller's eyes says so, rather than sitting at "0m 00s"
+      // looking winnable.
+      el.classList.toggle('sn-clock-ended', ms <= 0);
+      if (ms > 0 && ms <= 60 * 60 * 1000) {
+        el.classList.remove('sn-clock-today', 'sn-clock-open');
+        el.classList.add('sn-clock-closing');
+      }
+    });
+    renderDashboardSnipes();
+  }
+
+  function startSnipeTicker() {
+    stopSnipeTicker();
+    if (!snipeScan || $('snipe-section')?.classList.contains('hidden')) return;
+    snipeTicker = setInterval(() => {
+      // Self-cancelling: navigating away hides the section without going through the close button,
+      // and a timer left running against a hidden board is a leak nobody would ever notice.
+      if ($('snipe-section')?.classList.contains('hidden')) { stopSnipeTicker(); return; }
+      updateSnipeClocks();
+    }, 1000);
+  }
+
+  function stopSnipeTicker() {
+    if (snipeTicker) { clearInterval(snipeTicker); snipeTicker = null; }
+  }
+
+  // ── Tracking a snipe ──────────────────────────────────────────────────────
+  // Freezes the forecast that justified bidding, at the ASK that matters — the ceiling, not the
+  // current bid, because the ceiling is what the seller is actually deciding to spend. The Deal
+  // Pipeline grades it against what the flip really made.
+  async function trackSnipeRow(itemId, btn) {
+    const row = (snipeScan?.candidates || []).find(r => r.itemId === itemId);
+    if (!row || !btn) return;
+
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Tracking…';
+
+    try {
+      const res = await fetch('/api/deals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: row.title,
+          stage: 'sourced',
+          source: 'ebay_auction',
+          sourceLabel: row.buyingOption === 'AUCTION' ? 'eBay auction' : 'eBay Buy It Now',
+          sourceUrl: row.url,
+          sourceItemId: row.itemId,
+          // The ask is the ceiling: bidding to it is the decision being tracked, and the pipeline
+          // rebases the projection on whatever is actually paid the moment it's entered.
+          askPrice: row.maxBid,
+          maxBuyPrice: row.maxBid,
+          projectedSalePrice: row.expectedSale ?? row.marketMedian,
+          projectedNetProfit: row.profitAtMaxBid,
+          projectedRoiPercent: row.maxBid > 0 ? round2(row.profitAtMaxBid / (row.maxBid + row.shippingCost) * 100) : null,
+          projectedDaysToCash: row.daysToCash,
+          projectedBasis: [
+            `${(row.soldCompCount || 0) + (row.terapeakCompCount || 0)} sold comps`,
+            row.confidenceLevel,
+            row.speedLabel,
+            row.buyingOption === 'AUCTION' ? 'at the max bid' : 'Buy It Now',
+          ].filter(Boolean).join(' · '),
+          note: row.endUtc ? `Closes ${new Date(row.endUtc).toLocaleString()}` : '',
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      pipeline = await res.json();
+      renderDashboardPipeline();
+      btn.textContent = '✓ Tracked';
+      btn.classList.add('fb-arb-tracked');
+      setSnipeStatus(`Tracking "${row.title}" — it's on the Deal Pipeline with ${moneyExact(row.maxBid)} as the ceiling you decided on.`);
+      addActivity('Snipe tracked', `${row.title} — ${money(row.profitAtMaxBid || 0)} projected at the ceiling`);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = original;
+      setSnipeStatus(`Couldn't track that one: ${err.message}`);
+    }
+  }
+
+  // The dashboard band. Driven entirely by the last scan held in memory — a countdown on the front
+  // page must never mean an eBay search on every page load, and a stale clock would be worse than
+  // no clock at all.
+  function renderDashboardSnipes() {
+    const band = $('dash-snipe');
+    if (!band) return;
+
+    const s = snipeScan?.summary;
+    const live = (snipeScan?.candidates || []).filter(r => r.verdict === 'snipe' && (!r.endUtc || new Date(r.endUtc) > new Date()));
+    if (!s || live.length === 0) { band.classList.add('hidden'); return; }
+
+    band.classList.remove('hidden');
+    setText('dash-snipe-figure', moneyExact(live.reduce((sum, r) => sum + (r.profitAtMaxBid || 0), 0)));
+    setText('dash-snipe-sub',
+      `${live.length} listing${live.length === 1 ? '' : 's'} under market · if you won each at your ceiling`);
+
+    const soonest = live.filter(r => r.endUtc).sort((a, b) => new Date(a.endUtc) - new Date(b.endUtc))[0];
+    const host = $('dash-snipe-next');
+    if (host) {
+      host.innerHTML = soonest
+        ? `<span class="dash-pipeline-next-label">Closes in ${esc(snipeClock(soonest.endUtc))}</span><span class="dash-pipeline-next-text">${esc(soonest.title)}</span>`
+        : '';
     }
   }
 

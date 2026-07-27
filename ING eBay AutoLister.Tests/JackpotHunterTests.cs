@@ -358,6 +358,62 @@ public class JackpotHunterTests
             "iRobot Roomba 675 Robotic Vacuum Cleaner").Plausible);
     }
 
+    // Found by pointing the auction sniper at a real market: every one of these titles came back
+    // from a live eBay search for the miner itself, each naming the brand AND the model number,
+    // each around $15, and each priced as a spectacular flip against a $148 machine.
+    [Fact]
+    public void IsPlausibleSupply_RejectsFitForAccessoriesWrittenAsABareVerb()
+    {
+        var fan = Supply("Cooling Fan 4 pin fit Bitmain Antminer S19 XP S19j Pro", 15m,
+            "Bitmain Antminer S19 Pro 110TH", floor: 12m);
+
+        Assert.False(fan.Plausible);
+        Assert.Contains("fit-for accessory", fan.Reason);
+    }
+
+    [Fact]
+    public void IsPlausibleSupply_RejectsThePartsAKeywordSearchForAMinerReturns()
+    {
+        const string miner = "Bitmain Antminer S19 Pro 110TH";
+
+        Assert.False(Supply("Antminer S19 T19 Fan Speed Controller E9 pro KS3", 15m, miner, floor: 12m).Plausible);
+        Assert.False(Supply("4 pcs Fan Simulator Emulator Antminer S19 L7", 16.99m, miner, floor: 12m).Plausible);
+        Assert.False(Supply("Antminer S19 TPU rubber vibration absorbing standoffs", 14.99m, miner, floor: 12m).Plausible);
+        Assert.False(Supply("Used Bitmain Antminer S19 Pro Hashboard Tested", 59.99m, miner, floor: 12m).Plausible);
+    }
+
+    [Fact]
+    public void IsPlausibleSupply_StillAcceptsAProductThatNamesItsOwnParts()
+    {
+        // The component check compares against the product's own title, so a machine being sold AS
+        // a hashboard — or one whose title mentions its fans — is not rejected for saying so.
+        Assert.True(Supply("Bitmain Antminer S19 Pro Hashboard 110TH Tested Working", 200m,
+            "Bitmain Antminer S19 Pro Hashboard 110TH", floor: 30m).Plausible);
+    }
+
+    // Also found live, and the most dangerous rows a keyword search returns: they name the brand and
+    // the model exactly, cost a dollar, and are not things in boxes.
+    [Fact]
+    public void IsPlausibleSupply_RejectsServicesSoldAlongsideTheProduct()
+    {
+        const string miner = "Antminer S21 200TH Bitcoin Miner";
+
+        var hosting = Supply("ASIC Miner Hosting Europe - Antminer S21 S23 S19", 1m, miner, floor: 10m);
+        Assert.False(hosting.Plausible);
+        Assert.Contains("hosting", hosting.Reason);
+
+        Assert.False(Supply("Overclock Antminer S21 S19 S17 - Adds 10-20% hashrate", 19.99m, miner, floor: 10m).Plausible);
+        Assert.False(Supply("Bitmain Antminer S21 Repair Service Send In", 75m, miner, floor: 10m).Plausible);
+    }
+
+    [Fact]
+    public void IsPlausibleSupply_DoesNotMistakeBenefitForFit()
+    {
+        // "benefit" ends in "fit", and a substring test here would reject half of eBay.
+        Assert.True(Supply("iRobot Roomba 675 Robotic Vacuum Cleaner Benefit Sale", 90m,
+            "iRobot Roomba 675 Robotic Vacuum Cleaner").Plausible);
+    }
+
     // The catch-all: whatever the title says, a price far under what the product itself ever sells
     // for means it isn't the product.
     [Fact]

@@ -129,13 +129,23 @@ public class EbayOpportunityItem
     public string Title { get; set; } = "";
     public decimal Price { get; set; }
     public decimal ShippingCost { get; set; }
+    // Whether eBay actually stated that shipping cost. A listing with no shipping option quoted is
+    // shipping-unknown, NOT free shipping — booking it as free silently understates what winning an
+    // auction costs, and the sniper's max bid is exactly that number minus shipping.
+    public bool ShippingStated { get; set; }
     public string Url { get; set; } = "";
     public string ImageUrl { get; set; } = "";
     public DateTime? EndDate { get; set; }
     public string SellerUsername { get; set; } = "";
     public int SellerFeedbackScore { get; set; }
+    // eBay's percentage-positive for the seller. Null when the search didn't report one.
+    public decimal? SellerFeedbackPercent { get; set; }
     public string BuyingOption { get; set; } = "";
     public int BidCount { get; set; }
+    // eBay's own item id, for the rows that carry one — the join that lets a tracked deal point
+    // back at the listing it came from.
+    public string ItemId { get; set; } = "";
+    public string Condition { get; set; } = "";
 }
 
 // Mutable (not anonymous) so the top-candidate Terapeak re-check can overwrite profit fields

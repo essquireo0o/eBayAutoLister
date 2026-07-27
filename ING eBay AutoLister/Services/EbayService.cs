@@ -315,9 +315,16 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
 
     // ── Live listings ending soon (Browse API — public search, no special approval needed) ──
 
+    /// <param name="sortOverride">
+    /// eBay's own sort key, when the caller needs one the default wouldn't pick. The auction sniper
+    /// sweeps Buy It Nows with <c>price</c> (cheapest first, shipping included) because an
+    /// underpriced fixed-price listing is by definition at the bottom of that order, while
+    /// "newly listed" would return the most recent 50 regardless of price.
+    /// </param>
     public async Task<List<EbayOpportunityItem>> SearchEndingSoonAsync(
         string query, int minFeedback = 0, int limit = 50, string? category = null,
-        string? condition = null, decimal? minPrice = null, decimal? maxPrice = null, string listingType = "AUCTION")
+        string? condition = null, decimal? minPrice = null, decimal? maxPrice = null, string listingType = "AUCTION",
+        string? sortOverride = null)
     {
         var token = await GetBrowseApplicationTokenAsync();
         var client = httpClientFactory.CreateClient();
@@ -332,7 +339,9 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             "BOTH"        => "AUCTION|FIXED_PRICE",
             _             => "AUCTION"
         };
-        var sort = listingType == "AUCTION" ? "endingSoonest" : "newlyListed";
+        var sort = !string.IsNullOrWhiteSpace(sortOverride)
+            ? sortOverride
+            : listingType == "AUCTION" ? "endingSoonest" : "newlyListed";
 
         var filters = new List<string> { $"buyingOptions:{{{buyingOptions}}}" };
 
@@ -395,8 +404,11 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                                 ? edVal.UtcDateTime : null;
 
             // Cheapest shipping option's cost — used to compare buyer's real total cost
-            // (price + shipping) against sold comps, not just the listed price alone.
+            // (price + shipping) against sold comps, not just the listed price alone. Whether one
+            // was quoted at all is carried separately: no shippingOptions block means the cost is
+            // unknown, and treating unknown as free is how a buy-side estimate quietly loses money.
             var shippingCost = 0m;
+            var shippingStated = false;
             if (item.TryGetProperty("shippingOptions", out var shipOpts) && shipOpts.ValueKind == JsonValueKind.Array)
             {
                 foreach (var opt in shipOpts.EnumerateArray())
@@ -406,6 +418,7 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                         decimal.TryParse(scv.GetString(), out var scVal))
                     {
                         shippingCost = scVal;
+                        shippingStated = true;
                         break;
                     }
                 }
@@ -416,13 +429,20 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                 Title               = item.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
                 Price               = price,
                 ShippingCost        = shippingCost,
+                ShippingStated      = shippingStated,
                 Url                 = item.TryGetProperty("itemWebUrl", out var u) ? u.GetString() ?? "" : "",
                 ImageUrl            = item.TryGetProperty("image", out var img) && img.TryGetProperty("imageUrl", out var iu) ? iu.GetString() ?? "" : "",
                 EndDate             = endDate,
                 SellerUsername      = seller.ValueKind == JsonValueKind.Object && seller.TryGetProperty("username", out var un) ? un.GetString() ?? "" : "",
                 SellerFeedbackScore = feedbackScore,
+                SellerFeedbackPercent = seller.ValueKind == JsonValueKind.Object &&
+                                        seller.TryGetProperty("feedbackPercentage", out var fp) &&
+                                        decimal.TryParse(fp.GetString(), out var fpVal) ? fpVal : null,
                 BuyingOption        = item.TryGetProperty("buyingOptions", out var bo) && bo.GetArrayLength() > 0 ? bo[0].GetString() ?? "" : "",
                 BidCount            = item.TryGetProperty("bidCount", out var bc) && bc.TryGetInt32(out var bcVal) ? bcVal : 0,
+                ItemId              = item.TryGetProperty("legacyItemId", out var lid) ? lid.GetString() ?? ""
+                                      : item.TryGetProperty("itemId", out var iid) ? iid.GetString() ?? "" : "",
+                Condition           = item.TryGetProperty("condition", out var cnd) ? cnd.GetString() ?? "" : "",
             });
         }
 
@@ -570,6 +590,9 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
                 Title               = item.Element(EbayNs + "Title")?.Value ?? "",
                 Price               = price,
                 ShippingCost        = shipCost,
+                ShippingStated      = !string.IsNullOrWhiteSpace(shippingCost),
+                ItemId              = item.Element(EbayNs + "ItemID")?.Value ?? "",
+                Condition           = item.Element(EbayNs + "ConditionDisplayName")?.Value ?? "",
                 Url                 = listingDetails?.Element(EbayNs + "ViewItemURL")?.Value ?? "",
                 ImageUrl            = item.Element(EbayNs + "PictureDetails")?.Element(EbayNs + "GalleryURL")?.Value ?? "",
                 EndDate             = endDate,
