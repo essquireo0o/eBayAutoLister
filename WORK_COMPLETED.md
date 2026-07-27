@@ -4661,3 +4661,106 @@ money on **42.2% of US buyers**; calculated shipping cuts the seller's exposure 
   labels every such row, and the tiles report the split, but the dollar figures are only as good as the
   profiles until someone puts a box on a scale.
 - **Nothing writes to eBay.** No labels are bought, no listing is edited, no shipping policy is changed.
+
+---
+
+## Trustworthy percentages — comp-backed ROI on the local-arbitrage board (autonomous session, 2026-07-27)
+
+### The complaint
+
+A $60 *"toyota trailer hitch"* on the Local Deals board showed a **$554 resell price and a 698% ROI**,
+off **one loose sold comp**. Nothing on the row was arithmetically wrong — `ProfitCalculator` did
+exactly what it was asked with the price it was handed — but that price rested on a single sale of
+something that may not even have been the same product, and the board printed the resulting percentage
+in the same typeface as a percentage backed by twenty sales.
+
+The board's job is to tell a seller which listing is worth driving to. A jackpot number off one bad
+match is worse than no number: it is the one row they *will* drive to.
+
+### Two separate failures, fixed separately
+
+**1. The comp count on screen was never the comp count behind the price.**
+`ResalePricing.SoldCompCount` carried `localComparables.Count` — everything the *lookup returned*.
+By the time `MarketPriceEstimator` had run per-unit normalization, the identity guard, outlier removal
+and the strong-match filter, the set that actually produced the median could be a fraction of that. A
+twelve-comp search that priced off one comp displayed "12 sold comps" and cleared every evidence gate
+in the app on that basis.
+
+`PriceEstimate.PricedOnCompCount` now states how many comps produced the figures, carried through
+`SourceBreakdown` → `ResalePricing.PricedCompCount` → the row. **Every evidence gate on the board now
+counts in that number** (`ResalePricing.EvidenceCompCount`): the verdict tiering, the warranty uplift
+gate, the liquidation retail sanity check, and the comps the negotiation draft is allowed to cite.
+
+**2. The identity guard was quietly stepping aside exactly when it mattered.**
+`MarketPriceEstimator.ApplyIdentityGuard` filtered comps to those whose title carries the target's
+model/part token — then **fell back to the unfiltered set whenever fewer than three survived.** That
+fallback is the bug: the case where two comps match and eighteen don't is precisely the case where
+pricing off the eighteen is wrong. A $74 FANUC fuse priced off $1,050 FANUC drives is the same failure
+the guard was written to stop, reintroduced by its own escape hatch.
+
+The guard now **narrows rather than steps aside** — any survivor wins, because two real sales of this
+item price it and twenty sales of the pricier thing beside it do not. When *nothing* carries the
+identifier the set is still handed back whole (an unpriced row helps nobody), but the new
+`IdentityGuardResult.Verified` comes back **false**, and a false there caps the row at "thin" at any
+comp count and dims its percentages.
+
+### Confidence gating — `LocalArbitrageAnalyzer.GradeEvidence`
+
+One pure function, three tiers, and the rule that only the top tier may make a claim:
+
+| Tier | When | What the row is allowed to say |
+|---|---|---|
+| `confident` | ≥ 3 matching comps priced it **and** identity verified **and** confidence ≥ 50 | 💎 Goldmine / ✅ Worth it; ROI and margin shown as rates |
+| `low` | < 3 comps, **or** no comp carries the model/part number, **or** the history is too scattered | Capped at ⚠️ Thin; ROI/margin/resale dimmed and labelled *"estimate — too few comps"* |
+| `none` | nothing matched | ? No data, as before |
+
+Three is the floor because two sales cannot disagree with each other, so two sales cannot be checked.
+An unverified identity is checked **before** the count and is never rescued by it.
+
+The numbers are **not hidden**. The lead is still worth chasing by hand, and a blank cell would just
+hide the thing the seller needs to judge. They are demoted: same column, same figure, dimmed and
+italic, with the reason in the tooltip.
+
+### What the seller now sees
+
+- **`3 sold comps priced it · of 12`** — the honest count leads, the search's count sits behind it.
+- The **source named** on every row (`sold-comps DB`, `Terapeak`, or both) rather than implied.
+- A dimmed resale/ROI/margin with an **`ESTIMATE — TOO FEW COMPS`** flag, or **`— no comp matches this
+  model`** when the identity guard couldn't verify it.
+- A board-level line: *"4 rows are estimates — too few matching sold comps to trust, so the ROI and
+  margin on them are dimmed rather than shown as real rates."*
+- **Deal Pipeline** forecasts freeze the priced-on count and an `ESTIMATE ONLY` marker, so a projection
+  is graded later against the evidence it actually had.
+
+### The one behaviour change to be aware of
+
+`ApplyIdentityGuard` used to return a **larger** set (the unfiltered one) when few comps matched; it now
+returns the **smaller, matching** one. Every screen that prices through `MarketPriceEstimator` — not
+just local arbitrage — will therefore price some thin-comp items differently, and closer to the item in
+front of it. The existing test that pinned the old fallback was rewritten to pin the new rule, which is
+the honest thing to do with a test that was encoding the defect.
+
+### Verified
+
+- `dotnet build` — 0 errors.
+- `dotnet test` — **1706 passed, 0 failed** (17 new: 14 gating cases across `GradeEvidence` / `Judge` /
+  `Build`, and 3 rewritten or added identity-guard cases).
+- The end-to-end regression is pinned directly: `Build_OneLooseComp_KeepsTheMoneyButRefusesToCallItWorthIt`
+  builds the reported row ($60 ask, one comp at $554), asserts the money is **unchanged** ($420.20 net,
+  ~700% ROI) and that the verdict is `thin`, the tier is `low`, and the note names the single comp.
+- `node --check` on `app.js`. Assets bumped to `app.js?v=65` / `style.css?v=56`.
+
+### Not verified / known limits
+
+- **An item with no model or part number cannot be identity-checked at all** — "toyota trailer hitch"
+  has no token to require, so the guard reports `Verified` (silence is not a warning) and the row is
+  held to account by the comp *count* alone. That is what catches the reported case, but a listing with
+  four loose comps for four different hitches will still price and still read as confident. Closing that
+  needs title-similarity gating on the comps themselves, which is `ComparableMatcher`'s territory.
+- **The 3-comp floor is a judgement, not a measurement.** It is the point at which a median can be
+  contradicted, and it is now stated in exactly one place (`LocalArbitrageAnalyzer.ThinCompCount`) so it
+  can be tuned against real outcomes once the Deal Pipeline has graded enough forecasts.
+- **`JackpotHunter` and `InventoryHealthAnalyzer` still count raw comps** in their own believe-it gates.
+  They read the same `ResalePricing`, so `EvidenceCompCount` is a one-line swap on each — deliberately
+  left out of this change to keep it to one board.
+- Nothing writes to eBay. No pricing source, key or credential was touched.

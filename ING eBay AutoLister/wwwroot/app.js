@@ -1262,6 +1262,15 @@
     no_data:  { label: '? No data', cls: 'nodata' },
   };
 
+  // Which sold-comps database answered. Named on every row rather than left to "eBay data":
+  // "hosted comps + Terapeak" is a materially stronger claim than either alone, and a seller
+  // deciding whether to drive somewhere is entitled to know which one the price came from.
+  const ARB_SOURCES = {
+    hosted_comps: 'sold-comps DB',
+    terapeak: 'Terapeak',
+    'hosted_comps+terapeak': 'sold-comps DB + Terapeak',
+  };
+
   // How long the money stays spent, in one cell. Server-side tiers (DaysToCashEstimator) so the
   // colour on the row and the sentence in the tooltip can't disagree.
   const SPEED_TIERS = {
@@ -1426,11 +1435,18 @@
         ? `<strong class="fb-arb-hit">${data.asIsRiskCount} sold as-is with no returns</strong> — test before you pay`
         : '',
     ].filter(Boolean).join(' · ');
+    // How many of the priced rows are guesses. Said in the summary as well as on the rows, because
+    // a board where most of the percentages are estimates is a different board from one where two
+    // of them are — and that is not visible from any single row.
+    const estimates = (data.items || []).filter(r => r.evidenceTier === 'low' && r.netProfit != null).length;
+
     $('fb-arb-summary').innerHTML =
       scanned +
       `<div class="fb-arb-sources">Priced ${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} against sold comps` +
       `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} of them re-checked live on Terapeak` : ''}` +
-      `${data.terapeakConnected ? '' : ' · Terapeak not connected — sold-comps database only'}.</div>`;
+      `${data.terapeakConnected ? '' : ' · Terapeak not connected — sold-comps database only'}.` +
+      `${estimates ? ` <strong class="fb-arb-estimate-flag">${estimates} row${estimates === 1 ? ' is an estimate' : 's are estimates'}</strong>` +
+        ` — too few matching sold comps to trust, so the ROI and margin on ${estimates === 1 ? 'it' : 'them'} are dimmed rather than shown as real rates.` : ''}</div>`;
 
     const warn = $('fb-arb-warning');
     if (warn) {
@@ -1545,7 +1561,10 @@
           // What the forecast rested on, carried across verbatim. A projection with no stated
           // basis is impossible to argue with later, which makes it impossible to learn from.
           projectedBasis: [
-            row.soldCompCount ? `${row.soldCompCount} sold comp${row.soldCompCount === 1 ? '' : 's'}` : '',
+            // The comps that PRICED it, not the ones the search returned — the pipeline grades this
+            // forecast later, and grading it against a comp count it never used teaches nothing.
+            row.pricedCompCount ? `${row.pricedCompCount} sold comp${row.pricedCompCount === 1 ? '' : 's'} priced it` : '',
+            row.evidenceTier === 'low' ? 'ESTIMATE ONLY' : '',
             row.confidenceLevel,
             row.speedLabel,
           ].filter(Boolean).join(' · '),
@@ -1596,11 +1615,23 @@
     const roi = row.roiPercent != null ? `${Math.round(row.roiPercent)}%`
       : row.netProfit > 0 && row.localAsk === 0 ? '∞' : '—';
 
+    // Percentages off thin or mismatched comps are still shown — hiding them would just hide the
+    // lead — but they are dimmed and labelled, so a 698% return backed by one loose sale can never
+    // be read the same way as one backed by twenty. See LocalArbitrageAnalyzer.GradeEvidence.
+    // Only ever applied to a figure that exists — a dash has nothing to hedge, and hedging it
+    // would put a warning on the one row that already says plainly it couldn't be priced.
+    const guessed = row.evidenceTier === 'low' && row.ebayExpectedSale != null;
+    const est = guessed ? ` class="num fb-arb-estimate" title="${esc(row.evidenceNote)}"` : ' class="num"';
+
     const evidence = row.ebayExpectedSale == null
       ? '<span class="fb-arb-muted">no sold history</span>'
       : [
-          `${row.soldCompCount} sold comp${row.soldCompCount === 1 ? '' : 's'}`,
+          // The count that priced it leads, with the count the search returned behind it — they are
+          // routinely very different, and only the first one backs the money columns.
+          compsCell(row),
           row.terapeakCompCount ? `${row.terapeakCompCount} Terapeak` : '',
+          // Which sold-comps source answered, named rather than implied.
+          ARB_SOURCES[row.resaleSource] || '',
           row.confidenceLevel ? esc(row.confidenceLevel) : '',
           row.liquidityLevel ? esc(row.liquidityLevel) : '',
         ].filter(Boolean).join(' · ');
@@ -1624,17 +1655,42 @@
         </td>
         <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
         <td class="num">${buyCostCell(row)}</td>
-        <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}${warrantyResaleLine(row)}</td>
+        <td class="num${guessed ? ' fb-arb-estimate' : ''}"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}${warrantyResaleLine(row)}${estimateFlag(row)}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
         <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
         <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
-        <td class="num">${roi}</td>
-        <td class="num">${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
+        <td${est}>${roi}</td>
+        <td${est}>${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
         <td class="num fb-arb-offer">${offerCell(row)}</td>
         <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
         <td class="fb-arb-track">${trackCell(row)}</td>
       </tr>`;
+  }
+
+  // How many comps actually set this price, out of how many the search returned. The gap between
+  // the two is the whole point: a twelve-comp search that priced off one of them is not a
+  // twelve-comp price, and until now the row only ever showed the twelve.
+  function compsCell(row) {
+    const priced = row.pricedCompCount || 0;
+    const found = row.soldCompCount || 0;
+    if (!found) return '';
+    if (!priced) return `${found} sold comp${found === 1 ? '' : 's'}`;
+
+    const label = `${priced} sold comp${priced === 1 ? '' : 's'} priced it`;
+    return priced < found
+      ? `<span title="${found} matched the search; the rest were a different product, a different quantity, or a price outlier.">${label} <span class="fb-arb-muted">of ${found}</span></span>`
+      : label;
+  }
+
+  // The label beside a dimmed figure. Without it a greyed-out percentage reads as a rendering
+  // fault; with it, it reads as the warning it is.
+  function estimateFlag(row) {
+    if (row.evidenceTier !== 'low' || row.ebayExpectedSale == null) return '';
+    const why = row.identityVerified === false
+      ? 'no comp matches this model'
+      : `too few comps (${(row.pricedCompCount || 0) + (row.terapeakCompCount || 0)})`;
+    return `<br /><span class="fb-arb-estimate-flag" title="${esc(row.evidenceNote)}">estimate — ${why}</span>`;
   }
 
   // The way out of a research table and into the pipeline. Offered on every row that could be

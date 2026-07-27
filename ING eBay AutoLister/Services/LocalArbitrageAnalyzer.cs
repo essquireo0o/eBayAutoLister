@@ -16,6 +16,19 @@ public sealed class ResalePricing
     public int TerapeakCompCount { get; set; }
     public decimal SoldCompWeightPercent { get; set; }
     public decimal TerapeakWeightPercent { get; set; }
+    // How many of those sold comps actually produced the price — after the identity guard, outlier
+    // removal and the strong-match filter. SoldCompCount is what the lookup returned, which is the
+    // flattering number: a search can return twelve rows and price the item off one of them.
+    public int PricedCompCount { get; set; }
+    // False when this item states a model/part number and no comp title carries it. The price is
+    // then a price for something else that shares a brand — see MarketPriceEstimator.GuardIdentity.
+    public bool IdentityVerified { get; set; } = true;
+    // The evidence every verdict and every percentage is judged against. Falls back to the raw
+    // count only for the hand-built ResalePricing objects (the trend projection, the negotiation
+    // endpoint) that never ran a lookup and state their comp count directly — the real pricing path
+    // always sets PricedCompCount, including to zero.
+    public int EvidenceCompCount =>
+        (PricedCompCount > 0 ? PricedCompCount : SoldCompCount) + TerapeakCompCount;
     // What buyers paid for shipping on the matched comps. Booked as revenue AND as cost
     // (see LocalArbitrageAnalyzer.Build) rather than as either one alone.
     public decimal AvgCompShipping { get; set; }
@@ -44,6 +57,8 @@ public sealed class ResalePricing
             QuickSale = analysis.PriceEstimate.QuickSalePrice,
             SoldCompCount = analysis.Sources.LocalComparableCount,
             TerapeakCompCount = analysis.Sources.TerapeakComparableCount,
+            PricedCompCount = analysis.Sources.PricedOnCompCount,
+            IdentityVerified = analysis.Sources.IdentityVerified,
             SoldCompWeightPercent = Math.Round(analysis.Sources.LocalWeightPercent, 0),
             TerapeakWeightPercent = Math.Round(analysis.Sources.TerapeakWeightPercent, 0),
             AvgCompShipping = comps.Count > 0 ? Math.Round(comps.Average(c => c.Shipping), 2) : 0m,
@@ -104,7 +119,83 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
     public const decimal SolidRoiPercent = 30m;
     public const decimal SolidProfit = 25m;
     // Below this the sold history is too sparse to call anything, however good the arithmetic.
-    private const int ThinCompCount = 3;
+    // Counted in comps that ACTUALLY PRICED the item, never in comps the lookup returned — see
+    // ResalePricing.EvidenceCompCount. Three is the floor at which a median means anything at all:
+    // two sales cannot disagree with each other, so two sales cannot be checked.
+    public const int ThinCompCount = 3;
+
+    // ── Evidence tiers ───────────────────────────────────────────────────────────────────────
+    // What the money columns are allowed to claim. Public because the UI dims on them and the
+    // tests assert on them, and because "confident" has to mean one thing across the app.
+    public const string EvidenceConfident = "confident";
+    public const string EvidenceLow = "low";
+    public const string EvidenceNone = "none";
+
+    /// <summary>
+    /// How much to believe this row's resale price, and therefore its ROI and margin.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The failure this exists to stop: a $60 trailer hitch matched to one loose sold comp at $554,
+    /// published as a 698% return in the same typeface as a return backed by twenty sales. The
+    /// arithmetic was never wrong — <see cref="ProfitCalculator"/> did exactly what it was asked —
+    /// but the price it was handed rested on nothing, and nothing on the row said so.
+    /// </para>
+    /// <para>
+    /// Two things can sink a row here and they are different failures. Too FEW comps means the
+    /// price might be right and cannot be checked. An unverified identity means the price is for
+    /// something else — twenty comps of the wrong product is worse evidence than two of the right
+    /// one, so the count never rescues it.
+    /// </para>
+    /// <para>Pure and total: takes the counts, returns the tier and the sentence that explains it.</para>
+    /// </remarks>
+    public static (string Tier, string Note) GradeEvidence(
+        int pricedCompCount, int terapeakCompCount, bool identityVerified, int confidenceScore)
+    {
+        var comps = Math.Max(0, pricedCompCount) + Math.Max(0, terapeakCompCount);
+
+        if (comps == 0)
+            return (EvidenceNone, "No sold comps matched this item — there is no resale price to check the ask against.");
+
+        // Priced off the wrong product. Said first and said plainly: no number of comps for a
+        // different item adds up to evidence about this one.
+        if (!identityVerified)
+        {
+            return (EvidenceLow,
+                $"Estimate only — not one of the {comps} sold comp{(comps == 1 ? "" : "s")} carries this item's " +
+                "model or part number, so the resale price behind these percentages is another product's.");
+        }
+
+        if (comps < ThinCompCount)
+        {
+            return (EvidenceLow,
+                $"Estimate — priced off {comps} sold comp{(comps == 1 ? "" : "s")}, too few to call a market price. " +
+                $"One unusual sale sets the whole figure until there are {ThinCompCount}.");
+        }
+
+        // Enough comps, and they are this item's — but the scorer still found the history weak
+        // (stale, scattered, or inconsistent in condition). Believable as a guide, not as a rate.
+        if (confidenceScore < GoldmineMinConfidence)
+        {
+            return (EvidenceLow,
+                $"Estimate — {comps} sold comps, but their prices and dates are too scattered to trust the exact figure.");
+        }
+
+        return (EvidenceConfident,
+            $"Backed by {comps} sold comp{(comps == 1 ? "" : "s")} that match this item.");
+    }
+
+    // Only a confident row may wear a green badge or state a percentage as a rate. Everything else
+    // is capped at "thin" — the arithmetic still shows, labelled as the estimate it is.
+    private static void ApplyEvidence(LocalArbitrageOpportunity row, ResalePricing resale)
+    {
+        var (tier, note) = GradeEvidence(
+            resale.PricedCompCount > 0 ? resale.PricedCompCount : resale.SoldCompCount,
+            resale.TerapeakCompCount, resale.IdentityVerified, resale.ConfidenceScore);
+
+        row.EvidenceTier = tier;
+        row.EvidenceNote = note;
+    }
 
     /// <summary>
     /// Prices one listing. <paramref name="retailSalesTaxPercent"/> applies only to rows from a
@@ -194,6 +285,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             row.Verdict = "no_data";
             row.VerdictNote = "No eBay sold history matched this title.";
             row.PricedAs = resale?.LookupTitle ?? "";
+            if (resale is not null) ApplyEvidence(row, resale);
             // No price to add a premium to, and still worth saying out loud: "this one is under
             // factory warranty until March" is the most useful thing an unpriceable row can carry,
             // and it is the reason to go and look at it by hand.
@@ -219,7 +311,9 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // When it does allow one, the row's own resale column moves with it. A profit computed
         // against a price the row doesn't show is a row that doesn't add up, and every figure below
         // — fees, net, ROI, max buy price — is meant to be checkable against the column beside it.
-        var compCount = resale.SoldCompCount + resale.TerapeakCompCount;
+        // Counted in comps that priced it, not comps that were found — so a warranty premium and a
+        // verdict both rest on the same evidence the resale price does.
+        var compCount = resale.EvidenceCompCount;
         if (warranty is not null)
         {
             row.Warranty = WarrantyPricer.Value(warranty, expected, buyCost, compCount, resale.ConfidenceScore);
@@ -261,9 +355,10 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         // seller's hands from the till to the cheque, exactly the way inventory is.
         ApplyDaysToCash(row, resale, freebie?.RefundWaitDays ?? 0);
 
-        // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay.
+        // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay —
+        // and on the comps that priced it, so it never rests on a resale price nothing backs.
         var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, buyCost,
-            compCount, resale.ConfidenceScore);
+            compCount, resale.ConfidenceScore, resale.IdentityVerified);
 
         if (freebie is not null) (verdict, note) = JudgeFreebie(verdict, note, freebie, profit.NetProfitPerUnit);
 
@@ -363,7 +458,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             // its own, friendlier definition of a goldmine.
             var (verdict, _) = Judge(
                 discounted.NetProfitPerUnit, discounted.RoiPercent, stack.NetCost,
-                resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
+                resale.EvidenceCompCount, resale.ConfidenceScore, resale.IdentityVerified);
 
             if (verdict != row.Verdict && VerdictRank(verdict) > VerdictRank(row.Verdict))
                 savings.VerdictIfItWorks = verdict;
@@ -391,7 +486,10 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         row.TerapeakCompCount = resale.TerapeakCompCount;
         row.SoldCompWeightPercent = resale.SoldCompWeightPercent;
         row.TerapeakWeightPercent = resale.TerapeakWeightPercent;
+        row.PricedCompCount = resale.PricedCompCount;
+        row.IdentityVerified = resale.IdentityVerified;
         row.ResaleSource = SourceLabel(resale.SoldCompCount, resale.TerapeakCompCount);
+        ApplyEvidence(row, resale);
         row.ConfidenceScore = resale.ConfidenceScore;
         row.ConfidenceLevel = resale.ConfidenceLevel;
         row.DisagreementMessage = resale.DisagreementMessage;
@@ -463,8 +561,9 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
 
         ApplyDaysToCash(row, resale);
 
-        var compCount = resale.SoldCompCount + resale.TerapeakCompCount;
-        var (verdict, note) = Judge(quote.NetProfit, quote.RoiPercent, quote.TotalCost, compCount, resale.ConfidenceScore);
+        var compCount = resale.EvidenceCompCount;
+        var (verdict, note) = Judge(quote.NetProfit, quote.RoiPercent, quote.TotalCost, compCount,
+            resale.ConfidenceScore, resale.IdentityVerified);
 
         // A lot multiplies one comp by its unit count, so an error in that comp is multiplied too.
         // Its evidence bar rises with the unit count; under it, the row is a lead, never a green
@@ -547,7 +646,9 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             askPrice: row.LocalAsk,
             breakEvenBuyPrice: row.MaxBuyPrice ?? 0m,
             resalePrice: row.EbayExpectedSale ?? row.EbayResaleMedian,
-            compCount: resale.SoldCompCount + resale.TerapeakCompCount,
+            // The comps the advisor is allowed to cite in the message are the ones that priced it.
+            // "Similar ones sold for $554" has to be true of the item being haggled over.
+            compCount: resale.EvidenceCompCount,
             daysListed: DaysListed(row.PostedUtc),
             daysToCash: row.DaysToCash,
             originalPrice: row.OriginalPrice,
@@ -593,10 +694,23 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
             _ => "none",
         };
 
-    // Pure verdict tiering. A free item has no cost basis so ROI is undefined rather than zero —
-    // treated as unbounded, which is what "free" actually means for a flip.
+    /// <summary>
+    /// Pure verdict tiering. A free item has no cost basis so ROI is undefined rather than zero —
+    /// treated as unbounded, which is what "free" actually means for a flip.
+    /// </summary>
+    /// <param name="compCount">
+    /// Comps that actually PRICED it (<see cref="ResalePricing.EvidenceCompCount"/>), never the
+    /// number the lookup returned. Passing the larger figure is how a one-comp valuation earns a
+    /// badge that says twelve.
+    /// </param>
+    /// <param name="identityVerified">
+    /// False when the item states a model/part number and no comp carries it. Nothing above "thin"
+    /// is reachable from there at any comp count: the profit is arithmetic on another product's
+    /// price. Defaulted so callers with no identity to check are unaffected.
+    /// </param>
     public static (string Verdict, string Note) Judge(
-        decimal netProfit, decimal? roiPercent, decimal localAsk, int compCount, int confidenceScore)
+        decimal netProfit, decimal? roiPercent, decimal localAsk, int compCount, int confidenceScore,
+        bool identityVerified = true)
     {
         // Nothing was spent, so there is no ROI to quote — it is unbounded, not enormous. The
         // sentinel below stands in for that in the comparisons; it must never reach a sentence,
@@ -611,6 +725,15 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, Liquidat
         }
 
         var roi = roiPercent ?? (localAsk <= 0 ? decimal.MaxValue : 0m);
+
+        // Priced off the wrong product. Checked before the count, because more comps of something
+        // else is not more evidence — and stated as what it is, so the seller knows to re-search
+        // rather than to go and buy it.
+        if (!identityVerified)
+        {
+            return ("thin", $"${netProfit:0.##} on paper, but no sold comp carries this item's model or part " +
+                            "number — the resale price behind it is another product's. Treat it as unpriced.");
+        }
 
         if (compCount < ThinCompCount)
             return ("thin", $"Profitable on {compCount} sold comp{(compCount == 1 ? "" : "s")} — too few to trust yet.");

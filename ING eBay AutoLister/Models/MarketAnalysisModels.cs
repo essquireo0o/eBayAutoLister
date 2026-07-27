@@ -75,6 +75,21 @@ public class PriceEstimate
     public int TerapeakComparableCount { get; set; }
     public bool MarketDataDisagreement { get; set; } // local vs Terapeak medians differ by >20%
     public string? DisagreementMessage { get; set; }
+
+    // ── How much evidence these figures actually rest on ─────────────────────────────────────
+    // How many local sold comps produced the numbers above, AFTER per-unit normalization, the
+    // identity guard, outlier removal and the strong-match filter. Nearly always smaller than the
+    // number of comps the lookup returned, and it is this count — not that one — that says whether
+    // a price is a market price or one loose sale. Anything gating a verdict on evidence must read
+    // this: "12 comps found, 1 of them priced it" is how a jackpot ROI gets published.
+    public int PricedOnCompCount { get; set; }
+    // False when the target carried a real model/part identifier and NOT ONE comp title contained
+    // it — the estimate is then priced off items that merely share a brand or a keyword, which is
+    // exactly how a $60 part gets valued at $554. See MarketPriceEstimator.GuardIdentity.
+    public bool IdentityVerified { get; set; } = true;
+    // Comps whose title carried the target's model/part token. Equals PricedOnCompCount's input set
+    // when the guard had an identifier to check; equals the whole set when it had none.
+    public int IdentityMatchedCompCount { get; set; }
 }
 
 // ── Sell-through (see Services/SellThroughCalculator.cs) ────────────────────────────────────
@@ -180,6 +195,12 @@ public class SourceBreakdown
     public int TerapeakComparableCount { get; set; }
     public decimal LocalWeightPercent { get; set; }
     public decimal TerapeakWeightPercent { get; set; }
+    // The subset of LocalComparableCount that actually priced it, and whether the model/part token
+    // survived into that subset. LocalComparableCount answers "how many did the lookup return?",
+    // which is a much friendlier number and the wrong one to trust a percentage to.
+    // See PriceEstimate.PricedOnCompCount.
+    public int PricedOnCompCount { get; set; }
+    public bool IdentityVerified { get; set; } = true;
 }
 
 // Everything computed for one product by the matching/pricing/scoring pipeline

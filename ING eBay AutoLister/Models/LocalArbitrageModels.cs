@@ -90,6 +90,25 @@ public class LocalArbitrageOpportunity
     public int TerapeakCompCount { get; set; }
     public decimal SoldCompWeightPercent { get; set; }
     public decimal TerapeakWeightPercent { get; set; }
+
+    // ── How much to believe the four percentages below ───────────────────────
+    // SoldCompCount is how many comps the lookup RETURNED. This is how many of them actually
+    // produced the resale price, once the identity guard, outlier removal and the strong-match
+    // filter had run — and it is the number that decides whether this row's ROI is a market rate or
+    // one loose sale multiplied out. A twelve-comp search that prices off one comp is the single
+    // most common way this board publishes a 698% return on a $60 item.
+    public int PricedCompCount { get; set; }
+    // False when this item states a model or part number and NO sold comp title carried it: the
+    // resale price is then a price for a different product that happens to share the brand.
+    public bool IdentityVerified { get; set; } = true;
+    // confident | low | none — how the money columns should be read, decided by
+    // LocalArbitrageAnalyzer.GradeEvidence. Only "confident" earns a Worth-it/goldmine badge and an
+    // ROI presented as a fact; "low" means the arithmetic is right and the price under it is a
+    // guess, and the UI dims it and says so rather than letting a jackpot percentage stand.
+    public string EvidenceTier { get; set; } = "none";
+    // The one sentence that explains the tier, in the row's own numbers. Shown next to the dimmed
+    // figures — a greyed-out 698% with no explanation reads as a rendering bug, not as a warning.
+    public string EvidenceNote { get; set; } = "";
     // The title the comp lookup was actually run against — often a sibling
     // listing's fuller title, so it needs to be visible rather than implied.
     public string PricedAs { get; set; } = "";

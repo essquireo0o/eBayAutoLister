@@ -5074,6 +5074,20 @@ textarea {
 .fb-arb-muted { color: var(--muted); font-style: italic; }
 .fb-arb-empty { text-align: center; color: var(--muted); padding: 18px 10px; }
 
+/* A price, ROI or margin that rests on too few matching sold comps. Dimmed and italicised so it
+   reads at a glance as a working figure rather than a rate — the same number in the same column,
+   demoted rather than hidden, because the lead is still worth chasing by hand. */
+.fb-arb-estimate { color: var(--muted); font-style: italic; cursor: help; }
+.fb-arb-estimate-flag {
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--warning);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+
 .fb-arb-footnote {
   font-size: 11px;
   color: var(--muted);

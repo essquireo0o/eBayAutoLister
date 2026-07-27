@@ -5795,6 +5795,10 @@ static async Task<MarketAnalysisResult> AnalyzeProductAsync(
             TerapeakComparableCount = priceEstimate.TerapeakComparableCount,
             LocalWeightPercent = priceEstimate.LocalWeight * 100,
             TerapeakWeightPercent = priceEstimate.TerapeakWeight * 100,
+            // The count that decides whether a percentage is believable, carried beside the count
+            // that decides whether the lookup found anything. They are routinely very different.
+            PricedOnCompCount = priceEstimate.PricedOnCompCount,
+            IdentityVerified = priceEstimate.IdentityVerified,
         },
     };
 
@@ -5804,8 +5808,10 @@ static async Task<MarketAnalysisResult> AnalyzeProductAsync(
 
     sw.Stop();
     log.Add("Info", "Market analysis computed",
-        $"\"{titleText}\"; Local comps: {localComparables.Count} (strong: {strongComparableCount}, " +
-        $"exact-id: {exactIdentifierMatches}, model: {modelNumberMatches}); Source weighting: " +
+        $"\"{titleText}\"; Local comps: {localComparables.Count} (priced on: {priceEstimate.PricedOnCompCount}, " +
+        $"strong: {strongComparableCount}, exact-id: {exactIdentifierMatches}, model: {modelNumberMatches}" +
+        $"{(priceEstimate.IdentityVerified ? "" : ", IDENTITY UNVERIFIED — no comp carries the model/part token")}" +
+        $"); Source weighting: " +
         $"local {result.Sources.LocalWeightPercent:0}%/Terapeak {result.Sources.TerapeakWeightPercent:0}%; " +
         $"Opportunity score: {result.Score.Score}; Confidence: {result.Confidence.Score} ({result.Confidence.Level}); " +
         $"Duration: {sw.ElapsedMilliseconds}ms");

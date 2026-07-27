@@ -20,14 +20,18 @@ public class LocalArbitrageAnalyzerTests
             Price = price, IsFree = price is null, DistanceMiles = miles, Location = "Las Vegas, NV",
         };
 
+    // pricedComps defaults to soldComps: unless a case is specifically about thin evidence, the
+    // comps the lookup returned are the comps that priced it.
     private static ResalePricing Pricing(
         decimal? expected = 200m, int soldComps = 8, int terapeakComps = 0,
-        decimal avgShipping = 0m, int confidence = 70) =>
+        decimal avgShipping = 0m, int confidence = 70, int? pricedComps = null,
+        bool identityVerified = true) =>
         new()
         {
             LookupTitle = "Bitmain Antminer S19j Pro 104TH",
             Median = expected, ExpectedSale = expected, QuickSale = expected * 0.85m,
             SoldCompCount = soldComps, TerapeakCompCount = terapeakComps,
+            PricedCompCount = pricedComps ?? soldComps, IdentityVerified = identityVerified,
             AvgCompShipping = avgShipping, ConfidenceScore = confidence, ConfidenceLevel = "Good",
         };
 
@@ -199,6 +203,147 @@ public class LocalArbitrageAnalyzerTests
     {
         var (verdict, _) = LocalArbitrageAnalyzer.Judge(150m, roiPercent: null, localAsk: 0m, compCount: 9, confidenceScore: 80);
         Assert.Equal("goldmine", verdict);
+    }
+
+    // ── Confidence gating: a percentage has to be backed before it's shown as one ──────────────
+    // The failure these pin: a $60 "toyota trailer hitch" matched to ONE loose sold comp at $554,
+    // published as a 698% return in the same typeface as a return backed by twenty sales. Nothing
+    // here changes the arithmetic — it changes what the board is allowed to CLAIM about it.
+
+    [Fact]
+    public void GradeEvidence_EnoughMatchingComps_IsConfident()
+    {
+        var (tier, note) = LocalArbitrageAnalyzer.GradeEvidence(
+            pricedCompCount: 6, terapeakCompCount: 0, identityVerified: true, confidenceScore: 70);
+
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceConfident, tier);
+        Assert.Contains("6 sold comps", note);
+    }
+
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(2, 0)]
+    [InlineData(0, 2)]
+    [InlineData(1, 1)]
+    public void GradeEvidence_UnderThreeComps_IsLowAndSaysWhy(int priced, int terapeak)
+    {
+        var (tier, note) = LocalArbitrageAnalyzer.GradeEvidence(priced, terapeak, identityVerified: true, confidenceScore: 90);
+
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, tier);
+        Assert.Contains("Estimate", note);
+        Assert.Contains("too few", note);
+    }
+
+    [Fact]
+    public void GradeEvidence_ThreeCompsIsTheFloor_NotTwo()
+    {
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow,
+            LocalArbitrageAnalyzer.GradeEvidence(2, 0, true, 90).Tier);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceConfident,
+            LocalArbitrageAnalyzer.GradeEvidence(LocalArbitrageAnalyzer.ThinCompCount, 0, true, 90).Tier);
+    }
+
+    [Fact]
+    public void GradeEvidence_TerapeakMakesUpTheNumbers_CountsTowardsConfidence()
+    {
+        // Two hosted comps plus two Terapeak sales is four real sales of the same product. The
+        // gate is about how much evidence there is, not which database it came out of.
+        var (tier, _) = LocalArbitrageAnalyzer.GradeEvidence(2, 2, identityVerified: true, confidenceScore: 70);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceConfident, tier);
+    }
+
+    [Fact]
+    public void GradeEvidence_IdentityUnverified_IsLowNoMatterHowManyComps()
+    {
+        // Twenty comps for a different product is worse evidence than two for this one, so the
+        // count never rescues a mismatch.
+        var (tier, note) = LocalArbitrageAnalyzer.GradeEvidence(
+            pricedCompCount: 20, terapeakCompCount: 5, identityVerified: false, confidenceScore: 95);
+
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, tier);
+        Assert.Contains("model or part number", note);
+    }
+
+    [Fact]
+    public void GradeEvidence_EnoughCompsButScatteredHistory_IsLow()
+    {
+        var (tier, note) = LocalArbitrageAnalyzer.GradeEvidence(8, 0, identityVerified: true, confidenceScore: 20);
+
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, tier);
+        Assert.Contains("scattered", note);
+    }
+
+    [Fact]
+    public void GradeEvidence_NothingMatched_IsNone()
+    {
+        var (tier, _) = LocalArbitrageAnalyzer.GradeEvidence(0, 0, identityVerified: true, confidenceScore: 0);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceNone, tier);
+    }
+
+    [Fact]
+    public void Build_OneLooseComp_KeepsTheMoneyButRefusesToCallItWorthIt()
+    {
+        // The reported bug, end to end: $60 ask, one comp at $554.
+        var row = Analyzer.Build(Listing(60m), Pricing(expected: 554m, soldComps: 1, confidence: 90), Fees);
+
+        // The arithmetic is untouched — the lead is still worth chasing by hand.
+        Assert.Equal(420.20m, row.NetProfit);
+        Assert.InRange(row.RoiPercent!.Value, 700m, 701m);
+        // What changed is the claim attached to it.
+        Assert.Equal("thin", row.Verdict);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, row.EvidenceTier);
+        Assert.Contains("1 sold comp", row.EvidenceNote);
+        Assert.Equal(1, row.PricedCompCount);
+    }
+
+    [Fact]
+    public void Build_TwelveCompsFoundButOnePricedIt_IsJudgedOnTheOne()
+    {
+        // The quiet version of the same failure: the search returned twelve rows, the identity
+        // guard and the outlier filter threw eleven away, and the row used to show "12 sold comps"
+        // beside a percentage that rested on one of them.
+        var row = Analyzer.Build(Listing(60m), Pricing(expected: 554m, soldComps: 12, pricedComps: 1, confidence: 90), Fees);
+
+        Assert.Equal("thin", row.Verdict);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, row.EvidenceTier);
+        // Both counts survive onto the row, so the UI can show the gap rather than the flattering half.
+        Assert.Equal(12, row.SoldCompCount);
+        Assert.Equal(1, row.PricedCompCount);
+    }
+
+    [Fact]
+    public void Build_NoCompCarriesTheModelNumber_IsNeverWorthIt()
+    {
+        var row = Analyzer.Build(
+            Listing(150m), Pricing(expected: 400m, soldComps: 20, confidence: 95, identityVerified: false), Fees);
+
+        Assert.NotEqual("goldmine", row.Verdict);
+        Assert.NotEqual("solid", row.Verdict);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceLow, row.EvidenceTier);
+        Assert.False(row.IdentityVerified);
+        Assert.Contains("model or part number", row.VerdictNote);
+    }
+
+    [Fact]
+    public void Build_EnoughMatchingComps_StillEarnsItsBadgeAndItsPercentages()
+    {
+        // The gate must not swallow the good rows: real evidence, real badge, undimmed ROI.
+        var row = Analyzer.Build(Listing(50m), Pricing(expected: 200m, soldComps: 9, confidence: 80), Fees);
+
+        Assert.Equal("goldmine", row.Verdict);
+        Assert.Equal(LocalArbitrageAnalyzer.EvidenceConfident, row.EvidenceTier);
+        Assert.Equal(246.2m, row.RoiPercent);
+        Assert.NotNull(row.MarginPercent);
+    }
+
+    [Fact]
+    public void Judge_IdentityUnverified_IsThinWhateverTheNumbersSay()
+    {
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(
+            180m, 300m, 60m, compCount: 20, confidenceScore: 90, identityVerified: false);
+
+        Assert.Equal("thin", verdict);
+        Assert.Contains("model or part number", note);
     }
 
     [Theory]

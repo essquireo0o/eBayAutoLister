@@ -25,10 +25,9 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         // Identity guard (general, all items): when the target has a real model/part identifier,
         // restrict the pricing set to comps whose title actually contains it — so a cheap item
         // can't be priced off comps of a different, often pricier product that merely shares a
-        // brand/keyword (e.g. a $74 "FANUC GP50 fuse" priced off $1050 FANUC drives). Falls back to
-        // the unfiltered set when the guard would leave too few comps to trust.
-        var identityFiltered = ApplyIdentityGuard(target, perUnit);
-        var trimmed = MarketplacePricingCalculator.RemovePriceOutliers(identityFiltered);
+        // brand/keyword (e.g. a $74 "FANUC GP50 fuse" priced off $1050 FANUC drives).
+        var guard = GuardIdentity(target, perUnit);
+        var trimmed = MarketplacePricingCalculator.RemovePriceOutliers(guard.Comps);
 
         var strongRecent = trimmed
             .Where(c => c.MatchScore >= StrongMatchThreshold && (c.SoldDate is null || (now - c.SoldDate.Value).TotalDays <= RecentDays))
@@ -42,7 +41,16 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         var prices = strongForStats.Select(c => c.SoldPrice).OrderBy(p => p).ToList();
         var weighted = strongForStats.Select(c => (c.SoldPrice, Weight: WeightFor(c, listingType, now))).ToList();
 
-        var estimate = new PriceEstimate();
+        var estimate = new PriceEstimate
+        {
+            // Stated before anything is computed, and stated even when nothing could be: how many
+            // comps are behind these figures, and whether they are this product's. Every caller
+            // that gates a verdict on evidence reads these rather than counting the rows the
+            // lookup returned — see PriceEstimate.PricedOnCompCount.
+            PricedOnCompCount = prices.Count,
+            IdentityVerified = guard.Verified,
+            IdentityMatchedCompCount = guard.MatchedCount,
+        };
         if (prices.Count > 0)
         {
             estimate.MedianPrice = Math.Round(MarketplacePricingCalculator.Median(prices), 2);
@@ -79,11 +87,36 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         return estimate;
     }
 
-    // Keep only comps whose title contains one of the target's distinctive model/part tokens
-    // (a token with a digit, or length >= 4). General across categories; a no-op when the target
-    // has no usable identifier, and it never zeroes out the estimate (falls back if < 3 survive).
-    // Pure/testable: takes only the target identity and the comps, not the estimate.
-    public static List<MarketplaceComparableResult> ApplyIdentityGuard(
+    /// <summary>
+    /// What the identity guard did: the comps to price off, and whether they are demonstrably this
+    /// product's. <see cref="Verified"/> is the part a caller must not throw away — a price and a
+    /// price that is known to be for something else are not the same number.
+    /// </summary>
+    /// <param name="Verified">
+    /// True when the pricing set is identity-matched, and also true when the target had no
+    /// identifier to check (the guard has nothing to say, which is not the same as a warning).
+    /// False only when there WAS an identifier and no comp carried it.
+    /// </param>
+    public readonly record struct IdentityGuardResult(
+        List<MarketplaceComparableResult> Comps, int TokenCount, int MatchedCount, bool Verified);
+
+    /// <summary>
+    /// Keeps only comps whose title contains one of the target's distinctive model/part tokens
+    /// (a token with a digit, or length &gt;= 4). General across categories; a no-op when the target
+    /// has no usable identifier. Pure/testable: takes only the target identity and the comps.
+    /// </summary>
+    /// <remarks>
+    /// A handful of matching comps beats a pile of comps for a different product, however thin the
+    /// handful looks — two real sales of THIS item price it, and twenty sales of the pricier thing
+    /// beside it on the shelf do not. So any survivor wins: the guard narrows rather than stepping
+    /// aside, and the thinness of what's left is reported through
+    /// <see cref="PriceEstimate.PricedOnCompCount"/> for the caller to gate on.
+    ///
+    /// When NOTHING carries the identifier the set is handed back whole — a row with no price at
+    /// all helps nobody — but <see cref="IdentityGuardResult.Verified"/> comes back false, and a
+    /// caller presenting an ROI off that set must present it as an estimate.
+    /// </remarks>
+    public static IdentityGuardResult GuardIdentity(
         NormalizedProduct target, List<MarketplaceComparableResult> comps)
     {
         var tokens = new[] { target.Model, target.PartNumber }
@@ -92,11 +125,18 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
             .Where(t => t.Length >= 3 && (t.Any(char.IsDigit) || t.Length >= 4))
             .Distinct()
             .ToList();
-        if (tokens.Count == 0) return comps;
+        if (tokens.Count == 0) return new IdentityGuardResult(comps, 0, comps.Count, true);
 
         var kept = comps.Where(c => { var t = Norm(c.Title); return tokens.Any(t.Contains); }).ToList();
-        return kept.Count >= 3 ? kept : comps;
+        return kept.Count > 0
+            ? new IdentityGuardResult(kept, tokens.Count, kept.Count, true)
+            : new IdentityGuardResult(comps, tokens.Count, 0, false);
     }
+
+    // The pricing set alone, for callers that only want the comps back.
+    public static List<MarketplaceComparableResult> ApplyIdentityGuard(
+        NormalizedProduct target, List<MarketplaceComparableResult> comps) =>
+        GuardIdentity(target, comps).Comps;
 
     private static string Norm(string? s) =>
         new string((s ?? "").ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());

@@ -157,7 +157,7 @@ public sealed class LiquidationLotPricer(ProfitCalculator profitCalc)
             ? details.ClaimedRetailTotal / economics.Units
             : null;
         var mismatch = LotAnalyzer.RetailSanityCheck(
-            Math.Round(comp, 2), claimedUnitRetail, resale.SoldCompCount + resale.TerapeakCompCount);
+            Math.Round(comp, 2), claimedUnitRetail, resale.EvidenceCompCount);
         if (mismatch is not null)
         {
             economics.UnpriceableReason = mismatch;

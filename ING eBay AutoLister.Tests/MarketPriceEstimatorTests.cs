@@ -171,10 +171,11 @@ public class MarketPriceEstimatorTests
     }
 
     [Fact]
-    public void ApplyIdentityGuard_TooFewCompsSurvive_FallsBackToTheUnfilteredSet()
+    public void ApplyIdentityGuard_OnlyTwoCompsCarryTheIdentifier_StillPricesOffJustThoseTwo()
     {
-        // Only two comps carry the identifier — not enough to price off, so rather than return a
-        // two-comp estimate the guard steps aside and hands back everything it was given.
+        // Two real sales of THIS part price it. Twenty sales of the $1050 drive beside it do not,
+        // however much better twenty looks than two — so the guard narrows rather than stepping
+        // aside, and the thinness of what survives is reported for the caller to gate on.
         var target = new NormalizedProduct { Brand = "FANUC", Model = "GP50" };
         var comps = new List<MarketplaceComparableResult>
         {
@@ -184,9 +185,47 @@ public class MarketPriceEstimatorTests
             Comp("4", "FANUC Servo Drive Unit Fully Tested Working", 1200.00m),
         };
 
-        var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
+        var guard = MarketPriceEstimator.GuardIdentity(target, comps);
 
-        Assert.Equal(4, kept.Count);
+        Assert.Equal(2, guard.Comps.Count);
+        Assert.All(guard.Comps, c => Assert.Contains("GP50", c.Title));
+        // Thin, but this product's — which is what the confidence gate needs to hear.
+        Assert.True(guard.Verified);
+        Assert.Equal(2, guard.MatchedCount);
+    }
+
+    [Fact]
+    public void GuardIdentity_NoCompCarriesTheIdentifier_PricesAnywayButReportsItUnverified()
+    {
+        // Nothing matched. The set is handed back whole so the row still gets a figure — an
+        // unpriced row helps nobody — but the estimate is flagged as not this product's, which is
+        // what stops it being published as a real ROI.
+        var target = new NormalizedProduct { Brand = "Toyota", Model = "13575" };
+        var comps = new List<MarketplaceComparableResult>
+        {
+            Comp("1", "Toyota Tacoma Tow Hitch Receiver OEM", 554.00m),
+            Comp("2", "Toyota Tundra Trailer Hitch Assembly", 480.00m),
+        };
+
+        var guard = MarketPriceEstimator.GuardIdentity(target, comps);
+
+        Assert.Equal(2, guard.Comps.Count);
+        Assert.False(guard.Verified);
+        Assert.Equal(0, guard.MatchedCount);
+    }
+
+    [Fact]
+    public void GuardIdentity_TargetHasNoIdentifier_ReportsVerifiedBecauseThereIsNothingToCheck()
+    {
+        // No model, no part number: the guard has nothing to say, and silence is not a warning.
+        // Rows like this are held to account by the comp COUNT instead — see GradeEvidence.
+        var target = new NormalizedProduct { Brand = "Toyota" };
+        var comps = new List<MarketplaceComparableResult> { Comp("1", "Toyota Trailer Hitch", 554.00m) };
+
+        var guard = MarketPriceEstimator.GuardIdentity(target, comps);
+
+        Assert.True(guard.Verified);
+        Assert.Equal(0, guard.TokenCount);
     }
 
     [Fact]
