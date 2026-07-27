@@ -348,6 +348,7 @@
   }
 
   async function init() {
+    initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
     initPhotoGrid();          // render 6 photo slots on page load, not just on modal open
     initPhotoEditorPaste();
     bindDashboard();
@@ -455,13 +456,7 @@
     on('btn-table-view', 'click', () => setViewMode('table'));
 
     document.querySelectorAll('.nav-item').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const page = btn.dataset.page || 'dashboard';
-        // Setting the hash to what it already is fires no hashchange, so the click would do
-        // nothing at all. Navigate directly in that case.
-        if (location.hash.slice(1) === page) handleNav(page);
-        else location.hash = page;
-      });
+      btn.addEventListener('click', () => navigateTo(btn.dataset.page || 'dashboard'));
     });
 
     window.addEventListener('hashchange', () => {
@@ -469,110 +464,387 @@
     });
   }
 
+  // Every route in this app is a workspace tab now, so navigation is one line: open the tab, or
+  // switch to it if it is already open.
   function handleNav(page) {
+    openWorkspaceTab(page || 'dashboard');
+  }
+
+  // Setting the hash to what it already is fires no hashchange, so the click would do nothing at
+  // all. Navigate directly in that case. Shared by the sidebar, the workspace tab bar and every
+  // dashboard button that jumps to a screen, so all three routes behave identically.
+  function navigateTo(page) {
+    if (location.hash.slice(1) === page) handleNav(page);
+    else location.hash = page;
+  }
+
+  function setActiveNavItem(page) {
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === page));
-    if (page !== 'ai') $('new-listing-overlay')?.classList.add('hidden');
-    if (page !== 'opportunity') $('opportunity-section')?.classList.add('hidden');
-    if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
-    if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
-    if (page !== 'offers') $('offers-section')?.classList.add('hidden');
-    if (page !== 'rescue') $('rescue-section')?.classList.add('hidden');
-    if (page !== 'budget') $('budget-section')?.classList.add('hidden');
-    if (page !== 'relist') $('relist-section')?.classList.add('hidden');
-    if (page !== 'lots') $('lots-section')?.classList.add('hidden');
-    if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
-    if (page !== 'shipping') $('shipping-section')?.classList.add('hidden');
-    if (page !== 'trends') $('trends-section')?.classList.add('hidden');
-    if (page !== 'wheretosell') $('wts-section')?.classList.add('hidden');
-    if (page !== 'snipe') closeSnipeSection({ back: false });
-    if (page !== 'earnings') $('earnings-section')?.classList.add('hidden');
-    if (page !== 'pipeline') $('pipeline-section')?.classList.add('hidden');
-    if (page === 'earnings') {
-      showEarningsSection();
+  }
+
+  // ── Workspace tabs ───────────────────────────────────────────────────────
+  // Every feature here is a full-screen overlay, and opening one used to CLOSE the one before it:
+  // pricing a pallet meant losing the sourcing board that found it, and coming back re-ran the
+  // scan that produced it. These tabs are the model the AI Listing drafts already use
+  // (newDraftTab / switchDraftTab / renderDraftTabs / closeDraftTab), lifted one level up so a
+  // *feature* is a tab. Each open tab keeps its own section alive in the DOM, so switching back
+  // to a finished scan shows that scan rather than re-spending the eBay calls and comp lookups
+  // that paid for it.
+  //
+  // A page belongs in this table if it has a screen of its own. `section` is the element the
+  // screen lives in, `open` is that screen's existing opener (it hides the others, renders and
+  // loads), and the optional hooks are for the two screens that need more than show/hide:
+  //   refresh — re-run on every return to the tab. Only for screens whose whole content is
+  //             server state; never for one holding something the seller typed.
+  //   onShow / onHide — start and stop work that must not run for a screen nobody is looking at.
+  const WORKSPACE_PAGES = {
+    dashboard:   { section: 'dashboard-section',     open: showDashboard, pinned: true },
+    earnings:    { section: 'earnings-section',      open: showEarningsSection },
+    pipeline:    { section: 'pipeline-section',      open: showPipelineSection },
+    // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
+    // tab and scroll, instead of opening a second tab showing the same page.
+    listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
+    ai:          { section: 'new-listing-overlay',   open: showAiSection },
+    photos:      { section: 'photo-library-section', open: showPhotoLibrarySection },
+    opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
+    snipe:       { section: 'snipe-section',         open: showSnipeSection,
+                   onShow: startSnipeTicker, onHide: stopSnipeTicker },
+    budget:      { section: 'budget-section',        open: showBudgetSection },
+    inventory:   { section: 'inventory-section',     open: showInventorySection },
+    offers:      { section: 'offers-section',        open: showOffersSection },
+    rescue:      { section: 'rescue-section',        open: showRescueSection },
+    relist:      { section: 'relist-section',        open: showRelistSection },
+    lots:        { section: 'lots-section',          open: showLotsSection },
+    promoted:    { section: 'promoted-section',      open: showPromotedSection },
+    shipping:    { section: 'shipping-section',      open: showShippingSection },
+    wheretosell: { section: 'wts-section',           open: showWhereToSellSection },
+    trends:      { section: 'trends-section',        open: showTrendsSection },
+    activity:    { scrollTo: 'activity-list', scrollBlock: 'center' },
+    logs:        { section: 'logs-section',          open: showLogsSection, refresh: loadLogs },
+    settings:    { section: 'settings-section',      open: showSettingsSection },
+    license:     { section: 'license-section',       open: showLicenseSection, refresh: loadLicenseStatus },
+  };
+
+  let workspaceTabs = [];        // [{ id, page, title, icon, pinned, loaded }] in bar order
+  let activeWorkspaceTabId = null;
+  let workspaceTabCounter = 0;
+
+  // Title and icon come off the sidebar entry rather than a second list here, so renaming a
+  // feature in the nav renames its tab and there is nothing to keep in sync.
+  function workspaceNavItem(page) {
+    return document.querySelector('.nav-item[data-page="' + page + '"]');
+  }
+
+  function newWorkspaceTab(page) {
+    workspaceTabCounter++;
+    const nav = workspaceNavItem(page);
+    const tab = {
+      id: workspaceTabCounter,
+      page,
+      title: nav ? nav.textContent.trim() : page,
+      icon: nav?.querySelector('use')?.getAttribute('href') || '#i-dashboard',
+      pinned: !!WORKSPACE_PAGES[page]?.pinned,
+      loaded: false
+    };
+    workspaceTabs.push(tab);
+    return tab;
+  }
+
+  function findWorkspaceTab(page) {
+    return workspaceTabs.find(t => t.page === page);
+  }
+
+  function openWorkspaceTab(page) {
+    const def = WORKSPACE_PAGES[page];
+    if (!def) { openWorkspaceTab('dashboard'); return; }
+
+    if (def.scrollTo) {
+      openWorkspaceTab('dashboard');
+      $(def.scrollTo)?.scrollIntoView({ behavior: 'smooth', block: def.scrollBlock || 'start' });
       return;
     }
-    if (page === 'pipeline') {
-      showPipelineSection();
-      return;
+
+    activateWorkspaceTab(findWorkspaceTab(page) || newWorkspaceTab(page));
+  }
+
+  function activateWorkspaceTab(tab) {
+    if (!tab) return;
+    const def = WORKSPACE_PAGES[tab.page];
+    const outgoing = workspaceTabs.find(t => t.id === activeWorkspaceTabId);
+    if (outgoing && outgoing.id !== tab.id) WORKSPACE_PAGES[outgoing.page]?.onHide?.();
+
+    activeWorkspaceTabId = tab.id;
+
+    if (!tab.loaded) {
+      def.open();                 // first visit: the screen's own opener does the work
+    } else {
+      // Already open once. Put it back exactly as the seller left it — calling open() again
+      // would throw away a completed scan and charge for it a second time.
+      hideOverlaySections();
+      if (tab.page === 'dashboard') {
+        showDashboard();
+      } else {
+        $(def.section)?.classList.remove('hidden');
+        setActiveNavItem(tab.page);
+        def.refresh?.();
+        def.onShow?.();
+      }
     }
-    if (page === 'ai') {
-      showAiSection();
-      return;
+    tab.loaded = true;
+    syncWorkspaceHash(tab.page);
+    renderWorkspaceTabs();
+  }
+
+  // Some screens open by a route other than the sidebar — the AI Listing modal off a pasted
+  // screenshot or a recovered draft, the Opportunity Finder off Roll the Dice. Every show*Section
+  // ends here, so a screen that put itself on the page always gets a tab, without opening twice.
+  function markWorkspaceTabOpen(page) {
+    if (!WORKSPACE_PAGES[page]) return;
+    const tab = findWorkspaceTab(page) || newWorkspaceTab(page);
+    tab.loaded = true;
+    if (activeWorkspaceTabId !== tab.id) {
+      const outgoing = workspaceTabs.find(t => t.id === activeWorkspaceTabId);
+      if (outgoing) WORKSPACE_PAGES[outgoing.page]?.onHide?.();
+      activeWorkspaceTabId = tab.id;
     }
-    if (page === 'settings') {
-      showSettingsSection();
-      return;
+    syncWorkspaceHash(page);
+    renderWorkspaceTabs();
+  }
+
+  // The URL follows the active tab so a reload lands back on it. replaceState fires no
+  // hashchange, so this can never loop back into handleNav. The Dashboard is the one exception:
+  // showDashboard() clears the hash itself, because "#dashboard" is not a place.
+  function syncWorkspaceHash(page) {
+    if (page === 'dashboard') return;
+    if (location.hash.slice(1) === page) return;
+    history.replaceState(null, '', location.pathname + location.search + '#' + page);
+  }
+
+  // The ✕ on a tab and the ✕ in a screen's own header do the same thing: close that one screen
+  // and land on the tab beside it. Neither closes the seller's other open work, which is what
+  // "back to the dashboard" used to do to it.
+  function closeWorkspaceTab(id) {
+    const idx = workspaceTabs.findIndex(t => t.id === id);
+    if (idx === -1) return;
+    const tab = workspaceTabs[idx];
+    if (tab.pinned) return;       // the Dashboard is the floor — there is nothing behind it
+
+    const def = WORKSPACE_PAGES[tab.page];
+    def?.onHide?.();
+    if (def?.section) $(def.section)?.classList.add('hidden');
+    workspaceTabs.splice(idx, 1);
+
+    if (activeWorkspaceTabId === id) {
+      activeWorkspaceTabId = null;
+      activateWorkspaceTab(workspaceTabs[Math.min(idx, workspaceTabs.length - 1)]);
     }
-    if (page === 'logs') {
-      showLogsSection();
-      return;
-    }
-    if (page === 'license') {
-      showLicenseSection();
-      return;
-    }
-    if (page === 'opportunity') {
-      showOpportunitySection();
-      return;
-    }
-    if (page === 'photos') {
-      showPhotoLibrarySection();
-      return;
-    }
-    if (page === 'inventory') {
-      showInventorySection();
-      return;
-    }
-    if (page === 'offers') {
-      showOffersSection();
-      return;
-    }
-    if (page === 'rescue') {
-      showRescueSection();
-      return;
-    }
-    if (page === 'budget') {
-      showBudgetSection();
-      return;
-    }
-    if (page === 'relist') {
-      showRelistSection();
-      return;
-    }
-    if (page === 'lots') {
-      showLotsSection();
-      return;
-    }
-    if (page === 'promoted') {
-      showPromotedSection();
-      return;
-    }
-    if (page === 'shipping') {
-      showShippingSection();
-      return;
-    }
-    if (page === 'trends') {
-      showTrendsSection();
-      return;
-    }
-    if (page === 'wheretosell') {
-      showWhereToSellSection();
-      return;
-    }
-    if (page === 'snipe') {
-      showSnipeSection();
-      return;
-    }
+    renderWorkspaceTabs();
+  }
+
+  function closeWorkspacePage(page) {
+    const tab = findWorkspaceTab(page);
+    if (tab) { closeWorkspaceTab(tab.id); return; }
+    // Nothing on the bar for it (it was never opened through the workspace) — fall back to the
+    // old behaviour so a stray close button can still get the screen off the page.
+    const def = WORKSPACE_PAGES[page];
+    if (def?.section) $(def.section)?.classList.add('hidden');
     showDashboard();
-    if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function renderWorkspaceTabs() {
+    const bar = $('ws-tab-bar');
+    if (!bar) return;
+    const newBtn = $('ws-tab-new-btn');
+    bar.querySelectorAll('.ws-tab').forEach(el => el.remove());
+
+    workspaceTabs.forEach(tab => {
+      const def = WORKSPACE_PAGES[tab.page];
+      const active = tab.id === activeWorkspaceTabId;
+
+      const el = document.createElement('div');
+      el.className = 'ws-tab' + (active ? ' active' : '');
+
+      const main = document.createElement('button');
+      main.type = 'button';
+      main.className = 'ws-tab-main';
+      main.setAttribute('role', 'tab');
+      main.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (def?.section) main.setAttribute('aria-controls', def.section);
+      // Only the selected tab is in the page's tab order; ← and → move between them. That is the
+      // ARIA tablist pattern, and it stops Tab from walking through twenty open features before
+      // it reaches the screen the seller is actually reading.
+      main.tabIndex = active ? 0 : -1;
+      main.innerHTML =
+        '<svg class="ws-tab-icon" aria-hidden="true"><use href="' + esc(tab.icon) + '"/></svg>' +
+        '<span class="ws-tab-title">' + esc(tab.title) + '</span>';
+      main.addEventListener('click', () => navigateTo(tab.page));
+      el.appendChild(main);
+
+      if (!tab.pinned) {
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'ws-tab-close';
+        x.tabIndex = -1;          // reachable by Delete on the focused tab, not by another Tab stop
+        x.setAttribute('aria-label', 'Close ' + tab.title);
+        x.title = 'Close ' + tab.title;
+        x.textContent = '✕';
+        x.addEventListener('click', e => { e.stopPropagation(); closeWorkspaceTab(tab.id); });
+        el.appendChild(x);
+      }
+
+      bar.insertBefore(el, newBtn);
+    });
+
+    // One tab is not a workspace — it is the app as it always was. The strip only takes room off
+    // the top of the window once there is something to switch between.
+    document.body.classList.toggle('ws-tabs-open', workspaceTabs.length > 1);
+  }
+
+  // ── The "+" menu ─────────────────────────────────────────────────────────
+  // Built from the sidebar's own children, groups and all, so it is one list of features rather
+  // than a second one to keep in step with the first.
+  function renderWorkspaceMenu() {
+    const menu = $('ws-open-menu');
+    if (!menu) return;
+    menu.innerHTML = '';
+
+    document.querySelectorAll('.nav-list > *').forEach(src => {
+      if (src.classList.contains('nav-group-label')) {
+        const label = document.createElement('p');
+        label.className = 'ws-open-menu-group';
+        label.textContent = src.textContent.trim();
+        menu.appendChild(label);
+        return;
+      }
+      if (!src.classList.contains('nav-item')) return;
+
+      const page = src.dataset.page;
+      const def = WORKSPACE_PAGES[page];
+      // The Dashboard is always on the bar already, and Listings/Activity are regions of it
+      // rather than screens — neither opens a tab, so neither belongs in a tab opener.
+      if (!def || def.pinned || def.scrollTo) return;
+
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'ws-open-menu-item';
+      item.setAttribute('role', 'menuitem');
+      item.dataset.page = page;
+      const open = !!findWorkspaceTab(page);
+      item.innerHTML =
+        '<svg class="ws-tab-icon" aria-hidden="true"><use href="' +
+          esc(src.querySelector('use')?.getAttribute('href') || '#i-dashboard') + '"/></svg>' +
+        '<span class="ws-open-menu-label">' + esc(src.textContent.trim()) + '</span>' +
+        (open ? '<span class="ws-open-menu-open">open</span>' : '');
+      // An already-open feature switches to its tab rather than opening a second one, which is
+      // why every entry stays clickable instead of going grey.
+      item.addEventListener('click', () => { closeWorkspaceMenu(); navigateTo(page); });
+      menu.appendChild(item);
+    });
+  }
+
+  function openWorkspaceMenu() {
+    const menu = $('ws-open-menu');
+    const btn = $('ws-tab-new-btn');
+    if (!menu || !btn) return;
+    renderWorkspaceMenu();
+    menu.classList.remove('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+
+    // The bar scrolls horizontally, so the "+" is not at a fixed x. Anchor to where it actually
+    // is, and keep the panel on screen when it sits near the right edge.
+    const rect = btn.getBoundingClientRect();
+    menu.style.top = rect.bottom + 4 + 'px';
+    menu.style.left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 12) + 'px';
+    menu.querySelector('.ws-open-menu-item')?.focus();
+  }
+
+  function closeWorkspaceMenu({ refocus = false } = {}) {
+    const menu = $('ws-open-menu');
+    if (!menu || menu.classList.contains('hidden')) return;
+    menu.classList.add('hidden');
+    $('ws-tab-new-btn')?.setAttribute('aria-expanded', 'false');
+    if (refocus) $('ws-tab-new-btn')?.focus();
+  }
+
+  function toggleWorkspaceMenu() {
+    if ($('ws-open-menu')?.classList.contains('hidden')) openWorkspaceMenu();
+    else closeWorkspaceMenu({ refocus: true });
+  }
+
+  function focusWorkspaceTabAt(index) {
+    const buttons = $('ws-tab-bar')?.querySelectorAll('.ws-tab-main');
+    buttons?.[index]?.focus();
+  }
+
+  function bindWorkspaceTabs() {
+    const bar = $('ws-tab-bar');
+    if (!bar) return;
+    // Manual activation: arrows move focus, Enter/Space (the button's own behaviour) opens. A
+    // screen can cost API calls to load, so arrowing past one must not load it.
+    bar.addEventListener('keydown', e => {
+      const buttons = Array.from(bar.querySelectorAll('.ws-tab-main'));
+      const i = buttons.indexOf(document.activeElement);
+      if (i === -1) return;
+
+      if (e.key === 'ArrowRight')     { e.preventDefault(); focusWorkspaceTabAt((i + 1) % buttons.length); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); focusWorkspaceTabAt((i - 1 + buttons.length) % buttons.length); }
+      else if (e.key === 'Home')      { e.preventDefault(); focusWorkspaceTabAt(0); }
+      else if (e.key === 'End')       { e.preventDefault(); focusWorkspaceTabAt(buttons.length - 1); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') {
+        const tab = workspaceTabs[i];
+        if (!tab || tab.pinned) return;
+        e.preventDefault();
+        closeWorkspaceTab(tab.id);
+        // Keep the keyboard in the bar: focus whatever slid into that slot.
+        focusWorkspaceTabAt(Math.min(i, workspaceTabs.length - 1));
+      }
+    });
+
+    on('ws-tab-new-btn', 'click', toggleWorkspaceMenu);
+
+    const menu = $('ws-open-menu');
+    menu?.addEventListener('keydown', e => {
+      const items = Array.from(menu.querySelectorAll('.ws-open-menu-item'));
+      const i = items.indexOf(document.activeElement);
+      // Several screens close themselves on a document-level Escape. Dismissing this menu must
+      // not also close the screen behind it, so the key stops here.
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeWorkspaceMenu({ refocus: true });
+        return;
+      }
+      if (i === -1) return;
+      if (e.key === 'ArrowDown')    { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Home')    { e.preventDefault(); items[0].focus(); }
+      else if (e.key === 'End')     { e.preventDefault(); items[items.length - 1].focus(); }
+    });
+
+    // Clicking anywhere else is a dismissal, including onto the screen behind the menu.
+    document.addEventListener('pointerdown', e => {
+      if (e.target.closest?.('#ws-open-menu, #ws-tab-new-btn')) return;
+      closeWorkspaceMenu();
+    });
+  }
+
+  function initWorkspaceTabs() {
+    workspaceTabs = [];
+    activeWorkspaceTabId = null;
+    const home = newWorkspaceTab('dashboard');
+    home.loaded = true;
+    activeWorkspaceTabId = home.id;
+    bindWorkspaceTabs();
+    renderWorkspaceTabs();
   }
 
   function showAiSection() {
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  // Every full-screen view in the app, including the AI Listing modal: hiding "the screens" has
+  // to mean all of them, or navigating out of a draft leaves it sitting on top of the next one.
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -587,14 +859,18 @@
     if (location.hash && location.hash !== '#dashboard')
       history.replaceState(null, '', location.pathname + location.search);
     $('dashboard-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'dashboard'));
+    setActiveNavItem('dashboard');
+    markWorkspaceTabOpen('dashboard');
   }
 
+  // Settings has no `refresh` hook on purpose: every return to the tab would re-run
+  // loadSettingsStatus() over inputs the seller may be halfway through typing into.
   async function showSettingsSection() {
     hideOverlaySections();
     $('settings-section')?.classList.remove('hidden');
     $('settings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'settings'));
+    setActiveNavItem('settings');
+    markWorkspaceTabOpen('settings');
     await loadSettingsStatus();
     await loadTerapeakStatus();
     await loadFacebookStatus();
@@ -2553,7 +2829,8 @@
     hideOverlaySections();
     $('logs-section')?.classList.remove('hidden');
     $('logs-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'logs'));
+    setActiveNavItem('logs');
+    markWorkspaceTabOpen('logs');
     await loadLogs();
   }
 
@@ -2561,7 +2838,12 @@
     hideOverlaySections();
     $('license-section')?.classList.remove('hidden');
     $('license-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'license'));
+    setActiveNavItem('license');
+    markWorkspaceTabOpen('license');
+    await loadLicenseStatus();
+  }
+
+  async function loadLicenseStatus() {
     const status = await fetch('/api/license/status').then(r => r.json()).catch(() => null);
     if (status) updateLicenseUI(status);
   }
@@ -2569,9 +2851,9 @@
   // ── Opportunity Finder ───────────────────────────────────────────────────
   function showOpportunitySection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('opportunity-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'opportunity'));
+    setActiveNavItem('opportunity');
+    markWorkspaceTabOpen('opportunity');
     loadTerapeakStatus();
     loadFacebookStatus();
     // Also loaded on its own, not only off the back of the Facebook status call: Craigslist is
@@ -2656,8 +2938,7 @@
   }
 
   function closeOpportunitySection() {
-    $('opportunity-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('opportunity');
   }
 
   // ── Inventory Health ─────────────────────────────────────────────────────
@@ -2671,21 +2952,20 @@
 
   function showInventorySection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('inventory-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'inventory'));
+    setActiveNavItem('inventory');
+    markWorkspaceTabOpen('inventory');
     loadCostBasis();
   }
 
   function closeInventorySection() {
-    $('inventory-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('inventory');
   }
 
   function bindInventoryHealth() {
     on('inv-scan-btn', 'click', runInventoryScan);
     on('inv-close', 'click', closeInventorySection);
-    on('inv-home', 'click', closeInventorySection);
+    on('inv-home', 'click', goHome);
     // Filtering is a pure view over the result already in hand — changing it must never re-run a
     // scan that costs eBay calls and comp lookups.
     on('inv-verdict-filter', 'change', renderInventoryRows);
@@ -3113,21 +3393,20 @@
 
   function showOffersSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('offers-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'offers'));
+    setActiveNavItem('offers');
+    markWorkspaceTabOpen('offers');
   }
 
   function closeOffersSection() {
-    $('offers-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('offers');
   }
 
   function bindWatcherOffers() {
     on('wo-scan-btn', 'click', runOfferScan);
     on('wo-close', 'click', closeOffersSection);
-    on('wo-home', 'click', closeOffersSection);
-    on('inv-to-offers', 'click', () => { location.hash = 'offers'; });
+    on('wo-home', 'click', goHome);
+    on('inv-to-offers', 'click', () => { navigateTo('offers'); });
     // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
     on('wo-filter', 'change', renderOfferRows);
     on('wo-select-all', 'change', toggleSelectAllOffers);
@@ -3505,21 +3784,20 @@
 
   function showRescueSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('rescue-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'rescue'));
+    setActiveNavItem('rescue');
+    markWorkspaceTabOpen('rescue');
   }
 
   function closeRescueSection() {
-    $('rescue-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('rescue');
   }
 
   function bindRescue() {
     on('rsc-scan-btn', 'click', runRescueScan);
     on('rsc-close', 'click', closeRescueSection);
-    on('rsc-home', 'click', closeRescueSection);
-    on('inv-to-rescue', 'click', () => { location.hash = 'rescue'; });
+    on('rsc-home', 'click', goHome);
+    on('inv-to-rescue', 'click', () => { navigateTo('rescue'); });
     // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
     on('rsc-filter', 'change', renderRescuePlans);
     on('rsc-select-all', 'change', toggleSelectAllRescue);
@@ -3896,23 +4174,22 @@
 
   function showBudgetSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('budget-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'budget'));
+    setActiveNavItem('budget');
+    markWorkspaceTabOpen('budget');
     renderBudgetPool();
   }
 
   function closeBudgetSection() {
-    $('budget-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('budget');
   }
 
   function bindBudget() {
     on('bud-plan-btn', 'click', runBudgetPlan);
     on('bud-close', 'click', closeBudgetSection);
-    on('bud-home', 'click', closeBudgetSection);
+    on('bud-home', 'click', goHome);
     // The step out of the ranked table and into an allocation, from the board itself.
-    on('fb-arb-budget-btn', 'click', () => { location.hash = 'budget'; });
+    on('fb-arb-budget-btn', 'click', () => { navigateTo('budget'); });
     // Switching the definition of "best" re-solves from the same pool. It is one cheap POST over
     // numbers already computed, not a re-scan, so it can be a plain control change.
     on('bud-objective', 'change', () => { if (budgetPlan) runBudgetPlan(); });
@@ -4251,20 +4528,19 @@
 
   function showRelistSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('relist-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'relist'));
+    setActiveNavItem('relist');
+    markWorkspaceTabOpen('relist');
   }
 
   function closeRelistSection() {
-    $('relist-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('relist');
   }
 
   function bindRelist() {
     on('rl-scan-btn', 'click', runRelistScan);
     on('rl-close', 'click', closeRelistSection);
-    on('rl-home', 'click', closeRelistSection);
+    on('rl-home', 'click', goHome);
     // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
     on('rl-filter', 'change', renderRelistRows);
     on('rl-select-all', 'change', toggleSelectAllRelists);
@@ -4794,27 +5070,26 @@
 
   function showEarningsSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('earnings-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'earnings'));
+    setActiveNavItem('earnings');
+    markWorkspaceTabOpen('earnings');
     if (!earnings) loadEarnings();
   }
 
   function closeEarningsSection() {
-    $('earnings-section')?.classList.add('hidden');
     $('er-log-modal')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('earnings');
   }
 
   function bindEarnings() {
     on('er-close', 'click', closeEarningsSection);
-    on('er-home', 'click', closeEarningsSection);
+    on('er-home', 'click', goHome);
     on('er-import-btn', 'click', importEarnings);
     on('er-log-btn', 'click', openFlipLogger);
     on('er-log-cancel', 'click', closeFlipLogger);
     on('er-log-cancel-2', 'click', closeFlipLogger);
     on('er-log-save', 'click', saveManualFlip);
-    on('dash-earnings-open', 'click', () => { location.hash = 'earnings'; });
+    on('dash-earnings-open', 'click', () => { navigateTo('earnings'); });
     on('er-chart-table-toggle', 'click', () => toggleDisclosure('er-chart-table', 'er-chart-table-toggle', 'Show as table', 'Hide table'));
     on('er-ledger-toggle', 'click', () => toggleDisclosure('er-ledger', 'er-ledger-toggle', 'Show all sales', 'Hide all sales'));
 
@@ -5415,22 +5690,21 @@
 
   function showPipelineSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('pipeline-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'pipeline'));
+    setActiveNavItem('pipeline');
+    markWorkspaceTabOpen('pipeline');
     if (!pipeline) loadPipeline(); else renderPipeline();
   }
 
   function closePipelineSection() {
-    $('pipeline-section')?.classList.add('hidden');
     closeDealForm();
     closeStageForm();
-    showDashboard();
+    closeWorkspacePage('pipeline');
   }
 
   function bindPipeline() {
     on('dp-close', 'click', closePipelineSection);
-    on('dp-home', 'click', closePipelineSection);
+    on('dp-home', 'click', goHome);
     on('dp-refresh-btn', 'click', () => loadPipeline());
     on('dp-add-btn', 'click', () => openDealForm(null));
     on('dp-add-cancel', 'click', closeDealForm);
@@ -5439,7 +5713,7 @@
     on('dp-stage-cancel', 'click', closeStageForm);
     on('dp-stage-cancel-2', 'click', closeStageForm);
     on('dp-stage-save', 'click', saveStageForm);
-    on('dash-pipeline-open', 'click', () => { location.hash = 'pipeline'; });
+    on('dash-pipeline-open', 'click', () => { navigateTo('pipeline'); });
     on('dp-actions-toggle', 'click', () => toggleDisclosure('dp-actions', 'dp-actions-toggle', 'Show', 'Hide'));
 
     // Live projected profit as the seller types, so a deal is priced before it's committed to.
@@ -5678,7 +5952,7 @@
     const apply = e.target.closest?.('.dp-apply-cost');
     if (apply) { applyDealCost(Number(apply.dataset.id)); return; }
 
-    if (e.target.closest?.('.dp-go-inventory')) { location.hash = 'inventory'; return; }
+    if (e.target.closest?.('.dp-go-inventory')) { navigateTo('inventory'); return; }
   }
 
   // ── Add / edit ────────────────────────────────────────────────────────────
@@ -6017,9 +6291,9 @@
 
   async function showShippingSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('shipping-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'shipping'));
+    setActiveNavItem('shipping');
+    markWorkspaceTabOpen('shipping');
 
     // Zones only exist relative to an origin, and the seller already told us theirs once. Filling
     // it in beats asking again — a blank ZIP silently falls back to the national average, which is
@@ -6034,13 +6308,12 @@
   }
 
   function closeShippingSection() {
-    $('shipping-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('shipping');
   }
 
   function bindShipping() {
     on('ship-close', 'click', closeShippingSection);
-    on('ship-home', 'click', closeShippingSection);
+    on('ship-home', 'click', goHome);
     on('ship-quote-btn', 'click', runShippingQuote);
     on('ship-scan-btn', 'click', () => { showShipPanel('leaks'); runShippingLeakScan(); });
     on('ship-tab-quote', 'click', () => showShipPanel('quote'));
@@ -6479,21 +6752,20 @@
 
   function showTrendsSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('trends-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'trends'));
+    setActiveNavItem('trends');
+    markWorkspaceTabOpen('trends');
   }
 
   function closeTrendsSection() {
-    $('trends-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('trends');
   }
 
   function bindTrendRadar() {
     on('tr-scan-btn', 'click', () => runTrendScan({ nextSeed: false }));
     on('tr-scan-again', 'click', () => runTrendScan({ nextSeed: true }));
     on('tr-close', 'click', closeTrendsSection);
-    on('tr-home', 'click', closeTrendsSection);
+    on('tr-home', 'click', goHome);
     // Direction is a pure view over the scan in hand when we already have everything; it only
     // re-runs when the previous scan was narrowed server-side and the seller now wants it all.
     on('tr-direction', 'change', () => {
@@ -6842,20 +7114,19 @@
 
   function showWhereToSellSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('wts-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'wheretosell'));
+    setActiveNavItem('wheretosell');
+    markWorkspaceTabOpen('wheretosell');
   }
 
   function closeWhereToSellSection() {
-    $('wts-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('wheretosell');
   }
 
   function bindWhereToSell() {
     on('wts-run-btn', 'click', runWhereToSell);
     on('wts-close', 'click', closeWhereToSellSection);
-    on('wts-home', 'click', closeWhereToSellSection);
+    on('wts-home', 'click', goHome);
     on('wts-query', 'keydown', e => { if (e.key === 'Enter') runWhereToSell(); });
     on('wts-zip', 'keydown', e => { if (e.key === 'Enter') runWhereToSell(); });
 
@@ -7088,23 +7359,23 @@
 
   function showSnipeSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('snipe-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'snipe'));
+    setActiveNavItem('snipe');
+    markWorkspaceTabOpen('snipe');
     startSnipeTicker();
   }
 
-  function closeSnipeSection({ back = true } = {}) {
-    $('snipe-section')?.classList.add('hidden');
-    stopSnipeTicker();
-    if (back) showDashboard();
+  // The ticker is stopped by the tab machinery (onHide) whether this screen is closed or merely
+  // switched away from — a countdown ticking for a screen nobody is looking at is wasted work.
+  function closeSnipeSection() {
+    closeWorkspacePage('snipe');
   }
 
   function bindSniper() {
     on('sn-scan-btn', 'click', () => runSnipeScan());
     on('sn-close', 'click', () => closeSnipeSection());
-    on('sn-home', 'click', () => closeSnipeSection());
-    on('dash-snipe-open', 'click', () => { location.hash = 'snipe'; });
+    on('sn-home', 'click', goHome);
+    on('dash-snipe-open', 'click', () => { navigateTo('snipe'); });
     // Ranking is the server's, so re-ordering means asking it again rather than re-implementing the
     // rules here — two sort orders that disagree is two answers to "what should I bid on first".
     on('sn-sort', 'change', () => { if (snipeScan) runSnipeScan(); });
@@ -7517,21 +7788,20 @@
 
   function showPromotedSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('promoted-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'promoted'));
+    setActiveNavItem('promoted');
+    markWorkspaceTabOpen('promoted');
     prefillAdRateFromFeeProfile();
   }
 
   function closePromotedSection() {
-    $('promoted-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('promoted');
   }
 
   function bindPromoted() {
     on('ad-scan-btn', 'click', runAdRateScan);
     on('ad-close', 'click', closePromotedSection);
-    on('ad-home', 'click', closePromotedSection);
+    on('ad-home', 'click', goHome);
     // Filtering is a pure view over the scan already in hand — changing it must never re-run a
     // multi-minute inventory scan.
     on('ad-filter', 'change', renderAdRows);
@@ -7890,16 +8160,15 @@
 
   function showPhotoLibrarySection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('photo-library-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'photos'));
+    setActiveNavItem('photos');
+    markWorkspaceTabOpen('photos');
     setPlUploadMsg('');
     loadPhotoLibrary();
   }
 
   function closePhotoLibrarySection() {
-    $('photo-library-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('photos');
   }
 
   function bindPhotoLibrary() {
@@ -8472,20 +8741,19 @@
 
   function showLotsSection() {
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.add('hidden');
     $('lots-section')?.classList.remove('hidden');
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'lots'));
+    setActiveNavItem('lots');
+    markWorkspaceTabOpen('lots');
     loadLotGrades();
   }
 
   function closeLotsSection() {
-    $('lots-section')?.classList.add('hidden');
-    showDashboard();
+    closeWorkspacePage('lots');
   }
 
   function bindLotAnalyzer() {
     on('lot-close', 'click', closeLotsSection);
-    on('lot-home',  'click', closeLotsSection);
+    on('lot-home',  'click', goHome);
     on('lot-analyze-btn', 'click', runLotAnalysis);
     on('lot-run-btn',     'click', runLotAnalysis);
     on('lot-sample-btn',  'click', () => {
@@ -9079,7 +9347,7 @@
   // Jumps to AI Listing and reuses the existing quick-fill-by-name pipeline so a profitable
   // supplier find goes straight to a drafted listing without any new listing-creation code.
   window.__oppListSupplierItem = function (productName) {
-    location.hash = 'ai';
+    navigateTo('ai');
     setTimeout(() => {
       const input = $('nl-quickfill-input');
       if (input) {
@@ -9089,7 +9357,9 @@
     }, 150);
   };
 
-  function goHome() { location.hash = 'dashboard'; }
+  // Home is now a *switch*, not an exit: it brings the Dashboard tab forward and leaves the
+  // screen it was clicked from open on the bar. Closing is what the ✕ is for.
+  function goHome() { navigateTo('dashboard'); }
 
   function bindHomeButtons() {
     on('nl-home',  'click', goHome);
@@ -11560,6 +11830,10 @@
   }
 
   function openNewListingModal(keepTabs = false) {
+    // The AI Listing screen is a workspace tab like any other, and it opens by several routes
+    // that never went through the sidebar — a pasted screenshot, a recovered draft, the dashboard
+    // button. Clearing the other screens here means every one of those routes behaves the same.
+    hideOverlaySections();
     if (!$('nl-photo-grid')?.querySelector('.nl-photo-slot')) initPhotoGrid();
     // Always start fresh unless explicitly told to keep existing tabs (e.g. bulk import)
     if (!keepTabs) {
@@ -11579,7 +11853,8 @@
     $('new-listing-overlay')?.focus();
     nlRefreshSoldCompsConnect();   // show/hide the Connect-to-Terapeak prompt in the bar
     nlRunReadiness(true);          // score the blank form so the bar is there from the start
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'ai'));
+    setActiveNavItem('ai');
+    markWorkspaceTabOpen('ai');
     if (cachedPolicies) {
       fillNlPolicySelects();
     } else if (isConnected) {
@@ -11622,9 +11897,7 @@
   }
 
   function closeNewListingModal() {
-    $('new-listing-overlay')?.classList.add('hidden');
-    if (location.hash === '#ai') location.hash = 'dashboard';
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'dashboard'));
+    closeWorkspacePage('ai');
   }
 
   function nlClearAll() {

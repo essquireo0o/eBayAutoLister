@@ -9939,3 +9939,209 @@ a.dp-card-title:hover { color: var(--teal-600); text-decoration: underline; }
   .ship-leak-money { text-align: left; min-width: 0; }
   .ship-tip { flex-direction: column; gap: var(--s2); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Workspace tabs
+   One tab per open feature. Every screen in this app is a fixed, full-viewport
+   overlay (.opportunity-overlay, .new-listing-overlay), so the strip that
+   switches between them has to sit ABOVE them — fixed to the top of the window
+   at a z-index over theirs, with everything else pushed down by its height.
+   That height is one token: 0 until there is more than one tab open, so a
+   seller who only ever uses the Dashboard never pays for chrome they don't use.
+   Modals stay above the strip (z-index 1000+), which is right — a confirmation
+   must not be switchable-away-from.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root { --ws-tabbar-h: 0px; }
+body.ws-tabs-open { --ws-tabbar-h: 38px; }
+
+.ws-tab-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--ws-tabbar-h);
+  z-index: 950;
+  display: none;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 10px 0;
+  background: linear-gradient(180deg, var(--teal-950), var(--teal-900));
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+body.ws-tabs-open .ws-tab-bar { display: flex; }
+
+/* Everything the strip covers moves down by exactly its height. */
+body.ws-tabs-open .app-shell { padding-top: var(--ws-tabbar-h); }
+body.ws-tabs-open .sidebar {
+  top: var(--ws-tabbar-h);
+  height: calc(100vh - var(--ws-tabbar-h));
+}
+body.ws-tabs-open .opportunity-overlay,
+body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
+
+.ws-tab {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  min-width: 96px;
+  max-width: 210px;
+  flex: 0 1 auto;
+  padding-right: 4px;
+  background: rgba(255, 255, 255, .07);
+  border-radius: 8px 8px 0 0;
+  color: rgba(246, 251, 251, .62);
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.ws-tab:hover { background: rgba(255, 255, 255, .14); color: #f6fbfb; }
+
+.ws-tab.active {
+  background: var(--page);
+  color: var(--ink);
+}
+.ws-tab.active .ws-tab-icon { color: var(--teal-700); opacity: 1; }
+
+.ws-tab-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--s2) 0 var(--s3);
+  background: none;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ws-tab-main:focus-visible { box-shadow: var(--focus-ring-dark); outline: none; }
+.ws-tab.active .ws-tab-main:focus-visible { box-shadow: var(--focus-ring); }
+
+.ws-tab-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .72;
+}
+
+.ws-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease), background var(--dur-2) var(--ease);
+}
+.ws-tab:hover .ws-tab-close,
+.ws-tab.active .ws-tab-close,
+.ws-tab-close:focus-visible { opacity: .6; }
+.ws-tab-close:hover { opacity: 1; background: rgba(0, 0, 0, .18); }
+
+@media (max-width: 900px) {
+  .ws-tab { min-width: 44px; }
+  .ws-tab-title { display: none; }
+}
+
+/* The "+" and its feature menu — the only way to a second feature while a full-screen one is
+   open, since those overlays sit on top of the sidebar. */
+.ws-tab-new-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: 0 0 3px 4px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  color: rgba(246, 251, 251, .55);
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.ws-tab-new-btn:hover { background: rgba(255, 255, 255, .15); color: #fff; }
+.ws-tab-new-btn:focus-visible { box-shadow: var(--focus-ring-dark); outline: none; }
+
+.ws-open-menu {
+  position: fixed;
+  z-index: 960;
+  width: 264px;
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  padding: var(--s2);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--e3);
+}
+
+.ws-open-menu-group {
+  padding: var(--s2) var(--s2) 4px;
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ws-open-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: 7px var(--s2);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-open-menu-item:hover { background: var(--soft-2); }
+.ws-open-menu-item:focus-visible { background: var(--soft-2); box-shadow: var(--focus-ring); outline: none; }
+.ws-open-menu-item .ws-tab-icon { color: var(--teal-700); opacity: .85; }
+
+.ws-open-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ws-open-menu-open {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--teal-100);
+  color: var(--teal-700);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}

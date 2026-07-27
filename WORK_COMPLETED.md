@@ -4764,3 +4764,119 @@ the honest thing to do with a test that was encoding the defect.
   They read the same `ResalePricing`, so `EvidenceCompCount` is a one-line swap on each — deliberately
   left out of this change to keep it to one board.
 - Nothing writes to eBay. No pricing source, key or credential was touched.
+
+---
+
+## One feature per tab — the app becomes a workspace (autonomous session, 2026-07-27)
+
+### The complaint
+
+Every screen in this app is a fixed, full-viewport overlay, and opening one **closed** the one
+before it. Find a pallet on the Lot Analyzer, go price the parts on Ship Smart, come back — the
+manifest is gone and the scan runs again. The seller could hold exactly one thought at a time.
+
+Worse, those overlays sit **on top of the sidebar** (`position: fixed; inset: 0; z-index: 900`), so
+with any feature open the nav was not merely unhelpful, it was unclickable. The only way to a
+second screen was to close the first.
+
+### The change
+
+The AI Listing modal already had the right idea one level down: `newDraftTab` / `switchDraftTab` /
+`renderDraftTabs` / `closeDraftTab`, a browser-style strip of open drafts. That model is now lifted
+one level up, so a **feature** is a tab.
+
+| Piece | Draft tabs (existing) | Workspace tabs (new) |
+|---|---|---|
+| Model | `draftTabs[]`, `activeDraftTabId` | `workspaceTabs[]`, `activeWorkspaceTabId` |
+| Create | `newDraftTab()` | `newWorkspaceTab(page)` |
+| Switch | `switchDraftTab(id)` | `activateWorkspaceTab(tab)` |
+| Render | `renderDraftTabs()` | `renderWorkspaceTabs()` |
+| Close | `closeDraftTab(id)` | `closeWorkspaceTab(id)` |
+| Opener | `nl-tab-new-btn` (+) | `ws-tab-new-btn` (+) → feature menu |
+
+**Navigation collapsed to one line.** `handleNav` was a 90-line ladder — eighteen "hide that
+section" lines followed by eighteen "if this page, show that section" branches. It is now
+`openWorkspaceTab(page)`, and the ladder became one table, `WORKSPACE_PAGES`: route → section id →
+the screen's existing opener. Adding a screen is one row.
+
+**Switching back does not re-run the scan.** A tab's `open` function runs on the *first* visit
+only; after that the tab is put back exactly as it was left. That is the whole point — a finished
+Local Deals board cost eBay calls and comp lookups, and showing it again must not spend them
+twice. Two escape hatches exist for screens where a stale view is the wrong answer:
+
+- `refresh` — re-run on every return. Set for **Logs** and **License** only, because their entire
+  content is server state. Deliberately **not** set for Settings: it would overwrite fields the
+  seller may be halfway through typing.
+- `onShow` / `onHide` — the Auction Sniper's countdown ticker starts and stops with its tab, so no
+  timer runs for a screen nobody is looking at.
+
+**A route to the second feature.** Since the overlays bury the sidebar, the `+` on the strip opens
+a menu of every feature — built from the sidebar's own children, groups and all, so the two lists
+cannot disagree. Already-open features carry an `OPEN` badge and switch to their tab rather than
+opening a duplicate.
+
+**✕ and 🏠 stopped meaning the same thing.** Every screen header had both, and both did *exactly*
+the same thing: throw the screen away and go back to the Dashboard. Now ✕ closes that one tab
+(landing on its neighbour, not on the Dashboard), and 🏠 brings the Dashboard forward while the
+screen **stays open on the bar**. Both tooltips say so.
+
+### Keyboard
+
+The strip is a real ARIA tablist with **manual** activation — a screen can cost API calls to load,
+so arrowing past one must not open it.
+
+| Key | Effect |
+|---|---|
+| `Tab` | Reaches the strip first — it is the first element in the document |
+| `←` `→` `Home` `End` | Move focus between tabs without activating them |
+| `Enter` / `Space` | Open the focused tab |
+| `Delete` / `Backspace` | Close the focused tab, keeping focus in the strip |
+| `+` then `↑` `↓`, `Esc` | Feature menu: move, then dismiss back to the `+` |
+
+Only the selected tab is in the page tab order (`tabindex="-1"` on the rest), so `Tab` does not
+walk through twenty open features before reaching the screen being read.
+
+### Files
+
+| File | Change |
+|---|---|
+| `wwwroot/app.js` | `WORKSPACE_PAGES` table; `openWorkspaceTab` / `activateWorkspaceTab` / `markWorkspaceTabOpen` / `closeWorkspaceTab` / `closeWorkspacePage` / `renderWorkspaceTabs` / `renderWorkspaceMenu` / `syncWorkspaceHash`; `handleNav` reduced to one line; `navigateTo` and `setActiveNavItem` extracted and used by all three navigation routes; every `show*Section` ends in `markWorkspaceTabOpen`; every `close*Section` routes through `closeWorkspacePage` |
+| `wwwroot/index.html` | `#ws-tab-bar` (role=tablist) + `#ws-tab-new-btn` + `#ws-open-menu` above the app shell; ✕/🏠 tooltips say what they now do. `app.js?v=66`, `style.css?v=57` |
+| `wwwroot/style.css` | `.ws-*` — the strip, tabs, the `+` and its menu, on the existing tokens |
+| `Tests/WorkspaceTabsAssetTests.cs` | **New** — the three lists that have to agree |
+
+### The one thing worth knowing about the layout
+
+`--ws-tabbar-h` is **0px until a second tab exists**. A seller who only ever uses the Dashboard
+never pays for chrome they do not use, and nothing moves. Once the strip appears, the app shell,
+the sticky sidebar and every full-screen overlay shift down by exactly that token — one number,
+one place.
+
+### Verified
+
+- `dotnet build` — 0 errors.
+- `dotnet test` — **1713 passed, 0 failed** (7 new).
+- **Real browser (Playwright, dev port 9394) — 43 checks, all passing.** Four features open at
+  once; a query typed into the Local Deals box survives switching away and back; the URL follows
+  the active tab and a reload rebuilds it; ✕ on the tab and ✕ in the header each close exactly one
+  tab and land on the neighbour; 🏠 leaves the tab open; the `+` menu marks what is open and
+  switches rather than duplicating; `←`/`→`/`Home`/`End`/`Enter`/`Delete` all behave; the AI
+  Listing screen is a tab whose *draft* tabs survive a round trip through another feature; the
+  Dashboard has no ✕; **no page errors**.
+- One real bug found and fixed by that run: dismissing the `+` menu with `Escape` also reached the
+  document-level `Escape` handlers that close the Opportunity Finder and Photo Library, so
+  cancelling a menu closed the screen behind it. The key now stops at the menu.
+
+### Not verified / known limits
+
+- **Open tabs do not survive a reload.** The URL hash restores the *one* screen it names, and the
+  bar rebuilds as Dashboard + that screen. Persisting the whole set needs a session store and a
+  decision about re-running each screen's loader on restore; deliberately out of this change.
+- **Tabs cannot be reordered or dragged**, and there is no overflow menu — with many open, the
+  strip scrolls horizontally, which can push the `+` off the right edge. Both are additions to the
+  same render function rather than changes to the model.
+- **Every open tab keeps its section in the DOM.** That is what makes switching free; it also means
+  a dozen open boards hold a dozen boards' worth of nodes. No screen was measured for this, and
+  nothing is evicted.
+- Nothing writes to eBay. No pricing source, key or credential was touched, and no server code
+  changed — this is entirely the three shipped web assets plus one test.

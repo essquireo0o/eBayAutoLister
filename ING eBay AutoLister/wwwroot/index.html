@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=56" />
+  <link rel="stylesheet" href="style.css?v=57" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -32,6 +32,25 @@
       <symbol id="i-pipeline" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="10" rx="1"/><rect x="9.5" y="4" width="5" height="16" rx="1"/><rect x="16" y="4" width="5" height="7" rx="1"/></symbol>
     </defs>
   </svg>
+
+  <!--
+    Workspace tabs. One tab per open feature, so pricing a pallet no longer closes the sourcing
+    board that found it. Rendered by renderWorkspaceTabs() in app.js — the same tab model the AI
+    Listing drafts use, one level up. Empty and out of the layout until a second tab exists
+    (body.ws-tabs-open); it sits first in the document so it is also the first thing Tab reaches.
+  -->
+  <div id="ws-tab-bar" class="ws-tab-bar" role="tablist" aria-label="Open features">
+    <!--
+      Every feature screen is a fixed, full-viewport overlay, so with one of them open the sidebar
+      underneath it cannot be clicked. This is the way to a SECOND feature without closing the
+      first — the same job the "+" on the draft tab bar does, one level up. Its menu is built from
+      the sidebar itself, so the two can never list different features.
+    -->
+    <button id="ws-tab-new-btn" class="ws-tab-new-btn" type="button"
+            aria-haspopup="menu" aria-expanded="false" aria-controls="ws-open-menu"
+            title="Open another feature in a new tab" aria-label="Open another feature in a new tab">+</button>
+  </div>
+  <div id="ws-open-menu" class="ws-open-menu hidden" role="menu" aria-labelledby="ws-tab-new-btn"></div>
 
   <div class="app-shell">
     <aside class="sidebar">
@@ -379,8 +398,8 @@
               <button id="nl-load-all-drafts-btn" class="nl-load-all-drafts-btn" type="button" title="Load all saved drafts as tabs">Open All Drafts</button>
               <button id="nl-clear-drafts-btn" class="nl-clear-drafts-btn" type="button" title="Delete all saved drafts and clear all tabs">Clear All</button>
             </div>
-            <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <button id="nl-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="nl-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
 
           <!-- Action cards — outcome-driven, not generic form fields -->
@@ -926,14 +945,14 @@
       <section id="opportunity-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="opp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="opp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Opportunity Finder</div>
               <h2>🔍 Surface What's Worth Listing Next</h2>
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
-            <button id="opp-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="opp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1394,7 +1413,7 @@
       <section id="photo-library-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="pl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="pl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Photo Library</div>
               <h2>📸 Your Real Stock Photos, by Model</h2>
@@ -1402,7 +1421,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="pl-refresh" class="btn btn-secondary small" type="button">Refresh</button>
-            <button id="pl-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="pl-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1458,7 +1477,7 @@
       <section id="inventory-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="inv-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="inv-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Inventory Health</div>
               <h2>💸 Find the Money Stuck in Your Listings</h2>
@@ -1472,7 +1491,7 @@
                  ignoring their suggested price for months need a whole plan, not another cut. -->
             <button id="inv-to-rescue" class="btn btn-secondary" type="button">🛟 Rescue aging stock</button>
             <button id="inv-scan-btn" class="btn btn-primary" type="button">🔎 Scan My Listings</button>
-            <button id="inv-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="inv-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1585,7 +1604,7 @@
       <section id="offers-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="wo-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="wo-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Offers to Watchers</div>
               <h2>👁 Turn Watchers Into Buyers</h2>
@@ -1593,7 +1612,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="wo-scan-btn" class="btn btn-primary" type="button">👁 Find My Watchers</button>
-            <button id="wo-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="wo-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1712,7 +1731,7 @@
       <section id="rescue-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="rsc-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="rsc-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Rescue Aging Stock</div>
               <h2>🛟 Turn Dead Stock Back Into Cash</h2>
@@ -1720,7 +1739,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="rsc-scan-btn" class="btn btn-primary" type="button">🛟 Rescue My Aging Stock</button>
-            <button id="rsc-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="rsc-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1827,7 +1846,7 @@
       <section id="budget-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="bud-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="bud-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Spend My Budget</div>
               <h2>💵 Put Every Dollar Where It Makes The Most</h2>
@@ -1835,7 +1854,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="bud-plan-btn" class="btn btn-primary" type="button">💵 Plan My Basket</button>
-            <button id="bud-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="bud-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -1927,7 +1946,7 @@
       <section id="promoted-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="ad-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="ad-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Promoted Listings ROI</div>
               <h2>📣 The Ad Rate That Keeps The Most Money</h2>
@@ -1935,7 +1954,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="ad-scan-btn" class="btn btn-primary" type="button">📣 Check My Ad Rates</button>
-            <button id="ad-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="ad-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2017,7 +2036,7 @@
       <section id="shipping-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="ship-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="ship-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Ship Smart</div>
               <h2>📦 What It Really Costs To Ship</h2>
@@ -2025,7 +2044,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="ship-scan-btn" class="btn btn-primary" type="button">📦 Find My Shipping Leaks</button>
-            <button id="ship-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="ship-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2199,7 +2218,7 @@
       <section id="trends-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="tr-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="tr-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Rising-Demand Radar</div>
               <h2>📈 Buy Now — Prices Climbing</h2>
@@ -2207,7 +2226,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="tr-scan-btn" class="btn btn-primary" type="button">📈 Find What's Climbing</button>
-            <button id="tr-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="tr-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2295,7 +2314,7 @@
       <section id="relist-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="rl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="rl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">The sales that got away</div>
               <h2>♻️ Recover Lost Sales</h2>
@@ -2303,7 +2322,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="rl-scan-btn" class="btn btn-primary" type="button">♻️ Find My Lost Sales</button>
-            <button id="rl-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="rl-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2442,7 +2461,7 @@
       <section id="wts-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="wts-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="wts-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Where the money is</div>
               <h2>🧭 Where to Sell Highest</h2>
@@ -2450,7 +2469,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="wts-run-btn" class="btn btn-primary" type="button">🧭 Compare Venues</button>
-            <button id="wts-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="wts-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2524,7 +2543,7 @@
       <section id="snipe-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="sn-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="sn-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Undervalued Auction Sniper</div>
               <h2>🎯 Buy It Under Market — On eBay Itself</h2>
@@ -2532,7 +2551,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="sn-scan-btn" class="btn btn-primary" type="button">🎯 Find Underpriced Auctions</button>
-            <button id="sn-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="sn-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2596,7 +2615,7 @@
       <section id="lots-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="lot-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="lot-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Liquidation Lot Analyzer</div>
               <h2>📦 Should You Buy This Pallet?</h2>
@@ -2604,7 +2623,7 @@
           </div>
           <div class="opportunity-overlay-header-actions">
             <button id="lot-analyze-btn" class="btn btn-primary" type="button">📦 Analyze This Lot</button>
-            <button id="lot-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="lot-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2742,7 +2761,7 @@
       <section id="earnings-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="er-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="er-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Earnings Tracker</div>
               <h2>💰 Money Made</h2>
@@ -2751,7 +2770,7 @@
           <div class="opportunity-overlay-header-actions">
             <button id="er-import-btn" class="btn btn-primary" type="button">⬇ Import eBay Sales</button>
             <button id="er-log-btn" class="btn btn-secondary" type="button">＋ Log a Flip</button>
-            <button id="er-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="er-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -2929,7 +2948,7 @@
       <section id="pipeline-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
-            <button id="dp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <button id="dp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Sourced → Bought → Listed → Sold</div>
               <h2>🧭 Deal Pipeline</h2>
@@ -2938,7 +2957,7 @@
           <div class="opportunity-overlay-header-actions">
             <button id="dp-add-btn" class="btn btn-primary" type="button">＋ Add a deal</button>
             <button id="dp-refresh-btn" class="btn btn-secondary" type="button">Refresh</button>
-            <button id="dp-close" class="nl-close-btn" type="button" title="Close">✕</button>
+            <button id="dp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
         </div>
 
@@ -4020,6 +4039,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=65"></script>
+  <script src="app.js?v=66"></script>
 </body>
 </html>
