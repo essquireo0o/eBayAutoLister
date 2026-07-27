@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=42" />
+  <link rel="stylesheet" href="style.css?v=43" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -29,6 +29,7 @@
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9 15.5H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
       <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6"/><path d="M7 9h10v3a5 5 0 01-10 0z"/><path d="M12 17v4"/></symbol>
       <symbol id="i-money" viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19V3"/><path d="M3 21h18"/></symbol>
+      <symbol id="i-pipeline" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="10" rx="1"/><rect x="9.5" y="4" width="5" height="16" rx="1"/><rect x="16" y="4" width="5" height="7" rx="1"/></symbol>
     </defs>
   </svg>
 
@@ -47,6 +48,10 @@
         <!-- The one screen that reports money already in the bank rather than money forecast. It
              sits with Sell, above the tools, because it is the answer to "is any of this working". -->
         <button class="nav-item" type="button" data-page="earnings"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Money Made</button>
+        <!-- The thread between every other screen: one flip from the forecast that justified it to
+             the sale that settled it. Next to Money Made because between them they answer "what
+             have I made" and "what's still out there" — the two halves of the same question. -->
+        <button class="nav-item" type="button" data-page="pipeline"><svg class="nav-icon" aria-hidden="true"><use href="#i-pipeline"/></svg>Deal Pipeline</button>
         <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
         <button class="nav-item" type="button" data-page="ai"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
@@ -199,6 +204,20 @@
           <div class="dash-earnings-side">
             <div id="dash-earnings-spark" class="dash-earnings-spark" aria-hidden="true"></div>
             <button id="dash-earnings-open" class="btn btn-secondary" type="button">See the breakdown</button>
+          </div>
+        </div>
+
+        <!-- Money in motion. Same rule as the band above: hidden until there is real money behind
+             it, and a projection is never allowed to be the headline figure. -->
+        <div id="dash-pipeline" class="dash-earnings dash-pipeline hidden">
+          <div class="dash-earnings-main">
+            <p class="eyebrow">Money in motion</p>
+            <p id="dash-pipeline-figure" class="dash-earnings-figure">$0</p>
+            <p id="dash-pipeline-sub" class="dash-earnings-sub"></p>
+          </div>
+          <div class="dash-earnings-side">
+            <div id="dash-pipeline-next" class="dash-pipeline-next"></div>
+            <button id="dash-pipeline-open" class="btn btn-secondary" type="button">Open the pipeline</button>
           </div>
         </div>
 
@@ -1101,6 +1120,9 @@
                       <th class="num">Max to pay</th>
                       <th class="num">Offer them</th>
                       <th>Evidence</th>
+                      <!-- The way out of research and into the pipeline: track the row with the
+                           forecast it was just given, frozen, so the buy can be graded later. -->
+                      <th class="fb-arb-th-track">Track</th>
                     </tr>
                   </thead>
                   <tbody id="fb-arb-body"></tbody>
@@ -2128,6 +2150,221 @@
         </div>
       </section>
 
+      <!-- The Deal Pipeline. Every other money screen in the app is a snapshot of one moment; this
+           is the thread between them, carrying one flip from the sourcing forecast that justified
+           buying it to the sale in Money Made that settled it.
+
+           The rule the whole page is built on: projected profit and realized profit are separate
+           numbers, in separate places, and nothing adds them together. The hero is CAPITAL AT
+           RISK — real money the seller told us they actually spent — because that is the only
+           figure here that isn't an estimate. See Services/DealPipelineCalculator.cs. -->
+      <section id="pipeline-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="dp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Sourced → Bought → Listed → Sold</div>
+              <h2>🧭 Deal Pipeline</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="dp-add-btn" class="btn btn-primary" type="button">＋ Add a deal</button>
+            <button id="dp-refresh-btn" class="btn btn-secondary" type="button">Refresh</button>
+            <button id="dp-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- One hero figure, and it is deliberately the least flattering one on the page: money
+               that has left the bank and hasn't come back. The projections sit beside it, labelled
+               as projections. -->
+          <div id="dp-hero" class="dp-hero hidden">
+            <div class="dp-hero-main">
+              <p class="dp-hero-label">Your money, out in the world right now</p>
+              <p id="dp-hero-figure" class="dp-hero-figure">$0</p>
+              <p id="dp-hero-sub" class="dp-hero-sub"></p>
+            </div>
+            <div class="dp-hero-side">
+              <div class="dp-hero-stat">
+                <span class="dp-hero-stat-label">Projected profit on it</span>
+                <span id="dp-hero-projected" class="dp-hero-stat-value dp-projected">$0</span>
+                <span class="dp-hero-stat-note">forecast, not earned</span>
+              </div>
+              <div class="dp-hero-stat">
+                <span class="dp-hero-stat-label">Already realized</span>
+                <span id="dp-hero-realized" class="dp-hero-stat-value dp-realized">$0</span>
+                <span id="dp-hero-realized-note" class="dp-hero-stat-note">from completed sales</span>
+              </div>
+              <div class="dp-hero-stat">
+                <span class="dp-hero-stat-label">Forecast accuracy</span>
+                <span id="dp-hero-accuracy" class="dp-hero-stat-value">—</span>
+                <span id="dp-hero-accuracy-note" class="dp-hero-stat-note">needs a closed deal</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="dp-notice" class="inv-warning hidden"></div>
+
+          <!-- Do this next. The reason a board beats a spreadsheet: ranked by dollars at stake,
+               not by when the card was made. -->
+          <div id="dp-actions-card" class="dp-actions-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Do this next</p>
+                <h3 id="dp-actions-title">What your money is waiting on</h3>
+              </div>
+              <button id="dp-actions-toggle" class="btn btn-ghost small" type="button" aria-expanded="true">Hide</button>
+            </div>
+            <div id="dp-actions" class="dp-actions"></div>
+          </div>
+
+          <div id="dp-stats" class="er-stats hidden"></div>
+
+          <div id="dp-board" class="dp-board hidden"></div>
+
+          <div id="dp-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-pipeline"/></svg></div>
+              <div class="state-title">Turn scattered flips into something you can see.</div>
+              <p class="state-body">Track a deal from the moment you spot it — what you expect to make, what you actually paid, when it went live, and what it really earned. The board shows what money is in motion and tells you which deal is costing you by sitting still. Find something in Local Deals and press <strong>＋ Track</strong>, or add one by hand.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('dp-add-btn')?.click()">Add a deal</button>
+                <button class="btn btn-secondary" type="button" onclick="location.hash='opportunity'">Go find one</button>
+              </div>
+              <p class="state-hint">Nothing here touches eBay. It's your own record of your own money.</p>
+            </div>
+          </div>
+
+          <div id="dp-honesty" class="inv-footnote hidden"></div>
+        </div>
+
+        <!-- Add / edit a deal. Short on purpose: a name is the only thing required. A pipeline
+             nobody can be bothered to fill in tracks nothing. -->
+        <div id="dp-add-modal" class="er-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dp-add-title">
+          <div class="er-modal-card">
+            <div class="er-modal-head">
+              <h3 id="dp-add-title">Add a deal</h3>
+              <button id="dp-add-cancel" class="nl-close-btn" type="button" title="Close">✕</button>
+            </div>
+            <div class="er-modal-body">
+              <p class="er-modal-hint">Anything you're thinking about buying, have bought, or already have listed. Fill in what you know — the rest can come later.</p>
+              <div class="er-form-grid">
+                <div class="opp-field er-field-wide">
+                  <label for="dp-f-title">What is it?</label>
+                  <input id="dp-f-title" type="text" placeholder="Antminer S19 95TH" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-stage">Where is it now?</label>
+                  <select id="dp-f-stage">
+                    <option value="sourced" selected>Sourced — found it, haven't bought</option>
+                    <option value="bought">Bought — it's mine, not listed</option>
+                    <option value="listed">Listed — it's live</option>
+                  </select>
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-qty">How many</label>
+                  <input id="dp-f-qty" type="number" min="1" step="1" value="1" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-ask">Asking price, each ($)</label>
+                  <input id="dp-f-ask" type="number" min="0" step="0.01" placeholder="450.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-paid">You paid, each ($)</label>
+                  <input id="dp-f-paid" type="number" min="0" step="0.01" placeholder="380.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-extra">Gas, freight, parts ($)</label>
+                  <input id="dp-f-extra" type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-resale">You expect it to sell for ($)</label>
+                  <input id="dp-f-resale" type="number" min="0" step="0.01" placeholder="1100.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-listing">eBay listing ID</label>
+                  <input id="dp-f-listing" type="text" placeholder="1103xxxxxxxx" />
+                </div>
+                <div class="opp-field">
+                  <label for="dp-f-sku">SKU</label>
+                  <input id="dp-f-sku" type="text" placeholder="optional" />
+                </div>
+                <div class="opp-field er-field-wide">
+                  <label for="dp-f-url">Link to the listing you found</label>
+                  <input id="dp-f-url" type="url" placeholder="https://..." />
+                </div>
+                <div class="opp-field er-field-wide">
+                  <label for="dp-f-note">Note</label>
+                  <input id="dp-f-note" type="text" placeholder="Seller says it powers on, needs a PSU" />
+                </div>
+              </div>
+              <p id="dp-add-preview" class="er-log-preview">Enter what you'd pay and what it should sell for to see the projected profit.</p>
+              <p id="dp-add-error" class="er-log-error hidden"></p>
+            </div>
+            <div class="er-modal-foot">
+              <button id="dp-add-cancel-2" class="btn btn-ghost" type="button">Cancel</button>
+              <button id="dp-add-save" class="btn btn-primary" type="button">Track this deal</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Moving a card. Each stage asks only for what that stage actually knows, and reaching
+             Listed writes the shared cost basis — which is what makes the eventual sale count as
+             real profit in Money Made without anyone typing the price twice. -->
+        <div id="dp-stage-modal" class="er-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dp-stage-title">
+          <div class="er-modal-card">
+            <div class="er-modal-head">
+              <h3 id="dp-stage-title">Move this deal</h3>
+              <button id="dp-stage-cancel" class="nl-close-btn" type="button" title="Close">✕</button>
+            </div>
+            <div class="er-modal-body">
+              <p id="dp-stage-hint" class="er-modal-hint"></p>
+              <div class="er-form-grid">
+                <div class="opp-field dp-stage-buy hidden">
+                  <label for="dp-s-paid">What you paid, each ($)</label>
+                  <input id="dp-s-paid" type="number" min="0" step="0.01" placeholder="380.00" />
+                </div>
+                <div class="opp-field dp-stage-buy hidden">
+                  <label for="dp-s-extra">Gas, freight, parts ($)</label>
+                  <input id="dp-s-extra" type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+                <div class="opp-field dp-stage-buy hidden">
+                  <label for="dp-s-bought">Date you bought it</label>
+                  <input id="dp-s-bought" type="date" />
+                </div>
+                <div class="opp-field dp-stage-list hidden">
+                  <label for="dp-s-listing">eBay listing ID</label>
+                  <input id="dp-s-listing" type="text" placeholder="1103xxxxxxxx" />
+                </div>
+                <div class="opp-field dp-stage-list hidden">
+                  <label for="dp-s-sku">SKU</label>
+                  <input id="dp-s-sku" type="text" placeholder="optional" />
+                </div>
+                <div class="opp-field dp-stage-list hidden">
+                  <label for="dp-s-price">Listed at ($)</label>
+                  <input id="dp-s-price" type="number" min="0" step="0.01" placeholder="1100.00" />
+                </div>
+                <div class="opp-field dp-stage-sold hidden">
+                  <label for="dp-s-sold">Date it sold</label>
+                  <input id="dp-s-sold" type="date" />
+                </div>
+                <div class="opp-field er-field-wide dp-stage-drop hidden">
+                  <label for="dp-s-note">What happened?</label>
+                  <input id="dp-s-note" type="text" placeholder="Sold before I got there" />
+                </div>
+              </div>
+              <p id="dp-stage-preview" class="er-log-preview hidden"></p>
+              <p id="dp-stage-error" class="er-log-error hidden"></p>
+            </div>
+            <div class="er-modal-foot">
+              <button id="dp-stage-cancel-2" class="btn btn-ghost" type="button">Cancel</button>
+              <button id="dp-stage-save" class="btn btn-primary" type="button">Move it</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
           <div>
@@ -3015,6 +3252,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=52"></script>
 </body>
 </html>

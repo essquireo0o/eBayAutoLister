@@ -258,6 +258,13 @@ builder.Services.AddSingleton<PromotedListingAdvisor>();
 // eBay can never supply, so a cost typed once in Inventory Health counts the profit here too.
 builder.Services.AddSingleton<EarningsStore>();
 builder.Services.AddSingleton<EarningsCalculator>();
+// The Deal Pipeline — the thread that joins all of the above. Every other money service answers
+// one question about one moment; this one carries a single flip from the sourcing forecast that
+// justified the buy, through the cash that left the bank, to the sale in EarningsStore that
+// settled it. It computes no profit of its own: the projection is frozen at tracking time and the
+// realized figure comes from Money Made, so the two can be compared without either being fudged.
+builder.Services.AddSingleton<DealStore>();
+builder.Services.AddSingleton<DealPipelineCalculator>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -2287,6 +2294,167 @@ static EarningsResult BuildEarnings(
 
     // Local time, not UTC: "this month" has to mean the month the seller is living in.
     return calculator.Summarize(computed, DateTimeOffset.Now);
+}
+
+// ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────
+// Everything above answers one question about one moment. This carries a single flip end to end:
+// the forecast that justified buying it, the cash that actually left, the listing it went into,
+// and the sale that settled it — so the seller can see what money is in motion and what to do next.
+//
+// It reaches into two existing stores rather than keeping its own copies:
+//   * EarningsStore supplies realized profit, which uses the fee eBay actually charged.
+//   * CostBasisStore is written when a deal is listed, so the price paid — typed once, at the
+//     moment it was paid — becomes the break-even floor in Inventory Health AND the cost of goods
+//     in Money Made, with nobody typing it a second time.
+//
+// Nothing here touches eBay. The whole feature is the app's own database.
+
+app.MapGet("/api/deals", (
+    DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile) =>
+    Results.Ok(BuildPipeline(deals, earnings, costBasis, earningsCalc, pipeline, feeProfile)));
+
+// Tracking a deal. Called by "Track" in the goldmine table — which hands over the projection it
+// just computed — and by the Add-a-deal form. Tracking the same local post twice updates the card
+// rather than duplicating its capital and its projected profit into every total on the board.
+app.MapPost("/api/deals", (
+    DealUpsertRequest req, DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile, ActionLog log) =>
+{
+    try
+    {
+        if (req.Id is > 0)
+        {
+            var updated = deals.ApplyEdit(req.Id.Value, req);
+            if (updated is null) return Results.NotFound("That deal is no longer on the board.");
+            log.Add("Info", "Deal updated", $"#{updated.Id} \"{updated.Title}\" — {DealStages.Label(updated.Stage)}");
+        }
+        else
+        {
+            var deal = DealStore.FromRequest(req);
+            var inserted = deals.Upsert(deal);
+            log.Add("Info", inserted ? "Deal tracked" : "Deal re-tracked",
+                $"\"{deal.Title}\"{(deal.ProjectedNetProfit is > 0 ? $" — {deal.ProjectedNetProfit * deal.Quantity:C0} projected" : "")}");
+        }
+
+        return Results.Ok(BuildPipeline(deals, earnings, costBasis, earningsCalc, pipeline, feeProfile));
+    }
+    catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+});
+
+// Moving a card. This is where the pipeline pays for itself: reaching Listed with a listing ID and
+// a purchase price writes the shared cost basis, which is the number Money Made needs before it
+// will count a sale as profit at all.
+app.MapPost("/api/deals/{id:long}/stage", (
+    long id, DealUpsertRequest req, DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile, ActionLog log) =>
+{
+    var before = deals.Get(id);
+    if (before is null) return Results.NotFound("That deal is no longer on the board.");
+
+    DealRecord deal;
+    try
+    {
+        var updated = deals.ApplyEdit(id, req);
+        if (updated is null) return Results.NotFound("That deal is no longer on the board.");
+        deal = updated;
+    }
+    catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+
+    var result = ApplyDealCostBasis(deal, earnings, costBasis);
+    log.Add("Info", $"Deal moved to {DealStages.Label(deal.Stage)}",
+        $"\"{deal.Title}\"{(result.CostBasisSaved ? $" — cost basis {result.CostBasisUnitCost:C2} recorded" : "")}");
+
+    result.Pipeline = BuildPipeline(deals, earnings, costBasis, earningsCalc, pipeline, feeProfile);
+    return Results.Ok(result);
+});
+
+// "Apply what you paid" — the one-click fix for a sold deal whose completed sales are sitting in
+// Money Made uncounted. The pipeline already knows the purchase price; this pushes it to the shared
+// cost table so the profit the seller has already earned starts being reported.
+app.MapPost("/api/deals/{id:long}/apply-cost", (
+    long id, DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile, ActionLog log) =>
+{
+    var deal = deals.Get(id);
+    if (deal is null) return Results.NotFound("That deal is no longer on the board.");
+    if (deal.PurchasePrice is null)
+        return Results.BadRequest("This deal has no purchase price recorded yet, so there's nothing to apply.");
+    if (string.IsNullOrWhiteSpace(deal.ListingId) && string.IsNullOrWhiteSpace(deal.Sku))
+        return Results.BadRequest("Add the eBay listing ID or SKU first — that's what joins the cost to the sale.");
+
+    var result = ApplyDealCostBasis(deal, earnings, costBasis);
+    log.Add("Info", "Cost basis applied from the deal pipeline",
+        $"\"{deal.Title}\" — {result.CostBasisUnitCost:C2}, pricing {result.SalesPriced} completed sale(s)");
+
+    result.Pipeline = BuildPipeline(deals, earnings, costBasis, earningsCalc, pipeline, feeProfile);
+    return Results.Ok(result);
+});
+
+app.MapDelete("/api/deals/{id:long}", (
+    long id, DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile, ActionLog log) =>
+{
+    if (!deals.Delete(id)) return Results.NotFound("That deal is no longer on the board.");
+    // The cost basis is deliberately left behind: it belongs to the listing, other sales may
+    // already be priced by it, and deleting a card off a board is not a statement about what the
+    // item cost.
+    log.Add("Info", "Deal removed from the pipeline", $"#{id}");
+    return Results.Ok(BuildPipeline(deals, earnings, costBasis, earningsCalc, pipeline, feeProfile));
+});
+
+// Writes what the seller paid into the SHARED cost-basis table, and reports how many already-
+// completed sales that just gave a real profit figure to. Inbound extras are divided across the
+// units, because CostBasisEntry is per unit and a $60 pickup run on a lot of six is $10 a unit.
+static DealStageChangeResult ApplyDealCostBasis(DealRecord deal, EarningsStore earnings, CostBasisStore costBasis)
+{
+    var result = new DealStageChangeResult();
+
+    var hasKey = !string.IsNullOrWhiteSpace(deal.ListingId) || !string.IsNullOrWhiteSpace(deal.Sku);
+    if (!hasKey || deal.PurchasePrice is null) return result;
+
+    var perUnitExtra = deal.Quantity > 0 ? Math.Round(deal.PurchaseExtraCost / deal.Quantity, 2) : deal.PurchaseExtraCost;
+
+    // Counted BEFORE the write: these are the sales whose profit was unknown and is about to be
+    // known. Counting after would report zero every time.
+    result.SalesPriced = earnings.GetAll().Count(f =>
+        f.Status == "paid" && f.UnitCost is null
+        && ((!string.IsNullOrWhiteSpace(deal.ListingId) && string.Equals(f.ListingId, deal.ListingId, StringComparison.OrdinalIgnoreCase))
+         || (!string.IsNullOrWhiteSpace(deal.Sku) && string.Equals(f.Sku, deal.Sku, StringComparison.OrdinalIgnoreCase)))
+        && CostBasisStore.Find(costBasis.GetAll(), f.ListingId, f.Sku) is null);
+
+    costBasis.Save(new CostBasisEntry
+    {
+        ListingId = deal.ListingId,
+        Sku = deal.Sku,
+        UnitCost = deal.PurchasePrice.Value,
+        InboundShipping = perUnitExtra,
+        Note = $"From the deal pipeline — {deal.Title}",
+        AcquiredUtc = deal.BoughtUtc,
+    });
+
+    result.CostBasisSaved = true;
+    result.CostBasisUnitCost = Math.Round(deal.PurchasePrice.Value + perUnitExtra, 2);
+    result.Message = result.SalesPriced > 0
+        ? $"Recorded {result.CostBasisUnitCost:C2} as what this cost you — that also prices {result.SalesPriced} completed sale{(result.SalesPriced == 1 ? "" : "s")} in Money Made."
+        : $"Recorded {result.CostBasisUnitCost:C2} as what this cost you. Inventory Health now has a real break-even floor for it, and any sale will count as real profit.";
+    return result;
+}
+
+// One place that assembles the board, so every mutation answers with the recomputed pipeline and
+// the browser never has to re-derive a total.
+static DealPipelineResult BuildPipeline(
+    DealStore deals, EarningsStore earnings, CostBasisStore costBasis,
+    EarningsCalculator earningsCalc, DealPipelineCalculator pipeline, FeeProfile feeProfile)
+{
+    // One read of the cost table for the whole set, exactly as BuildEarnings does — a board with
+    // 200 deals must not become 200 scans of the same table.
+    var costs = costBasis.GetAll();
+    var computed = earnings.GetAll()
+        .Select(flip => earningsCalc.Compute(flip, CostBasisStore.Find(costs, flip.ListingId, flip.Sku), feeProfile))
+        .ToList();
+
+    return pipeline.Build(deals.GetAll(), computed, DateTimeOffset.UtcNow);
 }
 
 // ── Offers to watchers ────────────────────────────────────────────────────────────────────────

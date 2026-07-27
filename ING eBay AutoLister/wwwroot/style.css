@@ -4551,7 +4551,9 @@ textarea {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  min-width: 940px;
+  /* Raised with the Track column: below this the Evidence cell squeezes into four wrapped lines
+     rather than the wrapper scrolling, which is the behaviour the overflow is there to provide. */
+  min-width: 1040px;
 }
 .fb-arb-table th {
   text-align: left;
@@ -8198,4 +8200,315 @@ td.skeleton-cell { padding: 0 !important; }
   .dash-earnings-spark { display: none; }
   .er-cost-entry { width: 100%; }
   .er-cost-input { flex: 1; width: auto; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Deal Pipeline — Sourced → Bought → Listed → Sold
+   The colour system carries the one distinction the whole feature rests on:
+   PROJECTED money is gold (a forecast, warm, unproven) and REALIZED money is
+   green (banked — the same green Money Made uses). They never share a colour,
+   never share a row, and are never summed. Urgency is amber/red and belongs
+   to actions only: a large number is not an emergency, a stuck one is.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.dp-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s7);
+  flex-wrap: wrap;
+  margin-bottom: var(--s5);
+  padding: var(--s6) var(--s7);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--teal-700);
+  background:
+    radial-gradient(1000px 220px at 90% -50%, rgba(224, 187, 99, .30), transparent 62%),
+    linear-gradient(135deg, var(--teal-900), var(--teal-700));
+  box-shadow: var(--e3);
+  color: #fff;
+}
+
+.dp-hero-label {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--gold-light);
+}
+
+.dp-hero-figure {
+  margin: var(--s2) 0 var(--s1);
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  color: #fff;
+}
+
+.dp-hero-sub { margin: 0; font-size: var(--fs-base); color: rgba(255, 255, 255, .84); }
+
+.dp-hero-side { display: flex; gap: var(--s6); flex-wrap: wrap; }
+.dp-hero-stat { display: flex; flex-direction: column; gap: 2px; max-width: 210px; }
+
+.dp-hero-stat-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .62);
+}
+
+.dp-hero-stat-value { font-size: var(--fs-lg); font-weight: 700; color: #fff; }
+.dp-hero-stat-note  { font-size: var(--fs-2xs); color: rgba(255, 255, 255, .55); line-height: 1.4; }
+
+/* On the dark hero both money colours have to lift enough to read, but they
+   stay recognisably gold and green so the meaning survives the surface. */
+.dp-hero .dp-projected { color: var(--gold-light); }
+.dp-hero .dp-realized  { color: #8fe3bd; }
+.dp-hero .dp-under     { color: #ffd9a1; }
+
+/* ── Do this next ───────────────────────────────────────────────────────── */
+
+.dp-actions-card {
+  margin-bottom: var(--s5);
+  padding: var(--s5) var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.dp-actions { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s4); }
+
+.dp-action {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+
+/* Urgency is the left edge. A whole row washed in red makes every row shout,
+   and then none of them do. */
+.dp-action-normal { border-left-color: var(--line-strong); }
+.dp-action-warn   { border-left-color: var(--warning); background: var(--warning-soft); }
+.dp-action-urgent { border-left-color: var(--danger);  background: var(--danger-soft); }
+
+.dp-action-money {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dp-action-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dp-action-label { font-size: var(--fs-sm); font-weight: 700; color: var(--ink); }
+.dp-action-detail { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.45; }
+.dp-action-go { white-space: nowrap; }
+
+/* ── The board ──────────────────────────────────────────────────────────── */
+
+.dp-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+  align-items: start;
+}
+
+.dp-col {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--soft);
+  padding: var(--s3);
+  min-width: 0;
+}
+
+/* Only the last column is tinted — that is where money actually came back,
+   and it is the direction every other column is heading. */
+.dp-col-sold { border-color: var(--success-line); background: var(--success-soft); }
+
+.dp-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.dp-col-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.dp-col-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+}
+
+.dp-col-money {
+  margin: var(--s1) 0 var(--s3);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.dp-col-body { display: flex; flex-direction: column; gap: var(--s2); }
+
+.dp-col-empty {
+  margin: 0;
+  padding: var(--s4) var(--s3);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+}
+
+/* ── One card ───────────────────────────────────────────────────────────── */
+
+.dp-card {
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.dp-card-warn   { box-shadow: inset 3px 0 0 var(--warning), var(--e1); }
+.dp-card-urgent { box-shadow: inset 3px 0 0 var(--danger),  var(--e1); }
+
+.dp-card-head { display: flex; align-items: flex-start; gap: var(--s2); }
+
+.dp-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.dp-card-title:hover { color: var(--teal-600); text-decoration: underline; }
+
+.dp-card-meta {
+  margin: var(--s1) 0 var(--s2);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.dp-auto { color: var(--info); font-weight: 600; }
+
+.dp-card-money {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.dp-money-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.dp-money-row b { font-variant-numeric: tabular-nums; font-weight: 700; }
+.dp-money-quiet { color: var(--muted); }
+.dp-money-quiet b { color: var(--muted); font-weight: 600; }
+
+.dp-projected { color: var(--gold-dark); }
+.dp-realized  { color: var(--success); }
+.dp-loss      { color: var(--danger); }
+.dp-under     { color: var(--warning); }
+
+.dp-card-flag {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.dp-card-basis {
+  margin: var(--s1) 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.dp-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin-top: var(--s3);
+}
+
+/* ── The dashboard band ─────────────────────────────────────────────────── */
+/* Teal, not green: this is money OUT, and wearing the earnings band's green
+   would read as profit at a glance. */
+.dash-pipeline {
+  border-color: var(--info-line);
+  background: linear-gradient(135deg, var(--info-soft), var(--card));
+}
+
+.dash-pipeline .dash-earnings-figure { color: var(--teal-700); }
+
+.dash-pipeline-next {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+}
+
+.dash-pipeline-next-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dash-pipeline-next-text { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
+
+/* ── The Track cell in the goldmine table ───────────────────────────────── */
+
+.fb-arb-th-track { width: 92px; }
+.fb-arb-track { white-space: nowrap; }
+
+.fb-arb-tracked,
+.fb-arb-tracked-flag {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--success);
+}
+
+@media (max-width: 1200px) {
+  .dp-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .dp-board { grid-template-columns: 1fr; }
+  .dp-hero-figure { font-size: 42px; }
+  .dp-hero-side { gap: var(--s5); }
+  .dp-action { grid-template-columns: 1fr; gap: var(--s2); }
+  .dp-action-money { text-align: left; }
+  .dash-pipeline-next { display: none; }
 }

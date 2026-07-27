@@ -2840,3 +2840,136 @@ left in place, since that is the feature operating normally on the seller's own 
 covered by tests but not by live data), and profit figures against a seller who has actually filled
 in their cost basis — the connected account has none, which is precisely why the awaiting-cost block
 is the largest thing on the page today.
+
+---
+
+## 28. Deal Pipeline — what money is in motion, and what to do next (autonomous session, 2026-07-26)
+
+Sections 9–26 forecast. Section 27 reports the past. **Nothing joined them.** A single flip existed
+as four unconnected facts on four different screens — a goldmine row in Local Deals, a price paid
+that lived only in the seller's head, a listing in the grid, and eventually an order line in Money
+Made — and the thread between them was carried entirely by the seller's memory. Close the
+Opportunity Finder tab and the deal was gone.
+
+`GET /api/deals` → the new **🧭 Deal Pipeline** board, plus a **Money in motion** band on the
+dashboard and a **＋ Track** column on the goldmine table.
+
+### Why this makes the seller money
+
+1. **It finds cash that has stopped moving, which nothing else in the app can see.** Inventory
+   Health finds capital stuck in *live listings*. The money stuck **before** the listing — bought,
+   in a box, never photographed — was invisible to every screen. The board reports it as a dollar
+   figure with a clock on it: *"$170 has been sitting unlisted for 202 days. It earns nothing until
+   it's up."* On the live run that prompt was generated from a real purchase date, unprompted.
+2. **It types the cost basis once, at the moment it is actually known.** Reaching **Listed** writes
+   the purchase price to the shared `CostBasisStore`, which is the one number eBay cannot supply and
+   the one thing standing between the seller and a real profit figure. On the connected account,
+   moving one deal to Listed priced a completed sale that Money Made had been carrying as
+   uncountable — the all-time total went from **$0 to $186.99** with no number typed twice.
+3. **It grades the app's own forecasts, in public.** Every closed deal is measured against the
+   projection that justified buying it: *"Across 1 closed deal with a forecast, the app's projections
+   came in 25% better than forecast — $187 realized against $150 projected."* No other screen can
+   tell a seller whether the numbers they're acting on are worth acting on.
+4. **It catches paying over the ceiling.** A deal bought above its `maxBuyPrice` is flagged with the
+   overage. The Opportunity Finder computes that ceiling; until now nothing ever checked whether it
+   was honoured.
+5. **It credits the haggling.** Ask minus paid, per deal — *"Haggled $50 off the asking price —
+   that's profit with no fee and no wait on it."*
+
+### The rule the whole feature is built on
+
+**A projection is never money.** Projected and realized profit are separate fields on the card,
+separate totals in the summary, separate colours in the CSS (gold = forecast, green = banked), and
+nothing anywhere adds them. The hero figure is deliberately the *least* flattering number on the
+page — **capital at risk**, money that has actually left the bank — because it is the only figure
+here that isn't an estimate. A dishonest version of this feature would lead with projected upside,
+and it would have been the easy thing to build.
+
+### What the calculator refuses to do
+
+| Rule | Why |
+|---|---|
+| A one-unit deal claims **one** sale from a listing that has sold fourteen times | Attributing all fourteen reports a $300 flip as $4,200 of realized profit. Matching is capped at the deal's quantity, bounded to the deal's own lifetime, and a sale already claimed by an earlier deal is never claimed twice. |
+| A **part-sold lot is not a closed deal** | Found by a test: two of four units sold auto-advanced the card to Sold and retired the other two units' capital, so $200 vanished from "at risk" while it was still in the garage. Only a fully sold deal moves. |
+| A half-sold lot is **not graded** | A 2-of-10 partial measured against a 10-unit forecast reports an 80% miss on a deal going exactly to plan. |
+| A sale with no cost basis contributes **no realized profit** | Same rule as Money Made, for the same reason — the proceeds are known, the profit is not. |
+| Accuracy is **omitted** against a zero or negative forecast | There is no meaningful percentage there, only noise. |
+| **Nobody is told to go and buy something the forecast says loses money** | The most useful thing a pipeline can do with a bad deal is fail to produce a prompt for it. |
+| A card with nothing wrong with it gets **no prompt** | A board that nags about everything is one where the genuinely stuck $1,200 goes unnoticed. |
+| A listing selling inside **its own** forecast window is left alone | A part that was always going to take four months is not overdue at day 46. Where the deal carries no forecast, 45 days applies. |
+| Three days of grace before a stall is flagged | Photographing and writing a listing is real work; flagging the morning after the buy trains the seller to ignore the flag. |
+| **Dropped** capital is spent, not at risk | A write-off is a settled loss. Leaving it in "money in motion" keeps reporting cash that can't come back. |
+| A median cash cycle needs **three** closed deals | Below that it's one of the two numbers wearing a statistic's name. |
+| The frozen forecast is **never re-run** | Re-pricing an old deal against today's comps would quietly rewrite history and make the accuracy figure above worthless. |
+| Projected profit is **rebased** on the price actually paid | Net profit moves exactly one dollar per dollar paid — the identity behind `LocalArbitrageAnalyzer`'s max-buy price — so this is arithmetic, not a second forecast. The sale-side estimate is untouched. |
+
+### Two defects the live run caught
+
+The board was pointed at the connected account's **50 real imported sales** rather than reasoned
+about in the abstract.
+
+1. **A retroactively dated purchase reported zero days in stage.** Logging a January buy today
+   measured the stall from the *click*, not the purchase — hiding the oldest, most stuck money on
+   the board behind the newest card. `StageSince` now takes the date the stage was reached. That one
+   deal went from "0 days, normal" to "**202 days, urgent**". Now a test.
+2. **A part-sold lot auto-closed and hid its remaining capital** (above). Found by a test before it
+   reached the browser; fixed in the calculator, not the test.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/DealModels.cs` | **New** — `DealRecord` (the frozen forecast + what has happened since), `DealCard`, `DealAction`, `DealStageSummary`, `DealPipelineSummary`, `DealPipelineResult`, `DealUpsertRequest`, `DealStageChangeResult`, `DealStages` |
+| `Services/DealStore.cs` | **New** — SQLite `deals` table beside `flips` and `listing_cost_basis`. Unique index on `(source, source_item_id)` so pressing Track twice updates rather than duplicating the capital; field-level edits so a partial write can't blank the frozen projection |
+| `Services/DealPipelineCalculator.cs` | **New** — pure. Sale matching, the money, stage derivation, the flags and the ranked next actions. Computes no profit of its own: realized figures arrive already worked out from `EarningsCalculator` |
+| `Program.cs` | DI + `GET /api/deals`, `POST /api/deals`, `POST /api/deals/{id}/stage`, `POST /api/deals/{id}/apply-cost`, `DELETE /api/deals/{id}`; `ApplyDealCostBasis` (the write into the shared cost table, and how many completed sales it just priced) and `BuildPipeline` |
+| `wwwroot/index.html` | `#pipeline-section` (hero, do-this-next, stat tiles, 4-column board, add/move modals), `Deal Pipeline` nav entry, `#i-pipeline` icon, `#dash-pipeline` band, `Track` column on the goldmine table. `app.js?v=52`, `style.css?v=43` |
+| `wwwroot/app.js` | `bindPipeline`, `loadPipeline`, `renderPipeline*`, `dealCardHtml`, `openDealForm`/`saveDealForm`, `openStageForm`/`saveStageForm`, `applyDealCost`, `deleteDeal`, `renderDashboardPipeline`; `trackArbitrageRow` and `trackCell` on the arbitrage table |
+| `wwwroot/style.css` | `.dp-*`, `.dash-pipeline*`, `.fb-arb-track*`; `.fb-arb-table` min-width raised for the new column |
+| `ING eBay AutoLister.Tests/DealPipelineCalculatorTests.cs` | **New** — 43 tests |
+| `ING eBay AutoLister.Tests/DealStoreTests.cs` | **New** — 21 tests |
+
+### Where the stages come from, and what each one costs
+
+**Sourced** arrives from the goldmine table's `＋ Track`, carrying the forecast *and its basis*
+("14 sold comps · High confidence · Fast") frozen at that moment — a projection with no stated basis
+is impossible to argue with later, which makes it impossible to learn from. Rows with no sold
+history get no Track button: there is nothing honest to freeze. **Bought** asks for the price paid
+and the extras (gas, freight, parts) as two numbers, because that is how sellers know them.
+**Listed** asks for the listing ID — the join that lets the sale find its way home — and writes the
+cost basis. **Sold** happens by itself: an imported eBay sale moves the card, and the card says so
+(*"moved by an imported sale"*) rather than pretending someone clicked it.
+
+Nothing is written back to the stored stage on a read. The stored stage stays the record of what the
+seller said; the derived one is what the board shows.
+
+### Safety
+
+- **Nothing here touches eBay.** No listing, relisting, repricing, publishing or messaging. The
+  whole feature is the app's own SQLite database.
+- Deleting a card **leaves the cost basis behind** — it belongs to the listing, other sales may
+  already be priced by it, and removing a card off a board is not a statement about what an item cost.
+- A stage move that will change a number on another screen **says so before it happens**:
+  *"This will also record $170.00 as what this listing cost you."*
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,047 passed**, 0 failed, 0 skipped (983 pre-existing + 64 new) |
+| Live lifecycle (dev port 9375, real database) | Track → re-track (no duplicate) → Bought ($150 + $20 extras → $170 at risk, $150 expected after rebasing) → Listed against real listing `278057369628` → cost basis written, **1 real sale priced**, card auto-advanced to Sold, **$186.99 realized** from eBay's own fee, variance **+$36.99 (124.7%)**, 177-day cash cycle, capital at risk back to $0 |
+| Money Made cross-check (live) | All-time profit moved $0 → $186.99 off one cost the pipeline supplied |
+| Error paths (live) | Blank title, bought-with-no-price and a missing deal id all return 400/404 with a plain-English reason |
+| Real browser (Playwright) | Hero, do-this-next list, 6 stat tiles, 4-column board, card money rows, flags, add-a-deal modal with a live net preview, stage modal with prefills, dashboard band, and the empty state on a cleared board |
+| Track column (Playwright, stubbed search) | 14 cells per row; the priced row offers `＋ Track` and the no-sold-history row correctly offers nothing; tracking posts the frozen forecast and the deal appears in Sourced with its basis intact |
+| Browser console errors | **None** |
+
+**Test data cleaned up.** The three deals and the one cost-basis row created during verification were
+deleted; the database is back to 50 imported sales, 50 awaiting a cost, $0 counted profit, 0
+cost-basis rows and 0 deals — exactly as found.
+
+**Not verified:** a board with enough closed deals for the median cash cycle (needs three), and the
+"Apply what you paid" button end-to-end in the browser — its endpoint was exercised live and returned
+the correct message, and the rule behind it is covered by tests, but the connected account had only
+one sale available to close and it was consumed by the lifecycle run above.

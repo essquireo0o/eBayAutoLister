@@ -367,6 +367,7 @@
     bindPromoted();
     bindTrendRadar();
     bindEarnings();
+    bindPipeline();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -402,6 +403,10 @@
     // there is one, and no reason to hold the page up when there isn't. The band stays hidden
     // unless real money comes back.
     loadEarnings(true);
+
+    // Same posture: not awaited, quiet on failure. The board is only worth a front-page band
+    // when real money is actually out, so a seller with no tracked deals never sees a $0 banner.
+    loadPipeline(true);
 
     // Last, and not awaited: a listing recovered from a crash is the most valuable thing on this
     // page, but it must not delay the page loading — and if the check itself fails, the banner simply
@@ -468,8 +473,13 @@
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
     if (page !== 'earnings') $('earnings-section')?.classList.add('hidden');
+    if (page !== 'pipeline') $('pipeline-section')?.classList.add('hidden');
     if (page === 'earnings') {
       showEarningsSection();
+      return;
+    }
+    if (page === 'pipeline') {
+      showPipelineSection();
       return;
     }
     if (page === 'ai') {
@@ -525,7 +535,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'earnings-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -1304,7 +1314,7 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : `<tr><td colspan="13" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
+      : `<tr><td colspan="14" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
           ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
           : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
 
@@ -1312,6 +1322,60 @@
     // controls, so listeners attached to the previous rows are gone with them.
     body.querySelectorAll('.fb-arb-neg-btn').forEach(btn =>
       btn.addEventListener('click', () => openNegotiation(btn.dataset.key)));
+    body.querySelectorAll('.fb-arb-track-btn').forEach(btn =>
+      btn.addEventListener('click', () => trackArbitrageRow(btn.dataset.key, btn)));
+  }
+
+  // Research is only worth what gets acted on. This is the one step between a ranked table the
+  // seller closes and a deal they can still see next week — and it freezes the forecast as it
+  // stands right now, which is the only way the pipeline can grade it against the outcome later.
+  async function trackArbitrageRow(key, btn) {
+    const row = (arbitrageData?.items || []).find(r => arbRowKey(r) === key);
+    if (!row || !btn) return;
+
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Tracking…';
+
+    try {
+      const res = await fetch('/api/deals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: row.title,
+          stage: 'sourced',
+          source: row.source,
+          sourceLabel: row.sourceLabel,
+          sourceUrl: row.url,
+          sourceItemId: row.itemId,
+          askPrice: row.localAsk,
+          maxBuyPrice: row.maxBuyPrice,
+          projectedSalePrice: row.ebayExpectedSale,
+          projectedNetProfit: row.netProfit,
+          projectedRoiPercent: row.roiPercent,
+          projectedDaysToCash: row.daysToCash,
+          // What the forecast rested on, carried across verbatim. A projection with no stated
+          // basis is impossible to argue with later, which makes it impossible to learn from.
+          projectedBasis: [
+            row.soldCompCount ? `${row.soldCompCount} sold comp${row.soldCompCount === 1 ? '' : 's'}` : '',
+            row.confidenceLevel,
+            row.speedLabel,
+          ].filter(Boolean).join(' · '),
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      pipeline = await res.json();
+      renderDashboardPipeline();
+      btn.textContent = '✓ Tracked';
+      btn.classList.add('fb-arb-tracked');
+      setLocalStatus(`Tracking "${row.title}" — it's on the Deal Pipeline board, with this forecast frozen against it.`);
+      addActivity('Deal tracked', `${row.title} — ${money(row.netProfit || 0)} projected`);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = original;
+      setLocalStatus(`Couldn't track that deal: ${err.message}`);
+    }
   }
 
   // Rows have no id of their own that survives across sources, so the key is source + the site's
@@ -1370,7 +1434,26 @@
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
         <td class="num fb-arb-offer">${offerCell(row)}</td>
         <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
+        <td class="fb-arb-track">${trackCell(row)}</td>
       </tr>`;
+  }
+
+  // The way out of a research table and into the pipeline. Offered on every row that could be
+  // priced — including the ones that don't profit, because "I looked at this and walked" is worth
+  // recording too — but never on a row with no sold history, which has no forecast to freeze.
+  function trackCell(row) {
+    if (row.ebayExpectedSale == null) {
+      return '<span class="fb-arb-muted" title="Nothing sold-comp-backed to freeze against this one.">—</span>';
+    }
+    const tracked = isDealTracked(row.source, row.itemId);
+    return tracked
+      ? '<span class="fb-arb-tracked-flag" title="Already on the Deal Pipeline board.">✓ Tracked</span>'
+      : `<button class="btn btn-secondary small fb-arb-track-btn" type="button" data-key="${esc(arbRowKey(row))}">＋ Track</button>`;
+  }
+
+  function isDealTracked(source, itemId) {
+    if (!itemId || !pipeline?.deals) return false;
+    return pipeline.deals.some(d => d.deal?.source === source && d.deal?.sourceItemId === itemId);
   }
 
   // The buy-side cell: what to open at, what saying it is worth, and the way into the drafts.
@@ -3390,6 +3473,622 @@
     if (!value) return '';
     const d = new Date(value);
     return isNaN(d) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // ── Deal Pipeline ─────────────────────────────────────────────────────────
+  // Sourced → Bought → Listed → Sold. The thread between every other screen: the forecast that
+  // justified the buy, the cash that actually left, the listing it went into, and the sale that
+  // settled it, all on one card.
+  //
+  // Three rules this UI must never break, all inherited from DealPipelineCalculator:
+  //   * A projection is never money. Projected and realized profit live in different places, wear
+  //     different colours, and are never summed into one figure.
+  //   * The hero is capital at RISK — real money already spent — not the projected upside, which
+  //     is the number a dishonest version of this page would lead with.
+  //   * A card that has nothing wrong with it gets no prompt. A board that nags about everything
+  //     is a board where the genuinely stuck $1,200 goes unnoticed.
+  let pipeline = null;
+
+  // The seller's own fee rates, for the rough net this page shows while a hand-entered deal is
+  // being typed. Fetched once; the published defaults stand in if the call fails, and the preview
+  // says out loud that it's an estimate either way.
+  let dealFeeProfile = null;
+
+  async function loadDealFeeProfile() {
+    if (dealFeeProfile) return;
+    try { dealFeeProfile = await fetch('/api/fees/profile').then(r => r.json()); }
+    catch { /* the defaults below are the server's defaults too */ }
+  }
+
+  const DP_STAGES = {
+    sourced: { label: 'Sourced', icon: '🔍', blurb: 'Found it. Haven\'t paid yet.' },
+    bought:  { label: 'Bought',  icon: '💵', blurb: 'Your money is in it.' },
+    listed:  { label: 'Listed',  icon: '🏷️', blurb: 'Live and working.' },
+    sold:    { label: 'Sold',    icon: '✅', blurb: 'Money came back.' },
+  };
+
+  const DP_NEXT_STAGE = { sourced: 'bought', bought: 'listed', listed: 'sold' };
+
+  function showPipelineSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('pipeline-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'pipeline'));
+    if (!pipeline) loadPipeline(); else renderPipeline();
+  }
+
+  function closePipelineSection() {
+    $('pipeline-section')?.classList.add('hidden');
+    closeDealForm();
+    closeStageForm();
+    showDashboard();
+  }
+
+  function bindPipeline() {
+    on('dp-close', 'click', closePipelineSection);
+    on('dp-home', 'click', closePipelineSection);
+    on('dp-refresh-btn', 'click', () => loadPipeline());
+    on('dp-add-btn', 'click', () => openDealForm(null));
+    on('dp-add-cancel', 'click', closeDealForm);
+    on('dp-add-cancel-2', 'click', closeDealForm);
+    on('dp-add-save', 'click', saveDealForm);
+    on('dp-stage-cancel', 'click', closeStageForm);
+    on('dp-stage-cancel-2', 'click', closeStageForm);
+    on('dp-stage-save', 'click', saveStageForm);
+    on('dash-pipeline-open', 'click', () => { location.hash = 'pipeline'; });
+    on('dp-actions-toggle', 'click', () => toggleDisclosure('dp-actions', 'dp-actions-toggle', 'Show', 'Hide'));
+
+    // Live projected profit as the seller types, so a deal is priced before it's committed to.
+    ['dp-f-ask', 'dp-f-paid', 'dp-f-extra', 'dp-f-resale', 'dp-f-qty']
+      .forEach(id => on(id, 'input', updateDealPreview));
+    on('dp-f-stage', 'change', updateDealPreview);
+
+    $('pipeline-section')?.addEventListener('click', onPipelineClick);
+  }
+
+  async function loadPipeline(quiet) {
+    try {
+      const res = await fetch('/api/deals');
+      if (!res.ok) throw new Error(await res.text());
+      pipeline = await res.json();
+      if (!quiet) renderPipeline();
+      renderDashboardPipeline();
+    } catch (err) {
+      renderDashboardPipeline();
+      if (!quiet) setPipelineNotice(`Couldn't load the pipeline: ${err.message}`);
+    }
+  }
+
+  function setPipelineNotice(message) {
+    const el = $('dp-notice');
+    if (!el) return;
+    if (!message) { el.classList.add('hidden'); el.textContent = ''; return; }
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  function renderPipeline() {
+    const s = pipeline?.summary;
+    const deals = pipeline?.deals || [];
+    const empty = deals.length === 0;
+
+    $('dp-results')?.classList.toggle('hidden', !empty);
+    $('dp-hero')?.classList.toggle('hidden', empty);
+    $('dp-board')?.classList.toggle('hidden', empty);
+    $('dp-stats')?.classList.toggle('hidden', empty);
+    $('dp-honesty')?.classList.toggle('hidden', empty);
+    $('dp-actions-card')?.classList.toggle('hidden', empty || !(pipeline?.nextActions || []).length);
+    if (empty) return;
+
+    renderPipelineHero(s);
+    renderPipelineStats(s);
+    renderPipelineActions(pipeline.nextActions || []);
+    renderPipelineBoard(pipeline.stages || [], deals);
+
+    const honesty = $('dp-honesty');
+    if (honesty) honesty.innerHTML = (pipeline.honesty || []).map(h => `<p>${esc(h)}</p>`).join('');
+  }
+
+  function renderPipelineHero(s) {
+    setText('dp-hero-figure', moneyExact(s.capitalAtRisk || 0));
+
+    // The subline is what the hero figure is made of, because "$4,180 at risk" only means
+    // something once you can see it's four deals and which stage they're stuck in.
+    const bits = [];
+    if (s.activeDeals) bits.push(`${s.activeDeals} deal${s.activeDeals === 1 ? '' : 's'} in play`);
+    if (s.stalledCapital > 0) bits.push(`${moneyExact(s.stalledCapital)} bought but not listed`);
+    if (s.overdueCapital > 0) bits.push(`${moneyExact(s.overdueCapital)} listed longer than forecast`);
+    if (!bits.length) bits.push('nothing is tying up cash right now');
+    setText('dp-hero-sub', bits.join(' · '));
+
+    setText('dp-hero-projected', moneyExact(s.projectedProfitInMotion || 0));
+    setText('dp-hero-realized', moneyExact(s.realizedProfit || 0));
+    setText('dp-hero-realized-note',
+      s.dealsClosed ? `${s.dealsClosed} deal${s.dealsClosed === 1 ? '' : 's'} closed` : 'from completed sales');
+
+    const acc = $('dp-hero-accuracy');
+    if (acc) {
+      if (s.forecastAccuracyPercent != null) {
+        acc.textContent = `${Math.round(s.forecastAccuracyPercent)}%`;
+        // Green only for a forecast that came in at or above what it promised. A projection that
+        // overshot the outcome is the failure mode this figure exists to expose.
+        acc.className = `dp-hero-stat-value ${s.forecastAccuracyPercent >= 95 ? 'dp-realized' : 'dp-under'}`;
+        setText('dp-hero-accuracy-note',
+          `${moneyExact(s.gradedRealizedProfit)} made vs ${moneyExact(s.gradedForecastProfit)} projected`);
+      } else {
+        acc.textContent = '—';
+        acc.className = 'dp-hero-stat-value';
+        setText('dp-hero-accuracy-note', 'needs one closed deal with a cost');
+      }
+    }
+  }
+
+  function renderPipelineStats(s) {
+    const tiles = [
+      ['Capital deployed', moneyExact(s.capitalDeployedAllTime || 0), 'everything ever put into tracked deals'],
+      ['Sales revenue back', moneyExact(s.realizedRevenue || 0), `${s.dealsClosed || 0} closed`],
+      ['Won / lost', `${s.dealsProfitable || 0} / ${s.dealsAtALoss || 0}`, 'closed deals that made money, and that didn\'t'],
+      ['Median cash cycle', s.medianDaysToCash != null ? `${s.medianDaysToCash} days` : '—',
+        s.medianDaysToCash != null ? 'money out to money back' : 'needs three closed deals'],
+      ['Projected on the shelf', moneyExact(s.projectedProfitSourced || 0), 'forecast on deals not bought yet'],
+      // Scoped to this board on purpose — Money Made owns the count across every sale, and two
+      // different numbers under the same label in two places is how a seller stops trusting both.
+      ['Board sales missing a cost', String(s.salesAwaitingCost || 0), 'sales on these deals whose profit isn\'t counted yet'],
+    ];
+
+    const host = $('dp-stats');
+    if (host) host.innerHTML = tiles.map(([label, value, note]) => `
+      <div class="er-stat">
+        <span class="er-stat-label">${esc(label)}</span>
+        <span class="er-stat-value">${esc(value)}</span>
+        <span class="er-stat-note">${esc(note)}</span>
+      </div>`).join('');
+  }
+
+  function renderPipelineActions(actions) {
+    const host = $('dp-actions');
+    if (!host) return;
+
+    setText('dp-actions-title', actions.length
+      ? `${actions.length} thing${actions.length === 1 ? '' : 's'} your money is waiting on`
+      : 'Nothing is waiting on you');
+
+    host.innerHTML = actions.map(a => `
+      <div class="dp-action dp-action-${esc(a.urgency)}">
+        <span class="dp-action-money">${a.amountAtStake > 0 ? money(a.amountAtStake) : ''}</span>
+        <span class="dp-action-text">
+          <span class="dp-action-label">${esc(a.label)} — ${esc(a.title)}</span>
+          <span class="dp-action-detail">${esc(a.detail)}</span>
+        </span>
+        <span class="dp-action-go">${actionButtonHtml(a)}</span>
+      </div>`).join('');
+  }
+
+  // The prompt has to land somewhere useful. A repricing nudge belongs in Inventory Health, an
+  // unlisted buy belongs in the listing form; only the pipeline's own fixes stay on this page.
+  function actionButtonHtml(a) {
+    if (a.target === 'inventory')
+      return `<button class="btn btn-secondary small dp-go-inventory" type="button">Open Inventory Health</button>`;
+    if (a.label === 'Apply what you paid')
+      return `<button class="btn btn-primary small dp-apply-cost" type="button" data-id="${a.dealId}">Apply it</button>`;
+    const next = DP_NEXT_STAGE[a.stage];
+    if (next)
+      return `<button class="btn btn-secondary small dp-move" type="button" data-id="${a.dealId}" data-stage="${next}">Mark ${esc(DP_STAGES[next].label.toLowerCase())}</button>`;
+    return `<button class="btn btn-ghost small dp-edit" type="button" data-id="${a.dealId}">Open</button>`;
+  }
+
+  function renderPipelineBoard(stages, deals) {
+    const host = $('dp-board');
+    if (!host) return;
+
+    host.innerHTML = stages.map(col => {
+      const cards = deals.filter(d => d.stage === col.stage);
+      // Money means a different thing per column, and one shared label would be wrong in three of
+      // the four: what's at risk on the way in, what came back at the end.
+      // Blank on an empty column: the dashed placeholder below already carries the blurb, and
+      // printing it twice makes an empty column look like a rendering fault.
+      const moneyLine = !col.count ? ''
+        : col.stage === 'sold'
+        ? (col.realizedProfit ? `${moneyExact(col.realizedProfit)} realized` : `${moneyExact(col.capital)} deployed`)
+        : col.capital > 0 ? `${moneyExact(col.capital)} at risk`
+        : col.projectedProfit > 0 ? `${moneyExact(col.projectedProfit)} projected`
+        : DP_STAGES[col.stage]?.blurb || '';
+
+      return `
+        <div class="dp-col dp-col-${esc(col.stage)}">
+          <div class="dp-col-head">
+            <span class="dp-col-title">${DP_STAGES[col.stage]?.icon || ''} ${esc(col.label)}</span>
+            <span class="dp-col-count">${col.count}</span>
+          </div>
+          <p class="dp-col-money">${esc(moneyLine)}</p>
+          <div class="dp-col-body">
+            ${cards.length ? cards.map(dealCardHtml).join('')
+              : `<p class="dp-col-empty">${esc(DP_STAGES[col.stage]?.blurb || '')}</p>`}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function dealCardHtml(c) {
+    const d = c.deal || {};
+    const next = DP_NEXT_STAGE[c.stage];
+
+    // Projected and realized never share a row and never share a colour. On a closed deal the
+    // realized figure leads and the forecast becomes context for it.
+    const moneyRows = [];
+    if (c.realizedProfit != null)
+      moneyRows.push(`<span class="dp-money-row"><span>Made</span><b class="${c.realizedProfit < 0 ? 'dp-loss' : 'dp-realized'}">${moneyExact(c.realizedProfit)}</b></span>`);
+    if (c.expectedProfit != null && c.realizedProfit == null)
+      moneyRows.push(`<span class="dp-money-row"><span>Projected</span><b class="dp-projected">${moneyExact(c.expectedProfit)}</b></span>`);
+    else if (c.forecastProfit != null && c.realizedProfit == null && c.expectedProfit == null)
+      moneyRows.push(`<span class="dp-money-row"><span>Projected</span><b class="dp-projected">${moneyExact(c.forecastProfit)}</b></span>`);
+    if (c.realizedProfit != null && c.expectedProfit != null)
+      moneyRows.push(`<span class="dp-money-row dp-money-quiet"><span>Was projected</span><b>${moneyExact(c.expectedProfit)}</b></span>`);
+    if (c.capitalAtRisk > 0)
+      moneyRows.push(`<span class="dp-money-row dp-money-quiet"><span>Your cash in it</span><b>${moneyExact(c.capitalAtRisk)}</b></span>`);
+
+    const meta = [
+      d.quantity > 1 ? `×${d.quantity}` : '',
+      d.sourceLabel || (d.source && d.source !== 'manual' ? d.source : ''),
+      c.daysInStage > 0 ? `${c.daysInStage}d in ${esc(c.stageLabel.toLowerCase())}` : 'today',
+      c.daysToCashActual != null ? `${c.daysToCashActual}d to cash` : '',
+    ].filter(Boolean).join(' · ');
+
+    return `
+      <article class="dp-card${c.nextAction ? ` dp-card-${esc(c.nextAction.urgency)}` : ''}" data-id="${d.id}">
+        <header class="dp-card-head">
+          ${d.sourceUrl
+            ? `<a class="dp-card-title" href="${esc(d.sourceUrl)}" target="_blank" rel="noopener">${esc(d.title)} ↗</a>`
+            : `<span class="dp-card-title">${esc(d.title)}</span>`}
+          <button class="btn btn-ghost small dp-del" type="button" data-id="${d.id}" title="Remove this deal from the board">✕</button>
+        </header>
+        <p class="dp-card-meta">${esc(meta)}${c.stageAutoDerived ? ' · <span class="dp-auto">moved by an imported sale</span>' : ''}</p>
+        <div class="dp-card-money">${moneyRows.join('')}</div>
+        ${(c.flags || []).map(f => `<p class="dp-card-flag">${esc(f)}</p>`).join('')}
+        ${d.projectedBasis ? `<p class="dp-card-basis">Forecast from ${esc(d.projectedBasis)}</p>` : ''}
+        <footer class="dp-card-foot">
+          ${next ? `<button class="btn btn-secondary small dp-move" type="button" data-id="${d.id}" data-stage="${next}">${esc(dpMoveLabel(next))}</button>` : ''}
+          <button class="btn btn-ghost small dp-edit" type="button" data-id="${d.id}">Edit</button>
+          ${c.stage !== 'sold' ? `<button class="btn btn-ghost small dp-drop" type="button" data-id="${d.id}" title="Didn't happen, or written off">Drop</button>` : ''}
+        </footer>
+      </article>`;
+  }
+
+  function dpMoveLabel(stage) {
+    return { bought: 'I bought it', listed: 'It\'s listed', sold: 'It sold' }[stage] || 'Move';
+  }
+
+  function onPipelineClick(e) {
+    const move = e.target.closest?.('.dp-move');
+    if (move) { openStageForm(Number(move.dataset.id), move.dataset.stage); return; }
+
+    const drop = e.target.closest?.('.dp-drop');
+    if (drop) { openStageForm(Number(drop.dataset.id), 'dropped'); return; }
+
+    const edit = e.target.closest?.('.dp-edit');
+    if (edit) { openDealForm(Number(edit.dataset.id)); return; }
+
+    const del = e.target.closest?.('.dp-del');
+    if (del) { deleteDeal(Number(del.dataset.id)); return; }
+
+    const apply = e.target.closest?.('.dp-apply-cost');
+    if (apply) { applyDealCost(Number(apply.dataset.id)); return; }
+
+    if (e.target.closest?.('.dp-go-inventory')) { location.hash = 'inventory'; return; }
+  }
+
+  // ── Add / edit ────────────────────────────────────────────────────────────
+
+  let dealFormId = null;
+
+  function openDealForm(id) {
+    dealFormId = id || null;
+    const c = id ? (pipeline?.deals || []).find(x => x.id === id) : null;
+    const d = c?.deal;
+
+    setText('dp-add-title', d ? 'Edit this deal' : 'Add a deal');
+    const save = $('dp-add-save');
+    if (save) save.textContent = d ? 'Save changes' : 'Track this deal';
+
+    setVal('dp-f-title', d?.title || '');
+    setVal('dp-f-stage', c?.stage === 'sold' || c?.stage === 'dropped' ? 'listed' : (c?.stage || 'sourced'));
+    setVal('dp-f-qty', d?.quantity || 1);
+    setVal('dp-f-ask', d?.askPrice ?? '');
+    setVal('dp-f-paid', d?.purchasePrice ?? '');
+    setVal('dp-f-extra', d?.purchaseExtraCost || '');
+    setVal('dp-f-resale', d?.projectedSalePrice ?? '');
+    setVal('dp-f-listing', d?.listingId || '');
+    setVal('dp-f-sku', d?.sku || '');
+    setVal('dp-f-url', d?.sourceUrl || '');
+    setVal('dp-f-note', d?.note || '');
+
+    // The stage picker is disabled on an existing deal: moving a card is the stage modal's job,
+    // which asks for what that move actually needs. Two ways to do it is how one of them ends up
+    // recording a purchase with no price.
+    const stage = $('dp-f-stage');
+    if (stage) stage.disabled = !!d;
+
+    $('dp-add-error')?.classList.add('hidden');
+    updateDealPreview();
+    loadDealFeeProfile().then(updateDealPreview);
+    $('dp-add-modal')?.classList.remove('hidden');
+    $('dp-f-title')?.focus();
+  }
+
+  function closeDealForm() {
+    $('dp-add-modal')?.classList.add('hidden');
+    dealFormId = null;
+  }
+
+  // The same one-dollar-per-dollar identity the server uses, so the number the seller sees while
+  // typing is the number the board will show.
+  function updateDealPreview() {
+    const qty = Math.max(1, num('dp-f-qty') || 1);
+    const ask = num('dp-f-ask');
+    const paid = num('dp-f-paid');
+    const resale = num('dp-f-resale');
+    const extra = num('dp-f-extra') || 0;
+    const cost = paid != null ? paid : ask;
+    const el = $('dp-add-preview');
+    if (!el) return;
+
+    if (resale == null || cost == null) {
+      el.textContent = 'Enter what you\'d pay and what it should sell for to see the projected profit.';
+      el.className = 'er-log-preview';
+      return;
+    }
+
+    // Deliberately a rough net, and labelled as one: this form has no comps behind it, so it uses
+    // the fee rate from the seller's own Fees & Costs settings and says the number is an estimate.
+    const fees = resale * (dealFeeProfile?.ebayFinalValueFeePercent ?? 13.25) / 100
+      + (dealFeeProfile?.ebayFinalValueFeeFixed ?? 0.4);
+    const net = (resale - cost - fees) * qty - extra;
+    el.textContent = `About ${moneyExact(net)} net across ${qty} unit${qty === 1 ? '' : 's'} — ${moneyExact(resale)} sale less ${moneyExact(cost)} cost and roughly ${moneyExact(fees)} of eBay fees${extra ? `, less ${moneyExact(extra)} of extras` : ''}. Estimated from your fee settings, not from sold comps.`;
+    el.className = `er-log-preview ${net > 0 ? 'er-preview-good' : 'er-preview-bad'}`;
+  }
+
+  async function saveDealForm() {
+    const title = ($('dp-f-title')?.value || '').trim();
+    if (!title) { showDealError('Give it a name so you can find it on the board.'); return; }
+
+    const stage = dealFormId ? undefined : ($('dp-f-stage')?.value || 'sourced');
+    const paid = num('dp-f-paid');
+    if (!dealFormId && (stage === 'bought' || stage === 'listed') && paid == null) {
+      showDealError('Record what you paid — that\'s the number that tells you what\'s at risk.');
+      return;
+    }
+
+    const resale = num('dp-f-resale');
+    const ask = num('dp-f-ask');
+    const qty = Math.max(1, num('dp-f-qty') || 1);
+    const cost = paid != null ? paid : ask;
+    const fees = resale != null
+      ? resale * (dealFeeProfile?.ebayFinalValueFeePercent ?? 13.25) / 100 + (dealFeeProfile?.ebayFinalValueFeeFixed ?? 0.4)
+      : null;
+
+    const payload = {
+      id: dealFormId || undefined,
+      stage,
+      title,
+      quantity: qty,
+      askPrice: ask ?? undefined,
+      purchasePrice: paid ?? undefined,
+      purchaseExtraCost: num('dp-f-extra') ?? undefined,
+      projectedSalePrice: resale ?? undefined,
+      // A hand-entered deal has no comps behind it, so the basis says exactly that rather than
+      // borrowing the credibility of the sourced-from-comps forecasts on the same board.
+      projectedNetProfit: (resale != null && cost != null) ? round2(resale - cost - fees) : undefined,
+      projectedBasis: (resale != null && cost != null) ? 'your own estimate, at your fee settings' : undefined,
+      listingId: ($('dp-f-listing')?.value || '').trim(),
+      sku: ($('dp-f-sku')?.value || '').trim(),
+      sourceUrl: ($('dp-f-url')?.value || '').trim(),
+      note: ($('dp-f-note')?.value || '').trim(),
+    };
+
+    try {
+      const res = await fetch('/api/deals', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      pipeline = await res.json();
+      closeDealForm();
+      renderPipeline();
+      renderDashboardPipeline();
+      setPipelineNotice('');
+      addActivity(dealFormId ? 'Deal updated' : 'Deal tracked', title);
+    } catch (e) {
+      showDealError(e.message);
+    }
+  }
+
+  function showDealError(message) {
+    const el = $('dp-add-error');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  // ── Moving a card ─────────────────────────────────────────────────────────
+
+  let stageFormId = null;
+  let stageFormTarget = null;
+
+  function openStageForm(id, stage) {
+    const c = (pipeline?.deals || []).find(x => x.id === id);
+    if (!c) return;
+    stageFormId = id;
+    stageFormTarget = stage;
+    const d = c.deal;
+
+    setText('dp-stage-title', `${d.title} → ${DP_STAGES[stage]?.label || 'Dropped'}`);
+
+    const hints = {
+      bought: 'What you actually paid is the number everything else on this board is measured against — it sets your capital at risk, your real profit when it sells, and the break-even floor Inventory Health uses.',
+      listed: 'The eBay listing ID is what lets the sale find its way back to this deal. Adding it also records what you paid as the listing\'s cost basis, so the profit gets counted in Money Made without you typing the price twice.',
+      sold: 'Only for a sale this app can\'t see — a local cash deal, or another marketplace. eBay sales move this card by themselves once they\'re imported into Money Made.',
+      dropped: 'Takes it off the board. If you already paid for it, the money stays counted as spent — a write-off is a real loss, not a deal that never happened.',
+    };
+    setText('dp-stage-hint', hints[stage] || '');
+
+    document.querySelectorAll('.dp-stage-buy').forEach(el => el.classList.toggle('hidden', stage !== 'bought'));
+    document.querySelectorAll('.dp-stage-list').forEach(el => el.classList.toggle('hidden', stage !== 'listed'));
+    document.querySelectorAll('.dp-stage-sold').forEach(el => el.classList.toggle('hidden', stage !== 'sold'));
+    document.querySelectorAll('.dp-stage-drop').forEach(el => el.classList.toggle('hidden', stage !== 'dropped'));
+
+    // Pre-filled from what the deal already knows: the ask is the obvious opening guess at what
+    // was paid, and the projected sale price at what it'll be listed for.
+    setVal('dp-s-paid', d.purchasePrice ?? d.askPrice ?? '');
+    setVal('dp-s-extra', d.purchaseExtraCost || '');
+    setVal('dp-s-bought', todayInputValue());
+    setVal('dp-s-listing', d.listingId || '');
+    setVal('dp-s-sku', d.sku || '');
+    setVal('dp-s-price', d.listedPrice ?? d.projectedSalePrice ?? '');
+    setVal('dp-s-sold', todayInputValue());
+    setVal('dp-s-note', d.note || '');
+
+    const preview = $('dp-stage-preview');
+    if (preview) {
+      // Says out loud what pressing the button will do to a number somewhere else in the app.
+      const willWrite = stage === 'listed' && (d.purchasePrice != null);
+      preview.textContent = willWrite
+        ? `This will also record ${moneyExact(d.purchasePrice)} as what this listing cost you, which is what makes any sale of it count as real profit.`
+        : '';
+      preview.classList.toggle('hidden', !willWrite);
+    }
+
+    $('dp-stage-error')?.classList.add('hidden');
+    $('dp-stage-modal')?.classList.remove('hidden');
+  }
+
+  function closeStageForm() {
+    $('dp-stage-modal')?.classList.add('hidden');
+    stageFormId = null;
+    stageFormTarget = null;
+  }
+
+  async function saveStageForm() {
+    if (!stageFormId || !stageFormTarget) return;
+    const payload = { stage: stageFormTarget };
+
+    if (stageFormTarget === 'bought') {
+      const paid = num('dp-s-paid');
+      if (paid == null) { showStageError('Enter what you paid — that\'s what puts a number on your risk.'); return; }
+      payload.purchasePrice = paid;
+      payload.purchaseExtraCost = num('dp-s-extra') ?? 0;
+      payload.boughtUtc = dateInputToUtc('dp-s-bought');
+    } else if (stageFormTarget === 'listed') {
+      payload.listingId = ($('dp-s-listing')?.value || '').trim();
+      payload.sku = ($('dp-s-sku')?.value || '').trim();
+      payload.listedPrice = num('dp-s-price') ?? undefined;
+      payload.listedUtc = new Date().toISOString();
+    } else if (stageFormTarget === 'sold') {
+      payload.soldUtc = dateInputToUtc('dp-s-sold');
+    } else if (stageFormTarget === 'dropped') {
+      payload.note = ($('dp-s-note')?.value || '').trim();
+    }
+
+    try {
+      const res = await fetch(`/api/deals/${stageFormId}/stage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      pipeline = result.pipeline;
+      closeStageForm();
+      renderPipeline();
+      renderDashboardPipeline();
+      setPipelineNotice(result.message || '');
+    } catch (e) {
+      showStageError(e.message);
+    }
+  }
+
+  function showStageError(message) {
+    const el = $('dp-stage-error');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  async function applyDealCost(id) {
+    try {
+      const res = await fetch(`/api/deals/${id}/apply-cost`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+      pipeline = result.pipeline;
+      renderPipeline();
+      renderDashboardPipeline();
+      setPipelineNotice(result.message || '');
+      // The money it just unlocked lives on the other page, so that page's copy is now stale.
+      loadEarnings(true);
+    } catch (e) {
+      setPipelineNotice(`Couldn't apply that cost: ${e.message}`);
+    }
+  }
+
+  async function deleteDeal(id) {
+    const c = (pipeline?.deals || []).find(x => x.id === id);
+    if (!confirm(`Remove "${c?.deal?.title || 'this deal'}" from the board? Any completed sales stay in Money Made.`)) return;
+    try {
+      const res = await fetch(`/api/deals/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      pipeline = await res.json();
+      renderPipeline();
+      renderDashboardPipeline();
+    } catch (e) {
+      setPipelineNotice(`Couldn't remove that deal: ${e.message}`);
+    }
+  }
+
+  // The front-page band. Same rule as the earnings band: hidden until there is real money behind
+  // it, because "$0 in motion" on a fresh install reads as the app being broken.
+  function renderDashboardPipeline() {
+    const band = $('dash-pipeline');
+    if (!band) return;
+    const s = pipeline?.summary;
+    if (!s || (s.capitalAtRisk || 0) <= 0) { band.classList.add('hidden'); return; }
+
+    band.classList.remove('hidden');
+    setText('dash-pipeline-figure', moneyExact(s.capitalAtRisk));
+
+    const bits = [`${s.activeDeals} deal${s.activeDeals === 1 ? '' : 's'} in play`];
+    if (s.projectedProfitInMotion > 0) bits.push(`${moneyExact(s.projectedProfitInMotion)} projected on it`);
+    if (s.realizedProfit > 0) bits.push(`${moneyExact(s.realizedProfit)} already realized`);
+    setText('dash-pipeline-sub', bits.join(' · '));
+
+    const top = (pipeline.nextActions || [])[0];
+    const host = $('dash-pipeline-next');
+    if (host) {
+      host.innerHTML = top
+        ? `<span class="dash-pipeline-next-label">Next</span><span class="dash-pipeline-next-text">${esc(top.label)} — ${esc(top.title)}</span>`
+        : '';
+    }
+  }
+
+  function num(id) {
+    const raw = ($(id)?.value ?? '').trim();
+    if (raw === '') return null;
+    const value = parseFloat(raw);
+    return isNaN(value) ? null : value;
+  }
+
+  function round2(value) {
+    return Math.round(value * 100) / 100;
+  }
+
+  function todayInputValue() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // A date input is a local calendar day. Sent as local noon so a UTC conversion can never move it
+  // to the day before, which would silently misdate a purchase and skew every day-count on the board.
+  function dateInputToUtc(id) {
+    const raw = ($(id)?.value || '').trim();
+    if (!raw) return undefined;
+    const [y, m, d] = raw.split('-').map(Number);
+    if (!y || !m || !d) return undefined;
+    return new Date(y, m - 1, d, 12, 0, 0).toISOString();
   }
 
   // ── Rising-Demand / Price-Trend Radar ─────────────────────────────────────
