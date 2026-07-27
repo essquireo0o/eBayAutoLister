@@ -363,6 +363,7 @@
     bindInventoryHealth();
     bindWatcherOffers();
     bindLotAnalyzer();
+    bindPromoted();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -456,6 +457,7 @@
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
+    if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page === 'ai') {
       showAiSection();
       return;
@@ -492,6 +494,10 @@
       showLotsSection();
       return;
     }
+    if (page === 'promoted') {
+      showPromotedSection();
+      return;
+    }
     showDashboard();
     if (page === 'listings') $('listings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (page === 'activity') $('activity-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -501,7 +507,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2497,6 +2503,381 @@
 
   function setWoStatus(text) {
     const el = $('wo-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // ── Promoted Listings: the ad rate that keeps the most money ──────────────
+  // eBay's suggested ad rate is worked out from what the rest of the category pays — it has never
+  // seen what this seller paid for the item, so on a thin margin it will suggest a rate bigger than
+  // the profit and call it a recommendation. Everything below comes from /api/promoted/board, which
+  // costs each listing with the same ProfitCalculator + FeeProfile the editor and the sourcing
+  // screens use, so the margin an ad rate is judged against is the margin the rest of the app shows.
+  let adScan = null;
+
+  function showPromotedSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('promoted-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'promoted'));
+    prefillAdRateFromFeeProfile();
+  }
+
+  function closePromotedSection() {
+    $('promoted-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindPromoted() {
+    on('ad-scan-btn', 'click', runAdRateScan);
+    on('ad-close', 'click', closePromotedSection);
+    on('ad-home', 'click', closePromotedSection);
+    // Filtering is a pure view over the scan already in hand — changing it must never re-run a
+    // multi-minute inventory scan.
+    on('ad-filter', 'change', renderAdRows);
+    on('ad-apply-default', 'click', applyBlendedAdRate);
+    on('ad-ladder-close', 'click', () => $('ad-ladder-overlay')?.classList.add('hidden'));
+    $('ad-ladder-overlay')?.addEventListener('click', e => {
+      if (e.target.id === 'ad-ladder-overlay') $('ad-ladder-overlay').classList.add('hidden');
+    });
+  }
+
+  // The rate the app already assumes on every net figure it prints, so the board opens comparing
+  // against something real rather than against zero.
+  async function prefillAdRateFromFeeProfile() {
+    const box = $('ad-current-rate');
+    if (!box || box.value !== '') return;
+    try {
+      const fees = await fetch('/api/fees/profile').then(r => r.json());
+      box.value = String(Number(fees.promotedListingRatePercent) || 0);
+    } catch { /* leave it blank — the server falls back to the same profile anyway */ }
+  }
+
+  async function runAdRateScan() {
+    const btn = $('ad-scan-btn');
+    const maxItems = $('ad-max-items')?.value || '120';
+    const rateBox  = $('ad-current-rate')?.value.trim();
+    const rateArg  = rateBox === '' ? '' : `&currentRate=${Math.max(0, parseFloat(rateBox) || 0)}`;
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    setAdStatus('Reading your live listings and costing each one…');
+    $('ad-results').innerHTML = '<p class="opportunity-empty">Pricing every listing against sold comps, then testing each ad rate against its margin — this takes a moment on a large inventory.</p>';
+
+    try {
+      const res  = await fetch(`/api/promoted/board?maxItems=${maxItems}${rateArg}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      adScan = data;
+      renderAdScan();
+    } catch (err) {
+      adScan = null;
+      $('ad-summary')?.classList.add('hidden');
+      $('ad-blend-bar')?.classList.add('hidden');
+      $('ad-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setAdStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📣 Check My Ad Rates'; }
+    }
+  }
+
+  function renderAdScan() {
+    const warn = $('ad-warning');
+
+    if (adScan.status === 'ebay_unavailable') {
+      $('ad-summary')?.classList.add('hidden');
+      $('ad-blend-bar')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('ad-results').innerHTML =
+        '<p class="opportunity-empty">Your eBay account isn\'t connected, or the token has expired. Reconnect it in Settings, then check again.</p>';
+      setAdStatus('');
+      return;
+    }
+
+    const s = adScan.summary || {};
+    const notes = [];
+    if (adScan.dataWarning) notes.push(adScan.dataWarning);
+    // A rate can only be sized against a margin, and the margin needs a cost basis. Saying which
+    // listings are missing one beats silently advising on a subset.
+    const missing = (s.listingsAnalyzed || 0) - (s.withCostBasis || 0);
+    if (missing > 0) notes.push(`${missing} listing${missing === 1 ? ' has' : 's have'} no recorded cost, so no ad rate can be sized for ${missing === 1 ? 'it' : 'them'} — add what you paid in Inventory Health or the listing editor.`);
+
+    if (notes.length) { warn.textContent = notes.join(' '); warn.classList.remove('hidden'); }
+    else warn?.classList.add('hidden');
+
+    renderAdSummary(s);
+    // With nothing sizeable there is nothing in the "worth changing" view, and an empty table over a
+    // board full of listings reads as a broken scan. Show the working instead.
+    if (!s.advised && $('ad-filter')) $('ad-filter').value = 'all';
+    renderAdRows();
+    renderAdBlendBar(s);
+
+    setAdStatus(
+      `${adScan.itemsAnalyzed} listing${adScan.itemsAnalyzed === 1 ? '' : 's'} of ${adScan.activeListings} active · ` +
+      `judged against the ${Number(adScan.comparedRatePercent ?? adScan.defaultRatePercent ?? 0).toFixed(1)}% you said you run today`);
+  }
+
+  // Leads with the bill, not the listing count. "You pay $312 in ad fees on one sale of each" is a
+  // number a seller reacts to; "48 listings analyzed" is not.
+  function renderAdSummary(s) {
+    const el = $('ad-summary');
+    if (!el) return;
+
+    const delta = Number(s.adFeePerRoundAtRecommended || 0) - Number(s.adFeePerRoundAtCurrent || 0);
+    const tiles = [
+      { label: 'Ad fees, one sale of each', value: money(s.adFeePerRoundAtCurrent),
+        sub: 'At the rate you run today, charged on the whole sale',
+        tone: s.adFeePerRoundAtCurrent > 0 ? 'warn' : '' },
+      { label: 'At the recommended rates', value: money(s.adFeePerRoundAtRecommended),
+        sub: delta === 0 ? 'No change' : `${delta < 0 ? money(Math.abs(delta)) + ' less' : money(delta) + ' more'} per round of sales`,
+        tone: delta < 0 ? 'good' : '' },
+      { label: 'Spent past what it earns', value: money(s.overspendPerRound),
+        sub: `${s.overPromoted || 0} over-promoted · ${s.shouldNotPromote || 0} shouldn't run ads at all`,
+        tone: s.overspendPerRound > 0 ? 'bad' : '' },
+      { label: 'Extra take-home', value: money(s.netGainPer100),
+        sub: 'Per 100 sales of each listing, at the recommended rates',
+        tone: s.netGainPer100 > 0 ? 'good' : '' },
+      { label: 'Under-promoted', value: String(s.underPromoted || 0),
+        sub: 'Margin that can carry a higher rate than it runs', tone: s.underPromoted > 0 ? 'warn' : '' },
+      { label: 'Monthly, where known', value: money(s.extraProfitPerMonth),
+        sub: s.withSalesHistory ? `Across the ${s.withSalesHistory} listing${s.withSalesHistory === 1 ? '' : 's'} with a sales history` : 'No listing has sold yet, so no monthly figure is honest',
+        tone: s.extraProfitPerMonth > 0 ? 'good' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  // The blended rate is revenue-weighted, so a $1,400 miner's rate counts for more than a $9
+  // cable's. Applying it only changes what THIS APP assumes — eBay campaigns are set in Seller Hub,
+  // and the button says so rather than implying it pushed anything.
+  function renderAdBlendBar(s) {
+    const bar = $('ad-blend-bar');
+    const note = $('ad-blend-note');
+    if (!bar || !note) return;
+
+    if (s.blendedRecommendedPercent == null || !s.advised) { bar.classList.add('hidden'); return; }
+
+    note.textContent =
+      `Across the ${s.advised} listing${s.advised === 1 ? '' : 's'} that could be sized, the revenue-weighted answer is ` +
+      `${Number(s.blendedRecommendedPercent).toFixed(1)}%. Saving it updates what this app assumes on every net figure — ` +
+      `your eBay campaigns are set in Seller Hub → Marketing.`;
+    $('ad-apply-default').textContent = `Assume ${Number(s.blendedRecommendedPercent).toFixed(1)}% everywhere`;
+    bar.classList.remove('hidden');
+  }
+
+  async function applyBlendedAdRate() {
+    const rate = Number(adScan?.summary?.blendedRecommendedPercent);
+    if (!Number.isFinite(rate)) return;
+
+    const btn = $('ad-apply-default');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      // Read-modify-write the whole profile: the endpoint takes a full profile, and posting a bare
+      // ad rate would silently zero the shipping, packaging and floor settings alongside it.
+      const fees = await fetch('/api/fees/profile').then(r => r.json());
+      fees.promotedListingRatePercent = rate;
+      const { res, body } = await safePost('/api/fees/profile', fees);
+      if (!res.ok) throw new Error(body?.error || 'Save failed.');
+
+      setAdStatus(`Every net figure in the app now assumes ${Number(body.promotedListingRatePercent).toFixed(1)}% of ad spend.`);
+      addActivity('Default ad rate updated', `${Number(body.promotedListingRatePercent).toFixed(1)}% — set your real campaign rate in eBay Seller Hub`);
+      loadFeeProfile();
+      ['nl', 'f'].forEach(p => { if ($(`${p}-th-panel`)) scheduleTakeHome(p); });
+    } catch (err) {
+      setAdStatus(`Could not save the default rate: ${err.message || err}`);
+    } finally {
+      if (btn) { btn.disabled = false; renderAdBlendBar(adScan?.summary || {}); }
+    }
+  }
+
+  const AD_VERDICTS = {
+    under_promoted:  { label: '📈 Raise the rate',   cls: 'ad-v-under' },
+    over_promoted:   { label: '💸 Overpaying',       cls: 'ad-v-over' },
+    on_target:       { label: '✓ Right where it is', cls: 'ad-v-ok' },
+    dont_promote:    { label: '🚫 Do not promote',   cls: 'ad-v-none' },
+    no_margin:       { label: '🛑 No margin',        cls: 'inv-v-underwater' },
+    fix_price_first: { label: '⚠️ Price first',      cls: 'ad-v-price' },
+    no_cost_basis:   { label: '? No cost recorded',  cls: 'inv-v-nodata' },
+    no_price:        { label: '? No price',          cls: 'inv-v-nodata' },
+  };
+
+  function adFilterMatches(item, filter) {
+    switch (filter) {
+      case 'change': return item.needsChange || item.verdict === 'no_margin';
+      case 'all':    return true;
+      default:       return item.verdict === filter;
+    }
+  }
+
+  function renderAdRows() {
+    if (!adScan) return;
+    const filter = $('ad-filter')?.value || 'change';
+    const rows = (adScan.items || []).filter(i => adFilterMatches(i, filter));
+    const el = $('ad-results');
+
+    if (rows.length === 0) {
+      const total = (adScan.items || []).length;
+      el.innerHTML = `<p class="opportunity-empty">${
+        total === 0
+          ? 'No live listings came back from eBay to check.'
+          : !(adScan.summary?.advised)
+            ? 'None of these listings has a recorded cost, so there is no margin to size an ad rate against. Add what you paid — in the listing editor or Inventory Health — and check again.'
+          : filter === 'change'
+            ? 'Nothing to change — every listing that could be sized is already at the rate its margin supports. Switch to "Everything" to see the working.'
+            : 'Nothing matches that filter. Switch to "Everything" to see every listing.'}</p>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th>Listing</th>
+            <th class="num">Price</th>
+            <th class="num">Net / sale</th>
+            <th class="num">Category pays</th>
+            <th class="num">You run</th>
+            <th class="num">Should run</th>
+            <th class="num">Ad fee / sale</th>
+            <th class="num">Needs / expects</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(adRowHtml).join('')}</tbody>
+      </table>`;
+
+    el.querySelectorAll('.ad-ladder-btn').forEach(btn =>
+      btn.addEventListener('click', () => openAdLadder(btn.dataset.id)));
+  }
+
+  function adRowHtml(item) {
+    const v = AD_VERDICTS[item.verdict] || AD_VERDICTS.no_price;
+    const rec = item.recommendedRatePercent;
+    const pct = n => `${Number(n).toFixed(1)}%`;
+
+    // "Needs / expects" is the honest heart of the row: the first number is arithmetic (extra sales
+    // the rate must buy to pay for itself), the second is a model. Shown side by side so the seller
+    // can see whether the recommendation depends on the model or survives without it.
+    const liftCell = rec == null || rec <= 0
+      ? '<span class="inv-dash">—</span>'
+      : item.breakEvenLiftAtRecommendedPercent == null
+        ? '<span class="ad-lift-bad" title="The ad fee is bigger than the profit on the sale">impossible</span>'
+        : `<strong>+${pct(item.breakEvenLiftAtRecommendedPercent)}</strong>
+           <div class="inv-sub">model expects +${pct(item.modeledLiftAtRecommendedPercent)}</div>`;
+
+    return `
+      <tr class="${item.needsChange ? '' : 'wo-row-muted'}">
+        <td class="inv-cell-title">
+          <div class="inv-title-row">
+            ${item.imageUrl ? `<img class="inv-thumb" src="${esc(item.imageUrl)}" alt="" loading="lazy" />` : ''}
+            <div>
+              ${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title)}</a>` : esc(item.title)}
+              <div class="inv-sub">${esc(item.categoryLabel || item.category || 'Uncategorised')}${
+                item.quantitySold > 0 ? ` · ${item.quantitySold} sold` : ''}${
+                item.daysListed != null ? ` · ${item.daysListed}d live` : ''}</div>
+            </div>
+          </div>
+        </td>
+        <td class="num">${moneyExact(item.listPrice)}</td>
+        <td class="num">${item.netPerSaleNoAds != null
+            ? `<span class="${item.netPerSaleNoAds > 0 ? 'inv-gap-good' : 'inv-gap-bad'}">${moneyExact(item.netPerSaleNoAds)}</span>${
+                item.marginPercent != null ? `<div class="inv-sub">${Number(item.marginPercent).toFixed(1)}% margin</div>` : ''}`
+            : '<span class="inv-dash" title="Record what you paid to size an ad rate against it">—</span>'}</td>
+        <td class="num">${pct(item.categoryRatePercent)}<div class="inv-sub">${esc(item.categoryCompetition)}</div></td>
+        <td class="num">${pct(item.currentRatePercent)}</td>
+        <td class="num inv-cell-suggested">${rec == null
+            ? '<span class="inv-dash">—</span>'
+            : `<strong class="${rec > item.currentRatePercent ? 'inv-gap-good' : rec < item.currentRatePercent ? 'ad-rate-down' : ''}">${rec <= 0 ? 'none' : pct(rec)}</strong>${
+                item.maxSustainableRatePercent != null
+                  ? `<div class="inv-sub" title="Above this the ad fee is bigger than the whole profit on the sale">ceiling ${pct(item.maxSustainableRatePercent)}</div>` : ''}`}</td>
+        <td class="num">${moneyExact(item.adFeeAtCurrent)}${
+            item.adFeeAtRecommended != null && item.adFeeChangePerSale !== 0
+              ? `<div class="inv-sub">→ ${moneyExact(item.adFeeAtRecommended)}</div>` : ''}</td>
+        <td class="num">${liftCell}</td>
+        <td class="inv-cell-verdict">
+          <span class="inv-verdict ${v.cls}">${v.label}</span>
+          <div class="inv-note">${esc(item.note)}</div>
+          ${(item.signals || []).length ? `<div class="inv-signals">${item.signals.map(sig => esc(sig)).join(' ')}</div>` : ''}
+          ${(item.ladder || []).length
+            ? `<button class="btn btn-secondary small ad-ladder-btn" type="button" data-id="${esc(item.listingId || item.title)}">See the tradeoff</button>` : ''}
+        </td>
+      </tr>`;
+  }
+
+  function adItemById(id) {
+    return (adScan?.items || []).find(i => (i.listingId || i.title) === id) || null;
+  }
+
+  // Every rate, side by side. This is the screen eBay does not have: what the fee costs, what it
+  // has to buy back, and what it is actually worth once both are counted.
+  function openAdLadder(id) {
+    const item = adItemById(id);
+    if (!item) return;
+
+    $('ad-ladder-title').textContent = item.title;
+    $('ad-ladder-sub').textContent =
+      `${moneyExact(item.grossPerSale)} sale` +
+      (item.netPerSaleNoAds != null ? ` · ${moneyExact(item.netPerSaleNoAds)} net before ads` : '') +
+      ` · ${item.categoryLabel} typically pays ${Number(item.categoryRatePercent).toFixed(1)}% ` +
+      `(${item.categoryCompetition} competition)`;
+
+    const a = item.assumptions || {};
+    $('ad-ladder-body').innerHTML = `
+      <table class="inv-table ad-ladder-table">
+        <thead>
+          <tr>
+            <th class="num">Ad rate</th>
+            <th class="num">Fee per sale</th>
+            <th class="num">You keep</th>
+            <th class="num">Sales lift needed</th>
+            <th class="num">Model expects</th>
+            <th class="num">Per 100 sales</th>
+            <th class="num">vs no ads</th>
+          </tr>
+        </thead>
+        <tbody>${(item.ladder || []).map(p => adLadderRowHtml(p)).join('')}</tbody>
+      </table>
+      <p class="ad-assumptions">
+        <strong>Sales lift needed</strong> is arithmetic: at this rate you also pay the fee on the
+        ${Number(a.cannibalizationPercent || 0).toFixed(0)}% of sales you would have made anyway, so the ads have to
+        replace that before they add anything. <strong>Model expects</strong> is an estimate — up to
+        ${Number(a.maxLiftPercent || 0).toFixed(0)}% more sales, half of it bought by the
+        ${Number(a.halfLiftRatePercent || 0).toFixed(1)}% category rate, with diminishing returns above that.
+        ${esc(a.basis || '')} Where the two columns cross is where the rate stops paying for itself.
+      </p>`;
+
+    $('ad-ladder-overlay')?.classList.remove('hidden');
+  }
+
+  function adLadderRowHtml(p) {
+    const cls = [p.isRecommended ? 'ad-rung-best' : '', p.isCurrent ? 'ad-rung-current' : '',
+                 p.aboveCeiling ? 'ad-rung-over' : ''].filter(Boolean).join(' ');
+    const tag = [p.isRecommended ? '<span class="ad-tag ad-tag-best">best</span>' : '',
+                 p.isCurrent ? '<span class="ad-tag">you</span>' : ''].join('');
+
+    return `
+      <tr class="${cls}">
+        <td class="num"><strong>${p.ratePercent === 0 ? 'No ads' : Number(p.ratePercent).toFixed(1) + '%'}</strong>${tag}</td>
+        <td class="num">${moneyExact(p.adFeePerSale)}</td>
+        <td class="num">${p.netPerSale != null ? moneyExact(p.netPerSale) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${p.breakEvenLiftPercent == null
+            ? (p.netPerSale == null ? '<span class="inv-dash">—</span>'
+               : '<span class="ad-lift-bad">impossible</span>')
+            : `+${Number(p.breakEvenLiftPercent).toFixed(1)}%`}</td>
+        <td class="num">+${Number(p.modeledLiftPercent).toFixed(1)}%</td>
+        <td class="num">${p.netPer100Sales != null ? moneyExact(p.netPer100Sales) : '<span class="inv-dash">—</span>'}</td>
+        <td class="num">${p.netChangePer100 == null ? '<span class="inv-dash">—</span>'
+            : `<span class="${p.netChangePer100 > 0 ? 'inv-gap-good' : p.netChangePer100 < 0 ? 'inv-gap-bad' : ''}">${
+                p.netChangePer100 > 0 ? '+' : ''}${moneyExact(p.netChangePer100)}</span>`}</td>
+      </tr>`;
+  }
+
+  function setAdStatus(text) {
+    const el = $('ad-status');
     if (el) el.textContent = text || '';
   }
 
@@ -4928,6 +5309,7 @@
     });
 
     renderTakeHome(prefix, null);
+    refreshAdRateStrip(prefix, 0, 0);
   }
 
   function scheduleTakeHome(prefix) {
@@ -4954,6 +5336,7 @@
       if (!res.ok) throw new Error(body?.error || 'Could not price this sale.');
       takeHomeState[prefix] = body;
       renderTakeHome(prefix, body);
+      refreshAdRateStrip(prefix, price, cost);
     } catch (err) {
       // A pricing panel that silently shows nothing is worse than one that says it is stale:
       // the seller would read the blank space as "no fees on this sale".
@@ -5018,6 +5401,73 @@
                 ? ` · ${Number(q.roiPercent).toFixed(0)}% ROI` : ''}</span><span>${moneyExact(q.netProfit)}</span></div>`
           : ''}
       </details>`;
+  }
+
+  // ── The ad rate this margin can carry, in the editor ──────────────────────
+  // Promoted Listings is the one cost a seller opts into after the price is set, and eBay's own
+  // suggested rate is computed with no knowledge of what the item cost. Sizing it here — against
+  // the net just calculated above, live as the price changes — is the difference between choosing a
+  // rate and accepting one. Same endpoint and same math as the Ad Rate Advisor page.
+  async function refreshAdRateStrip(prefix, price, cost) {
+    const el = $(`${prefix}-th-ads`);
+    if (!el) return;
+
+    if (!(price > 0) || !(cost > 0)) {
+      el.innerHTML = '<div class="th-ads-idle">Add what you paid to see the Promoted Listings ad rate this margin can carry.</div>';
+      return;
+    }
+
+    try {
+      const { res, body } = await safePost('/api/promoted/advise', {
+        title: $(`${prefix}-title`)?.value || '',
+        category: $(`${prefix}-category`)?.value || '',
+        price,
+        unitCost: cost,
+        buyerPaidShipping: thNum(`${prefix}-buyer-shipping`),
+        shippingCost: $(`${prefix}-ship-cost`)?.value.trim() ? thNum(`${prefix}-ship-cost`) : null,
+      });
+      if (!res.ok) throw new Error(body?.error || 'Could not size an ad rate.');
+      renderAdRateStrip(el, body);
+    } catch {
+      // A blank strip would read as "ads are free on this one". Say what actually happened.
+      el.innerHTML = '<div class="th-ads-idle">The ad-rate check could not be reached — your price and take-home above are unaffected.</div>';
+    }
+  }
+
+  function renderAdRateStrip(el, a) {
+    const rec = a.recommendedRatePercent;
+    const pct = n => `${Number(n).toFixed(1)}%`;
+
+    if (rec == null) {
+      el.innerHTML = `<div class="th-ads-idle">${esc(a.note || '')}</div>`;
+      return;
+    }
+
+    // Below zero the server's own copy is the right copy — "this sale already loses money" and
+    // "the margin is too thin to carry ads" are different problems and must not read the same.
+    const headline = rec > 0
+      ? `Run ads at ${pct(rec)} — ${moneyExact(a.adFeeAtRecommended)} a sale`
+      : a.verdict === 'no_margin' ? 'No margin to advertise' : 'Don\'t promote this one';
+
+    const detail = rec <= 0
+      ? (a.note || '')
+      : `Leaves ${moneyExact(a.netPerSaleAtRecommended)} of your ${moneyExact(a.netPerSaleNoAds)}. ` +
+        (a.breakEvenLiftAtRecommendedPercent != null
+          ? `It has to lift sales ${pct(a.breakEvenLiftAtRecommendedPercent)} to pay for itself.`
+          : '');
+
+    el.innerHTML = `
+      <div class="th-ads-row th-ads-${rec > 0 ? 'on' : 'off'}">
+        <div>
+          <strong class="th-ads-headline">${esc(headline)}</strong>
+          <span class="th-ads-note">${esc(detail)}</span>
+        </div>
+        <div class="th-ads-meta">
+          <span title="Published typical ad rate for this category — override it with what your Seller Hub shows">${esc(a.categoryLabel)} pays ${pct(a.categoryRatePercent)}</span>
+          ${a.maxSustainableRatePercent != null
+            ? `<span class="th-ads-ceiling" title="Above this the ad fee is bigger than the whole profit on the sale">ceiling ${pct(a.maxSustainableRatePercent)}</span>` : ''}
+        </div>
+      </div>`;
   }
 
   function floorBasisText(q) {

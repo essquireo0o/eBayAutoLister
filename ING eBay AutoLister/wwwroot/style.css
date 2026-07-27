@@ -7246,3 +7246,102 @@ td.skeleton-cell { padding: 0 !important; }
 @media (max-width: 900px) {
   .th-inputs, .th-floors { grid-template-columns: 1fr; }
 }
+
+/* ── Ad Rate Advisor ──────────────────────────────────────────────────────
+   Reuses the Inventory Health table, tiles and verdict pills wholesale — this
+   is the same board seen from a different angle, and it should read as the
+   same screen. Only the things that are genuinely new to promoted listings
+   get their own rules: the rate verdicts, the tradeoff ladder, and the strip
+   under the price field in the editor. */
+
+.ad-v-under { background: var(--gold-soft); color: var(--gold-dark); }
+.ad-v-over  { background: var(--danger-soft); color: var(--danger); }
+.ad-v-ok    { background: var(--success-soft); color: var(--success); }
+.ad-v-none  { background: var(--soft); color: var(--ink-2); }
+.ad-v-price { background: #fdf0e2; color: var(--warning); }
+
+/* A rate coming down is money kept, not a loss — so it reads as the gold
+   "act on this" colour rather than the red one used for a shrinking margin. */
+.ad-rate-down { color: var(--gold-dark); }
+.ad-lift-bad  { color: var(--danger); font-weight: 700; }
+
+/* ── The tradeoff ladder ───────────────────────────────────────────────── */
+.ad-ladder-box { width: min(860px, 100%); padding: 22px; }
+
+.ad-ladder-table { margin-top: 4px; font-size: 12.5px; }
+.ad-ladder-table td, .ad-ladder-table th { padding: 6px 10px; }
+
+/* The winning rung carries the emphasis; the seller's current rung carries an
+   outline, so "where you are" and "where to go" are never the same signal. */
+.ad-rung-best { background: var(--success-soft); }
+.ad-rung-best td { font-weight: 700; }
+.ad-rung-current td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
+.ad-rung-over td { color: var(--muted); }
+
+.ad-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--soft-2);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.ad-tag-best { background: var(--success); color: #fff; }
+
+.ad-assumptions {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ── The strip under the price field in both editors ───────────────────── */
+.th-ads { margin-top: var(--s2); }
+
+.th-ads-idle {
+  padding: var(--s3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.th-ads-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+.th-ads-on  { border-left-color: var(--gold); background: var(--gold-soft); }
+.th-ads-off { border-left-color: var(--line-strong); }
+
+.th-ads-headline { display: block; font-size: var(--fs-sm); color: var(--ink); }
+.th-ads-on .th-ads-headline { color: var(--gold-dark); }
+.th-ads-note { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.5; }
+
+.th-ads-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.th-ads-ceiling { font-weight: 700; color: var(--danger); }
+
+@media (max-width: 900px) {
+  .th-ads-meta { align-items: flex-start; }
+}

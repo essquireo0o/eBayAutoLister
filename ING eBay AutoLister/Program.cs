@@ -249,6 +249,10 @@ builder.Services.AddSingleton<InventoryHealthAnalyzer>();
 // unit on the manifest, the ask allocated across the lines, the max bid solved exactly, and which
 // few lines actually carry the value. Orchestrated in AnalyzeLotAsync below.
 builder.Services.AddSingleton<LotAnalyzer>();
+// Promoted Listings ROI — the ad rate that maximises take-home rather than the one eBay suggests
+// from what the rest of the category is paying. Shares ProfitCalculator/FeeProfile with every other
+// money screen, so the margin an ad rate is measured against is the same margin the editor shows.
+builder.Services.AddSingleton<PromotedListingAdvisor>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -2206,6 +2210,119 @@ app.MapPost("/api/offers/send", async (
 
     return Results.Ok(result);
 });
+
+// ── Promoted Listings ROI ─────────────────────────────────────────────────────────────────────
+// eBay's suggested ad rate is computed from what the rest of the category pays. It does not know
+// what the seller paid for the item, so it will suggest a rate bigger than the margin and call it a
+// recommendation. These two endpoints answer the other half: what each rate costs per sale, how
+// much extra volume it has to buy to pay for itself, and the rate that ends the month with the most
+// money. Read-only — nothing here changes a campaign on eBay.
+
+// One listing, straight from the editor: no eBay connection, no scan, just the economics on screen.
+app.MapPost("/api/promoted/advise", (
+    PromotedAdviceRequest req, PromotedListingAdvisor advisor, FeeProfile fees) =>
+{
+    if (req is null) return Results.BadRequest(new { error = "No listing supplied." });
+    if (req.Price <= 0m) return Results.BadRequest(new { error = "A price is required to size an ad rate." });
+
+    var advice = advisor.Build(new PromotedListingAdvisor.Input(
+        Title: req.Title ?? "",
+        ListPrice: req.Price,
+        UnitCost: req.UnitCost,
+        BuyerPaidShipping: Math.Max(0m, req.BuyerPaidShipping),
+        ShippingCostOverride: req.ShippingCost,
+        Category: req.Category ?? "",
+        CategoryRateOverride: req.CategoryRatePercent,
+        // No explicit rate means "what the app already assumes on every net figure it shows",
+        // which is the rate the seller set in Fees & Costs.
+        CurrentRatePercent: req.CurrentRatePercent ?? fees.PromotedListingRatePercent,
+        SalesPerMonth: req.SalesPerMonth,
+        DaysListed: req.DaysListed,
+        WatchCount: Math.Max(0, req.WatchCount),
+        QuantitySold: Math.Max(0, req.QuantitySold),
+        SoldCompCount: Math.Max(0, req.SoldCompCount),
+        MarketPrice: req.MarketPrice,
+        PriceGapPercent: req.MarketPrice is > 0m
+            ? Math.Round((req.Price - req.MarketPrice.Value) / req.MarketPrice.Value * 100m, 1)
+            : null), fees);
+
+    return Results.Ok(advice);
+});
+
+// The whole board. Reuses the inventory-health scan rather than re-deriving market price, cost
+// basis and break-even a second way — the ad rate is a different question asked of the same facts,
+// exactly as the offers-to-watchers board is.
+app.MapGet("/api/promoted/board", async (
+    int? maxItems, int? terapeakBudget, decimal? currentRate,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    InventoryHealthAnalyzer analyzer, PromotedListingAdvisor advisor, ActionLog log, CancellationToken ct) =>
+{
+    var health = await ScanInventoryHealthAsync(
+        Math.Clamp(maxItems ?? 120, 1, 400), Math.Clamp(terapeakBudget ?? 3, 0, 15), minDays: 0,
+        ebay, costBasis, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+
+    if (health.Status == "ebay_unavailable")
+        return Results.Ok(new PromotedBoardResult { Status = "ebay_unavailable", Error = health.Error });
+
+    // What the seller says they are paying today. eBay exposes no API for a listing's live ad rate,
+    // so this is the app-wide assumption from Fees & Costs unless the board overrides it — and the
+    // UI says which, rather than presenting a guess as a reading.
+    var rate = Math.Clamp(currentRate ?? feeProfile.PromotedListingRatePercent, 0m, 100m);
+
+    var rows = health.Items.Select(h => advisor.Build(new PromotedListingAdvisor.Input(
+        Title: h.Title,
+        ListPrice: h.ListPrice,
+        UnitCost: h.CostBasis,
+        Category: h.Category,
+        CurrentRatePercent: rate,
+        SalesPerMonth: h.SalesPerMonth,
+        DaysListed: h.DaysListed,
+        WatchCount: h.WatchCount,
+        QuantitySold: h.QuantitySold,
+        SoldCompCount: h.SoldCompCount + h.TerapeakCompCount,
+        LiquidityScore: h.LiquidityScore,
+        LiquidityLevel: h.LiquidityLevel,
+        MarketPrice: h.MarketPrice,
+        PriceGapPercent: h.PriceGapPercent,
+        MarketComparable: h.MarketComparable,
+        ListingId: h.ListingId,
+        Sku: h.Sku,
+        Url: h.Url,
+        ImageUrl: h.ImageUrl), feeProfile)).ToList();
+
+    var result = new PromotedBoardResult
+    {
+        ActiveListings = health.ActiveListings,
+        ItemsAnalyzed = health.ItemsAnalyzed,
+        ProductsPriced = health.ProductsPriced,
+        TerapeakScrapesUsed = health.TerapeakScrapesUsed,
+        DataWarning = health.DataWarning,
+        DefaultRatePercent = feeProfile.PromotedListingRatePercent,
+        ComparedRatePercent = rate,
+        Items = PromotedListingAdvisor.Rank(rows),
+    };
+    result.Summary = PromotedListingAdvisor.Summarize(result.Items);
+
+    log.Add("Info", "Promoted Listings ROI scan",
+        $"Listings: {result.ItemsAnalyzed} of {result.ActiveListings} active; assumed rate {rate:0.##}%; " +
+        $"Under-promoted: {result.Summary.UnderPromoted}; Over-promoted: {result.Summary.OverPromoted}; " +
+        $"Shouldn't promote: {result.Summary.ShouldNotPromote}; " +
+        $"Blended recommendation: {result.Summary.BlendedRecommendedPercent:0.#}%");
+
+    return Results.Ok(result);
+});
+
+// The published category norms, for the picker in the advisor panel.
+app.MapGet("/api/promoted/categories", () => Results.Ok(new
+{
+    categories = PromotedRateNorms.All(),
+    minRatePercent = PromotedRateNorms.EbayMinimumRatePercent,
+    maxRecommendedPercent = PromotedRateNorms.MaxRecommendedRatePercent,
+}));
 
 // Pulls the seller's live eBay listings, prices each against the same sold-comps + Terapeak stack
 // every other screen uses, and works out what each should be priced at to actually sell.

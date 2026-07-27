@@ -2143,3 +2143,149 @@ $3 of handling and a 2% ad rate, that is **$15.65 the old numbers said the selle
   `FeeProfileStore` without touching anything downstream.
 * **Shipping cost is a default, overridable per listing, not calculated.** The app does not rate-shop
   a label; the seller supplies the typical cost and can override it in the take-home panel.
+
+---
+
+## 23. Promoted Listings ROI Advisor — the ad rate that keeps the most money (autonomous session, 2026-07-26)
+
+### The money problem
+
+Promoted Listings is the one cost a seller **opts into**, on a screen that has never seen what they
+paid for the item.
+
+eBay's suggested ad rate is computed from what the rest of the category is paying. On a listing with
+a 7.6% margin it will suggest 8%, present it as a recommendation, and charge it **on the whole sale,
+shipping included** — a rate bigger than the entire profit, one click away. Sales go up. Money goes
+down. Nothing on eBay ever tells the seller that happened.
+
+The app already had the missing half: `ProfitCalculator` + `FeeProfile` know exactly what one sale of
+one item is worth. `FeeProfile.PromotedListingRatePercent` existed as a single global assumption and
+nothing in the app ever advised on it. This joins the two.
+
+`POST /api/promoted/advise` (one listing, no eBay account needed) and `GET /api/promoted/board`
+(every live listing) → the new **📣 Ad Rate Advisor** page, plus a live strip under the price field
+in both listing editors.
+
+### The three numbers behind every answer
+
+1. **The margin ceiling** — `net ÷ gross`. Above it the ad fee is bigger than the whole profit on the
+   sale, and no amount of extra volume fixes that. Reported on every row, because it is the number
+   that turns eBay's suggested rate from "aggressive" into "arithmetically impossible".
+2. **The break-even lift** — `L* = c·f / (n − f)`. The extra sales a rate must actually buy just to
+   leave the seller no worse off. **No lift model appears in it**, so it stays true even if the model
+   is wrong. That is why it sits next to the modelled figure on every rung rather than behind it.
+3. **Take-home per 100 organic sales** — `100·[(1+L)·n − (c+L)·f]`. The rate that maximises this is
+   the recommendation, found by walking every half point from 2% to 20%.
+
+Expressed per 100 sales on purpose: **the optimal rate does not depend on how many units the listing
+moves**, so the recommendation is just as valid for a listing that has never sold — where any monthly
+projection would be an invented number with a dollar sign in front of it.
+
+### The two assumptions, reported rather than buried
+
+* **Lift saturates.** `lift(r) = maxLift · r / (r + k)`, with `k` = the category's typical rate. The
+  first points buy the most, and 2% in a category where the field runs 11% buys almost no placement
+  while the same 2% in a 4.5% category is a real bid. That is the entire reason category norms are in
+  here — not as a recommendation to copy, but as the competitive floor that decides what a rate buys.
+* **You pay for sales you were getting anyway.** A buyer who would have found the listing regardless
+  still arrives through the ad, and eBay bills the rate on that sale. That share is why a small ad
+  rate is not close to free, and it is the reason a **proven seller is advised a lower rate, not a
+  higher one** — the opposite of what eBay's suggestion does.
+
+Both are shown as numbers in the tradeoff panel ("up to 20% more sales, half of it bought by the 11%
+category rate… you also pay the fee on the 65% of sales you would have made anyway"), so a seller who
+disagrees can see exactly what they are disagreeing with.
+
+### What it refuses to do
+
+| Rule | Why |
+|---|---|
+| No cost basis → **no rate at all** | A rate is sized against a margin. Without one it shows what an ad costs per sale and says what is missing, rather than sizing against a guess. |
+| Net ≤ 0 → **no rate** (`no_margin`) | Promoted Listings multiplies whatever the margin already is. On a loss it multiplies the loss. |
+| Thin margin → **don't promote** | On a $22 item with $1.68 of margin, even eBay's 2% minimum takes $0.44 of it — charged on the sales it was already making. Keep the margin. |
+| No sold history → **held at the category norm** | Bidding above the field is a bet worth making on proven demand, not on a listing the app knows nothing about. |
+| Priced 15%+ above market → **fix the price first** | Ads cannot sell a price buyers are already beating; they only put it in front of more of them. |
+| The seller's **minimum profit floor bounds the ad rate** | An ad rate spends margin exactly like a markdown does, so the floor that bounds the repricer's ladder and the watcher-offer depth bounds this too. A seller who said "never under $15 a sale" should not be talked under it by a campaign instead of by a price. |
+| Recommendations capped at **20%** | eBay allows far more. A rate that size is a deliberate clearance decision, and the app says so instead of picking it for someone. |
+| Gain under **$10 per 100 sales** → "leave it" | Optimal and worth doing are different questions. A board full of dime-sized wins is how the real ones get scrolled past — the same materiality rule the repricer applies to a one-cent markdown. |
+
+### What the seller sees
+
+* **A ranked board**, biggest money first: net per sale, what the category pays, what they run, what
+  they should run, the ad fee per sale before and after, and — the honest heart of the row — **needs
+  vs expects**: the lift the rate must buy (arithmetic) beside the lift the model predicts (estimate).
+* **The tradeoff, per listing** — every rate from "no ads" to 20% with the fee, the take-home, both
+  lift figures, the net per 100 sales and the delta against not advertising. Where the two lift
+  columns cross is where the rate stops paying for itself, and it is visible rather than asserted.
+* **Board totals on a "one sale of each" basis**, not a projected month — eBay reports no per-listing
+  sales rate, and a fabricated volume would put a made-up dollar sign on the headline. Monthly money
+  appears only for the listings whose own sales history supports one, labelled that way.
+* **"Assume X% everywhere"** — the revenue-weighted recommended rate written into Fees & Costs, which
+  re-prices every net figure in the app at once. The button says plainly that it changes what the app
+  assumes; **eBay campaigns are set in Seller Hub**, and nothing here touches one.
+* **A live strip under the price field in both editors**: *"Run ads at 4.5% — $10.80 a sale. Leaves
+  $107.00 of your $117.80. It has to lift sales 5.0% to pay for itself."* Typing a price that kills
+  the margin flips it to "No margin to advertise" as you type.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/PromotedListingModels.cs` | **New** — `AdRatePoint`, `PromotedAssumptions`, `PromotedAdvice`, `PromotedBoardSummary`, `PromotedBoardResult`, `PromotedAdviceRequest` |
+| `Services/PromotedRateNorms.cs` | **New** — published typical ad rates for 23 category groups, matched on the category **name** (the Trading API returns a leaf id; mapping leaf → top level would need a live Taxonomy call per listing to answer a question accurate to the nearest point), competition labels, seller override |
+| `Services/PromotedListingAdvisor.cs` | **New** — `LiftPercentAt`, `BreakEvenLiftPercent`, `MarginCeilingRatePercent`, `NetPer100Sales`, `AssumptionsFor`, `SearchBestRate`, `BuildLadder`, `Build`, `Rank`, `Summarize` |
+| `Program.cs` | DI + `POST /api/promoted/advise`, `GET /api/promoted/board`, `GET /api/promoted/categories`. The board reuses `ScanInventoryHealthAsync` whole rather than re-deriving market price, cost basis and break-even a second way — the same posture the offers-to-watchers board takes |
+| `wwwroot/index.html` | Nav entry, the Ad Rate Advisor overlay, the tradeoff modal, the ads strip in both editors. `app.js?v=46`, `style.css?v=39` |
+| `wwwroot/app.js` | `bindPromoted`, `runAdRateScan`, `renderAdScan`/`renderAdSummary`/`renderAdRows`/`renderAdBlendBar`, `openAdLadder`, `applyBlendedAdRate`, `refreshAdRateStrip` (hung off the existing `refreshTakeHome`, so one price change costs one extra call) |
+| `wwwroot/style.css` | `.ad-*` verdicts and ladder, `.th-ads*` editor strip — reuses the Inventory Health table, tiles and pills wholesale |
+| `ING eBay AutoLister.Tests/PromotedListingAdvisorTests.cs` | **New** — 33 cases |
+| `ING eBay AutoLister.Tests/PromotedRateNormsTests.cs` | **New** — 17 cases |
+
+Net profit is never re-derived here: it comes from the same `ProfitCalculator`/`FeeProfile` pair as
+`NetProceedsCalculator`, the repricer and the watcher-offer floors, with the ad rate zeroed on a clone
+so the ad fee is the only thing this varies.
+
+### Verified
+
+* `dotnet build` — **0 errors** (2 pre-existing `NU1903` warnings). `dotnet test` — **820 passed, 0
+  failed** (770 before; +50 new). `node --check app.js` clean.
+* **Live against the running app** (dev ports 9461–9463). `/api/promoted/board` over the connected
+  account's **87 real listings**: 200, ranked, and correctly reporting that not one of them has a
+  recorded cost basis — so no rate was sized, and the board says why instead of advising on a guess.
+  `/api/promoted/advise` checked across six scenarios: a fat-margin miner (4.5%, break-even lift 6.6%
+  against a modelled 22.5%), a mid-margin headphone at 12% (**drop to 4% — overpaying $14.40 a sale**),
+  a proven card seller at 11% (**turn the ads off — $33.00 a sale for nothing**), a 7.6%-margin phone
+  case (**don't promote**), an unproven clothing listing (**held at the 11% category norm**), and a
+  listing with no cost (**refuses to size a rate**).
+* **Real browser (Playwright)** — the page opens from the nav, the scan renders summary tiles, the
+  warning banner, ranked rows and the blended-rate bar; the tradeoff modal renders all 13 rungs with
+  the best rung and the seller's current rung marked distinctly; changing the filter re-renders
+  **without re-fetching**; the editor strip updates live as price and cost change, and flips to "No
+  margin to advertise" when the price drops through break-even. **No console errors.**
+* **Read-only end to end.** No eBay campaign, price, listing or offer was created or changed. The only
+  write the feature can make is to the app's own fee profile, on an explicit click.
+
+### Two things the live run changed
+
+* The status line read the compared rate off the first row, which is only correct while every row
+  shares a rate. The board now returns `comparedRatePercent` and says what it judged against.
+* The editor strip rendered "don't promote" copy for a listing that was already **losing** money —
+  two different problems reading the same. Below zero it now uses the server's own `no_margin` copy
+  ("this sale already loses $0.18 before any ad spend").
+
+### Not verified / known limits
+
+* **The lift curve is a model, not measured data.** eBay publishes no per-listing attribution data
+  through any API available here, so the curve is calibrated on published category behaviour and
+  reported as an assumption on screen. The break-even lift beside it is arithmetic and needs no such
+  trust — that asymmetry is the design.
+* **The rate the seller "runs today" is self-reported.** eBay exposes no API for a listing's live ad
+  rate, so the board compares against the Fees & Costs assumption or the box on the page, and says
+  which. Per-listing current rates would need the Marketing API and a campaign-management scope.
+* **Category norms are published typicals, not this account's trending rate.** Overridable per
+  request; a per-row override in the board UI is the obvious next step.
+* **Category came back empty on the real inventory scanned here**, so those rows fell to the
+  cross-category average — honest, and labelled "eBay average", but a Taxonomy lookup per listing
+  would do better.
+* **Nothing sets a rate on eBay.** Applying a rate is a Seller Hub action, said plainly in the
+  footnote and on the apply button.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=38" />
+  <link rel="stylesheet" href="style.css?v=39" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -52,6 +52,7 @@
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
         <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
+        <button class="nav-item" type="button" data-page="promoted"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Ad Rate Advisor</button>
 
         <p class="nav-group-label">Account</p>
         <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
@@ -615,6 +616,9 @@
                         </label>
                       </div>
                       <div class="th-body" id="nl-th-body"></div>
+                      <!-- What ad rate this margin can carry, before the listing is even live.
+                           Same calculation as the Ad Rate Advisor page. -->
+                      <div class="th-ads" id="nl-th-ads"></div>
                     </div>
                   </div>
                 </details>
@@ -1530,6 +1534,109 @@
         </div>
       </div>
 
+      <!-- ── Promoted Listings: Ad Rate Advisor ──────────────────────────────────────────────
+           eBay's suggested ad rate is worked out from what the rest of the category pays. It has
+           no idea what this seller paid for the item, so on a thin margin it will suggest a rate
+           bigger than the profit and present it as a recommendation. This page answers the other
+           half: what each rate costs per sale, how much extra volume it has to buy to pay for
+           itself, and the rate that ends the month with the most money. Backed by
+           /api/promoted/board. Read-only — no campaign on eBay is touched. -->
+      <section id="promoted-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="ad-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Promoted Listings ROI</div>
+              <h2>📣 The Ad Rate That Keeps The Most Money</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="ad-scan-btn" class="btn btn-primary" type="button">📣 Check My Ad Rates</button>
+            <button id="ad-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+          <p class="opp-hint">
+            Promoted Listings is charged on the <strong>whole sale, shipping included</strong>, every time
+            eBay attributes a sale to the ad — including sales you were already getting. eBay's suggested
+            rate comes from what your competitors pay; it has never seen what you paid for the item.
+            This checks every rate against <strong>your</strong> margin and shows the tradeoff behind the answer.
+          </p>
+
+          <div class="inv-controls">
+            <div class="opp-field inv-field-small">
+              <label for="ad-current-rate">Ad rate you run today</label>
+              <input id="ad-current-rate" class="wo-profit-input" type="number" min="0" max="100" step="0.5" placeholder="0" />
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="ad-max-items">Scan up to</label>
+              <select id="ad-max-items">
+                <option value="50">50 listings</option>
+                <option value="120" selected>120 listings</option>
+                <option value="250">250 listings</option>
+                <option value="400">400 listings</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="ad-filter">Show</label>
+              <select id="ad-filter">
+                <option value="change" selected>Only rates worth changing</option>
+                <option value="all">Everything</option>
+                <option value="under_promoted">Under-promoted</option>
+                <option value="over_promoted">Over-promoted</option>
+                <option value="dont_promote">Shouldn't be promoted</option>
+                <option value="no_cost_basis">Missing a cost basis</option>
+              </select>
+            </div>
+            <span id="ad-status" class="inv-status"></span>
+          </div>
+          </div>
+
+          <div id="ad-warning" class="inv-warning hidden"></div>
+
+          <div id="ad-summary" class="inv-summary hidden"></div>
+
+          <div id="ad-blend-bar" class="inv-bulk-bar hidden">
+            <span id="ad-blend-note" class="inv-selection-note"></span>
+            <button id="ad-apply-default" class="btn btn-secondary small" type="button">Use as my default ad rate</button>
+          </div>
+
+          <div id="ad-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-inventory"/></svg></div>
+              <div class="state-title">Ads can double your sales or quietly eat the whole margin.</div>
+              <p class="state-body">This reads your live listings, works out what each one actually nets, and finds the ad rate that leaves the most money after eBay's cut — plus the rate above which the ad fee is bigger than the profit on the sale.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('ad-scan-btn')?.click()">Check my ad rates</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing here changes a campaign on eBay.</p>
+            </div>
+          </div>
+
+          <p class="inv-footnote">
+            eBay publishes no API for a listing's live ad rate or for its trending category rate, so the rate
+            you run today is taken from Fees &amp; Costs (or the box above), and category norms are published
+            typical rates you can overrule. Expected lift is a model and is labelled as one — the
+            <strong>break-even lift</strong> beside it is straight arithmetic and holds whatever the model
+            thinks. Ad rates are set in eBay Seller Hub → Marketing; this app never changes a campaign.
+          </p>
+        </div>
+      </section>
+
+      <!-- The tradeoff, one listing at a time: every rate, what it costs, what it has to buy back. -->
+      <div id="ad-ladder-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box ad-ladder-box">
+          <h3 id="ad-ladder-title">The tradeoff</h3>
+          <p id="ad-ladder-sub" class="inv-confirm-sub"></p>
+          <div id="ad-ladder-body"></div>
+          <div class="inv-confirm-actions">
+            <button id="ad-ladder-close" class="btn btn-secondary" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Liquidation Lot / Manifest Analyzer. One decision, a lot of money on it: pay the ask or
            walk. Read-only end to end — nothing here lists, publishes or sends anything. -->
       <section id="lots-section" class="opportunity-overlay hidden">
@@ -2142,6 +2249,9 @@
                   </label>
                 </div>
                 <div class="th-body" id="f-th-body"></div>
+                <!-- The ad rate this margin can carry — sized against the same net, live as the
+                     price changes. See /api/promoted/advise. -->
+                <div class="th-ads" id="f-th-ads"></div>
               </div>
             </div>
           </details>
@@ -2558,6 +2668,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=45"></script>
+  <script src="app.js?v=46"></script>
 </body>
 </html>
