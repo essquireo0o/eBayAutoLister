@@ -45,6 +45,36 @@ public interface ILocalSupplySource
     bool IsLocationBased => true;
 
     /// <summary>
+    /// Whether buying from this source puts sales tax on the bill.
+    ///
+    /// A default rather than a required member, so no existing source had to be edited, and it
+    /// defaults to <see cref="IsLocationBased"/>'s inverse because that is exactly what the UI was
+    /// already inferring when the deal feeds were the only taxed source. The inference was only ever
+    /// right by coincidence, and a liquidation auction breaks it: it is local AND it charges tax.
+    /// </summary>
+    bool ChargesSalesTax => !IsLocationBased;
+
+    /// <summary>
+    /// Sites this source deliberately does not read, offered to the seller as prefilled searches.
+    ///
+    /// Empty for every source that can read everything it claims to. It exists because the biggest
+    /// names in liquidation — liquidation.com, B-Stock — answer an automated request with a block
+    /// page rather than with stock, and the honest response to that is a link the seller can open,
+    /// not a source chip that is red every time.
+    /// </summary>
+    IReadOnlyList<LocalSupplyManualSite> ManualSites => [];
+
+    /// <summary>
+    /// A radius this source will not search below, or 0 when it honours the form exactly.
+    ///
+    /// Exists so the UI can stop promising "within 40 miles" for a source that searched 250 —
+    /// the same honesty <see cref="IsLocationBased"/> buys for the nationwide feeds. Auctions are
+    /// the reason: a metro with four hundred classifieds for "dewalt" may have one liquidation
+    /// sale running, and unlike a classified there is a whole pallet at the end of the drive.
+    /// </summary>
+    int MinRadiusMiles => 0;
+
+    /// <summary>
     /// One user-initiated search. Implementations must not retry, schedule, or authenticate as a
     /// side effect: an expired session is reported (status <c>session_expired</c>), never silently
     /// re-established.
@@ -85,5 +115,7 @@ public sealed class LocalSupplySources(IEnumerable<ILocalSupplySource> sources)
     {
         Id = s.Id, Label = s.Label, RequiresConnection = s.RequiresConnection,
         Available = s.IsAvailable, Note = s.AvailabilityNote, LocationBased = s.IsLocationBased,
+        ChargesSalesTax = s.ChargesSalesTax, ManualSites = s.ManualSites.ToList(),
+        MinRadiusMiles = s.MinRadiusMiles,
     }).ToList();
 }

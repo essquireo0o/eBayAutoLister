@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=49" />
+  <link rel="stylesheet" href="style.css?v=50" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -1048,8 +1048,8 @@
                DealFeedService); Facebook needs a one-time login to their own account because it
                publishes no search API. All three arrive as the same LocalSupplyListing. -->
           <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Deal Scanner — Craigslist, Facebook Marketplace &amp; retail deal feeds</h3>
-            <p class="opp-hint">Search local classifieds near you <em>and</em> what's on clearance nationwide (Slickdeals, DealNews, TechBargains), then compare every asking price against real eBay sold prices. Buy cheap, list on eBay. <strong>Only Facebook needs a login.</strong></p>
+            <h3 class="opp-supplier-heading">📍 Deal Scanner — classifieds, clearance &amp; liquidation</h3>
+            <p class="opp-hint">Search local classifieds near you, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off — store closings, overstock, customer returns and surplus. Every price is compared against real eBay sold prices. Buy cheap, list on eBay. <strong>Only Facebook needs a login.</strong></p>
 
             <!-- Source picker, rendered from /api/local/sources so a new source appears here
                  without touching this markup. -->
@@ -1108,14 +1108,23 @@
               <span class="cl-site-hint">Only needed if the auto-picked board is the wrong metro.</span>
             </div>
 
-            <!-- Retail buys are taxed and private-party buys aren't. Shown only while a retail
-                 source is ticked, because it changes nothing on a Craigslist scan. Defaulting to a
-                 middle-of-the-road US rate rather than zero: zero is a rate nobody pays, and it
-                 would overstate every retail row on the board. See Services/RetailBuyCosts.cs. -->
+            <!-- Retail and auction buys are taxed and private-party buys aren't. Shown only while a
+                 source that charges it is ticked, because it changes nothing on a Craigslist scan.
+                 Defaulting to a middle-of-the-road US rate rather than zero: zero is a rate nobody
+                 pays, and it would overstate every taxed row on the board. See RetailBuyCosts.cs. -->
             <div id="retail-tax-row" class="retail-tax-row hidden">
               <label for="retail-tax-input">Your sales tax</label>
               <input id="retail-tax-input" type="number" min="0" max="15" step="0.25" value="7.5" />
-              <span class="retail-tax-hint">% — charged on retail buys, so profit is what you'd actually keep. Set 0 if your state has none.</span>
+              <span class="retail-tax-hint">% — charged on clearance and auction buys, so profit is what you'd actually keep. Set 0 if your state has none.</span>
+            </div>
+
+            <!-- The liquidation marketplaces that answer an automated request with a block page.
+                 Rather than ship a source chip that is red every time, the seller gets the search
+                 they asked for as a link. Filled in from /api/local/sources, so the URLs live in
+                 LiquidationCatalog and not in this markup. -->
+            <div id="manual-sites-row" class="manual-sites-row hidden">
+              <span class="manual-sites-label">Also worth checking by hand</span>
+              <span id="manual-sites-links" class="manual-sites-links"></span>
             </div>
 
             <div id="fb-status" class="mr-status"></div>
@@ -1156,7 +1165,8 @@
                       <th>Deal</th>
                       <th>Source</th>
                       <!-- "You pay", not "Buy local": a retail row's figure includes the sales tax
-                           every profit number beside it was computed from. -->
+                           every profit number beside it was computed from, and an auction row's
+                           includes the buyer's premium as well. -->
                       <th class="num">You pay</th>
                       <th class="num">Resell on eBay</th>
                       <th class="num">Fees</th>
@@ -1164,6 +1174,8 @@
                       <th class="num">Days to cash</th>
                       <th class="num">ROI</th>
                       <th class="num">Margin</th>
+                      <!-- On an auction row this is the highest BID worth making, with the buyer's
+                           premium and the tax already taken out of it. -->
                       <th class="num">Max to pay</th>
                       <th class="num">Offer them</th>
                       <th>Evidence</th>
@@ -3820,6 +3832,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=58"></script>
+  <script src="app.js?v=59"></script>
 </body>
 </html>

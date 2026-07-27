@@ -8,7 +8,7 @@ namespace ING_eBay_AutoLister.Tests;
 // that a green badge has to be earned by evidence and not just by arithmetic.
 public class LocalArbitrageAnalyzerTests
 {
-    private static readonly LocalArbitrageAnalyzer Analyzer = new(new ProfitCalculator());
+    private static readonly LocalArbitrageAnalyzer Analyzer = new(new ProfitCalculator(), new LiquidationLotPricer(new ProfitCalculator()));
     private static readonly FeeProfile Fees = new(); // 13.25% + $0.40, no promoted/shipping/labor
 
     private static LocalSupplyListing Listing(

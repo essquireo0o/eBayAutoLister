@@ -54,6 +54,13 @@ public class LocalSupplyListing
     // The code that has to be typed for the price to be the price. Shown on the row, because a
     // price that only exists with a code is not a price the seller can get without it.
     public string CouponCode { get; set; } = "";
+
+    // ── Liquidation supply (closeout / GOB auctions) ──────────────────────────
+    // Null on every other source, which is the point: a Craigslist row is not an auction and does
+    // not carry a dozen blank auction columns to say so. Non-null means Price above is a BID rather
+    // than an asking price, that a buyer's premium and sales tax sit on top of it, and that the row
+    // may be several units of one product rather than one thing — see Models/LiquidationModels.cs.
+    public LiquidationLotDetails? Liquidation { get; set; }
     // "Just listed", "3 hours ago" — free text as the site rendered it.
     public string PostedAgo { get; set; } = "";
     // Craigslist's feed carries a real timestamp; Facebook only ever shows relative text.
@@ -146,4 +153,27 @@ public class LocalSupplySourceInfo
     // the form. The picker uses it to stop promising "within 40 miles of 89101" for a scan that
     // searched the whole country — see ILocalSupplySource.IsLocationBased.
     public bool LocationBased { get; set; } = true;
+    // Whether buying from this source puts sales tax on the bill. True for the retail deal feeds
+    // and for liquidation auctions; false for a cash pickup off a stranger. Drives whether the
+    // sales-tax field is worth showing — it used to be inferred from LocationBased, which was only
+    // ever right by coincidence: an auction is local AND taxed.
+    public bool ChargesSalesTax { get; set; }
+    // Sites worth searching that refuse to be read by a program — liquidation.com and B-Stock both
+    // answer an automated request with a block page. Rather than pretend the source covers them or
+    // silently drop them, the picker offers a prefilled link the seller can open themselves.
+    public List<LocalSupplyManualSite> ManualSites { get; set; } = [];
+    // A radius this source won't search below, or 0 when it honours the form exactly. Stops the
+    // panel promising "within 40 miles" for a source that searched 250 — see
+    // ILocalSupplySource.MinRadiusMiles.
+    public int MinRadiusMiles { get; set; }
+}
+
+// A site this app deliberately does not scrape, offered as a one-click search instead. UrlTemplate
+// carries a {query} placeholder the browser fills in.
+public class LocalSupplyManualSite
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string UrlTemplate { get; set; } = "";
+    public string Note { get; set; } = "";
 }

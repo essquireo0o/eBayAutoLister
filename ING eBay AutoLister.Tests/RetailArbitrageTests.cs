@@ -19,7 +19,7 @@ public class RetailArbitrageTests
         DefaultShippingCost = 0m,
     };
 
-    private static LocalArbitrageAnalyzer Analyzer() => new(new ProfitCalculator());
+    private static LocalArbitrageAnalyzer Analyzer() => new(new ProfitCalculator(), new LiquidationLotPricer(new ProfitCalculator()));
 
     private static LocalSupplyListing RetailDeal(decimal price) => new()
     {

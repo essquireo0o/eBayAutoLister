@@ -86,7 +86,7 @@ public sealed class LocalArbitrageGroup
 /// <see cref="ProfitCalculator"/>/<see cref="FeeProfile"/> so a local flip is costed by exactly
 /// the same rules as a dropship or supplier-file item.
 /// </summary>
-public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
+public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc, LiquidationLotPricer liquidationPricer)
 {
     // A "goldmine" has to be earned on both axes — a big multiple AND enough sold history to
     // believe it. Thin data gets the honest label instead of the green badge.
@@ -147,6 +147,14 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             BuyCostAllIn = listing.IsRetail ? buyCost : null,
         };
 
+        // An auction lot is a different arithmetic on the same pipeline: the price is a bid rather
+        // than an ask, a buyer's premium sits on top of it, and the row may be several units of one
+        // product. It gets its own branch rather than a pile of conditionals through this one — see
+        // LiquidationLotPricer, which does the money through the Liquidation Lot Analyzer's own
+        // grade, cost and max-bid arithmetic.
+        if (listing.Liquidation is { } lot)
+            return BuildLiquidation(row, lot, resale, fees, retailSalesTaxPercent);
+
         if (resale is null || !resale.HasPrice)
         {
             row.Verdict = "no_data";
@@ -156,20 +164,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             return row;
         }
 
-        row.PricedAs = resale.LookupTitle;
-        row.EbayResaleMedian = resale.Median;
-        row.EbayExpectedSale = resale.ExpectedSale;
-        row.EbayQuickSale = resale.QuickSale;
-        row.SoldCompCount = resale.SoldCompCount;
-        row.TerapeakCompCount = resale.TerapeakCompCount;
-        row.SoldCompWeightPercent = resale.SoldCompWeightPercent;
-        row.TerapeakWeightPercent = resale.TerapeakWeightPercent;
-        row.ResaleSource = SourceLabel(resale.SoldCompCount, resale.TerapeakCompCount);
-        row.ConfidenceScore = resale.ConfidenceScore;
-        row.ConfidenceLevel = resale.ConfidenceLevel;
-        row.DisagreementMessage = resale.DisagreementMessage;
-        row.LiquidityScore = resale.LiquidityScore;
-        row.LiquidityLevel = resale.LiquidityLevel;
+        ApplyResale(row, resale);
 
         var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
 
@@ -215,10 +210,110 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
         return row;
     }
 
+    // The resale half of a row, which is a property of the product and identical however the buy
+    // side is costed. Shared by the ordinary path and the liquidation one so the two can't drift.
+    private static void ApplyResale(LocalArbitrageOpportunity row, ResalePricing resale)
+    {
+        row.PricedAs = resale.LookupTitle;
+        row.EbayResaleMedian = resale.Median;
+        row.EbayExpectedSale = resale.ExpectedSale;
+        row.EbayQuickSale = resale.QuickSale;
+        row.SoldCompCount = resale.SoldCompCount;
+        row.TerapeakCompCount = resale.TerapeakCompCount;
+        row.SoldCompWeightPercent = resale.SoldCompWeightPercent;
+        row.TerapeakWeightPercent = resale.TerapeakWeightPercent;
+        row.ResaleSource = SourceLabel(resale.SoldCompCount, resale.TerapeakCompCount);
+        row.ConfidenceScore = resale.ConfidenceScore;
+        row.ConfidenceLevel = resale.ConfidenceLevel;
+        row.DisagreementMessage = resale.DisagreementMessage;
+        row.LiquidityScore = resale.LiquidityScore;
+        row.LiquidityLevel = resale.LiquidityLevel;
+    }
+
+    /// <summary>
+    /// One auction lot, priced.
+    ///
+    /// Three things differ from the row above and all three are money. The price is a <b>bid</b>, so
+    /// <see cref="LocalArbitrageOpportunity.MaxBuyPrice"/> becomes the highest bid worth making
+    /// rather than the highest sticker worth paying. A <b>buyer's premium</b> and sales tax sit on
+    /// top of it, so every figure is measured against the all-in cost. And the lot may be several
+    /// <b>units</b>, so the profit is per unit times the units expected to survive the grade — which
+    /// is the arithmetic <see cref="LotAnalyzer"/> has always done for a pasted manifest, called
+    /// here rather than written again.
+    /// </summary>
+    private LocalArbitrageOpportunity BuildLiquidation(
+        LocalArbitrageOpportunity row, LiquidationLotDetails lot,
+        ResalePricing? resale, FeeProfile fees, decimal salesTaxPercent)
+    {
+        var quote = liquidationPricer.Price(lot, row.LocalAsk, resale, fees, salesTaxPercent);
+
+        row.Liquidation = quote.Economics;
+        // Filled in on every liquidation row, priced or not: "this bid costs you $124 all in" is
+        // true and worth knowing even when the resale side has no answer.
+        row.SalesTax = quote.Economics.SalesTax;
+        row.BuyCostAllIn = quote.TotalCost;
+        row.PricedAs = resale?.LookupTitle ?? "";
+
+        if (resale is not null && resale.HasPrice) ApplyResale(row, resale);
+
+        // Refused: assorted contents, bulk with no stated count, for-parts, or a comp that failed
+        // the retail cross-check. The reason reaches the seller instead of a number, because the
+        // alternative on a lot is a fabricated figure multiplied by a unit count.
+        if (quote.Economics.UnpriceableReason is { } reason)
+        {
+            row.Verdict = "no_data";
+            row.VerdictNote = reason;
+            ApplyDaysToCash(row, resale);
+            return row;
+        }
+
+        if (resale is null || !resale.HasPrice)
+        {
+            row.Verdict = "no_data";
+            row.VerdictNote = "No eBay sold history matched this lot.";
+            ApplyDaysToCash(row, resale);
+            return row;
+        }
+
+        row.EstimatedFees = quote.Fees;
+        row.EstimatedShipCost = quote.ShipCost;
+        row.NetProfit = quote.NetProfit;
+        row.RoiPercent = quote.RoiPercent;
+        row.MarginPercent = quote.MarginPercent;
+        // The highest BID that still breaks even, with the premium and the tax already taken out of
+        // it — so it is a number to bid to, not a budget to spend.
+        row.MaxBuyPrice = quote.MaxBid;
+
+        ApplyDaysToCash(row, resale);
+
+        var compCount = resale.SoldCompCount + resale.TerapeakCompCount;
+        var (verdict, note) = Judge(quote.NetProfit, quote.RoiPercent, quote.TotalCost, compCount, resale.ConfidenceScore);
+
+        // A lot multiplies one comp by its unit count, so an error in that comp is multiplied too.
+        // Its evidence bar rises with the unit count; under it, the row is a lead, never a green
+        // badge. See LiquidationLotPricer.RequiredCompsForLot.
+        if (verdict == "goldmine" && LiquidationLotPricer.EvidenceTooThinForLot(quote.Economics, compCount))
+        {
+            verdict = "thin";
+            note = $"${quote.NetProfit:0.##} across {quote.Economics.Units} units — but on {compCount} sold comp" +
+                   $"{(compCount == 1 ? "" : "s")}, and a lot multiplies whatever that comp gets wrong.";
+        }
+
+        row.Verdict = verdict;
+        // The bid moves. Saying where to stop is the only honest way to state a profit measured
+        // against a price that has not finished changing.
+        row.VerdictNote = $"{note} {LiquidationLotPricer.BidNote(quote.Economics, row.LocalAsk)}";
+        return row;
+    }
+
     // The buy side of the same row. Every dollar this saves is profit with no fee, no shipping and
     // no wait attached — see NegotiationAdvisor.
     private static void ApplyNegotiation(LocalArbitrageOpportunity row, ResalePricing resale)
     {
+        // An auction row never reaches here — BuildLiquidation returns before this — and for the
+        // same reason: an auctioneer takes bids, not offers. What that row gets instead is the
+        // highest bid worth making, which is the whole of its buy-side decision.
+        //
         // Nobody at Walmart is reading your offer. Drafting one anyway would be the app's most
         // obviously useless output, and counting its "upside" would put money on the board that
         // cannot be won — so a retail row gets no plan, and the buy-side totals skip it. What the

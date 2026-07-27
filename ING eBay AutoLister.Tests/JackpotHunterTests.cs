@@ -11,7 +11,7 @@ public class JackpotHunterTests
 {
     private static readonly FeeProfile Fees = new();                       // 13.25% + $0.40, no shipping/labor
     private static readonly JackpotHunter Hunter = new(new ProfitCalculator());
-    private static readonly LocalArbitrageAnalyzer Arbitrage = new(new ProfitCalculator());
+    private static readonly LocalArbitrageAnalyzer Arbitrage = new(new ProfitCalculator(), new LiquidationLotPricer(new ProfitCalculator()));
     private static readonly ProductNormalizer Normalizer = new(new ProductIdentityExtractor());
     private static readonly DateTime Now = new(2026, 7, 26, 0, 0, 0, DateTimeKind.Utc);
 

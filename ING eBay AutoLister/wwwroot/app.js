@@ -774,8 +774,10 @@
     // The metro override only means anything to Craigslist.
     $('cl-site-row')?.classList.toggle('hidden', !picked.includes('craigslist'));
     if (picked.includes('craigslist')) loadCraigslistSites();
-    // Sales tax only changes a retail row's numbers, so the field only appears when one can appear.
-    $('retail-tax-row')?.classList.toggle('hidden', !picked.some(isRetailSource));
+    // Sales tax only changes a clearance or auction row's numbers, so the field only appears when
+    // one can appear.
+    $('retail-tax-row')?.classList.toggle('hidden', !picked.some(chargesSalesTax));
+    renderManualSites(picked);
     // Zip and radius mean nothing to a nationwide feed. Dimmed rather than hidden — untick the
     // online source and they matter again, and a field that vanishes is a field people hunt for.
     const online = picked.length > 0 && picked.every(id => !isLocationBasedSource(id));
@@ -792,8 +794,38 @@
     return source ? source.locationBased !== false : true;
   }
 
-  function isRetailSource(id) {
-    return !isLocationBasedSource(id);
+  // Whether buying from this source puts sales tax on the bill. Read off the source rather than
+  // inferred from "is it nationwide", which was only ever right by coincidence — a liquidation
+  // auction is local AND taxed, and inferring would have silently priced it tax-free.
+  function chargesSalesTax(id) {
+    const source = localSources.find(s => s.id === id);
+    return source ? source.chargesSalesTax === true : false;
+  }
+
+  // The liquidation marketplaces this app deliberately doesn't scrape, offered as prefilled
+  // searches. Rendered from the source's own list so the URLs live on the server.
+  function renderManualSites(picked) {
+    const row = $('manual-sites-row');
+    const links = $('manual-sites-links');
+    if (!row || !links) return;
+
+    const sites = picked.flatMap(id => localSources.find(s => s.id === id)?.manualSites || []);
+    row.classList.toggle('hidden', sites.length === 0);
+    if (sites.length === 0) return;
+
+    // The query is read at click time, not now: the seller types it after ticking the source.
+    links.innerHTML = sites.map(s =>
+      `<a class="manual-site-link" href="#" data-url="${esc(s.urlTemplate)}" title="${esc(s.note)}">${esc(s.label)} ↗</a>`
+    ).join('');
+
+    links.querySelectorAll('.manual-site-link').forEach(link => {
+      link.addEventListener('click', event => {
+        event.preventDefault();
+        const query = ($('fb-query-input')?.value || '').trim();
+        if (!query) { setLocalStatus('Type what you are looking for first — these open a search on that site.'); return; }
+        window.open(link.dataset.url.replace('{query}', encodeURIComponent(query)), '_blank', 'noopener');
+      });
+    });
   }
 
   async function loadLocalSources() {
@@ -914,8 +946,17 @@
     const local = ids.some(isLocationBasedSource);
     const online = ids.some(id => !isLocationBasedSource(id));
 
+    // A source with a radius floor searched further than the form said. Reporting the form's
+    // number would be the same broken promise the nationwide feeds used to make.
+    const widest = Math.max(radius || 0, ...ids.map(id =>
+      localSources.find(s => s.id === id)?.minRadiusMiles || 0));
+
     const parts = [];
-    if (local) parts.push(`within ${radius} miles${zip ? ` of ${zip}` : ''}`);
+    if (local) {
+      parts.push(widest > radius
+        ? `within ${radius}–${widest} miles${zip ? ` of ${zip}` : ''}`
+        : `within ${radius} miles${zip ? ` of ${zip}` : ''}`);
+    }
     if (online) parts.push('nationwide');
     return parts.join(' and ');
   }
@@ -1328,6 +1369,11 @@
       data.negotiationUpside > 0
         ? `<strong class="fb-arb-hit">${money(data.negotiationUpside)} more</strong> if all ${data.negotiableCount} sellers took your opening offer`
         : '',
+      // A closeout row expires. A profitable one read on Thursday for an auction that ended
+      // Wednesday is a deal the seller never had, so the deadline gets its own headline.
+      data.closingSoonCount
+        ? `<strong class="fb-arb-hit">${data.closingSoonCount} profitable auction${data.closingSoonCount === 1 ? '' : 's'} closing inside 48h</strong>`
+        : '',
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
       scanned +
@@ -1480,6 +1526,7 @@
       row.isRetail && row.freeShipping ? 'ships free' : '',
       // A price that only exists with a code is not a price without it.
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
+      ...liquidationMeta(row),
     ].filter(Boolean).join(' · ');
 
     // A free item has no cost basis, so its ROI is unbounded rather than zero.
@@ -1545,15 +1592,60 @@
     return pipeline.deals.some(d => d.deal?.source === source && d.deal?.sourceItemId === itemId);
   }
 
+  // Everything an auction row says about itself that a classifieds row has no equivalent for: what
+  // the sale is, who is running it, how many units are in the lot, and — the part that expires —
+  // how long is left to bid.
+  function liquidationMeta(row) {
+    const lot = row.liquidation;
+    if (!lot) return [];
+
+    const closing = lot.timeLeft
+      ? `<span class="${closingSoon(lot) ? 'liq-closing-soon' : 'liq-closing'}">closes in ${esc(lot.timeLeft)}</span>`
+      : '';
+
+    return [
+      // The reason the stock is cheap, and the whole point of the board.
+      lot.isLiquidationEvent && lot.eventName
+        ? `<span class="liq-event">${esc(lot.eventName)}</span>`
+        : (lot.eventName ? esc(lot.eventName) : ''),
+      lot.auctionHouse ? esc(lot.auctionHouse) : '',
+      lot.isLot ? `<span class="liq-units">lot of ${lot.units}${lot.gradeLabel ? ` · ${esc(lot.gradeLabel)}` : ''}</span>` : '',
+      // "No bids yet" is a materially different position from "you are bidding against people".
+      lot.isStartingBid ? 'no bids yet' : `${lot.bidCount} bid${lot.bidCount === 1 ? '' : 's'}`,
+      closing,
+    ];
+  }
+
+  function closingSoon(lot) {
+    if (!lot.closesUtc) return false;
+    const hours = (new Date(lot.closesUtc) - Date.now()) / 3600000;
+    return hours > 0 && hours <= 48;
+  }
+
   // What actually leaves the wallet. On a private-party buy that is the asking price; on a retail
-  // buy the register adds sales tax, and every profit figure in the row was computed from the
-  // taxed number — so showing the sticker alone would leave the arithmetic looking wrong.
+  // buy the register adds sales tax, and on an auction the house adds its premium first and the tax
+  // sits on top of both. Every profit figure in the row was computed from the all-in number — so
+  // showing the sticker alone would leave the arithmetic looking wrong.
   function buyCostCell(row) {
     if (!(row.buyCostAllIn > 0)) return row.localAsk > 0 ? money(row.localAsk) : 'Free';
 
-    const tax = row.salesTax > 0
-      ? `<span class="retail-tax">${money(row.localAsk)} + ${money(row.salesTax)} tax</span>` : '';
-    return `${money(row.buyCostAllIn)}${tax ? `<br />${tax}` : ''}`;
+    const lot = row.liquidation;
+    const lines = [];
+
+    if (lot && lot.buyerPremium > 0) {
+      lines.push(`<span class="retail-tax">${money(row.localAsk)} bid + ${money(lot.buyerPremium)} premium` +
+        `${lot.buyerPremiumAssumed ? ' (assumed)' : ''}${row.salesTax > 0 ? ` + ${money(row.salesTax)} tax` : ''}</span>`);
+    } else if (row.salesTax > 0) {
+      lines.push(`<span class="retail-tax">${money(row.localAsk)} + ${money(row.salesTax)} tax</span>`);
+    }
+
+    // On a lot the number that decides anything is the cost of one sellable unit — $240 for a
+    // pallet means nothing until you know it is $6.50 an item.
+    if (lot && lot.isLot && lot.costPerSellableUnit > 0) {
+      lines.push(`<span class="liq-per-unit">${money(lot.costPerSellableUnit)} per unit you can sell</span>`);
+    }
+
+    return `${money(row.buyCostAllIn)}${lines.length ? `<br />${lines.join('<br />')}` : ''}`;
   }
 
   // The cash a row ties up — the figure to sort and budget on, taxed where tax applies.
@@ -1572,6 +1664,19 @@
     // this says so instead of drafting a message that cannot be sent.
     if (row.isRetail) {
       return '<span class="fb-arb-muted" title="Retail price — there is nobody to haggle with. The number to act on is Max to pay: above that shelf price this stops making money.">retail — no haggling</span>';
+    }
+
+    // An auctioneer takes bids, not offers. The buy-side decision on this row is entirely "what is
+    // the most I can bid", and that number — premium and tax already removed from it — is the one
+    // shown here, because it is the only thing the seller has to remember when the clock runs down.
+    if (row.liquidation) {
+      const max = row.liquidation.maxBidForTargetRoi;
+      if (!(max > 0)) {
+        return '<span class="fb-arb-muted" title="The bid is already past what this lot returns after the premium, the tax and eBay\'s fees.">bid past it — walk</span>';
+      }
+      return `
+        <span class="neg-offer" title="Bid up to this and you still clear ${Math.round(row.liquidation.targetRoiPercent)}% ROI after the buyer's premium, sales tax, eBay's fees and shipping.">${money(max)}</span>
+        <span class="neg-upside">max bid</span>`;
     }
 
     if (!plan || plan.verdict === 'no_data') {

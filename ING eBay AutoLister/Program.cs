@@ -179,12 +179,19 @@ builder.Services.AddSingleton<CraigslistService>();
 // in the same table. The one sourcing source that still works when the seller's own city is
 // empty. See DealFeedService / DealFeedCatalog.
 builder.Services.AddSingleton<DealFeedService>();
+// Liquidation supply: what a business sells when it is emptying itself — store closings, overstock,
+// customer returns, municipal surplus. The cheapest stock this app can see, because the seller's
+// goal is an empty building rather than a good price. Priced through the Liquidation Lot Analyzer's
+// own grade and max-bid arithmetic. See LiquidationSourceService / LiquidationLotPricer.
+builder.Services.AddSingleton<LiquidationSourceService>();
+builder.Services.AddSingleton<LiquidationLotPricer>();
 // Every source behind one interface, so the arbitrage pipeline (grouping → comp lookup → profit →
-// ranking) never learns which site a listing came from and a fourth source is a registration.
+// ranking) never learns which site a listing came from and a fifth source is a registration.
 // Order matters: no-login sources first, so a seller who has connected nothing still gets
 // results from a default search. See ILocalSupplySource / LocalSupplySources.
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<CraigslistService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<DealFeedService>());
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<LiquidationSourceService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
 builder.Services.AddSingleton<LocalSupplySources>();
 // Local sold-history lookup — read-only against the externally-maintained Marketplace.db at
@@ -3818,6 +3825,15 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             .ToList();
         result.NegotiableCount = negotiable.Count;
         result.NegotiationUpside = Math.Round(negotiable.Sum(r => r.Negotiation!.Upside), 2);
+
+        // The liquidation half of the board, counted separately because it expires. A closeout row
+        // is not a listing that will still be there tomorrow — it is a bid that closes, and a
+        // profitable one the seller reads on Thursday for an auction that ended Wednesday is a
+        // deal they never had.
+        var now = DateTime.UtcNow;
+        result.LiquidationCount = result.Items.Count(r => r.Liquidation is not null);
+        result.ClosingSoonCount = result.Items.Count(r =>
+            r.NetProfit is > 0 && r.Liquidation is { } lot && LiquidationLotPricer.ClosingSoon(lot, now));
 
         if (result.Items.All(r => r.EbayExpectedSale is null))
         {

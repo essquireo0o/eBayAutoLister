@@ -4402,6 +4402,67 @@ textarea {
    aggregator (Slickdeals / DealNews / TechBargains) — the distinction that matters at a glance is
    "this is a shop, not a person". */
 .local-badge-dealfeeds  { background: #b4530a; }
+/* Liquidation auctions. Its own colour because the row behaves differently from every other one on
+   the board: it has a deadline on it. */
+.local-badge-liquidation { background: #8a1c3d; }
+
+/* The liquidation extras. Everything here is about a row that expires or contains more than one
+   thing — neither of which any other source on this board can do. */
+.liq-event {
+  font-weight: 700;
+  color: #8a1c3d;
+}
+
+.liq-units {
+  display: inline-block;
+  font-weight: 700;
+  border: 1px solid rgba(138, 28, 61, 0.35);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: #8a1c3d;
+}
+
+.liq-closing { color: var(--muted); }
+
+/* The one piece of urgency on this board that is real: after this it is gone. */
+.liq-closing-soon {
+  font-weight: 700;
+  color: #b4530a;
+}
+
+.liq-per-unit {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The liquidation sites this app deliberately doesn't read, offered as prefilled searches. */
+.manual-sites-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+
+.manual-sites-label { color: var(--muted); }
+
+.manual-sites-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.manual-site-link {
+  color: #8a1c3d;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(138, 28, 61, 0.45);
+}
+
+.manual-site-link:hover { border-bottom-style: solid; }
 
 /* The retail extras that only some rows have: what the register adds, the code you have to type,
    and the store you're buying from. */

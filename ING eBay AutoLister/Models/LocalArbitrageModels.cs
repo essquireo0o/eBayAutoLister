@@ -42,9 +42,18 @@ public class LocalArbitrageOpportunity
     public string CouponCode { get; set; } = "";
     // Sales tax on LocalAsk, and what therefore actually leaves the wallet. Null on a private-party
     // buy, where the ask IS the cost. Every profit figure on a retail row is computed from
-    // BuyCostAllIn, never from LocalAsk.
+    // BuyCostAllIn, never from LocalAsk. A liquidation row fills both in too — an auction charges
+    // tax like a till does, and a buyer's premium on top (see Liquidation below).
     public decimal? SalesTax { get; set; }
     public decimal? BuyCostAllIn { get; set; }
+
+    // ── When the buy is an auction lot, not an item on a shelf ───────────────
+    // Null on every other source. Non-null means LocalAsk is a BID rather than a price — so
+    // MaxBuyPrice is the highest bid worth making rather than the highest sticker worth paying —
+    // and that the row may be several units of one product, priced per unit through the same grade
+    // assumptions the Liquidation Lot Analyzer applies to a pasted manifest.
+    // See Services/LiquidationLotPricer.cs.
+    public LiquidationLotEconomics? Liquidation { get; set; }
 
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
@@ -152,4 +161,13 @@ public class LocalArbitrageResult
     // opening offer — but every dollar of it is profit with no fee and no wait attached.
     public int NegotiableCount { get; set; }
     public decimal NegotiationUpside { get; set; }
+
+    // ── What the liquidation half of the board found ─────────────────────────
+    // Counted separately because they are a different kind of buy: they close on a deadline, they
+    // cost a premium on top of the bid, and the profitable ones are usually the cheapest rows on
+    // the board rather than the biggest. A seller who scanned four sites needs to know whether the
+    // money is in the auctions before the clock runs out on them.
+    public int LiquidationCount { get; set; }
+    // Profitable liquidation rows whose auction closes inside LiquidationLotPricer.ClosingSoonHours.
+    public int ClosingSoonCount { get; set; }
 }

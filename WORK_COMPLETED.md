@@ -3771,3 +3771,207 @@ change touches `EarningsStore` — the class gives every test its own GUID-named
 its `Dispose` calls the process-global `SqliteConnection.ClearAllPools()`, which is the plausible
 cause when xUnit runs collections in parallel on Windows. Pre-existing, unrelated to the deal
 scanner, and worth its own look rather than being quietly ignored.
+
+## Going-Out-of-Business Finder — buying from businesses that are emptying themselves (autonomous session, 2026-07-27)
+
+### The money problem
+
+Every sourcing board in this app buys **one object from one seller**: a drill off Craigslist, a
+clearance vacuum off a deal feed. All of them shop the same market — retail-adjacent supply, priced
+by someone who wants a good price for it.
+
+The cheapest stock in the world is not priced that way. When a shop closes, a warehouse clears its
+returns or a company is dispersed, the seller's goal is an **empty building**, and the price is
+whatever the room will pay on the day. That is where pallets go for the price of one item, and this
+app could not see any of it.
+
+### What was built
+
+`LiquidationSourceService` — a fourth `ILocalSupplySource`, ticked on in the same picker, ranked in
+the same table, priced by the same sold-comps → `ProfitCalculator` → `FeeProfile` stack. **Nothing
+downstream changed**: grouping, comp lookups, `LocalSupplyMerger.TakeBalanced`, `Rank`, the Deal
+Pipeline and the Budget Optimizer were already written against `LocalSupplyListing`, so a store
+closing in Lindon, Utah lands in one ranked list beside the Craigslist rows.
+
+Four search slices (`LiquidationCatalog`, the one file to edit when one moves): the seller's own
+words, then `+ lot`, `+ pallet` and `+ closeout` to surface multi-unit stock. One word appended,
+never a phrase — the site ANDs every token, so `headphones lot` returns a full page and
+`lot of headphones` returns nothing at all because of the "of" (verified live).
+
+### Why HiBid, and not liquidation.com
+
+The obvious names were tried **first**, and all of them refuse to be read:
+
+| Site | What it actually answers with |
+|---|---|
+| liquidation.com | HTTP **403** on every path, including the front page |
+| B-Stock | **403** and a Cloudflare interstitial |
+| Direct Liquidation | A Vue shell with no stock in it |
+| GovDeals / AllSurplus | An Angular SPA behind an API key embedded in their own bundle |
+| BidFTA | **429**, and its API host does not resolve |
+
+Building a source on those would ship a permanently red chip. They are in the catalogue as
+**`ManualSites`** instead — a prefilled one-click search the seller opens themselves, rendered under
+the form. A smaller promise, and one the app can keep.
+
+HiBid is where the closing businesses themselves list, and it publishes each search as
+**server-rendered state**: a machine-readable island holding the lot, the current bid, the bid
+count, the closing countdown, the auction house, the pickup city **and the buyer's premium**. That
+last field is the reason this board can be honest at all — see below. No CSS selectors, so a
+redesign cannot silently empty the board.
+
+### The three things an auction costs that a shelf doesn't
+
+All three are priced in, because leaving any of them out makes every row flattering:
+
+- **The price is a bid, not a cost.** It is the floor. So the headline output is not "the profit at
+  this price" but **the highest bid still worth making** — `LotAnalyzer.MaxAsk`, the same exact
+  arithmetic the manifest analyzer has always used to answer "bid to here or walk", with the premium
+  and the tax already taken out of it. Every verdict says where to stop, because a profit quoted
+  against a price that is still climbing is only honest with a ceiling attached to it.
+- **The buyer's premium, and tax on top of it.** A $100 bid at 15% + 8% is **$124.20** — charged
+  through `LotAnalyzer.CostOf`, which already bills tax on hammer + premium the way an auction house
+  does. A test pins that the identical item costs exactly $24.20 more at auction than off a
+  stranger; a board that showed them level would be lying about a quarter of the margin.
+  When an auction publishes **no** rate and prints no percentage, a premium is **assumed rather than
+  waived** and the row says `(assumed)`: a published zero and an unpublished premium are
+  indistinguishable in this data, and only one of the two possible mistakes buys a loser.
+- **It may be several things.** A "Lot of 8" priced against one comp is wrong by **8×** in the
+  direction that invents a goldmine. Lots are priced per unit through `LotAnalyzer.Grades` — the
+  same recovery assumptions a pasted manifest gets — and the row reports **cost per sellable unit**,
+  because "$240 for a pallet" means nothing until you know it is $6.83 an item.
+
+### This is the Lot Analyzer, called rather than re-derived
+
+`LiquidationLotPricer` writes no money maths of its own. It calls `LotAnalyzer.CostOf`,
+`LotAnalyzer.MaxAsk`, `LotAnalyzer.Grades`/`Assumptions` and `LotAnalyzer.RetailSanityCheck`, plus
+the shared `ProfitCalculator`. **A pallet found by this scan and the same pallet pasted into the
+Liquidation Lot Analyzer cannot disagree about what it is worth** — including the "$4,200 retail
+value!" cross-check, which refuses a comp several times the listing's own claimed retail because on
+a lot that mismatch is multiplied by the unit count before it reaches the seller.
+
+### The parser's real job is refusal — and here the stakes are multiplied
+
+Every rule below was **measured against 801 live auction lots** pulled across eight searches, not
+guessed. The counts are recorded in `LiquidationSelectors` beside each rule.
+
+- **`bidAmount: 123.45` is a placeholder, not a price.** All **801** lots carried the identical
+  value. Reading it would have given every row on the board the same invented cost basis — mildly
+  flattering on the expensive lots and catastrophic on the cheap ones, where the real opening bid is
+  $1. The real money is `highBid`, falling back to `minBid`, which is flagged as an *opening* bid
+  because "nobody has bid yet" is the difference between a floor and a contest.
+- **"Pallet" alone never implies a quantity.** Of the 37 lots whose titles contained the word,
+  nearly all were pallet **jacks, forks, racks** and a pallet **shed** — single products named after
+  the thing. Only "pallet **of**" counts, and even then a count nobody stated is refused with
+  *"open the lot and count"* rather than invented.
+- **`(N)` beats "Lot of N".** The bracketed form led **62** titles (7.7%) against **9** (1.1%) for
+  the wordier one. Reading only the obvious form would have missed seven eighths of the multi-unit
+  stock — and missing a count prices eight units as one.
+- **"As-is" is not a refusal.** It appears in **56** lots (7%) as boilerplate stapled to everything;
+  refusing on it would delete a large slice of a perfectly good board. "For parts" and "not working"
+  appeared **once each** — said only when they are meant, and refused.
+- **A bare "new" is graded as a shelf pull, not as factory-sealed.** 122 lots (15%) say it, and at
+  an auction it describes the packaging far more often than it guarantees a seal.
+- Also refused: **assorted / various / mixed** contents (78 lots, 9.7% — no single product to comp),
+  multi-item titles ("(3) NASCAR Headphones, New Glue Gun, Small Tripod"), closed lots, floor-only
+  lots with no internet bidding, and things **eBay does not allow at all** — firearms, ammunition,
+  alcohol, vehicles, real estate, livestock.
+
+### The evidence bar rises with the unit count
+
+A single item's profit is one comp's worth of guess; a lot's is that guess **multiplied**. A 20%
+comp error on one $60 item is $12 and on forty of them is $480 — so a lot must clear
+`RequiredCompsForLot(units)`: *don't claim to know the market for N units from fewer than N observed
+sales*, floored at the board's ordinary 5-comp goldmine bar and capped at 15, where the demand would
+stop being meetable for any real product.
+
+This started as "reuse `LotAnalyzer.GoodEvidenceComps`", and a test caught that being **exactly**
+the board's existing 5-comp bar — i.e. no bar at all. Fixed rather than kept as decoration.
+
+### Honesty rules kept
+
+- **Never inflated.** Every ambiguity resolves toward a higher cost or no row at all.
+- **A slice that fails, fails alone.** Verified live: HiBid rate-limited the scan and it came back
+  naming all four slices, `retryable: true`, with a "wait a minute and scan again" sentence — never
+  a dead end.
+- **The radius is not quietly widened.** Auctions are far sparser than classifieds, so the seller's
+  radius is a **floor** of 250 miles — and `MinRadiusMiles` (a new default interface member) makes
+  the panel say "within 40–250 miles" instead of promising the 40 the form said. The same honesty
+  `IsLocationBased` bought for the nationwide feeds.
+- **`ChargesSalesTax` replaced an inference.** The tax field used to appear based on "is this source
+  nationwide", which was only ever right by coincidence — a liquidation auction is **local and
+  taxed**, and the inference would have priced it tax-free.
+- **No haggling at an auction.** An auctioneer takes bids, not offers, so these rows carry no
+  negotiation plan and contribute nothing to the board's `negotiationUpside` — money that cannot be
+  won must not appear as money. What they get instead is the max bid.
+- **The closing time is computed from the countdown**, not from the site's printed close time, which
+  is written in the auction house's local zone with no offset on it.
+- **A closeout row expires.** `closingSoonCount` headlines the profitable auctions closing inside
+  48h, because one read on Thursday for a sale that ended Wednesday is a deal the seller never had.
+- **No crawling.** One GET per slice per click, for the seller's own query, against the same search
+  page a person would open. Nothing scheduled, nothing stored, no account, no key, no retries.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/LiquidationModels.cs` | **New** — `LiquidationLotDetails` (what a lot is) and `LiquidationLotEconomics` (what it's worth) |
+| `Services/LiquidationCatalog.cs` | **New** — the four search slices, the radius floor, and the walled sites offered as manual searches |
+| `Services/LiquidationSelectors.cs` | **New** — every pattern isolated for tuning, each with the live count that justified it |
+| `Services/LiquidationParser.cs` | **New** — the state island, unit counts, grades, premium, claimed retail, refusals, dedupe. Pure |
+| `Services/LiquidationSourceService.cs` | **New** — the `ILocalSupplySource`: four GETs, per-slice failure isolation, scan budget, bounded reads, block detection |
+| `Services/LiquidationLotPricer.cs` | **New** — the auction/lot money, entirely on top of `LotAnalyzer` + `ProfitCalculator` |
+| `Services/ILocalSupplySource.cs` | `ChargesSalesTax`, `ManualSites`, `MinRadiusMiles` default members + carried into `Describe()` |
+| `Models/LocalSupplyModels.cs` | `Liquidation` on the listing; `ChargesSalesTax` / `ManualSites` / `MinRadiusMiles` + `LocalSupplyManualSite` |
+| `Models/LocalArbitrageModels.cs` | `Liquidation` on the row; `LiquidationCount` / `ClosingSoonCount` on the board |
+| `Services/LocalArbitrageAnalyzer.cs` | `BuildLiquidation` branch; `ApplyResale` extracted so both paths share it; no negotiation plan on an auction row |
+| `Program.cs` | DI registration + the two liquidation board counts |
+| `wwwroot/index.html` | Panel retitled, manual-sites row, header notes. `app.js?v=59`, `style.css?v=50` |
+| `wwwroot/app.js` | `chargesSalesTax`, `renderManualSites`, `liquidationMeta`, premium + per-unit lines in `buyCostCell`, max-bid branch in `offerCell`, closing-soon headline, honest `scopeTextFor` |
+| `wwwroot/style.css` | `.local-badge-liquidation`, `.liq-event`, `.liq-units`, `.liq-closing-soon`, `.liq-per-unit`, `.manual-site-link` |
+| `ING eBay AutoLister.Tests/LiquidationParserTests.cs` | **New** — 60 tests, mostly pinning refusal |
+| `ING eBay AutoLister.Tests/LiquidationArbitrageTests.cs` | **New** — 24 tests on the auction and lot money rules |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,416 passed**, 0 failed, 0 skipped (1,332 pre-existing + 84 new) |
+| `dotnet test` × 3 further full runs | 1,413–1,416 passed each time, 0 failures — no flakes seen this session |
+| `node --check app.js` | Syntax OK |
+| Live `GET /api/local/sources` | `liquidation` present, `available=true`, `locationBased=true`, `chargesSalesTax=true`, `minRadiusMiles=250`, 3 manual sites |
+| **Parser over 8 real captured search pages** (1.6–2.2 MB each) | **661 lots parsed**; **0** priced at the `123.45` sentinel; 80 lots detected, 51 refused with reasons; 112 liquidation events flagged; 555 published premiums vs 106 assumed; 661/661 with a pickup location, 653 with an image, 604 with a close time |
+| Live `GET /api/local/search?...&sources=liquidation` | `status=ok`, **37 lots**, $5–$275, correctly geo-filtered to Las Vegas / Boulder City NV / Youngtown AZ / Lancaster CA for zip 89101, real premiums (15%, 19.5%), real countdowns |
+| Live `GET /api/local/arbitrage?...&salesTax=8.375` | 25 rows priced. Premium and tax to the cent: a $10 bid → $1.50 premium → $0.96 tax → **$12.46** all-in, ROI measured on that. `maxBuyPrice` (break-even bid) and `maxBidForTargetRoi` both returned; `negotiation=null`, `negotiableCount=0`, `negotiationUpside=0` on **every** row; `closingSoonCount=4` |
+| Live thin-evidence gating | Rows at 1,775% and 1,109% ROI badged `solid` / `thin`, `goldmineCount=0` — the min-comp gate holding on a board where every bid starts at $5 |
+| Live partial failure | HiBid rate-limited an earlier scan: came back naming all four slices, `retryable=true`, "wait a minute and scan again" — never a dead end |
+
+### Two bugs the live run found, and fixed
+
+- **`LOT OF (2) DeWalt Rotary Hammer Drills` was refused** as "no count stated", while stating its
+  count perfectly clearly — `(N)` was only read at the *front* of a title. A bracketed count is now
+  read anywhere **inside bulk wording** ("lot of", "pallet of"), where the context guarantees it is
+  a quantity rather than a voltage or a size. Refusing cost coverage on a lot the seller could have
+  bought.
+- **"Bid up to $29.60" on a lot already standing at $37** — technically true, and an instruction to
+  bid when the honest answer is to stop. A bid past the target now reads *"already past the $29.60
+  that clears 40%. Let it go."*
+
+### Not verified
+
+- **The rendered board in a browser.** The endpoints are verified live with real request/response
+  payloads and the assets were bumped and syntax-checked, but the liquidation row (premium line,
+  per-unit cost, event badge, closing countdown, max-bid cell) and the manual-site links were not
+  driven in the UI against a live scan.
+- **A multi-unit lot carried all the way through a live scan.** The unit/grade/recovery path is
+  covered by unit tests and was exercised against 661 real lots through the parser, but no live
+  arbitrage scan in this session happened to return a priceable multi-unit lot with sold comps
+  behind it — the `dewalt` board near 89101 was all single items.
+- **A liquidation row tracked onto the Deal Pipeline or put through the Budget Optimizer.** The
+  all-in cost flows into both through the existing `buyCostAllIn` path that the retail rows already
+  use, but that was not driven end to end here.
+- **Comp-match quality on auction titles.** Shared, pre-existing behaviour: live rows priced
+  "S1 - DeWALT POWER TOOLS (G17?)" at $249.99 on 2 comps. It errs conservative (badged `thin`, no
+  goldmines claimed), but auction titles carry lot codes and abbreviations that classifieds do not,
+  and it is worth its own pass.
