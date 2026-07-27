@@ -3358,3 +3358,126 @@ otherwise. Both real listings are GTC and now correctly carry no age at all.
   (masked IDs, withheld bids, floor blocking, ranking — 11 tests) and the endpoint's own guards,
   not against a real `GetAllBidders` response.
 - **Multi-page unsold lists.** Only two ended listings existed, so pagination is untested live.
+
+---
+
+## Aging-Inventory Rescue — getting the money back off the shelf (autonomous session, 2026-07-27)
+
+### The money problem
+
+Inventory Health (`b40b30e`) already finds listings the market has drifted out from under, and
+prices them. But on an old listing it deliberately answers with **one capped step** and the line
+*"re-run the scan after this one to go further"*. That is the correct answer for a repricer and a
+useless one for dead stock, because it depends on the seller **coming back** — and not coming back
+is precisely how inventory ages in the first place. A listing that needed a 40% cut got 35% of one,
+and then sat there.
+
+The second half of the problem has no answer anywhere in the app or in eBay Seller Hub: some items
+will not sell alone at **any** price above their break-even, and the only way out of them is to
+attach them to something that already sells.
+
+Both are the same underlying loss. Capital parked in stock that is not moving cannot buy the next
+flip, and unlike a bad price it is invisible — nothing in Seller Hub ever says *"$4,200 of your
+money has been sitting on a shelf for four months."*
+
+### What was built
+
+`GET /api/inventory/rescue` — reuses `ScanInventoryHealthAsync` **whole** (so market price, cost
+basis, break-even, floors and comp-match guards are computed exactly once, one way, app-wide) and
+adds two things on top:
+
+**1. A dated markdown ladder per stuck listing.** The whole plan is decided up front, while the
+seller is looking at what the item is costing them, instead of one step at a time:
+
+- Walks linearly from today's asking price to a **clearance target** — the lower of the comps' own
+  quick-sale price and 85% of market — in evenly spaced drops, each dated forward.
+- **Urgency sets the shape, never the depth.** Past 180 days (or a `dead_capital` verdict) it is 2
+  steps 10 days apart; past 120 days, 3 steps at 14; otherwise 4 steps at 14. Both ladders finish at
+  the *same* price — being old buys you speed, not a deeper discount (pinned by a test).
+- **No rung of any ladder goes under the floor**, which is break-even raised by whatever profit or
+  margin policy the seller set in Fees & Costs. Reuses `NetProceedsCalculator.MinimumOffer` and
+  `InventoryHealthAnalyzer.Charm`, so a rescue price is costed identically to a local flip.
+- Steps too small to change a buyer's mind (under 3% or under $1) are **dropped, not shipped**.
+- Every step carries the date, the price, the cut, the listing's age when it lands, and the
+  take-home at that price.
+
+**2. Bundles.** Pairs each stuck listing with a fast mover from the same inventory:
+
+- "Fast" is **evidence, never assumption**: units actually sold, or 3+ watchers, or measured
+  days-to-sell inside 21. A stale item can never be the fast half — two slow movers in a box is a
+  bigger slow mover.
+- The slow half goes in at **its own clearance price** — the same number its ladder walks to, so one
+  item never has two values. The gain over the ladder: the seller reaches that price *inside a
+  bundle* without publicly cutting the standalone listing.
+- Scored the only honest way: **against what actually happens today**, which is the fast item selling
+  alone and the slow one continuing to sit. A bundle that nets less than that is **not suggested**.
+- Guards: category must fit, a partner under 10% of the slow item's price is refused (a $4 cable
+  does not pull a $900 miner), and **no listing appears in two bundles** — it can only be sold once.
+
+### The numbers the seller sees
+
+| Tile | What it is |
+|---|---|
+| Money stuck on the shelf | Real capital in listings past the age line, at cost basis where known |
+| Oldest one / median age | How long this has been going on |
+| Drops to make today | The work actually in front of them this morning |
+| Cash back if the plans clear | Take-home at the last step — **and the profit given up to get it**, stated plainly next to it |
+| Bundles found / Bundles add | Capital freed, and net (or revenue, without cost basis) over selling the fast item alone |
+
+Every conditional figure is labelled conditional, the same posture as
+`ProjectedNetIfRepricedSells`. Nothing is inflated: with no cost basis the board reports **added
+revenue** rather than inventing a profit.
+
+### Deliberate limits
+
+- **Only the drop due today is ever sent to eBay.** The later rungs stay in the UI as a plan. This
+  app is not running while it is closed, and scheduling a price change it cannot keep would be a lie
+  with a date on it. The footnote says exactly this.
+- **Applying reuses `POST /api/inventory/reprice`** rather than adding a second way to change a live
+  price — so preview-by-default, explicit `confirmed`, and the server-side break-even re-check stay
+  in exactly one place.
+- **Bundles are advisory.** Nothing is published; the seller lists the pair by hand.
+- A listing whose comps did not match, or that is underwater, or already at clearance, gets **no
+  plan and an explanation** — never a markdown off a comparison that failed.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/RescueModels.cs` | **New** — `RescueStep`, `RescuePlan`, `BundleSuggestion`, `RescueSummary`, `RescueResult` |
+| `Services/AgingInventoryRescuer.cs` | **New** — the ladder, the clearance target, urgency, bundle pairing and pricing, ranking, totals. Pure except the shared `ProfitCalculator` |
+| `Models/InventoryHealthModels.cs` | Carries `EstimatedDaysToSell` / `EstimatedMonthlySales` through, so a fast mover can be told from an unmeasured one |
+| `Services/InventoryHealthAnalyzer.cs` | Populates the two new velocity fields from `ResalePricing` |
+| `Program.cs` | DI + `GET /api/inventory/rescue` |
+| `wwwroot/index.html` | `#rescue-section`, the `Rescue Aging Stock` nav entry, the confirm gate, an `inv-to-rescue` cross-link from Inventory Health. `app.js?v=56`, `style.css?v=47` |
+| `wwwroot/app.js` | `bindRescue`, `runRescueScan`, `renderRescueSummary` / `renderRescuePlans` / `renderRescueCard`, `submitRescueDrops`, `renderRescueBundles` / `renderBundleCard` |
+| `wwwroot/style.css` | `.rsc-*` — the plan card and the side-by-side bundle pair; tiles, bulk bar and confirm gate are `.inv-*` reused |
+| `ING eBay AutoLister.Tests/AgingInventoryRescuerTests.cs` | **New** — 39 tests |
+
+### One bug the tests found
+
+The first version could skip the early rungs as too small and then leave the **first worthwhile drop
+dated four weeks out** — the plan had already decided the cut was worth making and then sat on it.
+The schedule is now pulled forward so the first surviving step is due today, with the rest keeping
+their spacing behind it (`A_drop_worth_making_is_not_left_waiting_for_a_schedule_slot`).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,221 passed**, 0 failed, 0 skipped (1,182 pre-existing + 39 new) |
+| `node --check app.js` | Syntax OK |
+
+The 39 tests pin the things that would cost real money: that **no step of any ladder goes under the
+break-even floor**, that a listing which is actually selling units is never dragged into a rescue,
+that both urgency levels finish at the same price, that a bundle is only suggested when it beats
+what already happens today, and that no listing is promised to two different buyers at once.
+
+### Not verified
+
+- **A live scan against the real eBay account.** The board is verified by unit tests and a clean
+  build only; no live `GET /api/inventory/rescue` was run this session, so the plan cards, bundle
+  cards and summary tiles are unexercised against real listing data and real comp matches.
+- **A real applied price drop.** The apply path reuses the already-shipped repricer endpoint, but no
+  drop was sent to eBay from this board.

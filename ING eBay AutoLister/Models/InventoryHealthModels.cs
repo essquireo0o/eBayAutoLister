@@ -46,6 +46,11 @@ public sealed class InventoryHealthItem
     public string ConfidenceLevel { get; set; } = "Insufficient Evidence";
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
+    // How fast the sold history says this product moves, carried through from the comps lookup.
+    // Null means unmeasured, not slow — the aging-inventory rescuer needs to tell "this sells in a
+    // fortnight" apart from "nobody has measured it", because only the first can carry a bundle.
+    public int? EstimatedDaysToSell { get; set; }
+    public decimal EstimatedMonthlySales { get; set; }
 
     // How far above (positive) or below (negative) today's market the listing sits, as a percent
     // of the market price. This is the number the whole feature turns on.

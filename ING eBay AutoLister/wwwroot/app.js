@@ -363,6 +363,7 @@
     bindPhotoLibrary();
     bindInventoryHealth();
     bindWatcherOffers();
+    bindRescue();
     bindRelist();
     bindLotAnalyzer();
     bindPromoted();
@@ -472,6 +473,7 @@
     if (page !== 'photos') $('photo-library-section')?.classList.add('hidden');
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
+    if (page !== 'rescue') $('rescue-section')?.classList.add('hidden');
     if (page !== 'relist') $('relist-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
@@ -520,6 +522,10 @@
       showOffersSection();
       return;
     }
+    if (page === 'rescue') {
+      showRescueSection();
+      return;
+    }
     if (page === 'relist') {
       showRelistSection();
       return;
@@ -553,7 +559,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2893,6 +2899,398 @@
 
   function setWoStatus(text) {
     const el = $('wo-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // ── Aging-Inventory Rescue ───────────────────────────────────────────────
+  // Inventory Health says what a listing should cost today and caps the cut at one revision, which
+  // is right for a repricer and useless for dead stock: it depends on the seller coming back, and
+  // the entire failure mode of aging inventory is that nobody comes back. This board decides the
+  // whole ladder up front — dated drops, floors included — and pairs what will not move on its own
+  // with something that already sells. See AgingInventoryRescuer.cs for the money rules.
+  let rescueScan     = null;   // last RescueResult, kept so filtering never re-scans
+  let rescueSelected = new Set();
+
+  function showRescueSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('rescue-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'rescue'));
+  }
+
+  function closeRescueSection() {
+    $('rescue-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindRescue() {
+    on('rsc-scan-btn', 'click', runRescueScan);
+    on('rsc-close', 'click', closeRescueSection);
+    on('rsc-home', 'click', closeRescueSection);
+    on('inv-to-rescue', 'click', () => { location.hash = 'rescue'; });
+    // Filtering is a pure view over the scan already in hand — it must never re-run eBay calls.
+    on('rsc-filter', 'change', renderRescuePlans);
+    on('rsc-select-all', 'change', toggleSelectAllRescue);
+    on('rsc-preview-btn', 'click', () => submitRescueDrops(true));
+    on('rsc-apply-btn', 'click', openRescueConfirm);
+    on('rsc-confirm-cancel', 'click', () => $('rsc-confirm-overlay')?.classList.add('hidden'));
+    on('rsc-confirm-go', 'click', () => {
+      $('rsc-confirm-overlay')?.classList.add('hidden');
+      submitRescueDrops(false);
+    });
+  }
+
+  async function runRescueScan() {
+    const btn       = $('rsc-scan-btn');
+    const staleDays = $('rsc-stale-days')?.value || '90';
+    const maxItems  = $('rsc-max-items')?.value || '120';
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+    setRescueStatus('Reading your live listings and pricing each one against sold comps…');
+    $('rsc-results').innerHTML = '<p class="opportunity-empty">Finding what has stopped moving, and what still sells — this takes a moment on a large inventory.</p>';
+
+    try {
+      const res  = await fetch(`/api/inventory/rescue?staleAfterDays=${staleDays}&maxItems=${maxItems}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The scan failed.');
+      rescueScan = data;
+      rescueSelected.clear();
+      renderRescueScan();
+    } catch (err) {
+      rescueScan = null;
+      $('rsc-summary')?.classList.add('hidden');
+      $('rsc-bulk-bar')?.classList.add('hidden');
+      $('rsc-bundles')?.classList.add('hidden');
+      $('rsc-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      setRescueStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🛟 Rescue My Aging Stock'; }
+    }
+  }
+
+  function renderRescueScan() {
+    const warn = $('rsc-warning');
+
+    if (rescueScan.status === 'ebay_unavailable') {
+      $('rsc-summary')?.classList.add('hidden');
+      $('rsc-bulk-bar')?.classList.add('hidden');
+      $('rsc-bundles')?.classList.add('hidden');
+      warn?.classList.add('hidden');
+      $('rsc-results').innerHTML =
+        '<p class="opportunity-empty">Your eBay account isn\'t connected, or the token has expired. Reconnect it in Settings, then scan again.</p>';
+      setRescueStatus('');
+      return;
+    }
+
+    if (rescueScan.dataWarning) {
+      warn.textContent = rescueScan.dataWarning;
+      warn.classList.remove('hidden');
+    } else {
+      warn?.classList.add('hidden');
+    }
+
+    renderRescueSummary(rescueScan.summary || {});
+    renderRescuePlans();
+    renderRescueBundles();
+
+    const s = rescueScan.summary || {};
+    setRescueStatus(
+      `${rescueScan.itemsAnalyzed} of ${rescueScan.activeListings} active listings checked · ` +
+      `${s.staleListings || 0} sitting ${rescueScan.staleAfterDays}+ days` +
+      (s.medianDaysListed ? ` · median ${s.medianDaysListed} days old` : ''));
+  }
+
+  // Leads with the money that is stuck, not with a listing count: "6 stale listings" is a
+  // statistic, "$4,200 of your money has been sitting on a shelf for four months" is a reason to act.
+  function renderRescueSummary(s) {
+    const el = $('rsc-summary');
+    if (!el) return;
+
+    const tiles = [
+      { label: 'Money stuck on the shelf', value: money(s.trappedCapital),
+        sub: `${s.staleListings || 0} listing${s.staleListings === 1 ? '' : 's'} past ${rescueScan.staleAfterDays} days`,
+        tone: s.trappedCapital > 0 ? 'warn' : '' },
+      { label: 'Oldest one', value: s.oldestDaysListed ? `${s.oldestDaysListed} days` : '—',
+        sub: s.medianDaysListed ? `half of them are ${s.medianDaysListed}+ days old` : 'Nothing stale yet',
+        tone: s.oldestDaysListed >= 180 ? 'warn' : '' },
+      { label: 'Drops to make today', value: String(s.stepsDueNow || 0),
+        sub: s.plansReady ? `${s.plansReady} plan${s.plansReady === 1 ? '' : 's'} ready to run` : 'No plan needed',
+        tone: s.stepsDueNow > 0 ? 'good' : '' },
+      { label: 'Cash back if the plans clear', value: money(s.cashIfEveryPlanClears),
+        sub: s.profitGivenUpIfEveryPlanClears
+          ? `after giving up ${money(s.profitGivenUpIfEveryPlanClears)} of asking-price profit`
+          : 'Record cost basis to see your take-home',
+        tone: s.cashIfEveryPlanClears > 0 ? 'good' : '' },
+      { label: 'Bundles found', value: String(s.bundlesFound || 0),
+        sub: s.bundlesFound
+          ? `freeing ${money(s.capitalFreedByBundles)} of stuck stock`
+          : 'No fast mover to pair with yet',
+        tone: s.bundlesFound > 0 ? 'good' : '' },
+      { label: 'Bundles add', value: s.incrementalNetFromBundles
+          ? money(s.incrementalNetFromBundles) : money(s.addedRevenueFromBundles),
+        sub: s.incrementalNetFromBundles
+          ? 'net, over selling the fast item alone'
+          : 'revenue, over selling the fast item alone',
+        tone: (s.incrementalNetFromBundles || s.addedRevenueFromBundles) > 0 ? 'good' : '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  const RSC_URGENCY = {
+    critical: { label: '🔴 Dead capital', cls: 'inv-v-dead' },
+    high:     { label: '🟠 Going stale',  cls: 'inv-v-stale' },
+    watch:    { label: '🟡 Watch',        cls: 'inv-v-over' },
+  };
+
+  function rescueFilterMatches(plan, filter) {
+    switch (filter) {
+      case 'ready':    return plan.hasPlan;
+      case 'critical': return plan.urgency === 'critical';
+      case 'no_plan':  return !plan.hasPlan;
+      default:         return true;
+    }
+  }
+
+  function renderRescuePlans() {
+    if (!rescueScan) return;
+    const filter = $('rsc-filter')?.value || 'ready';
+    const plans  = (rescueScan.plans || []).filter(p => rescueFilterMatches(p, filter));
+    const el     = $('rsc-results');
+
+    if (plans.length === 0) {
+      const total = (rescueScan.plans || []).length;
+      el.innerHTML = `<p class="opportunity-empty">${
+        total === 0
+          ? `Nothing has been sitting longer than ${rescueScan.staleAfterDays} days — your money is turning over. Lower the age filter to look further back.`
+          : 'Nothing matches that filter. Switch to "Everything" to see the listings no plan could be built for.'}</p>`;
+      $('rsc-bulk-bar')?.classList.add('hidden');
+      return;
+    }
+
+    el.innerHTML = plans.map(renderRescueCard).join('');
+
+    plans.forEach(p => {
+      const box = $(`rsc-check-${p.listingId}`);
+      if (box) box.addEventListener('change', () => {
+        if (box.checked) rescueSelected.add(p.listingId); else rescueSelected.delete(p.listingId);
+        updateRescueSelection();
+      });
+    });
+
+    $('rsc-bulk-bar')?.classList.remove('hidden');
+    updateRescueSelection();
+  }
+
+  function renderRescueCard(p) {
+    const urgency = RSC_URGENCY[p.urgency] || RSC_URGENCY.watch;
+    const age     = p.daysListed == null ? 'age unknown' : `${p.daysListed} days live`;
+
+    // The ladder itself. Dates are the point: a drop the seller has already decided on is one they
+    // will actually make, and the schedule is what turns "reprice it again sometime" into a plan.
+    const steps = (p.steps || []).map(s => `
+      <tr class="${s.daysFromNow === 0 ? 'rsc-step-now' : ''}">
+        <td>${s.daysFromNow === 0 ? '<strong>Today</strong>' : esc(shortDate(s.onUtc))}</td>
+        <td class="num"><strong>${moneyExact(s.price)}</strong></td>
+        <td class="num">−${Number(s.percentOffListPrice || 0).toFixed(0)}%</td>
+        <td class="num">${s.netProfit == null ? '—' : moneyExact(s.netProfit)}</td>
+        <td>${esc(s.note)}${s.isFloor ? ' <span class="rsc-floor-tag">floor</span>' : ''}</td>
+      </tr>`).join('');
+
+    const ladder = p.hasPlan ? `
+      <table class="inv-table rsc-ladder">
+        <thead>
+          <tr><th>When</th><th class="num">Price</th><th class="num">Off</th><th class="num">You keep</th><th>Why</th></tr>
+        </thead>
+        <tbody>${steps}</tbody>
+      </table>` : '';
+
+    const signals = (p.signals || []).length
+      ? `<ul class="rsc-signals">${p.signals.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : '';
+
+    return `
+      <div class="rsc-card">
+        <div class="rsc-card-head">
+          ${p.hasPlan
+            ? `<input id="rsc-check-${esc(p.listingId)}" type="checkbox" class="rsc-check" ${rescueSelected.has(p.listingId) ? 'checked' : ''} />`
+            : '<span class="rsc-check-spacer"></span>'}
+          <div class="rsc-card-title">
+            <a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+            <div class="rsc-card-meta">
+              <span class="inv-verdict ${urgency.cls}">${esc(urgency.label)}</span>
+              <span>${esc(age)}</span>
+              <span>${money(p.capitalTiedUp)} tied up</span>
+              <span>listed at ${moneyExact(p.listPrice)}</span>
+              ${p.marketPrice ? `<span>market ${moneyExact(p.marketPrice)}</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <p class="rsc-headline">${esc(p.headline)}</p>
+        <p class="rsc-why">${esc(p.why)}</p>
+        ${ladder}
+        ${signals}
+      </div>`;
+  }
+
+  function toggleSelectAllRescue(e) {
+    const on = !!e.target.checked;
+    rescueSelected.clear();
+    if (on) (rescueScan?.plans || []).filter(p => p.hasPlan).forEach(p => rescueSelected.add(p.listingId));
+    document.querySelectorAll('.rsc-check').forEach(box => { box.checked = on; });
+    updateRescueSelection();
+  }
+
+  function updateRescueSelection() {
+    const chosen = selectedRescuePlans();
+    const note   = $('rsc-selection-note');
+
+    if (note) {
+      note.textContent = chosen.length === 0
+        ? 'Nothing selected.'
+        : `${chosen.length} listing${chosen.length === 1 ? '' : 's'} selected — ` +
+          `${money(chosen.reduce((sum, p) => sum + (p.capitalTiedUp || 0), 0))} of stuck stock.`;
+    }
+    const preview = $('rsc-preview-btn');
+    const apply   = $('rsc-apply-btn');
+    if (preview) preview.disabled = chosen.length === 0;
+    if (apply)   apply.disabled   = chosen.length === 0;
+  }
+
+  function selectedRescuePlans() {
+    return (rescueScan?.plans || []).filter(p => p.hasPlan && rescueSelected.has(p.listingId));
+  }
+
+  function openRescueConfirm() {
+    const chosen = selectedRescuePlans();
+    if (chosen.length === 0) return;
+
+    // Only the drop due today goes to eBay. The later rungs are a plan, not a scheduled job — this
+    // app has no server running while it is closed, and quietly promising to cut a price in two
+    // weeks would be a promise it cannot keep.
+    const total = $('rsc-confirm-total');
+    if (total) total.textContent =
+      `${chosen.length} price${chosen.length === 1 ? '' : 's'} change now. The later steps stay here as your plan — come back and run this again when each date comes round.`;
+
+    const list = $('rsc-confirm-list');
+    if (list) list.innerHTML = chosen.map(p => `
+      <div class="inv-confirm-row">
+        <span class="inv-confirm-title">${esc(p.title)}</span>
+        <span class="inv-confirm-prices">${moneyExact(p.listPrice)} → <strong>${moneyExact(p.firstStep.price)}</strong></span>
+      </div>`).join('');
+
+    $('rsc-confirm-overlay')?.classList.remove('hidden');
+  }
+
+  async function submitRescueDrops(dryRun) {
+    const chosen = selectedRescuePlans();
+    if (chosen.length === 0) return;
+
+    // Reuses the repricer endpoint rather than adding a second way to change a live price: every
+    // brake on buyer-visible changes — preview by default, explicit confirm, server-side break-even
+    // re-check — stays in exactly one place.
+    const body = {
+      items: chosen.map(p => ({
+        listingId: p.listingId, sku: p.sku, title: p.title,
+        newPrice: p.firstStep.price, currentPrice: p.listPrice,
+        quantity: p.quantity || 1, breakEvenPrice: p.floorPrice,
+      })),
+      dryRun, confirmed: !dryRun,
+      allowBelowBreakEven: false,
+    };
+
+    setRescueStatus(dryRun ? 'Previewing…' : 'Dropping prices on eBay…');
+    try {
+      const res  = await fetch('/api/inventory/reprice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The price drop failed.');
+
+      const parts = [];
+      if (data.dryRun) parts.push(`Preview only — nothing sent to eBay. ${data.items.length} drop${data.items.length === 1 ? '' : 's'} ready.`);
+      else parts.push(`${data.applied} price${data.applied === 1 ? '' : 's'} dropped`);
+      if (data.skipped) parts.push(`${data.skipped} skipped`);
+      if (data.failed)  parts.push(`${data.failed} failed`);
+
+      const problems = (data.items || []).filter(i => i.status === 'skipped' || i.status === 'failed');
+      setRescueStatus(parts.join(' · ') + (problems.length
+        ? ' — ' + problems.map(p => `${p.title}: ${p.message}`).join('; ') : ''));
+
+      if (!dryRun && data.applied > 0) {
+        addActivity(`${data.applied} aging listing${data.applied === 1 ? '' : 's'} marked down`,
+          'Step one of the rescue plan applied from Aging-Inventory Rescue.');
+        // Those rows are stale by definition now, so re-scan rather than leave the board showing
+        // prices that are no longer live.
+        await runRescueScan();
+      }
+    } catch (err) {
+      setRescueStatus(`The price drop failed: ${err.message || err}`);
+    }
+  }
+
+  // The other way out: stop discounting the thing nobody is searching for, and attach it to the
+  // thing they already are.
+  function renderRescueBundles() {
+    const el = $('rsc-bundles');
+    if (!el) return;
+
+    const bundles = rescueScan?.bundles || [];
+    if (bundles.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+    el.innerHTML = `
+      <h3 class="rsc-bundle-heading">Bundle it out instead</h3>
+      <p class="opp-hint">
+        Each pair puts a slow mover in the same box as something that already sells. The slow half
+        goes out at its clearance price without you publicly cutting its standalone listing, and one
+        order pays the per-order costs instead of two. List these by hand — nothing here is published for you.
+      </p>
+      ${bundles.map(renderBundleCard).join('')}`;
+    el.classList.remove('hidden');
+  }
+
+  function renderBundleCard(b) {
+    const gain = b.incrementalNet != null
+      ? `<strong>${money(b.incrementalNet)} more net</strong> than selling the fast one alone`
+      : `<strong>${money(b.addedRevenue)} more revenue</strong> than selling the fast one alone`;
+
+    const signals = (b.signals || []).length
+      ? `<ul class="rsc-signals">${b.signals.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : '';
+
+    return `
+      <div class="rsc-card rsc-bundle-card">
+        <div class="rsc-bundle-pair">
+          <div class="rsc-bundle-half rsc-bundle-slow">
+            <div class="rsc-bundle-tag">🐢 Stuck ${b.slowDaysListed == null ? '' : `${b.slowDaysListed} days`}</div>
+            <div class="rsc-bundle-name">${esc(b.slowTitle)}</div>
+            <div class="rsc-bundle-price">${moneyExact(b.slowPrice)} → <strong>${moneyExact(b.slowContribution)}</strong> in the bundle</div>
+          </div>
+          <div class="rsc-bundle-plus">+</div>
+          <div class="rsc-bundle-half rsc-bundle-fast">
+            <div class="rsc-bundle-tag">⚡ Sells — ${esc(b.fastEvidence)}</div>
+            <div class="rsc-bundle-name">${esc(b.fastTitle)}</div>
+            <div class="rsc-bundle-price">${moneyExact(b.fastPrice)}</div>
+          </div>
+        </div>
+        <div class="rsc-bundle-money">
+          <span>List the pair at <strong>${moneyExact(b.bundlePrice)}</strong></span>
+          <span>${Number(b.discountPercent || 0).toFixed(0)}% off the two asking prices</span>
+          <span>${gain}</span>
+          <span>frees ${money(b.capitalFreed)} of stuck stock</span>
+        </div>
+        <p class="rsc-why">${esc(b.rationale)}</p>
+        <div class="rsc-bundle-title">Suggested title: <code>${esc(b.suggestedTitle)}</code></div>
+        ${signals}
+      </div>`;
+  }
+
+  function setRescueStatus(text) {
+    const el = $('rsc-status');
     if (el) el.textContent = text || '';
   }
 

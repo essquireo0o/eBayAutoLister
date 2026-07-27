@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=46" />
+  <link rel="stylesheet" href="style.css?v=47" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -64,6 +64,7 @@
         <button class="nav-item" type="button" data-page="snipe"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Auction Sniper</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
+        <button class="nav-item" type="button" data-page="rescue"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Rescue Aging Stock</button>
         <!-- Sits with Inventory Health and Offers to Watchers because it is the third view of the
              same inventory — and the only one that can see the listings that ENDED. -->
         <button class="nav-item" type="button" data-page="relist"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Lost Sales</button>
@@ -1396,6 +1397,9 @@
             <!-- The other half of the same inventory: a stuck listing WITH watchers doesn't need a
                  public markdown, it needs an offer to the people already interested. -->
             <button id="inv-to-offers" class="btn btn-secondary" type="button">👁 Offers to watchers</button>
+            <!-- And when one markdown was never going to be enough: the listings that have been
+                 ignoring their suggested price for months need a whole plan, not another cut. -->
+            <button id="inv-to-rescue" class="btn btn-secondary" type="button">🛟 Rescue aging stock</button>
             <button id="inv-scan-btn" class="btn btn-primary" type="button">🔎 Scan My Listings</button>
             <button id="inv-close" class="nl-close-btn" type="button" title="Close">✕</button>
           </div>
@@ -1624,6 +1628,121 @@
           <div class="inv-confirm-actions">
             <button id="wo-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
             <button id="wo-confirm-go" class="btn btn-primary" type="button">Yes — send on eBay</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Aging-Inventory Rescue ──────────────────────────────────────────────────────────
+           Inventory Health prices a listing for today and stops at one revision. That is the right
+           answer for a repricer and the wrong one for stock that has been ignoring it for months,
+           because it depends on the seller coming back — and not coming back is exactly how
+           inventory ages. This decides the whole ladder up front, with dates, and finds bundles
+           that let a slow mover ride out with something that already sells. -->
+      <section id="rescue-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="rsc-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Rescue Aging Stock</div>
+              <h2>🛟 Turn Dead Stock Back Into Cash</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="rsc-scan-btn" class="btn btn-primary" type="button">🛟 Rescue My Aging Stock</button>
+            <button id="rsc-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+          <p class="opp-hint">
+            Finds the listings your money has been sitting in for months, then writes each one an
+            escape plan: a <strong>dated ladder of price drops</strong> that stops dead on your
+            break-even, and <strong>bundles</strong> that pair a slow mover with something that
+            already sells. Trapped capital can't buy your next flip — this is about getting it back.
+            Nothing reaches eBay until you confirm it.
+          </p>
+
+          <div class="inv-controls">
+            <div class="opp-field inv-field-small">
+              <label for="rsc-stale-days">Count it stuck after</label>
+              <select id="rsc-stale-days">
+                <option value="60">60 days</option>
+                <option value="90" selected>90 days</option>
+                <option value="120">120 days</option>
+                <option value="180">180 days</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="rsc-max-items">Scan up to</label>
+              <select id="rsc-max-items">
+                <option value="50">50 listings</option>
+                <option value="120" selected>120 listings</option>
+                <option value="250">250 listings</option>
+                <option value="400">400 listings</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="rsc-filter">Show</label>
+              <select id="rsc-filter">
+                <option value="ready" selected>Only listings with a plan</option>
+                <option value="critical">Dead capital only</option>
+                <option value="all">Everything</option>
+                <option value="no_plan">No plan possible</option>
+              </select>
+            </div>
+            <span id="rsc-status" class="inv-status"></span>
+          </div>
+          </div>
+
+          <div id="rsc-warning" class="inv-warning hidden"></div>
+
+          <div id="rsc-summary" class="inv-summary hidden"></div>
+
+          <div id="rsc-bulk-bar" class="inv-bulk-bar hidden">
+            <label class="inv-select-all">
+              <input id="rsc-select-all" type="checkbox" />
+              Select every listing with a plan
+            </label>
+            <span id="rsc-selection-note" class="inv-selection-note">Nothing selected.</span>
+            <button id="rsc-preview-btn" class="btn btn-secondary small" type="button" disabled>Preview today's drops</button>
+            <button id="rsc-apply-btn" class="btn btn-primary small" type="button" disabled>Apply today's drops…</button>
+          </div>
+
+          <div id="rsc-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-inventory"/></svg></div>
+              <div class="state-title">Money on a shelf isn't inventory. It's a loan you made to yourself.</div>
+              <p class="state-body">Scanning finds every listing that has stopped moving, works out what it's really holding, and writes a dated markdown plan that never goes under your break-even — plus bundles that clear a slow mover by attaching it to one that sells.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('rsc-scan-btn')?.click()">Rescue my aging stock</button>
+              </div>
+              <p class="state-hint">Read-only. No price changes until you confirm them.</p>
+            </div>
+          </div>
+
+          <div id="rsc-bundles" class="rsc-bundles hidden"></div>
+
+          <p class="inv-footnote">
+            Only the drop due today is ever sent to eBay — the later steps stay here as your plan, because
+            this app isn't running while it's closed and won't promise a price change it can't make. Bundles
+            are suggestions to list by hand; nothing is published for you. Break-even uses the cost basis
+            recorded in Inventory Health plus your fee assumptions, and no step of any ladder goes under it.
+          </p>
+        </div>
+      </section>
+
+      <!-- Confirmation gate. A price drop is buyer-visible the moment it lands, so the exact list
+           of what is about to change sits next to the button that changes it. -->
+      <div id="rsc-confirm-overlay" class="modal-overlay hidden">
+        <div class="modal inv-confirm-box">
+          <h3>Drop these prices on eBay?</h3>
+          <p class="inv-confirm-sub">This is step one of each plan. Your listings' public prices change immediately, and every price has been re-checked against your break-even on the server.</p>
+          <p id="rsc-confirm-total" class="wo-confirm-total"></p>
+          <div id="rsc-confirm-list" class="inv-confirm-list"></div>
+          <div class="inv-confirm-actions">
+            <button id="rsc-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="rsc-confirm-go" class="btn btn-primary" type="button">Yes — drop the prices</button>
           </div>
         </div>
       </div>
@@ -3582,6 +3701,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=55"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>

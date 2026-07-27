@@ -5686,6 +5686,138 @@ body.drawer-open {
 /* A listing that has actually sold units — the one verdict that means "do nothing". */
 .inv-v-selling { background: #e3f2ec; color: var(--success); }
 
+/* ── Aging-Inventory Rescue ───────────────────────────────────────────────
+   Reuses the inventory-health tiles, bulk bar and confirm gate wholesale. What
+   it adds is the card: a plan is a listing plus a dated ladder, which is more
+   than a table row can hold without becoming unreadable. */
+.rsc-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.rsc-card-head { display: flex; gap: 10px; align-items: flex-start; }
+.rsc-check { flex: 0 0 auto; margin-top: 3px; }
+.rsc-check-spacer { flex: 0 0 13px; }
+.rsc-card-title { min-width: 0; flex: 1; }
+
+.rsc-card-title a {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.rsc-card-title a:hover { text-decoration: underline; }
+
+.rsc-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* The one sentence the seller acts on, so it outranks everything else on the card. */
+.rsc-headline {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.rsc-why { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.rsc-ladder { margin: 0 0 8px; }
+.rsc-ladder th, .rsc-ladder td { padding: 5px 8px; font-size: 11.5px; }
+
+/* The only row that is a decision today; the rest are a schedule. */
+.rsc-step-now { background: var(--gold-soft); }
+
+.rsc-floor-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f3e6f7;
+  color: #6b2d7a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.rsc-signals {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.rsc-bundles { margin-top: 26px; }
+
+.rsc-bundle-heading {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.rsc-bundle-card { border-left: 3px solid var(--success); }
+
+/* Slow + fast, side by side, because the pairing IS the idea — reading it as two
+   stacked list items loses the point entirely. */
+.rsc-bundle-pair {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.rsc-bundle-half {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.rsc-bundle-slow { border-left: 3px solid var(--warning); }
+.rsc-bundle-fast { border-left: 3px solid var(--success); }
+
+.rsc-bundle-tag { font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.rsc-bundle-name { margin-top: 3px; font-size: 12.5px; font-weight: 650; color: var(--ink); }
+.rsc-bundle-price { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+.rsc-bundle-plus { font-size: 20px; font-weight: 700; color: var(--muted); }
+
+.rsc-bundle-money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rsc-bundle-money strong { color: var(--ink); }
+
+.rsc-bundle-title { margin-top: 10px; font-size: 11.5px; color: var(--muted); }
+.rsc-bundle-title code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .rsc-bundle-pair { grid-template-columns: 1fr; }
+  .rsc-bundle-plus { text-align: center; }
+}
+
 /* ── Offers to Watchers ───────────────────────────────────────────────────
    Shares the inventory-health table, tiles and bulk bar wholesale — it is the
    same inventory seen from a different angle, and it should look like it.

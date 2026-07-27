@@ -249,6 +249,11 @@ builder.Services.AddSingleton<JackpotHunter>();
 // break-even-checked one.
 builder.Services.AddSingleton<CostBasisStore>();
 builder.Services.AddSingleton<InventoryHealthAnalyzer>();
+// Aging-inventory rescue — the step after a repricing suggestion. InventoryHealthAnalyzer caps a
+// markdown at one revision and tells the seller to come back; the whole failure mode of dead stock
+// is that nobody comes back. This turns that one step into a dated ladder decided in advance, and
+// finds bundles that let a slow mover ride out with something that already sells.
+builder.Services.AddSingleton<AgingInventoryRescuer>();
 // Recover lost sales — the same pricing stack pointed at listings that ENDED without selling, the
 // one slice of a seller's inventory no other screen in the app (or in eBay Seller Hub) puts a
 // number on. Decides what to put back up and at what price, and finds the bidders who lost an
@@ -2205,6 +2210,53 @@ app.MapPost("/api/inventory/reprice", async (
             log.Add("Warning", "Reprice failed", $"{item.ListingId}: {ex.Message}");
         }
     }
+
+    return Results.Ok(result);
+});
+
+// ── Aging-inventory rescue ────────────────────────────────────────────────────────────────────
+// Inventory Health says what a listing should cost today. This says what to do about the ones that
+// have been ignoring that answer for months: a dated ladder of drops per listing, decided in
+// advance, plus bundles that pair stuck stock with something that already sells.
+//
+// Read-only. The first step of a plan is applied through the existing /api/inventory/reprice, which
+// keeps every brake on changing a live price in exactly one place.
+app.MapGet("/api/inventory/rescue", async (
+    int? maxItems, int? terapeakBudget, int? staleAfterDays, int? maxBundles,
+    EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    InventoryHealthAnalyzer analyzer, AgingInventoryRescuer rescuer, ActionLog log, CancellationToken ct) =>
+{
+    var staleDays = Math.Clamp(staleAfterDays ?? AgingInventoryRescuer.DefaultStaleAfterDays, 14, 730);
+
+    // Deliberately NOT filtered to old listings, even though only old ones get a plan: the bundle
+    // half of this board needs the fast movers too, and a fast mover is by definition not stale.
+    // Filtering here would leave every slow item with nothing to pair it with.
+    var health = await ScanInventoryHealthAsync(
+        Math.Clamp(maxItems ?? 120, 1, 400), Math.Clamp(terapeakBudget ?? 5, 0, 15), minDays: 0,
+        ebay, costBasis, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
+        feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
+
+    if (health.Status == "ebay_unavailable")
+        return Results.Ok(new RescueResult { Status = "ebay_unavailable", Error = health.Error });
+
+    var result = rescuer.Build(
+        health.Items, feeProfile, DateTime.UtcNow, staleDays,
+        Math.Clamp(maxBundles ?? 12, 0, 50));
+
+    result.ActiveListings = health.ActiveListings;
+    result.ItemsAnalyzed = health.ItemsAnalyzed;
+    result.ProductsPriced = health.ProductsPriced;
+    result.TerapeakScrapesUsed = health.TerapeakScrapesUsed;
+    result.DataWarning = health.DataWarning;
+
+    var s = result.Summary;
+    log.Add("Info", "Aging-inventory rescue scan",
+        $"Analyzed: {result.ItemsAnalyzed} of {result.ActiveListings} active; Stale ({staleDays}d+): {s.StaleListings} " +
+        $"holding ${s.TrappedCapital:0.00}; Plans: {s.PlansReady} ({s.StepsDueNow} due now); " +
+        $"No plan: {s.NoPlanCount}; Bundles: {s.BundlesFound} freeing ${s.CapitalFreedByBundles:0.00}");
 
     return Results.Ok(result);
 });

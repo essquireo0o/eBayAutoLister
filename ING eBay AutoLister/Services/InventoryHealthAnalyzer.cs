@@ -136,6 +136,8 @@ public sealed class InventoryHealthAnalyzer(ProfitCalculator profitCalc)
         item.ConfidenceLevel = resale.ConfidenceLevel;
         item.LiquidityScore = resale.LiquidityScore;
         item.LiquidityLevel = resale.LiquidityLevel;
+        item.EstimatedDaysToSell = resale.EstimatedDaysToSell;
+        item.EstimatedMonthlySales = resale.EstimatedMonthlySales;
 
         var market = item.MarketPrice!.Value;
         item.PriceGapPercent = market > 0 ? Math.Round((listing.Price - market) / market * 100m, 1) : null;
