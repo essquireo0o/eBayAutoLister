@@ -366,6 +366,7 @@
     bindLotAnalyzer();
     bindPromoted();
     bindTrendRadar();
+    bindEarnings();
     bindHomeButtons();
     bindForm();
     initEditDrawer();
@@ -396,6 +397,11 @@
 
     renderListings();
     updateStats();
+
+    // Not awaited, and quiet on failure: the running total is the best thing on the dashboard when
+    // there is one, and no reason to hold the page up when there isn't. The band stays hidden
+    // unless real money comes back.
+    loadEarnings(true);
 
     // Last, and not awaited: a listing recovered from a crash is the most valuable thing on this
     // page, but it must not delay the page loading — and if the check itself fails, the banner simply
@@ -461,6 +467,11 @@
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
     if (page !== 'trends') $('trends-section')?.classList.add('hidden');
+    if (page !== 'earnings') $('earnings-section')?.classList.add('hidden');
+    if (page === 'earnings') {
+      showEarningsSection();
+      return;
+    }
     if (page === 'ai') {
       showAiSection();
       return;
@@ -514,7 +525,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'lots-section', 'promoted-section', 'trends-section', 'earnings-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2782,6 +2793,603 @@
   function setWoStatus(text) {
     const el = $('wo-status');
     if (el) el.textContent = text || '';
+  }
+
+  // ── Money Made — the earnings tracker ─────────────────────────────────────
+  // Everything else in this file renders a forecast. This renders the past, and the difference
+  // shows up in three rules the UI has to keep:
+  //   * The headline is net profit, never proceeds. Sales with no recorded cost are shown in their
+  //     own block with what they WOULD add — the number only ever grows by being made true.
+  //   * Every assumption that flatters a row is printed next to the row, not in a footnote.
+  //   * Nothing on this page is a placeholder. A seller with no sales gets an empty state, never
+  //     a "$0.00 earned" hero, which reads as the app failing rather than as nothing having sold.
+  let earnings = null;
+
+  function showEarningsSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('earnings-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'earnings'));
+    if (!earnings) loadEarnings();
+  }
+
+  function closeEarningsSection() {
+    $('earnings-section')?.classList.add('hidden');
+    $('er-log-modal')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindEarnings() {
+    on('er-close', 'click', closeEarningsSection);
+    on('er-home', 'click', closeEarningsSection);
+    on('er-import-btn', 'click', importEarnings);
+    on('er-log-btn', 'click', openFlipLogger);
+    on('er-log-cancel', 'click', closeFlipLogger);
+    on('er-log-cancel-2', 'click', closeFlipLogger);
+    on('er-log-save', 'click', saveManualFlip);
+    on('dash-earnings-open', 'click', () => { location.hash = 'earnings'; });
+    on('er-chart-table-toggle', 'click', () => toggleDisclosure('er-chart-table', 'er-chart-table-toggle', 'Show as table', 'Hide table'));
+    on('er-ledger-toggle', 'click', () => toggleDisclosure('er-ledger', 'er-ledger-toggle', 'Show all sales', 'Hide all sales'));
+
+    // Live net as the seller types, so the flip they're logging is priced before they commit to it.
+    ['er-f-price', 'er-f-cost', 'er-f-shipcharged', 'er-f-shipcost', 'er-f-fee', 'er-f-other', 'er-f-qty']
+      .forEach(id => on(id, 'input', updateFlipPreview));
+
+    $('earnings-section')?.addEventListener('click', onEarningsClick);
+    $('earnings-section')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-input')) {
+        e.preventDefault();
+        saveFlipCost(e.target.dataset.id, e.target.value);
+      }
+      if (e.key === 'Escape' && !$('er-log-modal')?.classList.contains('hidden')) closeFlipLogger();
+    });
+  }
+
+  function toggleDisclosure(panelId, buttonId, closedLabel, openLabel) {
+    const panel = $(panelId);
+    const btn = $(buttonId);
+    if (!panel || !btn) return;
+    const nowHidden = panel.classList.toggle('hidden');
+    btn.textContent = nowHidden ? closedLabel : openLabel;
+    btn.setAttribute('aria-expanded', nowHidden ? 'false' : 'true');
+  }
+
+  function onEarningsClick(e) {
+    const save = e.target.closest?.('.er-cost-save');
+    if (save) {
+      const input = $('earnings-section').querySelector(`.er-cost-input[data-id="${save.dataset.id}"]`);
+      saveFlipCost(save.dataset.id, input?.value);
+      return;
+    }
+    const del = e.target.closest?.('.er-flip-delete');
+    if (del) deleteFlip(del.dataset.id, del.dataset.title);
+  }
+
+  function setEarningsStatus(text) {
+    const el = $('er-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function showEarningsNotice(text, tone) {
+    const el = $('er-notice');
+    if (!el) return;
+    if (!text) { el.classList.add('hidden'); return; }
+    el.textContent = text;
+    el.classList.toggle('er-notice-good', tone === 'good');
+    el.classList.remove('hidden');
+  }
+
+  async function loadEarnings(quiet) {
+    try {
+      const res = await fetch('/api/earnings');
+      if (!res.ok) throw new Error('Could not read your earnings.');
+      earnings = await res.json();
+      renderEarnings();
+      renderDashboardEarnings();
+    } catch (err) {
+      if (!quiet) setEarningsStatus(err.message || 'Could not read your earnings.');
+    }
+  }
+
+  async function importEarnings() {
+    const btn = $('er-import-btn');
+    const days = $('er-days')?.value || '90';
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading eBay…'; }
+    setEarningsStatus('Reading your completed orders from eBay…');
+    showEarningsNotice('');
+
+    try {
+      const { res, body } = await safePost(`/api/earnings/import?days=${days}`, {});
+      if (!res.ok) throw new Error(typeof body === 'string' ? body : (body.error || 'The import failed.'));
+
+      const imp = body.import || {};
+      if (imp.status !== 'ok') {
+        // not_connected / reconnect / error all mean "we couldn't ask", which is a different thing
+        // from "you made nothing" and must never be rendered as a zeroed total.
+        showEarningsNotice(imp.message || 'eBay could not be reached.');
+        setEarningsStatus('');
+        return;
+      }
+
+      earnings = body.earnings;
+      renderEarnings();
+      renderDashboardEarnings();
+
+      const bits = [`${imp.linesImported} sold item${imp.linesImported === 1 ? '' : 's'} from ${imp.ordersRead} order${imp.ordersRead === 1 ? '' : 's'}`];
+      if (imp.linesAdded) bits.push(`${imp.linesAdded} new`);
+      if (imp.linesUpdated) bits.push(`${imp.linesUpdated} already tracked`);
+      setEarningsStatus(bits.join(' · '));
+
+      showEarningsNotice(
+        imp.feesReportedByEbay
+          ? 'eBay reported its actual fees on these orders, so the profit below is measured, not estimated.'
+          : 'eBay did not report fees on these orders, so fees are estimated from your Fees & Costs settings.',
+        imp.feesReportedByEbay ? 'good' : undefined);
+    } catch (err) {
+      showEarningsNotice(err.message || 'The import failed.');
+      setEarningsStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '⬇ Import eBay Sales'; }
+    }
+  }
+
+  function renderEarnings() {
+    if (!earnings) return;
+    const s = earnings.summary || {};
+    const hasSales = (s.salesAllTime || 0) > 0;
+
+    $('er-results')?.classList.toggle('hidden', hasSales);
+    $('er-stats')?.classList.toggle('hidden', !hasSales);
+    $('er-chart-card')?.classList.toggle('hidden', !hasSales);
+    $('er-ledger-card')?.classList.toggle('hidden', !hasSales);
+    $('er-honesty')?.classList.toggle('hidden', !hasSales);
+
+    renderEarningsHero(s, hasSales);
+    renderEarningsAwaiting();
+    if (!hasSales) {
+      ['er-best', 'er-returns'].forEach(id => { const el = $(id); if (el) el.innerHTML = ''; });
+      return;
+    }
+
+    renderEarningsStats(s);
+    renderEarningsChart();
+    renderEarningsLeaders();
+    renderEarningsLedger();
+
+    const honesty = $('er-honesty');
+    if (honesty) honesty.innerHTML = (earnings.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+  }
+
+  function renderEarningsHero(s, hasSales) {
+    const figure = $('er-hero-month');
+    if (figure) {
+      figure.textContent = moneyExact(s.netProfitThisMonth || 0);
+      figure.classList.toggle('er-negative', (s.netProfitThisMonth || 0) < 0);
+    }
+    setText('er-hero-alltime', moneyExact(s.netProfitAllTime || 0));
+    setText('er-hero-30', moneyExact(s.netProfitLast30Days || 0));
+    setText('er-hero-best', s.bestMonthLabel ? `${money(s.bestMonthProfit)} · ${s.bestMonthLabel}` : '—');
+
+    const sub = $('er-hero-sub');
+    if (!sub) return;
+    if (!hasSales) {
+      sub.textContent = 'this month — import your sales to start the count';
+      return;
+    }
+
+    const parts = [`this month, across ${s.salesThisMonth || 0} sale${s.salesThisMonth === 1 ? '' : 's'}`];
+    if (s.monthOverMonthPercent != null) {
+      const up = s.monthOverMonthPercent >= 0;
+      parts.push(`${up ? '▲' : '▼'} ${Math.abs(s.monthOverMonthPercent).toFixed(1)}% vs ${moneyExact(s.netProfitLastMonth)} last month`);
+    } else if ((s.netProfitLastMonth || 0) === 0 && (s.salesAllTime || 0) > (s.salesThisMonth || 0)) {
+      parts.push('nothing recorded last month');
+    }
+    sub.textContent = parts.join(' · ');
+  }
+
+  function renderEarningsStats(s) {
+    const el = $('er-stats');
+    if (!el) return;
+
+    // Deliberately not a stat tile: "gross sales" next to "net profit" is how a seller ends up
+    // quoting the bigger number to themselves. Gross is here as context for the net, sized down.
+    const tiles = [
+      ['Net profit, all time', moneyExact(s.netProfitAllTime || 0), `${s.salesAllTime || 0} sale${s.salesAllTime === 1 ? '' : 's'} · ${s.unitsAllTime || 0} unit${s.unitsAllTime === 1 ? '' : 's'}`, (s.netProfitAllTime || 0) < 0],
+      ['Average per sale', s.averageProfitPerSale != null ? moneyExact(s.averageProfitPerSale) : '—', 'across every sale with a recorded cost', (s.averageProfitPerSale || 0) < 0],
+      ['Return on money spent', s.averageRoiPercent != null ? `${s.averageRoiPercent.toFixed(1)}%` : '—', `${moneyExact(s.costOfGoodsAllTime || 0)} of buying turned into profit`, (s.averageRoiPercent || 0) < 0],
+      ['Margin', s.averageMarginPercent != null ? `${s.averageMarginPercent.toFixed(1)}%` : '—', 'of every dollar taken in that you kept', (s.averageMarginPercent || 0) < 0],
+      ['Gross sales', moneyExact(s.grossRevenueAllTime || 0), 'before fees, shipping and what you paid', false],
+      ['eBay fees paid', moneyExact(s.feesAllTime || 0), s.profitFromEstimatedFees ? 'part measured, part estimated' : 'as charged by eBay', false],
+    ];
+
+    el.innerHTML = tiles.map(([label, value, note, negative]) => `
+      <div class="er-stat">
+        <span class="er-stat-label">${esc(label)}</span>
+        <span class="er-stat-value${negative ? ' er-negative' : ''}">${esc(value)}</span>
+        <span class="er-stat-note">${esc(note)}</span>
+      </div>`).join('');
+  }
+
+  // Monthly net profit. One series, so no legend — the card title names what is plotted. Columns
+  // grow from a single zero baseline and go below it when a month lost money, which is the one
+  // thing a "money made" chart must be able to show without arguing about it.
+  function renderEarningsChart() {
+    const host = $('er-chart');
+    const months = earnings?.months || [];
+    if (!host || !months.length) return;
+
+    const W = 760, H = 240;
+    const padL = 62, padR = 16, padT = 16, padB = 44;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    const values = months.map(m => m.netProfit || 0);
+    const maxV = Math.max(0, ...values);
+    const minV = Math.min(0, ...values);
+    const span = (maxV - minV) || 1;
+    const y = v => padT + plotH - ((v - minV) / span) * plotH;
+    const zeroY = y(0);
+
+    const band = plotW / months.length;
+    const barW = Math.min(24, band - 2); // capped, and the leftover band stays as air
+
+    const ticks = niceTicks(minV, maxV, 4);
+    const grid = ticks.map(t => `
+      <line x1="${padL}" y1="${y(t).toFixed(1)}" x2="${W - padR}" y2="${y(t).toFixed(1)}" class="er-grid" />
+      <text x="${padL - 10}" y="${(y(t) + 4).toFixed(1)}" class="er-axis er-axis-y">${money(t)}</text>`).join('');
+
+    const best = Math.max(...values);
+    const bars = months.map((m, i) => {
+      const v = m.netProfit || 0;
+      const x = padL + i * band + (band - barW) / 2;
+      const top = v >= 0 ? y(v) : zeroY;
+      const h = Math.max(v === 0 ? 0 : 1.5, Math.abs(y(v) - zeroY));
+      const cls = v < 0 ? 'er-bar er-bar-loss' : 'er-bar';
+      // 4px rounded data-end, square at the baseline — rounding both ends makes a short bar read
+      // as a pill rather than as a quantity.
+      const r = Math.min(4, h);
+      const path = v >= 0
+        ? `M${x} ${top + h} L${x} ${top + r} Q${x} ${top} ${x + r} ${top} L${x + barW - r} ${top} Q${x + barW} ${top} ${x + barW} ${top + r} L${x + barW} ${top + h} Z`
+        : `M${x} ${top} L${x} ${top + h - r} Q${x} ${top + h} ${x + r} ${top + h} L${x + barW - r} ${top + h} Q${x + barW} ${top + h} ${x + barW} ${top + h - r} L${x + barW} ${top} Z`;
+
+      const tip = `${m.label}: ${moneyExact(v)} net from ${m.sales} sale${m.sales === 1 ? '' : 's'}`
+        + (m.salesAwaitingCost ? ` (${m.salesAwaitingCost} still waiting on a cost)` : '');
+
+      // Only the peak is directly labelled. A value on every column is noise, and the tooltip and
+      // the table view carry the rest.
+      const label = (v === best && v > 0)
+        ? `<text x="${(x + barW / 2).toFixed(1)}" y="${(y(v) - 8).toFixed(1)}" class="er-bar-label">${money(v)}</text>`
+        : '';
+
+      return `<g class="er-bar-group"><title>${esc(tip)}</title>
+        <rect x="${(padL + i * band).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}" class="er-bar-hit" />
+        <path d="${path}" class="${cls}" />${label}
+        <text x="${(x + barW / 2).toFixed(1)}" y="${H - 26}" class="er-axis er-axis-x">${esc(m.label.split(' ')[0])}</text>
+        <text x="${(x + barW / 2).toFixed(1)}" y="${H - 14}" class="er-axis er-axis-x er-axis-year">${esc(m.label.split(' ')[1] || '')}</text>
+      </g>`;
+    }).join('');
+
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="er-chart-svg" role="img"
+        aria-label="Net profit by month. Use Show as table for the values.">
+      ${grid}
+      ${bars}
+      <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" class="er-zero" />
+    </svg>`;
+
+    const table = $('er-chart-table');
+    if (table) table.innerHTML = `
+      <table class="er-table">
+        <thead><tr><th>Month</th><th class="num">Net profit</th><th class="num">Gross sales</th><th class="num">Sales</th><th class="num">Awaiting cost</th></tr></thead>
+        <tbody>${months.map(m => `<tr>
+          <td>${esc(m.label)}${m.isCurrentMonth ? ' <span class="er-chip">so far</span>' : ''}</td>
+          <td class="num${(m.netProfit || 0) < 0 ? ' er-negative' : ''}">${moneyExact(m.netProfit || 0)}</td>
+          <td class="num">${moneyExact(m.grossRevenue || 0)}</td>
+          <td class="num">${m.sales || 0}</td>
+          <td class="num">${m.salesAwaitingCost || 0}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+  }
+
+  // Round tick values so the axis reads 0 / 500 / 1,000 rather than 0 / 487 / 974.
+  function niceTicks(min, max, count) {
+    const span = (max - min) || 1;
+    const raw = span / Math.max(1, count);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || mag * 10;
+    const ticks = [];
+    for (let t = Math.ceil(min / step) * step; t <= max + step / 2; t += step) ticks.push(Math.round(t * 100) / 100);
+    if (!ticks.includes(0) && min <= 0 && max >= 0) ticks.push(0);
+    return ticks;
+  }
+
+  function renderEarningsLeaders() {
+    const losses = earnings.worstFlips || [];
+
+    renderFlipList('er-best', earnings.bestFlips || [], f => moneyExact(f.netProfit || 0),
+      (earnings.summary?.salesAwaitingCost || 0) > 0
+        ? 'Nothing with a recorded cost has turned a profit yet. Enter costs above and the winners show up here.'
+        : 'No sale has turned a profit yet.');
+
+    // The second column changes job when there is nothing to celebrate. A "best returns" list is
+    // meaningless with no profitable sales, and the losses are the rows worth reading instead.
+    const showLosses = !(earnings.bestReturns || []).length && losses.length > 0;
+    setText('er-returns-title', showLosses ? '🩹 Sold below cost' : '📈 Best returns');
+
+    if (showLosses) {
+      renderFlipList('er-returns', losses, f => moneyExact(f.netProfit || 0), '');
+      return;
+    }
+
+    renderFlipList('er-returns', earnings.bestReturns || [], f => `${(f.roiPercent || 0).toFixed(0)}%`,
+      'No sale yet clears $10 profit with a recorded cost — that is the bar for a return worth repeating.');
+  }
+
+  function renderFlipList(hostId, flips, valueOf, emptyText) {
+    const el = $(hostId);
+    if (!el) return;
+    if (!flips.length) { el.innerHTML = `<p class="er-empty">${esc(emptyText)}</p>`; return; }
+
+    el.innerHTML = flips.map(f => `
+      <div class="er-row">
+        <div class="er-row-main">
+          <span class="er-row-title" title="${esc(f.title)}">${esc(f.title)}</span>
+          <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)}${f.costOfGoods != null ? ` · paid ${moneyExact(f.costOfGoods)}` : ''}${f.source === 'manual' ? ' · logged by you' : ''}</span>
+        </div>
+        <span class="er-row-value${(f.netProfit || 0) < 0 ? ' er-negative' : ''}">${esc(valueOf(f))}</span>
+      </div>`).join('');
+  }
+
+  // Every sale, checkable against the seller's own eBay statement. A running total nobody can audit
+  // is a marketing claim; this is what turns it into a record. The "Fee" column says whether eBay
+  // reported the number or the app estimated it, per row, because that is exactly the distinction
+  // someone reconciling against a payout will want.
+  function renderEarningsLedger() {
+    const el = $('er-ledger');
+    const flips = earnings?.flips || [];
+    if (!el) return;
+
+    const title = $('er-ledger-title');
+    if (title) title.textContent = `${flips.length} sale${flips.length === 1 ? '' : 's'} on record`;
+
+    el.innerHTML = `
+      <table class="er-table">
+        <thead><tr>
+          <th>Sold</th><th>Item</th><th class="num">Took in</th><th class="num">Fee</th>
+          <th class="num">You paid</th><th class="num">Net</th><th>Source</th><th></th>
+        </tr></thead>
+        <tbody>${flips.map(f => {
+          const caveats = (f.caveats || []).join(' ');
+          const netCell = f.netProfit == null
+            ? '<span class="er-muted">needs a cost</span>'
+            : `${moneyExact(f.netProfit)}${f.roiPercent != null ? ` <span class="er-muted">${f.roiPercent.toFixed(0)}%</span>` : ''}`;
+          return `<tr${f.status !== 'paid' ? ' class="er-row-void"' : ''}>
+            <td>${esc(shortDate(f.soldUtc))}</td>
+            <td class="er-cell-item" title="${esc(f.title)}${caveats ? ' — ' + esc(caveats) : ''}">${esc(f.title)}${f.quantity > 1 ? ` <span class="er-muted">×${f.quantity}</span>` : ''}${f.status !== 'paid' ? ` <span class="er-chip">${esc(f.status)}</span>` : ''}</td>
+            <td class="num">${moneyExact(f.grossRevenue || 0)}</td>
+            <td class="num" title="${f.feesAreActual ? "eBay's own figure for this sale" : 'Estimated from your fee settings — eBay did not report a fee'}">${moneyExact(f.fees || 0)}${f.feesAreActual ? '' : ' <span class="er-muted">est</span>'}</td>
+            <td class="num">${f.costOfGoods != null ? moneyExact(f.costOfGoods) : '<span class="er-muted">—</span>'}</td>
+            <td class="num${(f.netProfit || 0) < 0 ? ' er-negative' : ''}">${netCell}</td>
+            <td>${f.source === 'ebay' ? 'eBay' : 'You'}</td>
+            <td class="num"><button class="er-flip-delete" data-id="${f.id}" data-title="${esc(f.title)}" type="button" title="Stop counting this sale" aria-label="Remove ${esc(f.title)} from earnings">✕</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+  }
+
+  // The growth path, and the only ask this page makes of the seller. Framed as money they have
+  // already earned but haven't proved, because that is exactly what it is.
+  function renderEarningsAwaiting() {
+    const el = $('er-awaiting');
+    if (!el) return;
+    const s = earnings?.summary || {};
+    const pending = earnings?.awaitingCost || [];
+
+    if (!pending.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+    el.classList.remove('hidden');
+    el.innerHTML = `
+      <div class="er-awaiting-head">
+        <div>
+          <p class="er-awaiting-title">${moneyExact(s.proceedsAwaitingCost || 0)} after fees isn't counted above</p>
+          <p class="er-awaiting-sub">${s.salesAwaitingCost} sale${s.salesAwaitingCost === 1 ? '' : 's'} with no record of what you paid. Type the cost and the profit lands in your total — it also gives Inventory Health a real break-even floor on the next one.${pending.length < s.salesAwaitingCost ? ` Showing the ${pending.length} biggest; the rest appear as you work through these.` : ''}</p>
+        </div>
+      </div>
+      <div class="er-awaiting-list">
+        ${pending.map(f => `
+          <div class="er-awaiting-row">
+            <div class="er-row-main">
+              <span class="er-row-title" title="${esc(f.title)}">${esc(f.title)}</span>
+              <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)} · ${moneyExact(f.netProceeds || 0)} after fees${f.quantity > 1 ? ` · ${f.quantity} units` : ''}</span>
+            </div>
+            <div class="er-cost-entry">
+              <label class="er-cost-label" for="er-cost-${f.id}">You paid ($ each)</label>
+              <input id="er-cost-${f.id}" class="er-cost-input" data-id="${f.id}" type="number" min="0" step="0.01" placeholder="0.00" />
+              <button class="btn btn-secondary small er-cost-save" data-id="${f.id}" type="button">Save</button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  async function saveFlipCost(id, raw) {
+    const value = parseFloat(raw);
+    if (!id || !isFinite(value) || value < 0) { setEarningsStatus('Enter what you paid for it — zero or more.'); return; }
+
+    try {
+      const { res, body } = await safePost('/api/earnings/cost', { id: Number(id), unitCost: value });
+      if (!res.ok) throw new Error(typeof body === 'string' ? body : (body.error || 'That cost could not be saved.'));
+      const before = earnings?.summary?.netProfitAllTime || 0;
+      earnings = body.earnings;
+      renderEarnings();
+      renderDashboardEarnings();
+
+      // One cost basis can price several sales of the same listing at once. That is the right
+      // answer — but moving thousands of dollars off one typed number without saying how many
+      // sales it landed on is how a seller decides the total is made up.
+      const also = body.alsoAffected || 0;
+      const scope = also
+        ? ` It also priced ${also} other sale${also === 1 ? '' : 's'} of the same item.`
+        : '';
+      const delta = (earnings.summary?.netProfitAllTime || 0) - before;
+      setEarningsStatus((delta >= 0
+        ? `Cost saved — ${moneyExact(delta)} of real profit added to your total.`
+        : `Cost saved — that works out to a ${moneyExact(Math.abs(delta))} loss, and the total now says so.`) + scope);
+    } catch (err) {
+      setEarningsStatus(err.message || 'That cost could not be saved.');
+    }
+  }
+
+  async function deleteFlip(id, title) {
+    if (!id) return;
+    if (!confirm(`Remove "${title || 'this sale'}" from your earnings? It stays on eBay — this only stops counting it here.`)) return;
+    try {
+      const res = await fetch(`/api/earnings/flips/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('That sale could not be removed.');
+      earnings = await res.json();
+      renderEarnings();
+      renderDashboardEarnings();
+      setEarningsStatus('Removed.');
+    } catch (err) {
+      setEarningsStatus(err.message || 'That sale could not be removed.');
+    }
+  }
+
+  function openFlipLogger() {
+    const modal = $('er-log-modal');
+    if (!modal) return;
+    ['er-f-title', 'er-f-price', 'er-f-cost', 'er-f-shipcharged', 'er-f-shipcost', 'er-f-fee', 'er-f-other']
+      .forEach(id => { const el = $(id); if (el) el.value = ''; });
+    setVal('er-f-qty', '1');
+    const today = new Date();
+    setVal('er-f-date', `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+    $('er-log-error')?.classList.add('hidden');
+    updateFlipPreview();
+    modal.classList.remove('hidden');
+    $('er-f-title')?.focus();
+  }
+
+  function closeFlipLogger() { $('er-log-modal')?.classList.add('hidden'); }
+
+  function updateFlipPreview() {
+    const el = $('er-log-preview');
+    if (!el) return;
+    const num = id => parseFloat($(id)?.value) || 0;
+    const price = num('er-f-price'), cost = num('er-f-cost');
+    if (price <= 0) { el.textContent = 'Fill in what it sold for and what you paid to see the net.'; el.classList.remove('er-negative'); return; }
+
+    const qty = Math.max(1, parseInt($('er-f-qty')?.value, 10) || 1);
+    const shipCharged = num('er-f-shipcharged'), shipCost = num('er-f-shipcost');
+    const feeRaw = $('er-f-fee')?.value;
+    // Mirrors the server's fee estimate closely enough to be useful while typing; the saved figure
+    // is always the server's, computed from the seller's real Fees & Costs settings.
+    const fee = feeRaw !== '' && feeRaw != null ? (parseFloat(feeRaw) || 0) : (price + shipCharged) * 0.1325 + 0.40;
+    const net = (price + shipCharged) - fee - shipCost - num('er-f-other') - cost * qty;
+
+    el.classList.toggle('er-negative', net < 0);
+    el.textContent = cost > 0
+      ? `Net ${moneyExact(net)}${cost > 0 ? ` · ${((net / (cost * qty)) * 100).toFixed(0)}% return on the ${moneyExact(cost * qty)} you paid` : ''}${feeRaw ? '' : ` (fees estimated at ${moneyExact(fee)})`}`
+      : `${moneyExact(net + 0)} after fees — add what you paid to turn this into profit.`;
+  }
+
+  async function saveManualFlip() {
+    const err = $('er-log-error');
+    const num = id => { const v = $(id)?.value; return v === '' || v == null ? null : (parseFloat(v) || 0); };
+    const title = ($('er-f-title')?.value || '').trim();
+
+    if (!title) { showFlipError('What did you sell?'); return; }
+    const price = num('er-f-price');
+    if (price == null || price < 0) { showFlipError('What did it sell for?'); return; }
+
+    const dateVal = $('er-f-date')?.value;
+    const payload = {
+      title,
+      // Parsed as local midday rather than midnight UTC: a sale on the 1st logged from a western
+      // timezone would otherwise land in the previous month and vanish from "this month".
+      soldUtc: dateVal ? new Date(`${dateVal}T12:00:00`).toISOString() : new Date().toISOString(),
+      quantity: Math.max(1, parseInt($('er-f-qty')?.value, 10) || 1),
+      salePrice: price,
+      shippingCharged: num('er-f-shipcharged') || 0,
+      shippingCost: num('er-f-shipcost'),
+      marketplaceFee: num('er-f-fee'),
+      otherCosts: num('er-f-other') || 0,
+      unitCost: num('er-f-cost'),
+      status: 'paid',
+    };
+
+    const btn = $('er-log-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const { res, body } = await safePost('/api/earnings/flips', payload);
+      if (!res.ok) throw new Error(typeof body === 'string' ? body : (body.error || 'That flip could not be saved.'));
+      earnings = body;
+      renderEarnings();
+      renderDashboardEarnings();
+      closeFlipLogger();
+      setEarningsStatus(`"${title}" added to your earnings.`);
+    } catch (e) {
+      showFlipError(e.message || 'That flip could not be saved.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save this flip'; }
+    }
+    if (err) { /* keeps the error visible until the next attempt */ }
+  }
+
+  function showFlipError(message) {
+    const el = $('er-log-error');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  // The front-page band. Only ever rendered when there is a real, non-zero figure behind it.
+  function renderDashboardEarnings() {
+    const band = $('dash-earnings');
+    if (!band) return;
+    const s = earnings?.summary;
+    if (!s || (s.salesAllTime || 0) === 0 || (s.netProfitAllTime || 0) === 0) { band.classList.add('hidden'); return; }
+
+    band.classList.remove('hidden');
+    const figure = $('dash-earnings-figure');
+    if (figure) {
+      figure.textContent = moneyExact(s.netProfitAllTime);
+      figure.classList.toggle('er-negative', s.netProfitAllTime < 0);
+    }
+
+    const bits = [`${moneyExact(s.netProfitThisMonth || 0)} this month`, `${s.salesAllTime} sale${s.salesAllTime === 1 ? '' : 's'} tracked`];
+    if (s.salesAwaitingCost) bits.push(`${moneyExact(s.proceedsAwaitingCost || 0)} still waiting on a cost`);
+    setText('dash-earnings-sub', bits.join(' · '));
+
+    renderEarningsSparkline();
+  }
+
+  // 12-point sparkline in the stat-tile idiom: de-emphasised history, the current month in the
+  // accent. No axes — it carries shape, and the page it links to carries the numbers.
+  function renderEarningsSparkline() {
+    const host = $('dash-earnings-spark');
+    const months = earnings?.months || [];
+    if (!host || months.length < 2) { if (host) host.innerHTML = ''; return; }
+
+    const W = 180, H = 44, pad = 4;
+    const values = months.map(m => m.netProfit || 0);
+    const max = Math.max(0, ...values), min = Math.min(0, ...values);
+    const span = (max - min) || 1;
+    const band = (W - pad * 2) / months.length;
+    const barW = Math.max(2, band - 3);
+
+    const zeroY = pad + (H - pad * 2) * (1 - (0 - min) / span);
+    const bars = months.map((m, i) => {
+      const v = values[i];
+      const vy = pad + (H - pad * 2) * (1 - (v - min) / span);
+      const top = Math.min(vy, zeroY), h = Math.max(1, Math.abs(vy - zeroY));
+      const cls = m.isCurrentMonth ? 'er-spark-bar er-spark-now' : (v < 0 ? 'er-spark-bar er-spark-loss' : 'er-spark-bar');
+      return `<rect x="${(pad + i * band).toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1" class="${cls}" />`;
+    }).join('');
+
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="er-spark-svg" aria-hidden="true">${bars}</svg>`;
+  }
+
+  function shortDate(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    return isNaN(d) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
   // ── Rising-Demand / Price-Trend Radar ─────────────────────────────────────

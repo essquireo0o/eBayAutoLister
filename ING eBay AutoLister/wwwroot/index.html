@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=41" />
+  <link rel="stylesheet" href="style.css?v=42" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -28,6 +28,7 @@
       <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l1.6 3h4.8l1.6-3h5"/><path d="M5.4 5.5h13.2a1 1 0 01.95.68L21 13v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5l1.45-6.82a1 1 0 01.95-.68z"/></symbol>
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9 15.5H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
       <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6"/><path d="M7 9h10v3a5 5 0 01-10 0z"/><path d="M12 17v4"/></symbol>
+      <symbol id="i-money" viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19V3"/><path d="M3 21h18"/></symbol>
     </defs>
   </svg>
 
@@ -43,6 +44,9 @@
       <nav class="nav-list" aria-label="Primary">
         <p class="nav-group-label">Sell</p>
         <button class="nav-item active" type="button" data-page="dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</button>
+        <!-- The one screen that reports money already in the bank rather than money forecast. It
+             sits with Sell, above the tools, because it is the answer to "is any of this working". -->
+        <button class="nav-item" type="button" data-page="earnings"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Money Made</button>
         <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
         <button class="nav-item" type="button" data-page="ai"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
@@ -180,6 +184,21 @@
             <button id="btn-import-listings" class="btn btn-primary" type="button">Import Listings</button>
             <button id="btn-new-ai-listing" class="btn btn-secondary" type="button">Create New AI Listing</button>
             <button id="btn-refresh-dashboard" class="btn btn-ghost light" type="button">Refresh Listings</button>
+          </div>
+        </div>
+
+        <!-- The running total, on the front page. Hidden until there is a real number to show:
+             a "$0 earned" band on a fresh install is a worse first impression than no band, and
+             this must never be a placeholder for money that hasn't been made. -->
+        <div id="dash-earnings" class="dash-earnings hidden">
+          <div class="dash-earnings-main">
+            <p class="eyebrow">Money made with ING</p>
+            <p id="dash-earnings-figure" class="dash-earnings-figure">$0</p>
+            <p id="dash-earnings-sub" class="dash-earnings-sub"></p>
+          </div>
+          <div class="dash-earnings-side">
+            <div id="dash-earnings-spark" class="dash-earnings-spark" aria-hidden="true"></div>
+            <button id="dash-earnings-open" class="btn btn-secondary" type="button">See the breakdown</button>
           </div>
         </div>
 
@@ -1926,6 +1945,189 @@
         </div>
       </section>
 
+      <!-- Money Made. The only screen in the app that reports the past rather than forecasting it,
+           which is why nothing on it is allowed to be optimistic: a sale with no recorded cost is
+           excluded from the headline and listed separately, and every assumption that flatters a
+           row is printed next to it. See EarningsCalculator for the rules. -->
+      <section id="earnings-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="er-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Earnings Tracker</div>
+              <h2>💰 Money Made</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="er-import-btn" class="btn btn-primary" type="button">⬇ Import eBay Sales</button>
+            <button id="er-log-btn" class="btn btn-secondary" type="button">＋ Log a Flip</button>
+            <button id="er-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- The headline. One hero figure per view, per the design system — everything else on
+               this page is context for this number. -->
+          <div class="er-hero">
+            <div class="er-hero-main">
+              <p class="er-hero-label">You've made with ING</p>
+              <p id="er-hero-month" class="er-hero-figure">$0</p>
+              <p id="er-hero-sub" class="er-hero-sub">this month — connect eBay and import your sales to start the count</p>
+            </div>
+            <div class="er-hero-side">
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">All time</span>
+                <span id="er-hero-alltime" class="er-hero-stat-value">$0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Last 30 days</span>
+                <span id="er-hero-30" class="er-hero-stat-value">$0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Best month</span>
+                <span id="er-hero-best" class="er-hero-stat-value">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="opp-supplier-panel">
+            <div class="inv-controls">
+              <div class="opp-field inv-field-small">
+                <label for="er-days">Import sales from</label>
+                <select id="er-days">
+                  <option value="30">The last 30 days</option>
+                  <option value="90" selected>The last 90 days</option>
+                  <option value="180">The last 6 months</option>
+                  <option value="365">The last year</option>
+                  <option value="730">The last 2 years</option>
+                </select>
+              </div>
+              <span id="er-status" class="inv-status"></span>
+            </div>
+          </div>
+
+          <div id="er-notice" class="inv-warning hidden"></div>
+
+          <!-- Money sitting behind a missing cost. Placed above the chart on purpose: it is the one
+               thing on this page the seller can do something about, and it makes the headline
+               number go UP — honestly — rather than being an apology for it being low. -->
+          <div id="er-awaiting" class="er-awaiting hidden"></div>
+
+          <div id="er-stats" class="er-stats hidden"></div>
+
+          <div id="er-chart-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Profit over time</p>
+                <h3 id="er-chart-title">Net profit by month</h3>
+              </div>
+              <button id="er-chart-table-toggle" class="btn btn-ghost small" type="button" aria-expanded="false">Show as table</button>
+            </div>
+            <div id="er-chart" class="er-chart"></div>
+            <div id="er-chart-table" class="er-chart-table hidden"></div>
+          </div>
+
+          <div class="er-columns">
+            <div class="er-column">
+              <h3 class="er-col-title">🏆 Best flips</h3>
+              <div id="er-best" class="er-list"></div>
+            </div>
+            <div class="er-column">
+              <h3 id="er-returns-title" class="er-col-title">📈 Best returns</h3>
+              <div id="er-returns" class="er-list"></div>
+            </div>
+          </div>
+
+          <!-- Every sale, line by line. The headline is only believable if it can be checked, so
+               each row shows what it sold for, the fee, what it cost and the net — and says which
+               of those eBay reported and which this app assumed. -->
+          <div id="er-ledger-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Every sale</p>
+                <h3 id="er-ledger-title">The whole ledger</h3>
+              </div>
+              <button id="er-ledger-toggle" class="btn btn-ghost small" type="button" aria-expanded="false">Show all sales</button>
+            </div>
+            <div id="er-ledger" class="er-ledger hidden"></div>
+          </div>
+
+          <div id="er-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">Prove it made you money.</div>
+              <p class="state-body">Import your completed eBay sales and this becomes a running total of what you've actually earned — sale price, the fee eBay really charged, what you paid for it, and the net left over. Sold something off-platform? Log it here too.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('er-import-btn')?.click()">Import eBay sales</button>
+                <button class="btn btn-secondary" type="button" onclick="document.getElementById('er-log-btn')?.click()">Log a flip by hand</button>
+              </div>
+              <p class="state-hint">Read-only on eBay. Importing sales never lists, relists or reprices anything.</p>
+            </div>
+          </div>
+
+          <div id="er-honesty" class="inv-footnote hidden"></div>
+        </div>
+
+        <!-- Log a flip. Deliberately short: name, what it sold for, what it cost. Everything else
+             is optional and estimated from the seller's fee settings if left blank. -->
+        <div id="er-log-modal" class="er-modal hidden" role="dialog" aria-modal="true" aria-labelledby="er-log-title">
+          <div class="er-modal-card">
+            <div class="er-modal-head">
+              <h3 id="er-log-title">Log a flip</h3>
+              <button id="er-log-cancel" class="nl-close-btn" type="button" title="Close">✕</button>
+            </div>
+            <div class="er-modal-body">
+              <p class="er-modal-hint">For anything you sold that didn't go through this app — a local cash deal, a Facebook sale, an eBay order older than your import window.</p>
+              <div class="er-form-grid">
+                <div class="opp-field er-field-wide">
+                  <label for="er-f-title">What did you sell?</label>
+                  <input id="er-f-title" type="text" placeholder="Antminer S19 95TH" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-date">Date sold</label>
+                  <input id="er-f-date" type="date" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-qty">Quantity</label>
+                  <input id="er-f-qty" type="number" min="1" step="1" value="1" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-price">Sold for ($)</label>
+                  <input id="er-f-price" type="number" min="0" step="0.01" placeholder="1250.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-cost">You paid ($)</label>
+                  <input id="er-f-cost" type="number" min="0" step="0.01" placeholder="600.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-shipcharged">Buyer paid shipping ($)</label>
+                  <input id="er-f-shipcharged" type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-shipcost">Shipping cost you ($)</label>
+                  <input id="er-f-shipcost" type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-fee">Selling fees ($)</label>
+                  <input id="er-f-fee" type="number" min="0" step="0.01" placeholder="leave blank to estimate" />
+                </div>
+                <div class="opp-field">
+                  <label for="er-f-other">Other costs ($)</label>
+                  <input id="er-f-other" type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+              </div>
+              <p id="er-log-preview" class="er-log-preview">Fill in what it sold for and what you paid to see the net.</p>
+              <p id="er-log-error" class="er-log-error hidden"></p>
+            </div>
+            <div class="er-modal-foot">
+              <button id="er-log-cancel-2" class="btn btn-ghost" type="button">Cancel</button>
+              <button id="er-log-save" class="btn btn-primary" type="button">Save this flip</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
           <div>
@@ -2813,6 +3015,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=50"></script>
+  <script src="app.js?v=51"></script>
 </body>
 </html>

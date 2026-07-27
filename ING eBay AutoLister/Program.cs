@@ -253,6 +253,11 @@ builder.Services.AddSingleton<LotAnalyzer>();
 // from what the rest of the category is paying. Shares ProfitCalculator/FeeProfile with every other
 // money screen, so the margin an ad rate is measured against is the same margin the editor shows.
 builder.Services.AddSingleton<PromotedListingAdvisor>();
+// Money Made — the only screen in the app that reports what already happened. EarningsStore keeps
+// the flips, EarningsCalculator does the money, and both lean on CostBasisStore for the one figure
+// eBay can never supply, so a cost typed once in Inventory Health counts the profit here too.
+builder.Services.AddSingleton<EarningsStore>();
+builder.Services.AddSingleton<EarningsCalculator>();
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
@@ -2075,6 +2080,214 @@ app.MapPost("/api/inventory/reprice", async (
 
     return Results.Ok(result);
 });
+
+// ── Money Made — the earnings tracker ─────────────────────────────────────────────────────────
+// Every other money endpoint in this file answers "what would this make?". These four answer
+// "what did it make?" — buy cost, sale price, the fee eBay actually charged, net profit, and a
+// running total the seller can check against their own bank statement.
+//
+// Read-only against eBay throughout. Importing orders reads /sell/fulfillment; nothing here lists,
+// relists, reprices or messages anybody.
+
+app.MapGet("/api/earnings", (
+    EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator, FeeProfile feeProfile) =>
+    Results.Ok(BuildEarnings(store, costBasis, calculator, feeProfile)));
+
+// Pulls completed orders from eBay. Idempotent by (orderId, lineItemId) — running it twice over
+// the same window updates rows rather than doubling the seller's profit, which matters because the
+// natural way to use this button is to press it again.
+app.MapPost("/api/earnings/import", async (
+    int? days, EbayService ebay, EarningsStore store, CostBasisStore costBasis,
+    EarningsCalculator calculator, FeeProfile feeProfile, ActionLog log, CancellationToken ct) =>
+{
+    var window = Math.Clamp(days ?? 90, 1, 730);
+    var import = new EarningsImportResult { DaysRequested = window };
+
+    List<EbayOrderSummary> orders;
+    try
+    {
+        orders = await ebay.GetOrdersAsync(window, maxOrders: 1000, ct);
+    }
+    catch (EbayPermissionException ex)
+    {
+        return Results.Ok(new { import = new EarningsImportResult { Status = "reconnect", Message = ex.Message, DaysRequested = window } });
+    }
+    catch (InvalidOperationException ex)
+    {
+        // No token at all — "connect eBay first", not an error.
+        return Results.Ok(new { import = new EarningsImportResult { Status = "not_connected", Message = ex.Message, DaysRequested = window } });
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Earnings import failed", ex.Message);
+        return Results.Ok(new { import = new EarningsImportResult { Status = "error", Message = ex.Message, DaysRequested = window } });
+    }
+
+    import.OrdersRead = orders.Count;
+    var knownCosts = costBasis.GetAll();
+    // Read once, not once per line: a 1,000-order import would otherwise re-read the whole flips
+    // table for every line item in it.
+    var existingByKey = store.GetAll()
+        .Where(f => !string.IsNullOrWhiteSpace(f.OrderId) && !string.IsNullOrWhiteSpace(f.LineItemId))
+        .ToDictionary(f => (f.OrderId, f.LineItemId));
+
+    foreach (var order in orders)
+    {
+        if (!EarningsImporter.IsCountable(order))
+        {
+            import.LinesSkipped += Math.Max(1, order.LineItems.Count);
+            continue;
+        }
+
+        if (order.TotalMarketplaceFee.HasValue) import.FeesReportedByEbay = true;
+
+        foreach (var flip in EarningsImporter.MapOrder(order))
+        {
+            // The seller's own figures survive a re-import. Someone who typed a shipping cost or a
+            // cost basis against an imported sale must not have it wiped by pressing Import again —
+            // that turns the button into a way to lose work. eBay stays authoritative for
+            // everything eBay knows (price, fee, refunds, title); the seller owns their costs.
+            if (existingByKey.TryGetValue((flip.OrderId, flip.LineItemId), out var existing))
+            {
+                flip.Id = existing.Id;
+                flip.ShippingCost = existing.ShippingCost;
+                flip.OtherCosts = existing.OtherCosts;
+                flip.UnitCost = existing.UnitCost;
+                flip.Note = existing.Note;
+            }
+
+            try
+            {
+                if (store.Upsert(flip)) import.LinesAdded++; else import.LinesUpdated++;
+                import.LinesImported++;
+                if (CostBasisStore.Find(knownCosts, flip.ListingId, flip.Sku) is not null) import.MatchedToCostBasis++;
+            }
+            catch (InvalidOperationException ex)
+            {
+                import.LinesSkipped++;
+                log.Add("Warning", "An eBay order line couldn't be recorded", $"{flip.OrderId}/{flip.LineItemId}: {ex.Message}");
+            }
+        }
+    }
+
+    log.Add("Info", $"Earnings import: {import.LinesImported} sold line(s) from {import.OrdersRead} order(s)",
+        $"{import.LinesAdded} new, {import.LinesUpdated} updated, {import.MatchedToCostBasis} already have a cost basis");
+
+    var earnings = BuildEarnings(store, costBasis, calculator, feeProfile);
+    earnings.Summary.LastImportUtc = DateTimeOffset.UtcNow;
+    return Results.Ok(new { import, earnings });
+});
+
+// Logging a flip the app never listed — a garage-sale find sold on Facebook, a local cash deal.
+// The seller's earnings are their earnings; restricting the tracker to eBay would make the total
+// smaller than the truth, which is the one direction this feature must never be wrong in.
+app.MapPost("/api/earnings/flips", (
+    FlipUpsertRequest req, EarningsStore store, CostBasisStore costBasis,
+    EarningsCalculator calculator, FeeProfile feeProfile, ActionLog log) =>
+{
+    try
+    {
+        if (req.Id is > 0)
+        {
+            var updated = store.ApplyEdit(req.Id.Value, req);
+            if (updated is null) return Results.NotFound("That sale is no longer on record.");
+            log.Add("Info", "Sale updated", $"#{updated.Id} \"{updated.Title}\"");
+        }
+        else
+        {
+            var flip = EarningsStore.FromRequest(req);
+            store.Upsert(flip);
+            log.Add("Info", "Sale logged", $"\"{flip.Title}\" — {flip.SalePrice:C0} on {flip.SoldUtc:yyyy-MM-dd}");
+        }
+
+        return Results.Ok(BuildEarnings(store, costBasis, calculator, feeProfile));
+    }
+    catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+});
+
+app.MapDelete("/api/earnings/flips/{id:long}", (
+    long id, EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator,
+    FeeProfile feeProfile, ActionLog log) =>
+{
+    if (!store.Delete(id)) return Results.NotFound("That sale is no longer on record.");
+    log.Add("Info", "Sale removed from earnings", $"#{id}");
+    return Results.Ok(BuildEarnings(store, costBasis, calculator, feeProfile));
+});
+
+// Recording what a sold item cost. Writes to the SHARED cost-basis table whenever the sale has a
+// listing ID or SKU, so a cost entered here also gives Inventory Health a real break-even floor
+// for the next unit of the same item — one number, typed once, used everywhere.
+app.MapPost("/api/earnings/cost", (
+    FlipUpsertRequest req, EarningsStore store, CostBasisStore costBasis,
+    EarningsCalculator calculator, FeeProfile feeProfile, ActionLog log) =>
+{
+    if (req.Id is not > 0) return Results.BadRequest("Which sale is this cost for?");
+    if (req.UnitCost is null or < 0) return Results.BadRequest("Enter what you paid for it — zero or more.");
+
+    var flip = store.Get(req.Id.Value);
+    if (flip is null) return Results.NotFound("That sale is no longer on record.");
+
+    var shared = !string.IsNullOrWhiteSpace(flip.ListingId) || !string.IsNullOrWhiteSpace(flip.Sku);
+
+    // How many OTHER sales this one cost is about to price. A listing that sold fourteen times is
+    // fourteen sales sharing one cost basis, and applying it to all of them is the correct answer —
+    // but it is a surprising amount of money to move without saying so, and the seller has to be
+    // told which number they just changed.
+    var alsoAffected = shared
+        ? store.GetAll().Count(f => f.Id != flip.Id && f.UnitCost is null
+            && ((!string.IsNullOrWhiteSpace(flip.ListingId) && string.Equals(f.ListingId, flip.ListingId, StringComparison.OrdinalIgnoreCase))
+             || (!string.IsNullOrWhiteSpace(flip.Sku) && string.Equals(f.Sku, flip.Sku, StringComparison.OrdinalIgnoreCase))))
+        : 0;
+
+    if (shared)
+    {
+        costBasis.Save(new CostBasisEntry
+        {
+            ListingId = flip.ListingId, Sku = flip.Sku,
+            UnitCost = req.UnitCost.Value, InboundShipping = 0m,
+            Note = $"From a sale logged in Money Made — {flip.Title}",
+            AcquiredUtc = null,
+        });
+        // Cleared rather than mirrored: two copies of the same cost drift apart the moment one is
+        // edited, and the per-flip value would silently win.
+        flip.UnitCost = null;
+    }
+    else
+    {
+        flip.UnitCost = req.UnitCost.Value;
+    }
+
+    if (req.ShippingCost.HasValue) flip.ShippingCost = req.ShippingCost.Value;
+    if (req.OtherCosts.HasValue) flip.OtherCosts = req.OtherCosts.Value;
+
+    try { store.Upsert(flip); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+
+    log.Add("Info", "Cost recorded for a completed sale",
+        $"\"{flip.Title}\" — {req.UnitCost.Value:C2}{(shared ? $" (shared cost basis; also prices {alsoAffected} other sale(s) of this item)" : "")}");
+
+    return Results.Ok(new
+    {
+        earnings = BuildEarnings(store, costBasis, calculator, feeProfile),
+        alsoAffected,
+        sharedBasis = shared,
+    });
+});
+
+// One place that assembles the page, so every endpoint that changes a flip answers with the same
+// recomputed totals rather than leaving the browser to re-derive them.
+static EarningsResult BuildEarnings(
+    EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator, FeeProfile feeProfile)
+{
+    // One read of the cost table for the whole set, not one lookup per sale.
+    var costs = costBasis.GetAll();
+    var computed = store.GetAll()
+        .Select(flip => calculator.Compute(flip, CostBasisStore.Find(costs, flip.ListingId, flip.Sku), feeProfile))
+        .ToList();
+
+    // Local time, not UTC: "this month" has to mean the month the seller is living in.
+    return calculator.Summarize(computed, DateTimeOffset.Now);
+}
 
 // ── Offers to watchers ────────────────────────────────────────────────────────────────────────
 // The warmest audience a seller ever gets for free: people who found the item, looked at it, and

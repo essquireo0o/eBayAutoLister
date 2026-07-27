@@ -2688,3 +2688,155 @@ final message refused a price that was already worth paying.
   entire persuasive force behind the number, and the alternative is a draft that either lies or gives
   no reason at all — but it is a trade-off, and a seller who would rather not say it can edit the box
   before sending.
+
+---
+
+## 27. Money Made — the earnings tracker (autonomous session, 2026-07-26)
+
+Sections 9–26 all answer the same shape of question: *what would this make?* Every one of them is a
+forecast. Past the sale there was nothing — the app could tell a seller what to buy, what to charge,
+what to mark down and what to offer, and then had no idea whether any of it had worked.
+
+`GET /api/earnings` → the new **💰 Money Made** page, plus a running total on the dashboard.
+
+### The number, and why it is smaller than it could be
+
+**"You've made $X this month / $Y all-time with ING"**, from real completed sales: sale price, the
+fee **eBay actually charged**, what the seller paid, net profit — with a profit-over-time chart,
+best flips, and every sale line by line.
+
+The whole feature turns on one decision. **A sale with no recorded cost basis contributes nothing to
+the headline.** It is counted as a sale, its proceeds are reported, and it is listed separately with
+what it *would* add. Counting proceeds as profit is what makes most "you've earned $X" dashboards
+worthless, and it would have been trivially easy here — the connected account's 50 imported sales
+carry $10,784 of proceeds after fees, and a dishonest version of this page would lead with that
+number today.
+
+Instead the empty state is the growth path: *"$10,784 after fees isn't counted above, because
+there's no record of what you paid. Enter the cost and the total goes up by whatever you actually
+made."* The number only ever grows by becoming true.
+
+### Real fees, not the 13.25% everything else has to assume
+
+The Sell Fulfillment API's Order resource carries **`totalMarketplaceFee`** — what eBay really
+charged on the real sale. Every other money screen in this app works from a published-rate estimate
+because eBay exposes no per-account fee API; this is the one place that doesn't have to. On the
+connected account the measured rate came back at **10.6%** on a $2,100 sale, not 13.25% — a $56
+difference on one sale that no forecast in the app could have known about.
+
+Where eBay reports no fee, the estimate is used and **flagged per row**, and the honesty block states
+the split: *"$1,176 of fees is eBay's own figure, across 41 of 50 sales."* That split is reported
+over **fees**, not over profit — a sale can carry a measured fee and still contribute no profit
+because its cost is missing, and reporting by profit made the page announce "$0 uses eBay's real
+fees" on an account where every fee had been measured.
+
+### One cost basis, typed once
+
+Costs resolve through the existing `CostBasisStore`, so a cost entered in **Inventory Health** counts
+the profit here, and a cost typed here gives Inventory Health a real break-even floor on the next
+unit. Imported lines key on `legacyItemId`, which is the same listing ID the rest of the app uses, so
+that join needs nothing from the seller. A per-flip `UnitCost` override exists for manual flips and
+one-off corrections, and is cleared when the cost goes to the shared table — two copies of one number
+drift apart the moment either is edited.
+
+### What the calculator refuses to do
+
+| Rule | Why |
+|---|---|
+| No cost basis → **no profit contribution at all** | The proceeds are known; the profit is not. Reporting one as the other is the lie this feature exists to avoid. |
+| **Return and testing reserves are not charged** | Every forward-looking screen applies them, correctly — they price the risk of a return that hasn't happened. On a completed sale the refund column *is* the outcome, and charging both understates every sale that went fine. |
+| Sales tax is excluded throughout | eBay collects and remits it; it never reaches the seller. `lineItemCost` is used rather than `total` for exactly this reason. |
+| Unrecorded shipping cost on a **paid-shipping** sale → assumed equal to what the buyer paid | A pass-through nets to zero. The alternative books buyer-paid shipping as revenue against no cost, which is phantom profit on every sale. |
+| Unrecorded shipping on a **free-shipping** sale → flagged and counted | There is no honest number to assume, so the row is counted at full value and the total says how many rows are flattered that way (41 of 50 on the connected account). |
+| A partial refund **scales the fee back** proportionally | Charging the full fee on a refunded order invents a loss; waiving it entirely invents profit. |
+| A cancelled order is worth **nothing**, not a loss of its costs | It is not a sale that made nothing. It is not a sale. |
+| An **unpaid** order is not imported | A promise to pay is not money made. Counting it puts profit in the headline that can evaporate — and taking it back out later reads as the tracker being broken. |
+| Average ROI is **capital-weighted** | A $2 buy returning 400% alongside a $1,000 buy returning 10% is an 11% portfolio, not a 205% one. The mean of the percentages reports the latter. |
+| Month-over-month is **omitted** when last month was zero or negative | There is no meaningful percentage against an empty base, and "+∞%" is noise. |
+| Best flips contains **only profitable** flips | See below — this was found by pointing it at real data. |
+
+### Three defects the real-inventory run caught
+
+The scan was pointed at the connected account's **50 real imported sales** rather than reasoned about
+in the abstract:
+
+1. **A trophy on a loss.** With no costs entered and one loss-making cost typed in, "🏆 Best flips"
+   proudly ranked the *least bad loss* at −$557. Best flips now requires `NetProfit > 0`, and when
+   nothing is profitable the second column changes job from "📈 Best returns" to "🩹 Sold below
+   cost" — the losses are the most useful rows on the page, and hiding them would make this a
+   highlight reel.
+2. **A silent cascade.** Typing one cost moved the all-time total by **$19,447**, because that
+   listing had sold twelve times and one cost basis priced all twelve. That is the correct answer,
+   and it is a shocking amount of money to move without a word — the status line said "*that sale*
+   lost $19,447". It now reports the scope: *"It also priced 11 other sales of the same item."*
+3. **A truncated list that lied about itself.** The header read "50 sales with no record of what you
+   paid" above 25 rows. It now says which 25.
+
+### eBay's `lineItemCost` is the extended line total, not a unit price
+
+Verified against the real orders rather than assumed: a 10-unit line reports `1499.90`, which divides
+into a clean `$149.99` each. Reading it as per-unit would have understated revenue on every
+multi-quantity sale **by the quantity**. Cost of goods is scaled by quantity to match, so both sides
+of the subtraction are line totals. Now a test.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/EarningsModels.cs` | **New** — `FlipRecord` (the stored sale), `FlipProfit` (its money), `EarningsSummary`, `EarningsMonthPoint`, `EarningsResult`, `EarningsImportResult`, `EbayOrderSummary`/`EbayOrderLineItem`, `FlipUpsertRequest` |
+| `Services/EarningsStore.cs` | **New** — SQLite `flips` table beside `listing_cost_basis`. Unique index on `(order_id, line_item_id)`, field-level edits, and the validation that keeps a running total from being corrupted by a typo |
+| `Services/EarningsCalculator.cs` | **New** — the money and the roll-up. Pure. Fee estimation routes through `ProfitCalculator` so there is one fee model in the app |
+| `Services/EarningsImporter.cs` | **New** — order → flips, and the pro-rata fee allocation. Pure |
+| `Services/EbayService.cs` | `GetOrdersAsync` + `ParseOrder` + `Amount` — the Sell Fulfillment order search. Uses the `sell.fulfillment` scope this app has always requested, so nobody has to reconnect |
+| `Program.cs` | DI + `GET /api/earnings`, `POST /api/earnings/import`, `POST /api/earnings/flips`, `DELETE /api/earnings/flips/{id}`, `POST /api/earnings/cost`, and `BuildEarnings` so every mutation answers with recomputed totals |
+| `wwwroot/index.html` | `#earnings-section` (hero, awaiting-cost block, stat tiles, chart, leaderboards, ledger, log-a-flip modal), `Money Made` nav entry, `#i-money` icon, `#dash-earnings` dashboard band. `app.js?v=51`, `style.css?v=42` |
+| `wwwroot/app.js` | `bindEarnings`, `loadEarnings`, `importEarnings`, `renderEarnings*`, `renderEarningsChart`, `niceTicks`, `renderEarningsLedger`, `saveFlipCost`, `saveManualFlip`, `renderDashboardEarnings`, `renderEarningsSparkline` |
+| `wwwroot/style.css` | `.er-*` and `.dash-earnings*` |
+| `ING eBay AutoLister.Tests/EarningsCalculatorTests.cs` | **New** — 30 tests |
+| `ING eBay AutoLister.Tests/EarningsImporterTests.cs` | **New** — 15 tests |
+| `ING eBay AutoLister.Tests/EarningsStoreTests.cs` | **New** — 15 tests |
+
+### The chart
+
+One series, monthly net profit, so no legend — the card title names what is plotted. Columns capped
+at 24px with a 4px rounded data-end **square at the baseline**, growing from a single zero line and
+going **below** it when a month lost money, which is the one thing a "money made" chart has to be
+able to show without arguing. Only the peak is directly labelled; the hover band (the whole column
+slot, not the 24px bar) and a **Show as table** view carry the rest. Gridlines are hairline and
+recessive, ticks round to clean numbers, and no text wears the data colour.
+
+The dashboard band carries a 12-point sparkline in the same idiom — de-emphasised history, current
+month in the accent — and **stays hidden until there is a non-zero total behind it**. A "$0.00
+earned" banner on a fresh install is a worse first impression than no banner.
+
+### Safety
+
+- **Read-only against eBay.** Importing calls `GET /sell/fulfillment/v1/order` and nothing else.
+  Nothing here lists, relists, reprices, publishes or messages anybody.
+- **Re-importing is idempotent** — verified against the live account: a second import over the same
+  90 days reported `0 added, 51 updated` with the totals unchanged. The natural way to use that
+  button is to press it again, and an import that appended would inflate the headline every time.
+- **The seller's own figures survive a re-import.** eBay stays authoritative for price, fee, refunds
+  and title; costs and notes are the seller's and are carried across.
+- Paging is capped (1,000 orders, 730 days) so one click can't become hundreds of requests.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **983 passed**, 0 failed, 0 skipped (923 pre-existing + 60 new) |
+| Live eBay import (dev port 9371) | **51 real orders**, `feesReportedByEbay: true`, $14,852.75 gross / $1,504.66 in real eBay fees |
+| Re-import idempotency (live) | `added 0, updated 51`, totals identical |
+| Refund handling (live) | Fully refunded → gross $0, fee $0. Partial ($33 sale, $31.34 back) → gross $1.66, fee $0.17 — scaled, not waived |
+| Real browser (Playwright) | Hero, awaiting-cost block, 6 stat tiles, chart + table view, ledger (51 rows), inline cost entry (click **and** Enter), log-a-flip modal with live net preview, dashboard band + sparkline |
+| Browser console errors | **None** |
+
+**Test data cleaned up.** Three synthetic manual flips and two fabricated cost-basis rows created
+during verification were deleted from the app database; the 50 genuinely imported eBay sales were
+left in place, since that is the feature operating normally on the seller's own data.
+
+**Not verified:** an account where eBay reports *no* `totalMarketplaceFee` (the estimate path is
+covered by tests but not by live data), and profit figures against a seller who has actually filled
+in their cost basis — the connected account has none, which is precisely why the awaiting-cost block
+is the largest thing on the page today.

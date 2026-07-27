@@ -7689,3 +7689,513 @@ td.skeleton-cell { padding: 0 !important; }
   .tr-product { max-width: none; }
   .tr-note-quiet { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Money Made — the earnings tracker
+   The only screen that reports money already banked, so it is the only one
+   that gets a hero figure. Everything below it is context for that number,
+   and sized accordingly.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.er-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s7);
+  flex-wrap: wrap;
+  margin-bottom: var(--s5);
+  padding: var(--s6) var(--s7);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--teal-700);
+  background:
+    radial-gradient(1000px 220px at 90% -50%, rgba(224, 187, 99, .30), transparent 62%),
+    linear-gradient(135deg, var(--teal-900), var(--teal-700));
+  box-shadow: var(--e3);
+  color: #fff;
+}
+
+.er-hero-label {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--gold-light);
+}
+
+/* The hero figure. Proportional figures, not tabular — a standalone number at
+   this size looks loose when every digit is forced to the width of a zero. */
+.er-hero-figure {
+  margin: var(--s2) 0 var(--s1);
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  color: #fff;
+}
+
+.er-hero-figure.er-negative { color: #ffc9bf; }
+
+.er-hero-sub {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: rgba(255, 255, 255, .84);
+}
+
+.er-hero-side {
+  display: flex;
+  gap: var(--s6);
+  flex-wrap: wrap;
+}
+
+.er-hero-stat { display: flex; flex-direction: column; gap: var(--s1); }
+
+.er-hero-stat-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .62);
+}
+
+.er-hero-stat-value {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: #fff;
+}
+
+/* ── Stat tiles ─────────────────────────────────────────────────────────── */
+
+.er-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+
+.er-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.er-stat-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.er-stat-value { font-size: var(--fs-xl); font-weight: 700; color: var(--ink); }
+.er-stat-note  { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.45; }
+
+/* Loss is red wherever it appears — but it is always beside a signed number
+   carrying a minus sign, never colour alone. Spelled out per component rather
+   than left to source order: .er-row-value and .er-table .num are both defined
+   further down and would otherwise repaint a loss green. */
+.er-negative,
+.er-stat-value.er-negative,
+.er-row-value.er-negative,
+.er-log-preview.er-negative,
+.er-table .num.er-negative { color: var(--danger); }
+
+/* ── Money waiting on a cost ────────────────────────────────────────────── */
+/* Gold, not red: this is money the seller has already earned and hasn't proved,
+   which is an opportunity, not an error. */
+
+.er-awaiting {
+  margin-bottom: var(--s5);
+  padding: var(--s5);
+  border: 1px solid var(--gold);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--r-md);
+  background: var(--gold-soft);
+}
+
+.er-awaiting-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.er-awaiting-sub {
+  margin: var(--s1) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.er-awaiting-list {
+  margin-top: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.er-awaiting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  padding: var(--s3);
+  border: 1px solid var(--gold-light);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+.er-cost-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.er-cost-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.er-cost-input {
+  width: 110px;
+  padding: 6px var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-base);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Chart ──────────────────────────────────────────────────────────────── */
+
+.er-chart-card {
+  margin-bottom: var(--s5);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.er-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+.er-chart-head h3 { margin: var(--s1) 0 0; font-size: var(--fs-lg); color: var(--ink); }
+
+.er-chart-svg { width: 100%; height: auto; display: block; }
+
+/* Recessive: hairline, solid, one step off the surface. Gridlines are scaffolding. */
+.er-grid { stroke: var(--line-soft); stroke-width: 1; }
+.er-zero { stroke: var(--line-strong); stroke-width: 1; }
+
+.er-bar      { fill: var(--success); }
+.er-bar-loss { fill: var(--danger); }
+
+/* The hit target is the whole band, not the 24px bar — a thin column is far too
+   small to hover reliably. */
+.er-bar-hit { fill: transparent; }
+.er-bar-group:hover .er-bar-hit { fill: var(--soft-2); }
+
+.er-axis {
+  font-size: 11px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.er-axis-x    { text-anchor: middle; }
+.er-axis-y    { text-anchor: end; }
+.er-axis-year { fill: var(--line-strong); }
+
+/* Text never wears the data colour — the bar beside it carries the identity. */
+.er-bar-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  fill: var(--ink);
+  text-anchor: middle;
+}
+
+.er-chart-table { margin-top: var(--s4); }
+
+.er-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.er-table th,
+.er-table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+}
+
+.er-table th {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Tabular figures here and only here: columns of numbers have to line up. */
+.er-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.er-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--soft-2);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+/* ── Ledger ─────────────────────────────────────────────────────────────── */
+
+.er-ledger { max-height: 520px; overflow: auto; }
+
+.er-ledger thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+}
+
+.er-cell-item {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.er-muted { color: var(--muted); font-weight: 400; }
+
+/* A refunded or cancelled sale stays visible — dropping it would leave a gap
+   the seller can't reconcile — but reads as struck from the total. */
+.er-row-void td { opacity: .55; }
+
+.er-flip-delete {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.er-flip-delete:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* ── Leaderboards ───────────────────────────────────────────────────────── */
+
+.er-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+
+.er-column {
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.er-col-title { margin: 0 0 var(--s3); font-size: var(--fs-md); color: var(--ink); }
+
+.er-list { display: flex; flex-direction: column; gap: var(--s1); }
+
+.er-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  min-width: 0;
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.er-row:last-child { border-bottom: 0; }
+
+.er-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.er-row-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.er-row-meta { font-size: var(--fs-xs); color: var(--muted); }
+
+.er-row-value {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--success);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.er-empty { margin: 0; font-size: var(--fs-sm); color: var(--muted); line-height: 1.55; }
+
+.er-notice-good {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+/* ── Log-a-flip modal ───────────────────────────────────────────────────── */
+
+.er-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s5);
+  background: rgba(4, 23, 26, .55);
+  backdrop-filter: blur(3px);
+}
+
+.er-modal-card {
+  width: min(720px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e4);
+  overflow: hidden;
+}
+
+.er-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s5) var(--s6);
+  border-bottom: 1px solid var(--line);
+}
+
+.er-modal-head h3 { margin: 0; font-size: var(--fs-lg); color: var(--ink); }
+
+.er-modal-body { padding: var(--s5) var(--s6); overflow-y: auto; }
+
+.er-modal-hint {
+  margin: 0 0 var(--s4);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.er-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s3);
+}
+
+.er-field-wide { grid-column: 1 / -1; }
+
+.er-log-preview {
+  margin: var(--s4) 0 0;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.er-log-error {
+  margin: var(--s3) 0 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
+  font-size: var(--fs-sm);
+  color: var(--danger);
+}
+
+.er-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding: var(--s4) var(--s6);
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+}
+
+/* ── Dashboard band ─────────────────────────────────────────────────────── */
+
+.dash-earnings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  flex-wrap: wrap;
+  margin-bottom: var(--s5);
+  padding: var(--s5) var(--s7);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--success-line);
+  background: linear-gradient(135deg, var(--success-soft), var(--card));
+  box-shadow: var(--e2);
+}
+
+.dash-earnings-figure {
+  margin: var(--s1) 0;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  color: var(--success);
+}
+
+.dash-earnings-figure.er-negative { color: var(--danger); }
+
+.dash-earnings-sub { margin: 0; font-size: var(--fs-sm); color: var(--ink-2); }
+
+.dash-earnings-side {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+}
+
+.dash-earnings-spark { width: 180px; }
+.er-spark-svg { width: 100%; height: auto; display: block; }
+
+/* De-emphasised history, the current month in the accent — the stat-tile idiom. */
+.er-spark-bar  { fill: var(--success-line); }
+.er-spark-now  { fill: var(--success); }
+.er-spark-loss { fill: var(--danger-line); }
+
+@media (max-width: 900px) {
+  .er-columns { grid-template-columns: 1fr; }
+  .er-hero-figure { font-size: 42px; }
+  .er-hero-side { gap: var(--s5); }
+  .dash-earnings-spark { display: none; }
+  .er-cost-entry { width: 100%; }
+  .er-cost-input { flex: 1; width: auto; }
+}

@@ -1507,6 +1507,155 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
     }
 
+    // ── Fulfillment API: the orders that already happened ─────────────────────
+    // Everything else in this class looks at listings — what is for sale. This reads what SOLD, and
+    // it is the only source in the app for what eBay actually charged: the Order resource carries
+    // totalMarketplaceFee, the real fee on the real sale, rather than the 13.25%-ish estimate every
+    // forecast in this app has to work from. That is the difference between "you probably made
+    // about $X" and "you made $X".
+    //
+    // Uses the sell.fulfillment scope, which this app has requested since before this feature
+    // existed, so no seller has to reconnect for it.
+
+    /// <summary>
+    /// The seller's orders created in the last <paramref name="days"/> days, reduced to the fields
+    /// the earnings tracker needs.
+    /// </summary>
+    /// <remarks>
+    /// Paged to a hard ceiling rather than "until eBay stops": a seller with years of history and
+    /// a large <paramref name="days"/> would otherwise turn one button into hundreds of requests.
+    /// </remarks>
+    public async Task<List<EbayOrderSummary>> GetOrdersAsync(int days, int maxOrders = 1000, CancellationToken ct = default)
+    {
+        days = Math.Clamp(days, 1, 730);
+        maxOrders = Math.Clamp(maxOrders, 1, 2000);
+
+        var token = await GetOrRefreshTokenAsync();
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Add("X-EBAY-C-MARKETPLACE-ID", "EBAY_US");
+
+        // eBay wants the range in UTC with a literal Z and no fractional seconds; a round-trip "O"
+        // format is rejected.
+        var since = DateTimeOffset.UtcNow.AddDays(-days).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var filter = Uri.EscapeDataString($"creationdate:[{since}..]");
+
+        var orders = new List<EbayOrderSummary>();
+        const int limit = 200;
+        var offset = 0;
+
+        while (orders.Count < maxOrders)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var response = await client.GetAsync(
+                $"{BaseUrl}/sell/fulfillment/v1/order?filter={filter}&limit={limit}&offset={offset}", ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                log.Add("Warning", $"Fulfillment order search HTTP {(int)response.StatusCode}",
+                    body[..Math.Min(600, body.Length)]);
+
+                if (IsPermissionFailure(response, body))
+                    throw new EbayPermissionException(
+                        "Your saved eBay connection doesn't include permission to read your orders. " +
+                        "Click \"Log into eBay\" to reconnect — that grants it, and nothing else changes.");
+
+                throw new Exception($"eBay couldn't return your orders: {ExtractRestError(body)}");
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("orders", out var array) || array.ValueKind != JsonValueKind.Array)
+                break;
+
+            var page = 0;
+            foreach (var element in array.EnumerateArray())
+            {
+                page++;
+                var order = ParseOrder(element);
+                if (order is not null) orders.Add(order);
+            }
+
+            if (page < limit) break;
+            offset += limit;
+        }
+
+        log.Add("Info", $"Read {orders.Count} eBay order(s) from the last {days} day(s)",
+            $"{orders.Count(o => o.TotalMarketplaceFee.HasValue)} carried eBay's own fee figure");
+
+        return orders;
+    }
+
+    private static EbayOrderSummary? ParseOrder(JsonElement element)
+    {
+        var orderId = Str(element, "orderId");
+        if (string.IsNullOrWhiteSpace(orderId)) return null;
+
+        var order = new EbayOrderSummary
+        {
+            OrderId = orderId,
+            LegacyOrderId = Str(element, "legacyOrderId"),
+            PaymentStatus = Str(element, "orderPaymentStatus"),
+            TotalMarketplaceFee = Amount(element, "totalMarketplaceFee"),
+        };
+
+        order.CreationDate = DateTimeOffset.TryParse(Str(element, "creationDate"), out var created)
+            ? created : DateTimeOffset.UtcNow;
+
+        if (element.TryGetProperty("cancelStatus", out var cancel))
+            order.CancelState = Str(cancel, "cancelState");
+
+        if (element.TryGetProperty("pricingSummary", out var pricing))
+            order.OrderTotal = Amount(pricing, "total") ?? 0m;
+
+        if (!element.TryGetProperty("lineItems", out var lines) || lines.ValueKind != JsonValueKind.Array)
+            return order;
+
+        foreach (var line in lines.EnumerateArray())
+        {
+            var lineItem = new EbayOrderLineItem
+            {
+                LineItemId = Str(line, "lineItemId"),
+                LegacyItemId = Str(line, "legacyItemId"),
+                Sku = Str(line, "sku"),
+                Title = Str(line, "title"),
+                Quantity = line.TryGetProperty("quantity", out var q) && q.TryGetInt32(out var qty) ? Math.Max(1, qty) : 1,
+                // lineItemCost is goods only. `total` would fold in eBay-collected sales tax, which
+                // the seller never receives, and counting it would inflate both revenue and margin.
+                LineItemCost = Amount(line, "lineItemCost") ?? 0m,
+            };
+
+            if (line.TryGetProperty("deliveryCost", out var delivery))
+                lineItem.ShippingCharged = Amount(delivery, "shippingCost") ?? 0m;
+
+            if (line.TryGetProperty("refunds", out var refunds) && refunds.ValueKind == JsonValueKind.Array)
+                foreach (var refund in refunds.EnumerateArray())
+                    lineItem.RefundedAmount += Amount(refund, "amount") ?? 0m;
+
+            if (!string.IsNullOrWhiteSpace(lineItem.LineItemId)) order.LineItems.Add(lineItem);
+        }
+
+        return order;
+    }
+
+    // eBay REST money is {"value": "12.34", "currency": "USD"} — a STRING, so GetDecimal on the
+    // element throws. Missing and unparseable both mean "eBay didn't tell us", which is a different
+    // answer from zero and is carried as null.
+    private static decimal? Amount(JsonElement el, string prop)
+    {
+        if (!el.TryGetProperty(prop, out var money) || money.ValueKind != JsonValueKind.Object) return null;
+        if (!money.TryGetProperty("value", out var value)) return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number => value.GetDecimal(),
+            JsonValueKind.String when decimal.TryParse(value.GetString(),
+                System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null,
+        };
+    }
+
     // ── Negotiation API: offers to the people watching a listing ──────────────
     // eBay's Send Offer to Interested Buyers. The two calls below are the whole API surface for
     // it: ask which listings currently have an audience worth offering to, then send one.
