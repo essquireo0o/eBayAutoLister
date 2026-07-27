@@ -24,10 +24,9 @@ public sealed class ResalePricing
     public string? DisagreementMessage { get; set; }
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
-    // How long the money stays tied up, and how many of these move a month — carried for the
-    // Roll the Dice board, where "days to cash" is part of judging one play against another. The
-    // local ranking doesn't use them; they cost nothing to carry, since AnalyzeProductAsync has
-    // already computed them.
+    // How long the money stays tied up, and how many of these move a month. Every board that ranks
+    // opportunities runs these through DaysToCashEstimator, because capital parked in a slow mover
+    // is money that can't buy the next flip — see LocalArbitrageAnalyzer.Build.
     public int? EstimatedDaysToSell { get; set; }
     public decimal EstimatedMonthlySales { get; set; }
     public int OpportunityScore { get; set; }
@@ -128,6 +127,7 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             row.Verdict = "no_data";
             row.VerdictNote = "No eBay sold history matched this title.";
             row.PricedAs = resale?.LookupTitle ?? "";
+            ApplyDaysToCash(row, resale);
             return row;
         }
 
@@ -168,11 +168,33 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
         // break-even ask is the ask plus the profit — the number to negotiate against.
         row.MaxBuyPrice = Math.Round(localAsk + profit.NetProfitPerUnit, 2);
 
+        // How long that profit takes to become money again. Computed from THIS row's net profit, so
+        // two listings of the same product at different asks correctly differ in profit-per-day
+        // even though they share a velocity.
+        ApplyDaysToCash(row, resale);
+
         var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, localAsk,
             resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
         row.Verdict = verdict;
         row.VerdictNote = note;
         return row;
+    }
+
+    private static void ApplyDaysToCash(LocalArbitrageOpportunity row, ResalePricing? resale)
+    {
+        var estimate = DaysToCashEstimator.Estimate(
+            resale?.EstimatedDaysToSell, resale?.EstimatedMonthlySales ?? 0m,
+            row.NetProfit, row.RoiPercent);
+
+        row.DaysToSell = estimate.DaysToSell;
+        row.CashPipelineDays = estimate.PipelineDays;
+        row.DaysToCash = estimate.DaysToCash;
+        row.ProfitPerDay = estimate.ProfitPerDay;
+        row.CapitalTurnsPerYear = estimate.CapitalTurnsPerYear;
+        row.AnnualizedRoiPercent = estimate.AnnualizedRoiPercent;
+        row.SpeedTier = estimate.SpeedTier;
+        row.SpeedLabel = estimate.SpeedLabel;
+        row.SpeedNote = estimate.Note;
     }
 
     // Which pricing sources actually contributed — "hosted comps + Terapeak" is a materially
@@ -266,14 +288,61 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
         return promising.Concat(unpriced).Take(budget).ToList();
     }
 
+    // How the table comes back ordered. "profit" is the historical default and stays the default;
+    // the other two exist because the biggest margin and the best use of the seller's cash are
+    // routinely different rows — see DaysToCashEstimator.
+    public const string SortByProfit = "profit";
+    public const string SortByFastestCash = "fastest";        // shortest wait for the money
+    public const string SortByProfitPerDay = "profit_per_day"; // most money earned per day tied up
+
+    public static string NormalizeSort(string? sort) => (sort ?? "").Trim().ToLowerInvariant() switch
+    {
+        SortByFastestCash or "days" or "speed" => SortByFastestCash,
+        SortByProfitPerDay or "perday" or "velocity" => SortByProfitPerDay,
+        _ => SortByProfit,
+    };
+
     // Best money first. Rows that couldn't be priced sort last rather than being dropped —
     // "we couldn't price this one" is information, and silently hiding listings from a
     // sourcing search is how a real deal gets missed.
-    public static List<LocalArbitrageOpportunity> Rank(IEnumerable<LocalArbitrageOpportunity> rows) =>
-        rows.OrderByDescending(r => r.NetProfit.HasValue)
-            .ThenByDescending(r => r.NetProfit ?? 0m)
-            .ThenByDescending(r => r.RoiPercent ?? 0m)
-            .ThenBy(r => r.DistanceMiles ?? double.MaxValue)
-            .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    //
+    // Every mode keeps that rule, and every mode keeps losers below winners: a listing that clears
+    // its fees in 200 days is still a better row than one that never clears them at all, however
+    // quickly it wouldn't.
+    public static List<LocalArbitrageOpportunity> Rank(
+        IEnumerable<LocalArbitrageOpportunity> rows, string? sort = null)
+    {
+        var ordered = rows
+            .OrderByDescending(r => r.NetProfit.HasValue)
+            .ThenByDescending(r => r.NetProfit > 0);
+
+        return NormalizeSort(sort) switch
+        {
+            // Fastest cash back, then the bigger profit among rows that turn equally fast.
+            SortByFastestCash => ordered
+                .ThenBy(r => DaysToCashEstimator.SortableDaysToCash(r.DaysToCash))
+                .ThenByDescending(r => r.NetProfit ?? 0m)
+                .ThenBy(r => r.DistanceMiles ?? double.MaxValue)
+                .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+
+            // The most money per day of tied-up capital — a small fast flip can and should outrank
+            // a bigger one that parks the cash for months.
+            SortByProfitPerDay => ordered
+                .ThenByDescending(r => r.ProfitPerDay.HasValue)
+                .ThenByDescending(r => r.ProfitPerDay ?? 0m)
+                .ThenByDescending(r => r.NetProfit ?? 0m)
+                .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+
+            _ => ordered
+                .ThenByDescending(r => r.NetProfit ?? 0m)
+                .ThenByDescending(r => r.RoiPercent ?? 0m)
+                // Equal money on both rows: take the one that gives the cash back sooner.
+                .ThenBy(r => DaysToCashEstimator.SortableDaysToCash(r.DaysToCash))
+                .ThenBy(r => r.DistanceMiles ?? double.MaxValue)
+                .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
+    }
 }

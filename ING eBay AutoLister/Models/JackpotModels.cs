@@ -71,6 +71,9 @@ public class JackpotSourceOption
     public decimal? NetProfit { get; set; }
     public decimal? RoiPercent { get; set; }
     public decimal? MarginPercent { get; set; }
+    // Per-source, because the buy price is: two listings of the same product recycle the seller's
+    // cash at different rates even though they sell in the same number of days.
+    public decimal? ProfitPerDay { get; set; }
 
     // goldmine | solid | thin | pass | no_data — LocalArbitrageAnalyzer's own tiers, unchanged.
     public string Verdict { get; set; } = "no_data";
@@ -82,7 +85,8 @@ public class JackpotSourceOption
         ImageUrl = row.ImageUrl, Location = row.Location, DistanceMiles = row.DistanceMiles,
         PostedAgo = row.PostedAgo, BuyPrice = row.LocalAsk, EstimatedFees = row.EstimatedFees,
         EstimatedShipCost = row.EstimatedShipCost, NetProfit = row.NetProfit, RoiPercent = row.RoiPercent,
-        MarginPercent = row.MarginPercent, Verdict = row.Verdict, VerdictNote = row.VerdictNote,
+        MarginPercent = row.MarginPercent, ProfitPerDay = row.ProfitPerDay,
+        Verdict = row.Verdict, VerdictNote = row.VerdictNote,
     };
 }
 
@@ -129,8 +133,21 @@ public class JackpotPlay
     public decimal? RoiPercent { get; set; }
     public decimal? MarginPercent { get; set; }
     public decimal? BestBuyPrice { get; set; }
+
+    // ── The wait ─────────────────────────────────────────────────────────────
     // How long the money is tied up — profit you can't realise for six months isn't the same deal.
+    // DaysToCash is the whole wait (sell + ship + payout), not just time-to-sell; ProfitPerDay is
+    // measured on the live buy where there is one, and on the target buy where there isn't, so a
+    // play with no supply yet can still be judged on how fast it would recycle the cash.
+    // See Services/DaysToCashEstimator.cs.
+    public int? DaysToSell { get; set; }
     public int? DaysToCash { get; set; }
+    public decimal? ProfitPerDay { get; set; }
+    public decimal? AnnualizedRoiPercent { get; set; }
+    // fast | steady | slow | dead_money | unknown
+    public string SpeedTier { get; set; } = "unknown";
+    public string SpeedLabel { get; set; } = "Speed unknown";
+    public string SpeedNote { get; set; } = "";
     public decimal EstimatedMonthlySales { get; set; }
 
     public List<JackpotSourceOption> Sources { get; set; } = [];
@@ -198,6 +215,9 @@ public class JackpotResult
     public bool EbaySupplySearched { get; set; }
 
     public int JackpotCount { get; set; }
+    // Plays whose money is expected back inside DaysToCashEstimator.FastCashDays — what a seller
+    // with one pot of cash and no patience is actually shopping for.
+    public int FastCashCount { get; set; }
     // Total net profit across every live source option that clears its fees — an upper bound on
     // this board if every one of them were bought and flipped, not a forecast.
     public decimal TotalPotentialProfit { get; set; }

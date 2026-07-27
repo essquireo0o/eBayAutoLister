@@ -465,7 +465,6 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
         play.LiquidityLevel = resale.LiquidityLevel;
         play.OpportunityScore = resale.OpportunityScore;
         play.DisagreementMessage = resale.DisagreementMessage;
-        play.DaysToCash = resale.EstimatedDaysToSell;
         play.EstimatedMonthlySales = resale.EstimatedMonthlySales;
 
         var breakEven = BreakEvenBuyPrice(resale, fees);
@@ -489,6 +488,24 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
             play.MarginPercent = best.MarginPercent;
             play.BestBuyPrice = best.BuyPrice;
         }
+
+        // How long the money stays spent, and what it earns per day of that. Measured on the live
+        // buy where there is one, and on the target buy otherwise — a play with no supply yet still
+        // has to be comparable against one that has.
+        var moneyRoi = play.RoiPercent ?? (play.TargetBuyPrice > 0
+            ? Math.Round(play.ProfitAtTarget / play.TargetBuyPrice * 100m, 1)
+            : null);
+        var speed = DaysToCashEstimator.Estimate(
+            resale.EstimatedDaysToSell, resale.EstimatedMonthlySales,
+            play.NetProfit ?? (play.ProfitAtTarget > 0 ? play.ProfitAtTarget : null), moneyRoi);
+
+        play.DaysToSell = speed.DaysToSell;
+        play.DaysToCash = speed.DaysToCash;
+        play.ProfitPerDay = speed.ProfitPerDay;
+        play.AnnualizedRoiPercent = speed.AnnualizedRoiPercent;
+        play.SpeedTier = speed.SpeedTier;
+        play.SpeedLabel = speed.SpeedLabel;
+        play.SpeedNote = speed.Note;
 
         var (tier, note) = JudgePlay(best, resale.SoldCompCount + resale.TerapeakCompCount,
             resale.ConfidenceScore, resale.ConfidenceLevel, play.MaxBuyPrice, play.TargetBuyPrice);
@@ -568,13 +585,39 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
     /// promise here is that the top of the board is the play most worth making — not the one with
     /// the biggest number attached to the weakest evidence.
     /// </summary>
-    public static List<JackpotPlay> Rank(IEnumerable<JackpotPlay> plays) =>
-        plays.OrderBy(p => TierRank(p.Tier))
-            .ThenByDescending(p => p.NetProfit ?? p.ProfitAtTarget)
-            .ThenByDescending(p => p.ConfidenceScore)
-            .ThenBy(p => p.DaysToCash ?? int.MaxValue)
-            .ThenBy(p => p.Product, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    /// <param name="sort">
+    /// <see cref="LocalArbitrageAnalyzer"/>'s sort names, so "fastest profit" means the same thing
+    /// on this board as it does on the local ranking. The velocity modes still keep plays that
+    /// can't be believed (pass / no data) at the bottom — a fast route to no money is not a play.
+    /// </param>
+    public static List<JackpotPlay> Rank(IEnumerable<JackpotPlay> plays, string? sort = null)
+    {
+        var ordered = plays.OrderBy(p => TierRank(p.Tier) >= TierRank("pass") ? 1 : 0);
+
+        return LocalArbitrageAnalyzer.NormalizeSort(sort) switch
+        {
+            LocalArbitrageAnalyzer.SortByFastestCash => ordered
+                .ThenBy(p => DaysToCashEstimator.SortableDaysToCash(p.DaysToCash))
+                .ThenByDescending(p => p.NetProfit ?? p.ProfitAtTarget)
+                .ThenBy(p => p.Product, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+
+            LocalArbitrageAnalyzer.SortByProfitPerDay => ordered
+                .ThenByDescending(p => p.ProfitPerDay.HasValue)
+                .ThenByDescending(p => p.ProfitPerDay ?? 0m)
+                .ThenByDescending(p => p.NetProfit ?? p.ProfitAtTarget)
+                .ThenBy(p => p.Product, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+
+            _ => ordered
+                .ThenBy(p => TierRank(p.Tier))
+                .ThenByDescending(p => p.NetProfit ?? p.ProfitAtTarget)
+                .ThenByDescending(p => p.ConfidenceScore)
+                .ThenBy(p => DaysToCashEstimator.SortableDaysToCash(p.DaysToCash))
+                .ThenBy(p => p.Product, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
+    }
 
     public static int TierRank(string tier) => tier switch
     {

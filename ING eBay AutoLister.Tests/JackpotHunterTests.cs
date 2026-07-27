@@ -490,7 +490,12 @@ public class JackpotHunterTests
         Assert.Equal(173.10m, play.MaxBuyPrice);
         Assert.Equal(98.10m, play.TargetBuyPrice);
         Assert.Equal(75.00m, play.ProfitAtTarget);
-        Assert.Equal(14, play.DaysToCash);
+        // The wait is the whole wait: 14 days to sell, then packing, transit and eBay's payout.
+        Assert.Equal(14, play.DaysToSell);
+        Assert.Equal(14 + DaysToCashEstimator.PipelineDays, play.DaysToCash);
+        Assert.Equal("steady", play.SpeedTier);
+        // $123.10 net over 22 days of tied-up cash.
+        Assert.Equal(Math.Round(play.NetProfit!.Value / play.DaysToCash!.Value, 2), play.ProfitPerDay);
         Assert.Contains("Craigslist", play.WhereToLook);
         Assert.True(play.HasLiveSupply);
     }
@@ -617,6 +622,53 @@ public class JackpotHunterTests
 
         var ranked = JackpotHunter.Rank([smaller, bigger]);
         Assert.Equal(bigger.NetProfit, ranked[0].NetProfit);
+    }
+
+    [Fact]
+    public void Rank_FastestCash_ReordersTheBoardByHowSoonTheMoneyComesBack()
+    {
+        var slow = Pricing(expected: 400m);
+        slow.EstimatedDaysToSell = 150;
+        var quick = Pricing(expected: 200m);
+        quick.EstimatedDaysToSell = 5;
+
+        var fat = Hunter.BuildPlay(Candidate(), slow, [OptionAt(50m, slow)], Fees);
+        var nimble = Hunter.BuildPlay(Candidate(), quick, [OptionAt(50m, quick)], Fees);
+
+        // Money-first still puts the bigger margin on top...
+        Assert.Equal(fat.NetProfit, JackpotHunter.Rank([nimble, fat])[0].NetProfit);
+
+        // ...and both velocity sorts put the money you get back this month on top instead.
+        Assert.Equal(nimble.NetProfit,
+            JackpotHunter.Rank([fat, nimble], LocalArbitrageAnalyzer.SortByFastestCash)[0].NetProfit);
+        Assert.Equal(nimble.NetProfit,
+            JackpotHunter.Rank([fat, nimble], LocalArbitrageAnalyzer.SortByProfitPerDay)[0].NetProfit);
+    }
+
+    [Fact]
+    public void Rank_VelocitySorts_KeepUnbuyablePlaysAtTheBottom()
+    {
+        var fast = Pricing(expected: 200m);
+        fast.EstimatedDaysToSell = 2;
+
+        // Priced above the ceiling: a pass, however quickly the product itself moves.
+        var pass = Hunter.BuildPlay(Candidate(), fast, [OptionAt(190m, fast)], Fees);
+        var target = Hunter.BuildPlay(Candidate(), Pricing(expected: 300m), [], Fees);
+
+        var ranked = JackpotHunter.Rank([pass, target], LocalArbitrageAnalyzer.SortByFastestCash);
+        Assert.Equal(["target", "pass"], ranked.Select(p => p.Tier));
+    }
+
+    [Fact]
+    public void BuildPlay_NoLiveSupply_StillRatesTheSpeedOfTheTargetBuy()
+    {
+        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m), [], Fees);
+
+        // Nothing is for sale, so the money being judged is what buying at the target would net.
+        Assert.Null(play.NetProfit);
+        Assert.Equal(14 + DaysToCashEstimator.PipelineDays, play.DaysToCash);
+        Assert.Equal(Math.Round(play.ProfitAtTarget / play.DaysToCash!.Value, 2), play.ProfitPerDay);
+        Assert.True(play.AnnualizedRoiPercent > 0);
     }
 
     [Fact]

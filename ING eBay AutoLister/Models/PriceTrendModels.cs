@@ -110,7 +110,17 @@ public class TrendRadarRow
     public string ConfidenceLevel { get; set; } = "Insufficient Evidence";
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
+    // How long the money stays tied up if you buy one: days to sell, plus ship and payout time
+    // (Services/DaysToCashEstimator.cs). ProfitPerDay is measured on the target buy price below,
+    // because that is the only buy this board actually recommends.
+    public int? DaysToSell { get; set; }
     public int? DaysToCash { get; set; }
+    public decimal? ProfitPerDay { get; set; }
+    public decimal? AnnualizedRoiPercent { get; set; }
+    // fast | steady | slow | dead_money | unknown
+    public string SpeedTier { get; set; } = "unknown";
+    public string SpeedLabel { get; set; } = "Speed unknown";
+    public string SpeedNote { get; set; } = "";
     public decimal EstimatedMonthlySales { get; set; }
     public string? DisagreementMessage { get; set; }
 

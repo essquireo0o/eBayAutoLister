@@ -2437,3 +2437,107 @@ backwards in front of a product whose sales had stopped. Now worded from the evi
   exercised against the real database; what is unproven is a full board of real rising products.
 - **Terapeak-blended rows** — needs a connected Terapeak session. The rationing is the same code path
   Roll the Dice and Local Deals already use.
+
+---
+
+## 25. Days to Cash — ranking by how fast the money comes back (autonomous session, 2026-07-26)
+
+Every board in this app ranked opportunities by **how much**. None of them said **how long**. A
+seller working from one pot of cash doesn't care that a pallet flip nets $300 if the money is gone
+until Christmas — the $45 flip that clears in two weeks buys the next three deals in the same time,
+and until now the app had no way to say so and no way to sort by it.
+
+The velocity was already measured (`LiquidityScoringService` → `SellThroughCalculator`), already
+carried on `ResalePricing`, and — in the local ranking — explicitly thrown away. Now every priced
+opportunity carries an expected **days to cash**, a **$/day** rate, and a speed tier, on all three
+boards, with the same definition on each.
+
+### Why this makes the seller money
+
+Two rows the app used to rank in the wrong order, from the real numbers a live roll produced:
+
+| Play | Net profit | Days to cash | $ per day |
+|---|---|---|---|
+| Antminer Z11 (fast mover) | ~$278 | **13 days** | **$21.43** |
+| A fat-margin slow mover at 150 days to sell | more per unit | **158 days** | ~$2 |
+
+Same $100 of working capital, one year: the 13-day flip turns **~28 times**, the 150-day one turns
+**twice**. The bigger margin loses by an order of magnitude, and no profit column can show that.
+That is the whole feature — *fast + profitable beats a bigger-but-stale margin.*
+
+### Days to cash is the whole wait, not the time to sell
+
+The honest number is not "how long until it sells" — a sale isn't money. `DaysToCashEstimator` adds a
+fixed **8-day pipeline** to every estimate:
+
+| Stage | Days | Why |
+|---|---|---|
+| Handling | 2 | pack it and get it to the carrier |
+| Transit | 4 | typical ground delivery |
+| Payout | 2 | eBay initiates payout after delivery, then it settles |
+
+So an item that sells the day it's listed is still a **9-day** turnaround, and it says 9, not 1.
+
+### The rules that keep it honest
+
+- **No velocity evidence → `unknown`, never fast.** A product with no dated sold history gets a dash
+  and sorts *last* in both velocity sorts (`SortableDaysToCash` → `int.MaxValue`). Defaulting it to
+  anything would rank unmeasured products against measured ones.
+- **Losers stay below winners in every sort.** A one-day route to a loss is not a fast flip.
+- **A loss is never annualized.** The daily bleed is reported (`profitPerDay` goes negative); an
+  "annualized ROI" on a loss states a rate of return that isn't one, so it stays null.
+- **$/day is per row, not per product.** Two listings of the same drill at different asks share a
+  velocity but recycle the seller's cash at different rates, and the column shows that.
+- **Colour is by speed, never by size.** A $300 margin parked for 188 days renders in the danger tone
+  next to a $45 one in green — the picture has to agree with the maths.
+
+### Where it shows up
+
+| Board | What's new |
+|---|---|
+| **Local Deals** (`/api/local/arbitrage`) | New **Days to cash** column (`15d` + `$3.00/day`), two new sorts — *Fastest profit ($ per day)* and *Days to cash* — an **"Only money back in 3 weeks"** filter, and a `fastCashCount` headline in the summary |
+| **Roll the Dice** (`/api/opportunities/roll-the-dice`) | Speed badge on every play (`~13d to cash · $21.43/day`), a board sort control (Best play / Fastest profit / Days to cash / Net profit), the same 3-week filter, and `fastCashCount` in the summary |
+| **Rising Now** (`/api/trends/radar`) | Days-to-cash + $/day under the target buy price — a climbing price is worth less if the money is stuck for five months getting it |
+
+Sorting is client-side over the response already in hand (a re-sort must never re-run a multi-minute
+scan), and the same sort name is sent on a *fresh* scan so the server returns it pre-ordered.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/DaysToCashModels.cs` | **New** — `DaysToCashEstimate` |
+| `Services/DaysToCashEstimator.cs` | **New** — pure/static: `DaysToSell`, `Estimate`, `SortableDaysToCash`, the pipeline constants and the speed bands (21 / 45 / 90 days) |
+| `Models/LocalArbitrageModels.cs` | `DaysToSell`, `CashPipelineDays`, `DaysToCash`, `ProfitPerDay`, `CapitalTurnsPerYear`, `AnnualizedRoiPercent`, `SpeedTier/Label/Note` on the row; `FastCashCount` on the result |
+| `Services/LocalArbitrageAnalyzer.cs` | `ApplyDaysToCash` in `Build`; `Rank(rows, sort)` with `SortByProfit` / `SortByFastestCash` / `SortByProfitPerDay` + `NormalizeSort`; days-to-cash as the tie-break in the money-first default |
+| `Models/JackpotModels.cs` | Play-level speed fields (`DaysToCash` now means the whole wait); `ProfitPerDay` per source option; `FastCashCount` on the result |
+| `Services/JackpotHunter.cs` | `BuildPlay` prices the wait on the live buy, or on the target buy where there's no supply yet; `Rank(plays, sort)` shares the local ranking's sort names |
+| `Models/PriceTrendModels.cs` | Radar rows carry the same speed fields |
+| `Program.cs` | `sort` on the two arbitrage endpoints and on Roll the Dice; `FastCashCount` on both results; `BuildTrendRow` prices the wait; both scan logs report it |
+| `wwwroot/index.html` | Days-to-cash column, two sort controls, two filters, footnote explaining the 8-day pipeline. `app.js?v=49` |
+| `wwwroot/app.js` | `SPEED_TIERS`, `perDay`, `daysToCashCell`; new comparators on both boards; dice board sorting; radar cell |
+| `wwwroot/style.css` | `.speed-days` / `.speed-rate` / `.speed-badge` + the four tiers; dice toolbar select |
+| `ING eBay AutoLister.Tests/DaysToCashEstimatorTests.cs` | **New** — 11 tests |
+| `ING eBay AutoLister.Tests/LocalArbitrageAnalyzerTests.cs` | +8 tests (wiring, the three sorts, the honesty rules) |
+| `ING eBay AutoLister.Tests/JackpotHunterTests.cs` | +3 tests, and the existing `DaysToCash` assertion updated to the new meaning |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **887 passed**, 0 failed, 0 skipped (865 pre-existing + 22 new) |
+| Live `GET /api/local/arbitrage?...&sort=perday` | 200, pipeline ran end to end, `fastCashCount` present |
+| Live `GET /api/opportunities/roll-the-dice?...&sort=perday` | 924 comps → 5 plays, **4 fast-cash**, board ordered $8.41 → $6.31 → $3.32 → $3.22 → $2.50 per day; `speedNote` rendered as a real sentence ("Cash back in ~13 days — $21.43 a day while it's tied up: about 28.1 turns of this money a year") |
+| Real browser (Playwright, stubbed arbitrage response) | Default sort keeps the $300/188-day row first; **$/day sort promotes the $45/15-day row to #1**; days sort orders 15 → 60 → 188; the unmeasured row sorts last in both and shows a dash; the 3-week filter leaves "1 of 4 shown"; **no console errors** |
+
+Screenshot: `docs/screenshots/days-to-cash.png`.
+
+### Not verified
+
+- **Terapeak-blended velocities** — needs a connected session. The velocity input is the same
+  `ResalePricing` field every other board already consumed.
+- **The 8-day pipeline is an assumption, not a measurement.** It is deliberately conservative and
+  identical for every item; it is not read from the seller's actual handling time or eBay payout
+  history (neither is available here). It shifts every row equally, so it cannot change a ranking —
+  only the absolute number.

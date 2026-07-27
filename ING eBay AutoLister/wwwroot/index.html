@@ -918,7 +918,15 @@
               <div id="dice-warning" class="fb-arb-warning hidden"></div>
               <div id="dice-niche-chips" class="dice-niche-chips"></div>
               <div class="dice-board-controls">
+                <label for="dice-sort">Sort by</label>
+                <select id="dice-sort">
+                  <option value="best" selected>Best play</option>
+                  <option value="perday">Fastest profit ($ per day)</option>
+                  <option value="fastest">Days to cash</option>
+                  <option value="profit">Net profit</option>
+                </select>
                 <label class="fb-arb-check"><input id="dice-only-buyable" type="checkbox" /> Only plays I can buy right now</label>
+                <label class="fb-arb-check"><input id="dice-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <span id="dice-shown" class="fb-arb-shown"></span>
               </div>
               <div id="dice-board" class="dice-board"></div>
@@ -1046,12 +1054,15 @@
                 <label for="fb-arb-sort">Sort by</label>
                 <select id="fb-arb-sort">
                   <option value="profit" selected>Net profit</option>
+                  <option value="perday">Fastest profit ($ per day)</option>
+                  <option value="fastest">Days to cash</option>
                   <option value="roi">ROI %</option>
                   <option value="margin">Margin %</option>
                   <option value="distance">Distance</option>
                   <option value="ask">Local price</option>
                 </select>
                 <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
+                <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <span id="fb-arb-shown" class="fb-arb-shown"></span>
               </div>
               <div class="fb-arb-table-wrap">
@@ -1065,6 +1076,7 @@
                       <th class="num">Resell on eBay</th>
                       <th class="num">Fees</th>
                       <th class="num">Net profit</th>
+                      <th class="num">Days to cash</th>
                       <th class="num">ROI</th>
                       <th class="num">Margin</th>
                       <th class="num">Max to pay</th>
@@ -1075,6 +1087,12 @@
                 </table>
               </div>
               <p class="fb-arb-footnote">
+                <strong>Days to cash</strong> is how long the buy price stays spent: the sold-history
+                velocity for that product, plus the fixed 8 days it takes to pack, ship and be paid out.
+                The <strong>$/day</strong> beneath it is the net profit spread over that wait — sorting by
+                it puts the flips that recycle your money fastest at the top, which is usually not the
+                same row as the biggest margin. Products with no dated sold history show a dash rather
+                than a guess.
                 Resale prices are real eBay sold comps (sold-comps database blended with Terapeak where
                 both have data), not asking prices. Profit subtracts eBay's standard final value fee and
                 any shipping the comps show buyers paying — it does <strong>not</strong> include your
@@ -2763,6 +2781,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=48"></script>
+  <script src="app.js?v=49"></script>
 </body>
 </html>

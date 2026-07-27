@@ -55,6 +55,22 @@ public class LocalArbitrageOpportunity
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
 
+    // ── The wait ─────────────────────────────────────────────────────────────
+    // How long the buy price stays spent: days to sell, plus ship and payout time. Flattened onto
+    // the row (rather than nested) because it is sorted on and rendered as columns —
+    // see Services/DaysToCashEstimator.cs for what each one means.
+    public int? DaysToSell { get; set; }
+    public int CashPipelineDays { get; set; }
+    public int? DaysToCash { get; set; }
+    // Net profit per day of tied-up cash: the ranking key behind "fastest profit".
+    public decimal? ProfitPerDay { get; set; }
+    public decimal? CapitalTurnsPerYear { get; set; }
+    public decimal? AnnualizedRoiPercent { get; set; }
+    // fast | steady | slow | dead_money | unknown
+    public string SpeedTier { get; set; } = "unknown";
+    public string SpeedLabel { get; set; } = "Speed unknown";
+    public string SpeedNote { get; set; } = "";
+
     // ── The money ────────────────────────────────────────────────────────────
     // eBay final value + promoted + payment processing, per FeeProfile.
     public decimal? EstimatedFees { get; set; }
@@ -105,5 +121,8 @@ public class LocalArbitrageResult
     public string? DataWarning { get; set; }
 
     public int GoldmineCount { get; set; }
+    // Profitable rows whose money is expected back inside DaysToCashEstimator.FastCashDays — the
+    // count a seller with limited cash actually shops from.
+    public int FastCashCount { get; set; }
     public decimal TotalPotentialProfit { get; set; }
 }

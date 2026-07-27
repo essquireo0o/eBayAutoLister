@@ -4621,6 +4621,35 @@ textarea {
 .fb-arb-profit { font-weight: 700; }
 .fb-arb-profit.good { color: var(--success); }
 .fb-arb-profit.bad  { color: var(--danger); }
+
+/* ── Days to cash ──────────────────────────────────────────────────────────
+   Coloured by how long the seller's money is tied up, never by how big the profit is:
+   a large margin that parks the cash for four months has to LOOK slow next to a small
+   one that clears in a fortnight. Tiers come from the server (DaysToCashEstimator), so
+   the colour here and the sentence in the tooltip always agree. */
+.fb-arb-speed { white-space: nowrap; }
+.speed-days {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  cursor: help;
+}
+.speed-rate { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.speed-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 99px;
+  cursor: help;
+}
+.speed-fast    { background: var(--success-soft); color: var(--success); }
+.speed-steady  { background: var(--info-soft); color: var(--info); }
+.speed-slow    { background: var(--warning-soft); color: var(--warning); }
+.speed-dead    { background: var(--danger-soft); color: var(--danger); }
+.speed-unknown { background: #f1f4f5; color: var(--muted); }
 .fb-arb-cost { color: var(--muted); }
 .fb-arb-evidence { font-size: 11px; color: var(--muted); max-width: 220px; }
 .fb-arb-flag { color: var(--warning); cursor: help; }
@@ -6724,9 +6753,18 @@ td.skeleton-cell { padding: 0 !important; }
   display: flex;
   align-items: center;
   gap: var(--s4);
+  flex-wrap: wrap;
   margin: var(--s3) 0 var(--s2);
   font-size: var(--fs-sm);
   color: var(--ink-2);
+}
+/* Same reason as .fb-arb-controls select: a toolbar control, not a stacked form field. */
+.dice-board-controls select {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
 
 .dice-board { display: flex; flex-direction: column; gap: var(--s3); }

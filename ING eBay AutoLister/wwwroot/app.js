@@ -794,6 +794,7 @@
     on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-arb-sort', 'change', renderArbitrageRows);
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
+    on('fb-arb-fast-only', 'change', renderArbitrageRows);
     // The seller's zip and radius don't change between searches — remembering them is the
     // difference between a two-field search and a one-field one.
     const zip = localStorage.getItem('fbZip');
@@ -1105,6 +1106,35 @@
     no_data:  { label: '? No data', cls: 'nodata' },
   };
 
+  // How long the money stays spent, in one cell. Server-side tiers (DaysToCashEstimator) so the
+  // colour on the row and the sentence in the tooltip can't disagree.
+  const SPEED_TIERS = {
+    fast:       { cls: 'fast',  short: 'fast' },
+    steady:     { cls: 'steady', short: 'steady' },
+    slow:       { cls: 'slow',  short: 'slow' },
+    dead_money: { cls: 'dead',  short: 'parked' },
+    unknown:    { cls: 'unknown', short: '' },
+  };
+
+  // "$1.85/day" — the profit spread over the wait. Sub-dollar rates keep their cents, because
+  // that is exactly the range where two flips are being compared.
+  function perDay(value) {
+    if (value == null) return '';
+    const abs = Math.abs(value);
+    return `${value < 0 ? '-' : ''}$${abs < 10 ? abs.toFixed(2) : Math.round(abs).toLocaleString()}/day`;
+  }
+
+  // The days-to-cash cell shared by both boards: the wait, then what it earns per day of waiting.
+  function daysToCashCell(row) {
+    const tier = SPEED_TIERS[row.speedTier] || SPEED_TIERS.unknown;
+    if (row.daysToCash == null) {
+      return '<span class="fb-arb-muted" title="No dated sold history for this product, so there is no honest estimate of how long the money stays tied up.">—</span>';
+    }
+    const rate = row.profitPerDay != null && row.profitPerDay > 0
+      ? `<span class="speed-rate">${perDay(row.profitPerDay)}</span>` : '';
+    return `<span class="speed-days speed-${tier.cls}" title="${esc(row.speedNote || '')}">${row.daysToCash}d</span>${rate}`;
+  }
+
   async function runLocalArbitrage() {
     const { query, zip, radius, sources, qs } = localSearchParams();
     const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
@@ -1122,7 +1152,11 @@
     setLocalStatus(`Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}, ` +
       'then pricing every result against eBay sold data — this can take a couple of minutes…');
 
-    const { data, error } = await localFetchJson(`/api/local/arbitrage?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
+    // The scan comes back already ordered the way the seller last chose to look at it. Changing
+    // the sort afterwards is still purely client-side — it must never re-run a multi-minute scan.
+    const sort = $('fb-arb-sort')?.value || 'profit';
+    const { data, error } = await localFetchJson(
+      `/api/local/arbitrage?${qs}&sort=${encodeURIComponent(sort)}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
     buttons.forEach(b => { b.disabled = false; });
 
     if (!data) {
@@ -1166,6 +1200,9 @@
       `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''}`,
       searched ? `from ${searched}` : '',
       data.goldmineCount ? `<strong class="fb-arb-hit">${data.goldmineCount} goldmine${data.goldmineCount === 1 ? '' : 's'}</strong>` : 'no goldmines this time',
+      // Capital that comes back inside three weeks is capital that can buy the next one — worth its
+      // own headline next to the total, which says nothing about when any of it arrives.
+      data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
       `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
     ].filter(Boolean).join(' · ');
     $('fb-arb-summary').innerHTML =
@@ -1192,9 +1229,12 @@
 
     const sort = $('fb-arb-sort')?.value || 'profit';
     const hideLosers = !!$('fb-arb-hide-losers')?.checked;
+    const fastOnly = !!$('fb-arb-fast-only')?.checked;
 
     let rows = arbitrageData.items.slice();
     if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
+    // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
+    if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
 
     // Unpriced rows always sort last whatever the key — "we couldn't price this" isn't a zero.
     const nullsLast = (a, b, key) => (a[key] == null) - (b[key] == null) || null;
@@ -1208,6 +1248,15 @@
       margin: (a, b) => nullsLast(a, b, 'marginPercent') ?? (b.marginPercent - a.marginPercent),
       distance: (a, b) => nullsLast(a, b, 'distanceMiles') ?? (a.distanceMiles - b.distanceMiles),
       ask: (a, b) => a.localAsk - b.localAsk,
+      // The point of the whole feature: money that comes back soonest, and money that earns most
+      // per day it is tied up. Rows that lose money stay below rows that make it in both — a fast
+      // route to a loss is not a fast flip — and an unmeasured wait is never treated as instant.
+      fastest: (a, b) => ((b.netProfit > 0) - (a.netProfit > 0))
+        || (nullsLast(a, b, 'daysToCash') ?? ((a.daysToCash - b.daysToCash) || (b.netProfit - a.netProfit)))
+        || 0,
+      perday: (a, b) => ((b.netProfit > 0) - (a.netProfit > 0))
+        || (nullsLast(a, b, 'profitPerDay') ?? (b.profitPerDay - a.profitPerDay))
+        || 0,
     }[sort];
     rows.sort(cmp);
 
@@ -1220,7 +1269,9 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : '<tr><td colspan="11" class="fb-arb-empty">Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.</td></tr>';
+      : `<tr><td colspan="12" class="fb-arb-empty">${fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
+          ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
+          : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
   }
 
   function arbitrageRowHtml(row, index) {
@@ -1267,6 +1318,7 @@
         <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
         <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}</td>
+        <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
         <td class="num">${roi}</td>
         <td class="num">${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
         <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
@@ -1306,6 +1358,8 @@
     on('dice-roll-btn', 'click', () => rollTheDice(null));
     on('dice-again-btn', 'click', () => rollTheDice(diceNextSeed));
     on('dice-only-buyable', 'change', renderDiceBoard);
+    on('dice-sort', 'change', renderDiceBoard);
+    on('dice-fast-only', 'change', renderDiceBoard);
     on('dice-zip-input', 'keydown', e => { if (e.key === 'Enter') rollTheDice(null); });
 
     // Same remembered zip and radius the local scan uses — a seller types their zip code once.
@@ -1342,10 +1396,15 @@
     // picker hasn't loaded), which lets the server search everything reachable.
     const sources = selectedSourceIds();
 
+    // "best" is the server's own ranking, which is the default — only the velocity sorts are worth
+    // asking for, and the board can still be re-sorted client-side afterwards without re-rolling.
+    const sort = $('dice-sort')?.value || 'best';
+
     const qs = `niches=${encodeURIComponent(niches)}&zip=${encodeURIComponent(zip)}` +
       `&radius=${encodeURIComponent(radius)}` +
       (sources.length ? `&sources=${encodeURIComponent(sources.join(','))}` : '') +
-      (seed != null ? `&seed=${encodeURIComponent(seed)}` : '');
+      (seed != null ? `&seed=${encodeURIComponent(seed)}` : '') +
+      `&sort=${encodeURIComponent(sort)}`;
 
     const buttons = ['dice-roll-btn', 'dice-again-btn', 'btn-roll-dice'].map($).filter(Boolean);
     diceRolling = true;
@@ -1389,6 +1448,7 @@
         ? `<strong class="fb-arb-hit">${data.jackpotCount} jackpot${data.jackpotCount === 1 ? '' : 's'}</strong>`
         : `<strong>${data.count}</strong> play${data.count === 1 ? '' : 's'}`,
       `across ${swept} categor${swept === 1 ? 'y' : 'ies'}`,
+      data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
       data.totalPotentialProfit > 0
         ? `${money(data.totalPotentialProfit)} of profit sitting in supply you can buy right now`
         : '',
@@ -1446,14 +1506,35 @@
     wrap.classList.remove('hidden');
   }
 
-  // Filtering is a pure view over the response already in hand — it must never re-run a roll.
+  // Sorting and filtering are pure views over the response already in hand — neither may re-run a
+  // roll, which is minutes of work across four systems.
   function renderDiceBoard() {
     const board = $('dice-board');
     if (!board || !diceData) return;
 
     const onlyBuyable = !!$('dice-only-buyable')?.checked;
+    const fastOnly = !!$('dice-fast-only')?.checked;
+    const sort = $('dice-sort')?.value || 'best';
     const all = diceData.plays || [];
-    const rows = onlyBuyable ? all.filter(p => p.sources && p.sources.length) : all;
+
+    let rows = onlyBuyable ? all.filter(p => p.sources && p.sources.length) : all.slice();
+    if (fastOnly) rows = rows.filter(p => p.speedTier === 'fast');
+
+    // "best" is the order the server ranked them in — believability first — and is left alone.
+    // The velocity sorts keep plays that can't be believed at the bottom, same rule the server uses.
+    // The play's money: what the live buy nets, or what buying at the target would net.
+    const cash = p => (p.netProfit != null ? p.netProfit : p.profitAtTarget) || 0;
+    const weak = p => p.tier === 'pass' || p.tier === 'no_data';
+    const diceCmp = {
+      fastest: (a, b) => (weak(a) - weak(b))
+        || ((a.daysToCash == null) - (b.daysToCash == null))
+        || ((a.daysToCash - b.daysToCash) || (cash(b) - cash(a))) || 0,
+      perday: (a, b) => (weak(a) - weak(b))
+        || ((a.profitPerDay == null) - (b.profitPerDay == null))
+        || ((b.profitPerDay - a.profitPerDay) || (cash(b) - cash(a))) || 0,
+      profit: (a, b) => (weak(a) - weak(b)) || (cash(b) - cash(a)),
+    }[sort];
+    if (diceCmp) rows = rows.slice().sort(diceCmp);
 
     const shown = $('dice-shown');
     if (shown) {
@@ -1465,7 +1546,9 @@
     board.innerHTML = rows.length
       ? rows.map(dicePlayHtml).join('')
       : all.length
-        ? '<p class="opportunity-empty">Nothing on this board is for sale anywhere right now. The target prices above are still worth watching for — or roll again for different categories.</p>'
+        ? `<p class="opportunity-empty">${fastOnly
+            ? 'Nothing on this board turns your money around inside three weeks. Untick that filter to see the slower plays — or roll again for different categories.'
+            : 'Nothing on this board is for sale anywhere right now. The target prices above are still worth watching for — or roll again for different categories.'}</p>`
         : '<p class="opportunity-empty">This roll found no product with enough sold history to stand behind. That is a real answer, not an error — roll again and the sweep moves on to different categories.</p>';
 
     board.querySelectorAll('.dice-hunt-btn').forEach(btn =>
@@ -1490,7 +1573,12 @@
       `Break even at <strong>${moneyExact(play.maxBuyPrice)}</strong>`,
       play.targetBuyPrice > 0 ? `Target buy <strong>${moneyExact(play.targetBuyPrice)}</strong>` : '',
       play.roiPercent != null ? `${Math.round(play.roiPercent)}% ROI` : '',
-      play.daysToCash != null ? `~${play.daysToCash} days to cash` : '',
+      // The wait, and what the money earns per day of it — the difference between a flip and a
+      // shelf. Rendered as a badge so a "dead money" play can't read like a fast one.
+      play.daysToCash != null
+        ? `<span class="speed-badge speed-${(SPEED_TIERS[play.speedTier] || SPEED_TIERS.unknown).cls}" title="${esc(play.speedNote || '')}">` +
+          `~${play.daysToCash}d to cash${play.profitPerDay > 0 ? ` · ${perDay(play.profitPerDay)}` : ''}</span>`
+        : '',
     ].filter(Boolean).join(' · ');
 
     const evidence = [
@@ -2804,7 +2892,12 @@
         </td>
         <td class="num"><div class="tr-strong">${money(row.maxBuyToday)}</div><div class="tr-sub">break-even today</div></td>
         <td class="num">${row.targetBuyPrice > 0
-          ? `<div class="tr-strong">${money(row.targetBuyPrice)}</div><div class="tr-sub">${money(row.profitAtTarget)} net · ${Number(row.marginAtTargetPercent).toFixed(0)}%</div>`
+          ? `<div class="tr-strong">${money(row.targetBuyPrice)}</div><div class="tr-sub">${money(row.profitAtTarget)} net · ${Number(row.marginAtTargetPercent).toFixed(0)}%</div>` +
+            // A climbing price is worth less if the money is stuck for five months getting it.
+            (row.daysToCash != null
+              ? `<div class="tr-sub"><span class="speed-days speed-${(SPEED_TIERS[row.speedTier] || SPEED_TIERS.unknown).cls}" title="${esc(row.speedNote || '')}">${row.daysToCash}d to cash</span>` +
+                `${row.profitPerDay > 0 ? ` <span class="speed-rate">${perDay(row.profitPerDay)}</span>` : ''}</div>`
+              : '')
           : '<span class="tr-sub">no price clears the bar</span>'}</td>
         <td class="num">${row.trendHeadroom > 0
           ? `<div class="tr-strong tr-up">+${money(row.trendHeadroom)}</div><div class="tr-sub">per unit</div>`

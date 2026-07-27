@@ -333,4 +333,106 @@ public class LocalArbitrageAnalyzerTests
 
         Assert.Equal(["near", "far"], ranked.Select(r => r.Title));
     }
+
+    // ── Days to cash: ranking by how fast the money comes back ─────────────────
+
+    private static LocalArbitrageOpportunity SpeedRow(
+        string title, decimal profit, int? daysToCash, decimal? perDay = null, string tier = "steady") =>
+        new()
+        {
+            Title = title, NetProfit = profit, DaysToCash = daysToCash,
+            ProfitPerDay = perDay ?? (daysToCash is int d && d > 0 ? Math.Round(profit / d, 2) : null),
+            SpeedTier = tier,
+        };
+
+    [Fact]
+    public void Build_PricesTheWaitAsWellAsTheProfit()
+    {
+        var resale = Pricing(expected: 200m);
+        resale.EstimatedDaysToSell = 12;
+        resale.EstimatedMonthlySales = 2.5m;
+
+        var row = Analyzer.Build(Listing(50m), resale, Fees);
+
+        Assert.Equal(12, row.DaysToSell);
+        Assert.Equal(12 + DaysToCashEstimator.PipelineDays, row.DaysToCash);
+        // Profit per day is this row's own profit over the wait, not the product's in general.
+        Assert.Equal(Math.Round(row.NetProfit!.Value / row.DaysToCash!.Value, 2), row.ProfitPerDay);
+        Assert.Equal("fast", row.SpeedTier);
+        Assert.NotEqual("", row.SpeedNote);
+    }
+
+    [Fact]
+    public void Build_NoVelocityEvidence_LeavesTheWaitUnknownRatherThanGuessing()
+    {
+        var row = Analyzer.Build(Listing(50m), Pricing(expected: 200m), Fees);
+
+        Assert.Null(row.DaysToCash);
+        Assert.Null(row.ProfitPerDay);
+        Assert.Equal("unknown", row.SpeedTier);
+    }
+
+    [Fact]
+    public void Rank_FastestCash_PutsTheSoonestMoneyFirst()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank(
+            [SpeedRow("slow", 300m, 180), SpeedRow("quick", 45m, 15), SpeedRow("middling", 90m, 60)],
+            LocalArbitrageAnalyzer.SortByFastestCash);
+
+        Assert.Equal(["quick", "middling", "slow"], ranked.Select(r => r.Title));
+    }
+
+    [Fact]
+    public void Rank_ProfitPerDay_BeatsTheBiggerButStalerMargin()
+    {
+        // $45 in 15 days is $3/day; $300 in 180 days is $1.67/day. The small flip wins.
+        var ranked = LocalArbitrageAnalyzer.Rank(
+            [SpeedRow("fat-and-stale", 300m, 180), SpeedRow("small-and-quick", 45m, 15)],
+            LocalArbitrageAnalyzer.SortByProfitPerDay);
+
+        Assert.Equal(["small-and-quick", "fat-and-stale"], ranked.Select(r => r.Title));
+    }
+
+    [Fact]
+    public void Rank_VelocitySorts_StillKeepLosersAndUnpricedRowsAtTheBottom()
+    {
+        // A one-day route to a loss is not a fast flip.
+        var loser = SpeedRow("loss", -20m, 2);
+        var unpriced = new LocalArbitrageOpportunity { Title = "unknown", NetProfit = null };
+        var winner = SpeedRow("win", 30m, 90);
+
+        foreach (var sort in new[] { LocalArbitrageAnalyzer.SortByFastestCash, LocalArbitrageAnalyzer.SortByProfitPerDay })
+            Assert.Equal(["win", "loss", "unknown"],
+                LocalArbitrageAnalyzer.Rank([loser, unpriced, winner], sort).Select(r => r.Title));
+    }
+
+    [Fact]
+    public void Rank_FastestCash_AnUnmeasuredWaitIsNeverTreatedAsInstant()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank(
+            [SpeedRow("unmeasured", 100m, null, tier: "unknown"), SpeedRow("measured", 100m, 40)],
+            LocalArbitrageAnalyzer.SortByFastestCash);
+
+        Assert.Equal(["measured", "unmeasured"], ranked.Select(r => r.Title));
+    }
+
+    [Fact]
+    public void Rank_EqualMoney_PrefersTheOneThatPaysBackSooner()
+    {
+        var slow = SpeedRow("slow", 100m, 120);
+        var fast = SpeedRow("fast", 100m, 20);
+        slow.RoiPercent = fast.RoiPercent = 50m;
+
+        // Default (money-first) ordering, where the two rows are otherwise identical.
+        Assert.Equal(["fast", "slow"], LocalArbitrageAnalyzer.Rank([slow, fast]).Select(r => r.Title));
+    }
+
+    [Theory]
+    [InlineData(null, "profit")]
+    [InlineData("", "profit")]
+    [InlineData("nonsense", "profit")]
+    [InlineData("FASTEST", "fastest")]
+    [InlineData(" perday ", "profit_per_day")]
+    public void NormalizeSort_UnknownSortsFallBackToMoneyFirst(string? input, string expected) =>
+        Assert.Equal(expected, LocalArbitrageAnalyzer.NormalizeSort(input));
 }

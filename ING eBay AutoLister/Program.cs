@@ -1695,7 +1695,8 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
 // this one costs a comp lookup per distinct product and can spend Terapeak scrapes, so it only
 // ever runs when someone clicks the button that says so.
 app.MapGet("/api/local/arbitrage", async (
-    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sources, string? craigslistSite,
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
+    string? sources, string? craigslistSite,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -1708,7 +1709,7 @@ app.MapGet("/api/local/arbitrage", async (
             q ?? "", zip ?? "", radius ?? 40,
             // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
             // too, so an unbounded request would turn one click into hundreds of lookups.
-            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
             registry.Resolve(sources), craigslistSite, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
             profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
 
@@ -1737,7 +1738,7 @@ static LocalArbitrageResult FailedArbitrage(string q, string zip, int radius, st
 // The original Facebook-only route, kept working: it predates the source picker, and silently
 // changing what an existing URL searches would be worse than one line of aliasing.
 app.MapGet("/api/facebook/arbitrage", async (
-    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget,
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -1748,7 +1749,7 @@ app.MapGet("/api/facebook/arbitrage", async (
     {
         var result = await FindLocalArbitrageAsync(
             q ?? "", zip ?? "", radius ?? 40,
-            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10),
+            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
             registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null, marketplace, normalizer, matcher,
             priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
             terapeak, analyzer, log, ct);
@@ -1775,7 +1776,7 @@ app.MapGet("/api/facebook/arbitrage", async (
 // use for "Roll again", which advances the sweep onto categories this roll didn't touch.
 app.MapGet("/api/opportunities/roll-the-dice", async (
     int? seed, int? niches, int? probes, int? maxProducts, int? maxSourced, int? terapeakBudget,
-    string? zip, int? radius, string? sources, string? craigslistSite,
+    string? zip, int? radius, string? sort, string? sources, string? craigslistSite,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -1792,7 +1793,7 @@ app.MapGet("/api/opportunities/roll-the-dice", async (
             Math.Clamp(niches ?? 4, 1, 8), Math.Clamp(probes ?? 2, 1, 3),
             Math.Clamp(maxProducts ?? 10, 1, 20), Math.Clamp(maxSourced ?? 5, 0, 10),
             Math.Clamp(terapeakBudget ?? 3, 0, 10),
-            zip ?? "", Math.Clamp(radius ?? 40, 1, 500),
+            zip ?? "", Math.Clamp(radius ?? 40, 1, 500), sort,
             registry.Resolve(sources), craigslistSite,
             marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
             opportunityScorer, confidenceScorer, terapeakMarket, terapeak, arbitrage, hunter, ebay, log, ct);
@@ -2553,7 +2554,7 @@ static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
 //     LocalArbitrageAnalyzer.SelectScrapeTargets, and only up to terapeakBudget. Pass 1 is
 //     cache-only, so a product Terapeak already knows about costs nothing.
 static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
-    string q, string zip, int radius, int maxItems, int terapeakBudget,
+    string q, string zip, int radius, int maxItems, int terapeakBudget, string? sort,
     IReadOnlyList<ILocalSupplySource> sources, string? craigslistSite,
     IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
@@ -2658,8 +2659,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile)))
             .ToList();
 
-        result.Items = LocalArbitrageAnalyzer.Rank(rows);
+        result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);
         result.GoldmineCount = result.Items.Count(r => r.Verdict == "goldmine");
+        // The rows a seller working off a fixed pot of cash can actually run: profitable AND back in
+        // the bank inside three weeks.
+        result.FastCashCount = result.Items.Count(r => r.NetProfit is > 0 && r.SpeedTier == "fast");
         // What the whole board is worth if every profitable listing on it were bought and flipped —
         // an upper bound on the search, not a forecast.
         result.TotalPotentialProfit = Math.Round(result.Items.Where(r => r.NetProfit is > 0).Sum(r => r.NetProfit!.Value), 2);
@@ -2700,7 +2704,8 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         $"on {string.Join(" + ", sources.Select(s => s.Id))}; " +
         $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
         $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +
-        $"Goldmines: {result.GoldmineCount}; Duration: {sw.ElapsedMilliseconds}ms");
+        $"Goldmines: {result.GoldmineCount}; Fast cash (<={DaysToCashEstimator.FastCashDays}d): {result.FastCashCount}; " +
+        $"Sorted by: {LocalArbitrageAnalyzer.NormalizeSort(sort)}; Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;
 }
@@ -2725,7 +2730,7 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 //      costed by LocalArbitrageAnalyzer, so a jackpot is a goldmine by the same definition.
 static async Task<JackpotResult> RollTheDiceAsync(
     int seed, int nicheCount, int probesPerNiche, int maxProducts, int maxSourced, int terapeakBudget,
-    string zip, int radius, IReadOnlyList<ILocalSupplySource> localSources, string? craigslistSite,
+    string zip, int radius, string? sort, IReadOnlyList<ILocalSupplySource> localSources, string? craigslistSite,
     IMarketplaceRepository marketplace, ProductNormalizer normalizer, ComparableMatcher matcher,
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     FeeProfile feeProfile, OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
@@ -3007,8 +3012,9 @@ static async Task<JackpotResult> RollTheDiceAsync(
             sourceOptions.TryGetValue(candidate.Key, out var options) ? options : [], feeProfile));
     }
 
-    result.Plays = JackpotHunter.Rank(plays);
+    result.Plays = JackpotHunter.Rank(plays, sort);
     result.JackpotCount = result.Plays.Count(p => p.Tier == "jackpot");
+    result.FastCashCount = result.Plays.Count(p => p.SpeedTier == "fast" && p.Tier is not ("pass" or "no_data"));
     // Every profitable buy currently on the board added up — an upper bound if you bought them all,
     // not a forecast, and it only ever counts supply that really exists right now.
     result.TotalPotentialProfit = Math.Round(
@@ -3042,7 +3048,8 @@ static async Task<JackpotResult> RollTheDiceAsync(
         $"Priced: {result.ProductsPriced}; Dropped: {result.ProductsDropped}; " +
         $"Sourced: {result.ProductsSourced}; Supply rejected: {result.SupplyRejected}; " +
         $"Terapeak scrapes: {result.TerapeakScrapesUsed}; Plays: {result.Plays.Count} " +
-        $"(jackpots: {result.JackpotCount}); Profit on the board: {result.TotalPotentialProfit:C}; " +
+        $"(jackpots: {result.JackpotCount}, fast cash: {result.FastCashCount}); " +
+        $"Profit on the board: {result.TotalPotentialProfit:C}; Sorted by: {LocalArbitrageAnalyzer.NormalizeSort(sort)}; " +
         $"Duration: {sw.ElapsedMilliseconds}ms");
 
     return result;
@@ -3339,7 +3346,6 @@ static TrendRadarRow BuildTrendRow(
         ConfidenceLevel = resale.ConfidenceLevel,
         LiquidityScore = resale.LiquidityScore,
         LiquidityLevel = resale.LiquidityLevel,
-        DaysToCash = resale.EstimatedDaysToSell,
         EstimatedMonthlySales = resale.EstimatedMonthlySales,
         DisagreementMessage = resale.DisagreementMessage,
     };
@@ -3353,6 +3359,20 @@ static TrendRadarRow BuildTrendRow(
     row.MarginAtTargetPercent = expectedToday > 0
         ? Math.Round(row.ProfitAtTarget / expectedToday * 100m, 1)
         : 0m;
+
+    // The wait, priced on the target buy — a climbing product that takes five months to sell is a
+    // worse use of the money than a flat one that clears in three weeks, and the row has to say so.
+    var speed = DaysToCashEstimator.Estimate(
+        resale.EstimatedDaysToSell, resale.EstimatedMonthlySales,
+        row.ProfitAtTarget > 0 ? row.ProfitAtTarget : null,
+        row.TargetBuyPrice > 0 ? Math.Round(row.ProfitAtTarget / row.TargetBuyPrice * 100m, 1) : null);
+    row.DaysToSell = speed.DaysToSell;
+    row.DaysToCash = speed.DaysToCash;
+    row.ProfitPerDay = speed.ProfitPerDay;
+    row.AnnualizedRoiPercent = speed.AnnualizedRoiPercent;
+    row.SpeedTier = speed.SpeedTier;
+    row.SpeedLabel = speed.SpeedLabel;
+    row.SpeedNote = speed.Note;
 
     // The same break-even, recomputed against the estimator's price scaled by the trend. Same fee
     // model, same shipping — the only thing that changed is the sale price it clears.
