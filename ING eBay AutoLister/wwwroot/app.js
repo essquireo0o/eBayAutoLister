@@ -349,6 +349,7 @@
 
   async function init() {
     initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
+    initOverlayMotion();      // before anything can open a modal, so the first close animates too
     initPhotoGrid();          // render 6 photo slots on page load, not just on modal open
     initPhotoEditorPaste();
     bindDashboard();
@@ -593,6 +594,9 @@
     tab.loaded = true;
     syncWorkspaceHash(tab.page);
     renderWorkspaceTabs();
+    // The screen is on the page by now whichever branch put it there, so one
+    // call covers both the first open and every return to an already-loaded tab.
+    playEnter($(def.section));
   }
 
   // Some screens open by a route other than the sidebar — the AI Listing modal off a pasted
@@ -5611,8 +5615,8 @@
     band.classList.remove('hidden');
     const figure = $('dash-earnings-figure');
     if (figure) {
-      figure.textContent = moneyExact(s.netProfitAllTime);
       figure.classList.toggle('er-negative', s.netProfitAllTime < 0);
+      countUp(figure, s.netProfitAllTime, moneyExact);
     }
 
     const bits = [`${moneyExact(s.netProfitThisMonth || 0)} this month`, `${s.salesAllTime} sale${s.salesAllTime === 1 ? '' : 's'} tracked`];
@@ -6227,7 +6231,7 @@
     if (!s || (s.capitalAtRisk || 0) <= 0) { band.classList.add('hidden'); return; }
 
     band.classList.remove('hidden');
-    setText('dash-pipeline-figure', moneyExact(s.capitalAtRisk));
+    countUpText('dash-pipeline-figure', s.capitalAtRisk, moneyExact);
 
     const bits = [`${s.activeDeals} deal${s.activeDeals === 1 ? '' : 's'} in play`];
     if (s.projectedProfitInMotion > 0) bits.push(`${moneyExact(s.projectedProfitInMotion)} projected on it`);
@@ -7765,7 +7769,7 @@
     if (!s || live.length === 0) { band.classList.add('hidden'); return; }
 
     band.classList.remove('hidden');
-    setText('dash-snipe-figure', moneyExact(live.reduce((sum, r) => sum + (r.profitAtMaxBid || 0), 0)));
+    countUpText('dash-snipe-figure', live.reduce((sum, r) => sum + (r.profitAtMaxBid || 0), 0), moneyExact);
     setText('dash-snipe-sub',
       `${live.length} listing${live.length === 1 ? '' : 's'} under market · if you won each at your ceiling`);
 
@@ -10338,6 +10342,11 @@
       }
       setListingsFeedback(errorDetail, 'error');
       addActivity('Import failed', errorDetail);
+    } finally {
+      // updateStats() clears this on every path that reaches it, but the ones
+      // that don't — a sample load that also failed — would leave four tiles
+      // shimmering forever. A loading state that cannot end is a hang.
+      setStatsLoading(false);
     }
   }
 
@@ -10347,6 +10356,10 @@
     clearListingsState();
     if (grid) grid.innerHTML = skeletonCardsHtml(8);
     if (tbody) tbody.innerHTML = `<tr><td colspan="12" class="skeleton-cell">${skeletonRowsHtml(6)}</td></tr>`;
+    // The tiles above the grid were the last stale thing on the page during a
+    // reload: four confident numbers from the previous account, sitting over a
+    // shimmering grid. updateStats() clears this when the real numbers land.
+    setStatsLoading(true);
   }
 
   function clearListingsState() {
@@ -11379,10 +11392,15 @@
     const value = cachedListings.reduce((sum, l) => sum + ((parseFloat(l.price) || 0) * (parseInt(l.quantity, 10) || 0)), 0);
     const review = cachedListings.filter(l => !l.thumbnailUrl || !l.title || (l.status || '').toUpperCase() !== 'PUBLISHED').length;
 
-    setText('stat-active', active);
-    setText('stat-quantity', qty);
-    setText('stat-value', money(value));
-    setText('stat-review', review);
+    // Counted, not swapped. An import that adds 40 listings should be visibly
+    // an import that added 40 listings, not a number that was one thing and is
+    // now another. setStatsLoading(false) first, or the figures would count up
+    // underneath the shimmer that was covering them.
+    setStatsLoading(false);
+    countUpText('stat-active', active);
+    countUpText('stat-quantity', qty);
+    countUpText('stat-value', value, money);
+    countUpText('stat-review', review);
   }
 
   function addActivity(title, detail) {
@@ -11596,7 +11614,10 @@
     try {
       const res   = await fetch('/api/local-drafts/list');
       const list  = await res.json();   // [{filename, title, savedAt}]
-      if (!list.length) { alert('No saved drafts found.'); return; }
+      if (!list.length) {
+        toast('No saved drafts found in Desktop\\eBayListing.', { kind: 'warning' });
+        return;
+      }
 
       // Close any blank tabs first
       draftTabs = draftTabs.filter(t => t.title !== 'New Draft' || t.saved);
@@ -11617,7 +11638,7 @@
       }
 
       if (loaded === 0) {
-        alert('All drafts are already open.');
+        toast('Every saved draft is already open in a tab.', { kind: 'info', title: 'Nothing to open' });
         return;
       }
 
@@ -11627,8 +11648,13 @@
       renderDraftTabs();
       $('new-listing-overlay')?.classList.remove('hidden');
       addActivity(`Loaded ${loaded} drafts as tabs`, 'Review and publish each one');
+      toastOk(`${loaded} draft${loaded === 1 ? '' : 's'} opened — review and publish each one.`,
+              { title: 'Drafts loaded' });
     } catch (e) {
-      alert('Failed to load drafts: ' + e.message);
+      toastErr(e.message || 'Unknown error.', {
+        title: "Couldn't open your drafts",
+        action: { label: 'Try again', onClick: loadAllDraftsAsTabs },
+      });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Open All Drafts'; }
     }
@@ -11686,7 +11712,12 @@
 
     } catch (err) {
       if (btn) { btn.disabled = false; btn.textContent = '💾 Save Draft'; }
-      alert('Save failed: ' + err.message);
+      // Unsaved work is the one failure the seller must not be able to click
+      // past, so the retry that would rescue it rides along on the toast.
+      toastErr(err.message || 'Unknown error.', {
+        title: 'Draft not saved',
+        action: { label: 'Try again', onClick: saveDraftLocal },
+      });
     }
   }
 
@@ -12276,7 +12307,7 @@
       addActivity(`Bulk import complete`, `${done} of ${links.length} saved as drafts — opening all as tabs`);
       await loadAllDraftsAsTabs();
     } catch (e) {
-      alert('Bulk import failed: ' + e.message);
+      toastErr(e.message || 'Unknown error.', { title: 'Bulk import failed' });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Import All'; }
     }
@@ -12290,7 +12321,8 @@
 
     const payload = buildNlPayload();
     if (!payload.title && !payload.description) {
-      alert('Fill in a listing first, then ask Claude to modify it.');
+      toast('Fill in a title or description first — there is nothing here for the AI to change yet.',
+            { kind: 'warning', title: 'Nothing to modify' });
       return;
     }
 
@@ -12312,7 +12344,9 @@
       if (input) { input.value = ''; input.placeholder = '✓ Done — ask Claude for another change'; }
       addActivity('AI modification applied', instruction);
     } catch (e) {
-      alert('Claude modify failed: ' + e.message);
+      // The instruction is still in the box behind the toast, so retrying is
+      // one click and nothing the seller typed is lost.
+      toastErr(e.message || 'Unknown error.', { title: "AI couldn't apply that change" });
     } finally {
       if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = 'Apply'; }
       if (input) input.classList.remove('loading');
@@ -13648,7 +13682,10 @@
       setPhotoSlotUrl(index, body.url);
       addActivity('Background removed', `Picture ${index + 1}`);
     } catch (err) {
-      alert('Background removal failed: ' + err.message);
+      toastErr(err.message || 'Unknown error.', {
+        title: `Background removal failed on picture ${index + 1}`,
+        action: { label: 'Try again', onClick: () => nlRemoveBgFromSlot(index) },
+      });
     } finally {
       if (btn) { btn.textContent = 'Remove BG'; btn.disabled = false; }
     }
@@ -15094,6 +15131,253 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
   }
+
+  // ── Motion & micro-interactions ─────────────────────────────────────────
+  // Four things, all decoration, none of them load-bearing: screens enter
+  // instead of appearing, overlays close instead of vanishing, figures count
+  // instead of teleporting, and a result arrives as a toast instead of an
+  // alert(). Each one degrades to the instant behaviour it replaced, so a
+  // seller with reduced motion turned on loses nothing but the movement.
+
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+
+  function prefersReducedMotion() {
+    return !!reducedMotion?.matches;
+  }
+
+  /**
+   * Play the section-enter animation on a screen that just became visible.
+   * Restarting it on a screen that is already showing needs the reflow: the
+   * class is still on the element from last time when a tab is re-activated
+   * quickly, and re-adding a class the element already has does nothing.
+   */
+  function playEnter(el) {
+    if (!el || prefersReducedMotion() || el.classList.contains('hidden')) return;
+    // A transform makes the element the containing block for every
+    // position:fixed descendant. Four screens have their confirm dialog
+    // nested inside them, so a screen left with one open would re-anchor that
+    // dialog to the panel for the length of the animation. Not worth 200ms.
+    if (el.querySelector('.modal-overlay:not(.hidden)')) return;
+    el.classList.remove('section-enter');
+    void el.offsetWidth;
+    el.classList.add('section-enter');
+    el.addEventListener('animationend', function done(e) {
+      if (e.target !== el) return;         // a child's own animation is not ours to clear
+      el.removeEventListener('animationend', done);
+      el.classList.remove('section-enter');
+    });
+  }
+
+  /**
+   * Hold a modal overlay on screen for one exit animation after something
+   * hides it.
+   *
+   * Every close in the app is `classList.add('hidden')` from one of about
+   * thirty call sites, and none of them are async. Rather than convert all
+   * of them, this watches the class attribute and adds `.closing`, which the
+   * CSS uses to out-specify `.hidden { display: none !important }` for the
+   * length of the animation. `.hidden` itself is never touched, so every
+   * `contains('hidden')` check elsewhere keeps telling the truth, and an
+   * overlay that gets re-opened mid-exit simply drops `.closing` and shows.
+   */
+  function initOverlayMotion() {
+    const overlays = document.querySelectorAll('.modal-overlay');
+    if (!overlays.length || typeof MutationObserver !== 'function') return;
+
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        const el = record.target;
+        const wasHidden = (record.oldValue || '').split(/\s+/).includes('hidden');
+        const isHidden = el.classList.contains('hidden');
+        // Adding or removing `.closing` is itself a class mutation. Only a
+        // change in hidden-ness is a real open or close.
+        if (wasHidden === isHidden) continue;
+
+        if (!isHidden) { el.classList.remove('closing'); continue; }
+        if (prefersReducedMotion()) continue;
+
+        el.classList.add('closing');
+        const finish = () => {
+          clearTimeout(el._closeTimer);
+          el.removeEventListener('animationend', onEnd);
+          el.classList.remove('closing');
+        };
+        const onEnd = e => { if (e.target === el) finish(); };
+        el.addEventListener('animationend', onEnd);
+        // A dropped animationend (a background tab, a display change mid-flight)
+        // would otherwise leave the overlay stuck visible over the app.
+        el._closeTimer = setTimeout(finish, 600);
+      }
+    });
+
+    overlays.forEach(el => observer.observe(el, {
+      attributes: true, attributeFilter: ['class'], attributeOldValue: true,
+    }));
+  }
+
+  /**
+   * Walk a figure from what it currently reads to `target`, then leave it
+   * showing exactly `format(target)` — never an interpolated value, so the
+   * number the seller ends up reading is always the real one.
+   *
+   * @param {HTMLElement|null} el
+   * @param {number} target
+   * @param {(n: number) => string} [format]
+   */
+  function countUp(el, target, format = String) {
+    if (!el) return;
+    const to = Number(target);
+    if (!Number.isFinite(to)) { el.textContent = format(target); return; }
+
+    cancelAnimationFrame(el._countRaf || 0);
+
+    // Read the value already on screen rather than caching it: another code
+    // path may have written the figure directly, and counting from a stale
+    // cached number would run the wrong distance.
+    const from = parseFloat(String(el.textContent || '').replace(/[^0-9.-]/g, ''));
+    const start = Number.isFinite(from) ? from : 0;
+
+    // Nothing to count: no animation, and no settle pop for a figure that
+    // did not actually change. Refreshing a dashboard should be quiet when
+    // nothing moved.
+    if (start === to) { el.textContent = format(to); return; }
+
+    // Off-screen or motion-averse: land on the number and stop.
+    if (prefersReducedMotion() || !el.offsetParent) { el.textContent = format(to); return; }
+
+    // Longer walks get a little more time, but never enough to make a
+    // refresh feel slow. A one-unit change is over almost immediately.
+    const span = Math.abs(to - start);
+    const duration = Math.min(900, Math.max(280, 240 + Math.log10(span + 1) * 190));
+    const t0 = performance.now();
+
+    const step = now => {
+      const t = Math.min(1, (now - t0) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);     // ease-out: fast off the mark, long settle
+      if (t < 1) {
+        el.textContent = format(start + (to - start) * eased);
+        el._countRaf = requestAnimationFrame(step);
+        return;
+      }
+      el._countRaf = 0;
+      el.textContent = format(to);
+      el.classList.remove('num-settled');
+      void el.offsetWidth;
+      el.classList.add('num-settled');
+      el.addEventListener('animationend', () => el.classList.remove('num-settled'), { once: true });
+    };
+    el._countRaf = requestAnimationFrame(step);
+  }
+
+  /** countUp() by element id — the setText() of animated figures. */
+  function countUpText(id, value, format) {
+    countUp($(id), value, format);
+  }
+
+  /** Shimmer the dashboard stat tiles while the numbers behind them reload. */
+  function setStatsLoading(on) {
+    document.querySelectorAll('.stats-grid > .stat-card')
+      .forEach(card => card.classList.toggle('is-loading', !!on));
+  }
+
+  // ── Toasts ──────────────────────────────────────────────────────────────
+  // The app had eight alert() calls, every one of them on a failure path.
+  // An alert freezes the page, cannot be styled, cannot carry the action
+  // that would fix the problem, and renders as an OS dialog with the page
+  // origin in its title bar. These say the same things without stopping
+  // anyone, and can hand back the button that resolves the failure.
+
+  const TOAST_ICONS = {
+    success: '<path d="M20 6 9 17l-5-5"/>',
+    error:   '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/>',
+    warning: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17v.01"/>',
+    info:    '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8v.01"/>',
+  };
+
+  const TOAST_TITLES = {
+    success: 'Done', error: 'That did not work', warning: 'Heads up', info: 'ING Listing Engine',
+  };
+
+  function toastStack() {
+    let stack = $('toast-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.id = 'toast-stack';
+      stack.className = 'toast-stack';
+      document.body.appendChild(stack);
+    }
+    return stack;
+  }
+
+  /**
+   * @param {string} message
+   * @param {{kind?: 'success'|'error'|'warning'|'info', title?: string,
+   *          timeout?: number, action?: {label: string, onClick: () => void}}} [opts]
+   * @returns {() => void} dismiss
+   */
+  function toast(message, opts = {}) {
+    const kind = TOAST_ICONS[opts.kind] ? opts.kind : 'info';
+    // An error the seller has to read and probably act on gets longer than a
+    // "saved" they already expected.
+    const timeout = opts.timeout ?? (kind === 'error' ? 9000 : 5000);
+    const stack = toastStack();
+
+    const slot = document.createElement('div');
+    slot.className = 'toast-slot';
+    slot.innerHTML =
+      `<div class="toast toast--${kind}" role="${kind === 'error' ? 'alert' : 'status'}" aria-live="${kind === 'error' ? 'assertive' : 'polite'}">
+         <span class="toast-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${TOAST_ICONS[kind]}</svg></span>
+         <div class="toast-body">
+           <p class="toast-title">${esc(opts.title ?? TOAST_TITLES[kind])}</p>
+           <p class="toast-msg">${esc(message)}</p>
+           ${opts.action ? `<button class="toast-action" type="button">${esc(opts.action.label)}</button>` : ''}
+         </div>
+         <button class="toast-close" type="button" aria-label="Dismiss">&times;</button>
+         ${timeout > 0 ? `<span class="toast-life" style="animation-duration:${timeout}ms"></span>` : ''}
+       </div>`;
+
+    let closed = false;
+    const dismiss = () => {
+      if (closed) return;
+      closed = true;
+      clearTimeout(slot._timer);
+      slot.classList.add('leaving');
+      // The slot collapses on a transition; if that never fires — the stack
+      // was hidden, the tab was in the background — the node still has to go.
+      const drop = () => slot.remove();
+      slot.addEventListener('transitionend', e => { if (e.target === slot) drop(); });
+      setTimeout(drop, 700);
+    };
+
+    slot.querySelector('.toast-close').addEventListener('click', dismiss);
+    if (opts.action) {
+      slot.querySelector('.toast-action').addEventListener('click', () => {
+        dismiss();
+        try { opts.action.onClick(); } catch (e) { console.error('toast action failed', e); }
+      });
+    }
+
+    // The hairline pauses on hover in CSS; the timer that actually removes
+    // the toast has to agree with it, or the toast disappears out from under
+    // a pointer that is holding it open to read.
+    if (timeout > 0) {
+      const toastEl = slot.firstElementChild;
+      const arm = () => { slot._timer = setTimeout(dismiss, timeout); };
+      toastEl.addEventListener('pointerenter', () => clearTimeout(slot._timer));
+      toastEl.addEventListener('pointerleave', arm);
+      toastEl.addEventListener('focusin', () => clearTimeout(slot._timer));
+      toastEl.addEventListener('focusout', arm);
+      arm();
+    }
+
+    stack.appendChild(slot);
+    // A stack that keeps growing becomes a wall. Oldest goes first.
+    while (stack.children.length > 4) stack.firstElementChild?.remove();
+    return dismiss;
+  }
+
+  const toastOk  = (message, opts) => toast(message, { kind: 'success', ...opts });
+  const toastErr = (message, opts) => toast(message, { kind: 'error', ...opts });
 
   // ── Empty / loading / error states ──────────────────────────────────────
   // Every data view in the app has the same three non-happy moments, and each

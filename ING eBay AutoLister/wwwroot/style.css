@@ -10369,3 +10369,324 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   letter-spacing: .03em;
   text-transform: uppercase;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Motion & micro-interactions
+   ───────────────────────────────────────────────────────────────────────
+   The app already had the right static surfaces; what it did not have was
+   any sense of cause and effect between a click and what happened next.
+   Screens appeared, modals vanished, numbers teleported, and a failure
+   arrived as a browser alert() with the whole app frozen behind it.
+
+   Three rules for everything in this section:
+
+     1. 150-250ms. Long enough to be seen, short enough that nobody waits
+        on it. Only the number count-up runs longer, because watching a
+        figure change IS the point of that one.
+     2. Compositor-only. opacity and transform. Nothing here animates a
+        property that forces layout, so none of it can drop a frame on a
+        page that is also rendering 200 listing cards.
+     3. Every rule here is decoration. The global prefers-reduced-motion
+        block near the top of this file already flattens durations to
+        ~0ms; the extra rules at the end of this section cover the few
+        cases where "instant" is not the same as "off".
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Screen transitions ──────────────────────────────────────────────────
+   Switching workspace tabs used to be a hard cut: one section display:none,
+   the next display:block, in the same frame. The eye reads that as a page
+   reload. A 6px rise reads as the same surface moving. */
+@keyframes section-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.section-enter { animation: section-in var(--dur-2) var(--ease-out); }
+
+/* ── Overlay exit ────────────────────────────────────────────────────────
+   Modals animated in and then vanished on close, which is the most visible
+   asymmetry in the app. Closing is driven from ~30 call sites that all do
+   the same thing — add .hidden — so rather than touch every one,
+   initOverlayMotion() adds .closing and these rules hold the overlay on
+   screen for exactly one exit animation.
+
+   .hidden stays on the element throughout, so any code asking "is this
+   modal open?" still gets the truth. That is why these selectors have to
+   out-specify `.hidden { display: none !important }`. */
+.modal-overlay.hidden.closing {
+  display: flex !important;
+  pointer-events: none;
+  animation: overlay-out var(--dur-2) var(--ease) forwards;
+}
+
+.modal-overlay.closing .modal { animation: modal-out var(--dur-2) var(--ease) forwards; }
+
+@keyframes overlay-out { to { opacity: 0; } }
+@keyframes modal-out   { to { opacity: 0; transform: translateY(6px) scale(.985); } }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────
+   The existing note on .btn is right: a button that lifts on hover shifts
+   the layout under the cursor. Press is the opposite case — the pointer is
+   already down and committed, and a small recede is the only feedback that
+   survives being underneath a fingertip or a cursor. */
+.btn { transition-property: background, border-color, box-shadow, color, filter, transform; }
+
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.988); }
+
+/* The primary action is the one button in the app that glows. On hover a
+   single light sweep crosses it — the same read as tilting a foil-stamped
+   card toward a lamp. It runs once per hover and never loops: an idle
+   animation on the main call to action is a distraction, not a delight. */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ::before, not ::after: `.btn.is-busy::after` is already the spinner, and a
+   second rule on the same pseudo-element would merge into it — the sheen's
+   `opacity: 0` would have made every busy button spin invisibly. */
+.btn-primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 34%, rgba(255, 255, 255, .30) 48%, transparent 62%);
+  opacity: 0;
+}
+
+.btn-primary:hover:not(:disabled)::before { animation: btn-sheen .55s var(--ease-out); }
+
+@keyframes btn-sheen {
+  from { opacity: 1; transform: translateX(-115%); }
+  to   { opacity: 1; transform: translateX(115%); }
+}
+
+/* Everything else that is a click target but is not a .btn. These already
+   had colour transitions; none had a press state, so a fast click on a nav
+   item or a view toggle gave back nothing at all. */
+.nav-item,
+.toggle-btn,
+.modal-close,
+.ws-tab { transition-property: background, border-color, box-shadow, color, opacity, transform; }
+
+.nav-item:active,
+.toggle-btn:active,
+.modal-close:active,
+.ws-tab:active { transform: scale(.97); }
+
+/* ── Numbers ─────────────────────────────────────────────────────────────
+   countUp() walks a figure to its new value instead of swapping it.
+   Tabular figures are what make that legible: with proportional digits
+   every frame is a different width, so the number jitters sideways as it
+   counts and drags the tile's layout with it. */
+.stat-card strong,
+.dash-earnings-figure,
+.num-anim { font-variant-numeric: tabular-nums; }
+
+/* The settle at the end of a count. Scale only — a figure that flashes a
+   colour on every refresh trains sellers to stop seeing the colour. */
+.num-settled { animation: num-settle var(--dur-3) var(--ease-spring); }
+
+@keyframes num-settle {
+  from { transform: scale(1.035); }
+}
+
+/* ── Skeletons ───────────────────────────────────────────────────────────
+   The card grid and the table already show skeletons while listings load.
+   The four stat tiles above them did not: they sat holding the previous
+   run's numbers, which is worse than blank, because a stale number looks
+   exactly like a fresh one. This greys the figure into the same shimmer
+   the grid below it is already showing. */
+.stat-card.is-loading strong {
+  color: transparent;
+  border-radius: var(--r-2xs);
+  background: var(--soft-2);
+  background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, .85), transparent);
+  background-size: 220% 100%;
+  animation: skeleton-sweep 1.4s var(--ease) infinite;
+  user-select: none;
+}
+
+.stat-card.is-loading strong { width: 60%; }
+
+@keyframes skeleton-sweep {
+  from { background-position: 120% 0; }
+  to   { background-position: -120% 0; }
+}
+
+/* ── Toasts ──────────────────────────────────────────────────────────────
+   Replaces alert(). An alert is a modal dialog: it stops the page, steals
+   focus, cannot carry an action, and on Windows it renders as OS chrome
+   with the page origin in the title bar — which is the least premium thing
+   the app could possibly put on screen. These stack bottom-right, dismiss
+   themselves, and pause while the pointer is over them, so a long error
+   message can actually be finished.
+
+   The stack itself is inert; only the toasts inside it take pointer
+   events, so it never swallows a click on the page behind it. */
+.toast-stack {
+  position: fixed;
+  right: var(--s5);
+  bottom: var(--s5);
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  width: min(390px, calc(100vw - var(--s6)));
+  pointer-events: none;
+}
+
+/* The collapsing wrapper. When a toast leaves, the ones below it have to
+   move up — animating the slot's row track from 1fr to 0fr does that with
+   nothing measured in JS, so it stays correct at any toast height. */
+.toast-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  padding-top: var(--s2);
+  transition: grid-template-rows var(--dur-2) var(--ease), padding-top var(--dur-2) var(--ease);
+}
+
+.toast-slot.leaving { grid-template-rows: 0fr; padding-top: 0; }
+
+.toast {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--s3);
+  overflow: hidden;
+  padding: var(--s3) var(--s3) var(--s4) var(--s4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal-600);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e4);
+  pointer-events: auto;
+  animation: toast-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(20px) scale(.97); }
+}
+
+.toast-slot.leaving > .toast {
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease);
+}
+
+.toast-icon {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--teal-600);
+}
+
+.toast-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.toast-title {
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-snug);
+}
+
+.toast-msg {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  overflow-wrap: anywhere;
+}
+
+.toast-action {
+  margin-top: var(--s2);
+  padding: 5px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--soft);
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.toast-action:hover { background: var(--soft-2); border-color: var(--teal-600); }
+.toast-action:active { transform: scale(.97); }
+
+.toast-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--faint);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.toast-close:hover { background: var(--soft-2); color: var(--ink); }
+.toast-close:active { transform: scale(.9); }
+
+/* The remaining-time hairline. Driven entirely by CSS animation, so hover
+   can pause it with animation-play-state and JS never has to track a
+   deadline or re-derive one on resume. */
+.toast-life {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  transform-origin: left center;
+  background: currentColor;
+  opacity: .3;
+  animation: toast-life linear forwards;
+}
+
+@keyframes toast-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+.toast:hover .toast-life,
+.toast:focus-within .toast-life { animation-play-state: paused; }
+
+.toast--success { border-left-color: var(--success-600); color: var(--success); }
+.toast--success .toast-icon { color: var(--success-600); }
+.toast--error   { border-left-color: var(--danger-600);  color: var(--danger); }
+.toast--error   .toast-icon { color: var(--danger-600); }
+.toast--warning { border-left-color: var(--warning-600); color: var(--warning); }
+.toast--warning .toast-icon { color: var(--warning-600); }
+.toast--info    { border-left-color: var(--teal-600);    color: var(--teal-700); }
+
+@media (max-width: 620px) {
+  .toast-stack {
+    right: var(--s3);
+    left: var(--s3);
+    bottom: var(--s3);
+    width: auto;
+  }
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────
+   The global block at the top of this file collapses every duration to
+   ~0ms, which correctly handles the transitions and one-shot animations
+   above. These are the cases where near-zero is the wrong answer rather
+   than the fast one: a countdown hairline that empties instantly is a lie
+   about how long the toast will stay, and a shimmer that finishes in a
+   microsecond is a flash. JS reads the same media query and skips
+   count-ups and screen enters outright. */
+@media (prefers-reduced-motion: reduce) {
+  .toast-life { display: none; }
+  .btn-primary::before { display: none; }
+  .stat-card.is-loading strong { background-image: none; animation: none; }
+}

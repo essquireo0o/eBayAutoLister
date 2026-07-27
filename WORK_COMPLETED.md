@@ -4963,3 +4963,96 @@ rather than as scaled-up body copy.
 - Sizes shifted by 1–2px in a handful of places where a raw value sat between
   two rungs of the new scale. That is the point of a scale, and every shift
   was toward the nearest rung.
+
+---
+
+## Motion pass — make the app answer when you touch it
+
+The design pass in `48924c2` gave the app the right surfaces and the motion
+*tokens* (`--dur-0…4`, `--ease`, `--ease-out`, `--ease-spring`) to move them
+with. Almost nothing used them for anything but colour fades. What was left
+was an app where every state change happened between two frames: a screen was
+one screen and then it was another, a modal animated open and then ceased to
+exist, four stat tiles held last run's numbers and then held this run's, and a
+failure arrived as `alert()` — an OS dialog, with the page frozen behind it and
+`localhost:9332` in its title bar.
+
+Everything here is decoration. Nothing in this change decides anything, fetches
+anything, or writes anything.
+
+### The five things
+
+| | Before | Now |
+|---|---|---|
+| **Screen switch** | `display:none` → `display:block`, same frame | 6px rise + fade, 200ms (`section-in`) |
+| **Modal close** | element vanishes | overlay and card each animate out, 200ms |
+| **Dashboard figures** | number swaps | counts to the new value, ease-out, 280–900ms by distance |
+| **Stat tiles while loading** | last run's numbers, sat over a shimmering grid | shimmer, matching the grid below them |
+| **Failure** | `alert()` — blocking, unstyleable, no action | toast, bottom-right, with the retry button on it |
+
+### Two decisions worth keeping
+
+**Modals close from ~30 call sites, and none of them were touched.** Every one
+does `classList.add('hidden')` synchronously. `initOverlayMotion()` puts a
+`MutationObserver` on the ten `.modal-overlay` nodes and adds `.closing`, which
+the CSS uses to out-specify `.hidden { display: none !important }` for exactly
+one animation. **`.hidden` is never removed**, so every `contains('hidden')`
+check in the app still reports the truth while the exit plays — and an overlay
+re-opened mid-exit simply drops `.closing` and replays its open animation.
+A 600ms timeout backs up `animationend`, because a dropped event would
+otherwise leave a modal stuck over the app.
+
+**`countUp()` reads the figure off the screen, not from a cache.** Other code
+paths write these same elements directly; counting from a remembered value
+would run the wrong distance. It also refuses to animate when the value did not
+change — refreshing a dashboard where nothing moved should be silent, not four
+tiles popping.
+
+### One bug caught before it shipped
+
+The primary-button hover sheen was first written on `.btn-primary::after`.
+`.btn.is-busy::after` is already the loading spinner, and the two rules merge:
+the sheen's `opacity: 0` would have made **every busy button in the app spin
+invisibly**. Moved to `::before`, which nothing else uses. There is now a
+browser check asserting the spinner still computes to `opacity: 1`.
+
+### Verified
+
+- `dotnet build` — 0 errors (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed.** No test was added or changed;
+  this is entirely presentation.
+- **Real browser (Playwright/Chromium, dev port 9412) — 24 checks, all
+  passing.** A real failure path (drafts endpoint aborted) raises an error
+  toast with `role="alert"`, a retry action and a running life bar; hovering it
+  computes `animation-play-state: paused`; dismissing collapses the slot and
+  removes the node. Opening a screen applies `section-enter` and clears it on
+  `animationend`. Closing a modal holds it at `display: flex` with
+  `overlay-out`/`modal-out` running while `.hidden` stays on, then lands at
+  `display: none`; re-opening mid-exit cancels the close and settles at
+  `opacity: 1`. A loading stat tile computes `skeleton-sweep` with transparent
+  text, and no code path leaves it shimmering. **No page errors, no console
+  errors.**
+- **Re-run under `reducedMotion: 'reduce'`** as a separate browser context: no
+  `section-enter` class is applied at all, modals close instantly, the sheen
+  computes to `display: none`, and no page errors.
+
+### Not verified / known limits
+
+- **Only the four dashboard stat tiles and the three money bands count up.**
+  Every other figure in the app still swaps. Extending it is one call site each
+  (`countUpText(id, value, format)`), deliberately not done in bulk.
+- **`playEnter()` skips a screen holding an open `.modal-overlay`.** A
+  transform makes the section the containing block for `position: fixed`
+  descendants, and four screens nest their confirm dialog inside themselves —
+  so that screen enters without the animation rather than re-anchoring a
+  dialog for 200ms.
+- **The toast system has eight call sites**, all of them the former `alert()`s
+  plus one success. The publish and eBay-revision paths still use their
+  existing in-page `showResult`/`nlSetResult` surfaces, which sit right under
+  the button that was pressed; toasting them as well would say it twice.
+- **Screen-enter and modal-exit are not tested by `dotnet test`.** They are CSS
+  and DOM behaviour; the browser run above is the only thing covering them, and
+  it is not wired into CI.
+- `style.css?v=59`, `app.js?v=67`. No server code, no business logic, no
+  pricing, key or credential touched.
