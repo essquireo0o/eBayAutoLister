@@ -243,6 +243,12 @@ builder.Services.AddSingleton<LocalArbitrageAnalyzer>();
 // wherever supply exists (local classifieds, or eBay Buy It Now). Pure clustering/screening/verdict
 // logic; the sweep itself is orchestrated in RollTheDiceAsync below.
 builder.Services.AddSingleton<JackpotHunter>();
+// The sourcing budget optimizer — the only screen that spends money rather than ranking it. Takes
+// the deals the seller is already looking at (priced by the services above) plus whatever is
+// tracked at Sourced, and solves an exact knapsack for the basket that makes the most out of a
+// fixed amount of cash. Pure: it re-prices nothing, because a basket whose numbers disagreed with
+// the board they came from would be worse than no basket.
+builder.Services.AddSingleton<SourcingBudgetOptimizer>();
 // Inventory health — the same pricing stack pointed at listings the seller ALREADY owns, to find
 // the ones whose price the market has drifted out from under. CostBasisStore holds the one number
 // eBay can never supply (what the seller paid), which is what turns a markdown suggestion into a
@@ -1835,6 +1841,96 @@ app.MapPost("/api/local/negotiate", (
 
     return Results.Ok(plan);
 });
+
+// ── Spend the budget: the sourcing basket ─────────────────────────────────────────────────────
+// Every board above ranks deals one at a time. This is the only endpoint that answers the question
+// the seller actually has standing at a cash machine: given $500 and these deals, WHICH ONES.
+//
+// It prices nothing. The candidates arrive already costed — from the local board the seller is
+// looking at, and from the deals they tracked at Sourced — and the allocation is an exact knapsack
+// over those numbers, so the basket can never quote a profit the table beside it doesn't.
+//
+// Read-only in every sense: nothing is bought, tracked, listed or sent anywhere. It answers with a
+// shopping list.
+app.MapPost("/api/sourcing/budget", (
+    BudgetPlanRequest req, SourcingBudgetOptimizer optimizer, DealStore deals, ActionLog log) =>
+{
+    try
+    {
+        var request = new BudgetPlanRequest
+        {
+            Budget = req.Budget,
+            Reserve = req.Reserve,
+            MaxDaysToCash = req.MaxDaysToCash,
+            MinCompCount = req.MinCompCount,
+            IncludeThin = req.IncludeThin,
+            IncludeTrackedDeals = req.IncludeTrackedDeals,
+            Objective = req.Objective,
+            // The scan rows go in first so that when the same post is both scanned and tracked, the
+            // live price is the one the basket is built on (SourcingBudgetOptimizer.Dedupe keeps the
+            // scan either way — this just keeps the order readable).
+            Candidates = [.. req.Candidates ?? []],
+        };
+
+        if (req.IncludeTrackedDeals)
+            request.Candidates.AddRange(TrackedDealCandidates(deals));
+
+        var result = optimizer.Plan(request);
+
+        log.Add("Sourcing", "Budget basket planned",
+            $"{result.Budget:C0} across {result.EligibleCount} eligible deal(s) → " +
+            $"{result.Plan.Picks.Count} to buy for {result.Plan.CapitalDeployed:C0}, " +
+            $"{result.Plan.TotalNetProfit:C0} projected net" +
+            (result.Comparison.ExtraProfit > 0
+                ? $" ({result.Comparison.ExtraProfit:C0} more than buying down the list)" : ""));
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Budget planning failed", ex.Message);
+        return Results.Ok(new BudgetPlanResult
+        {
+            Status = "error",
+            Message = $"The budget couldn't be planned: {ex.Message}",
+            Budget = req.Budget,
+        });
+    }
+});
+
+// Deals already on the pipeline board at Sourced — money the seller is weighing up but hasn't spent
+// yet. Their numbers are the forecast FROZEN when the deal was tracked, never a fresh lookup, which
+// is exactly what makes the pipeline's accuracy grading worth anything; the basket carries that
+// provenance through to the pick so a stale forecast is never passed off as a live one.
+static List<BudgetCandidate> TrackedDealCandidates(DealStore deals) => deals.GetAll()
+    .Where(d => d.Stage == DealStages.Sourced && d.AskPrice is > 0 && d.ProjectedNetProfit is > 0)
+    .Select(d => new BudgetCandidate
+    {
+        Id = string.IsNullOrWhiteSpace(d.SourceItemId) ? $"deal-{d.Id}" : d.SourceItemId,
+        Title = d.Title,
+        Source = string.IsNullOrWhiteSpace(d.Source) ? "manual" : d.Source,
+        SourceLabel = string.IsNullOrWhiteSpace(d.SourceLabel) ? "Tracked deal" : d.SourceLabel,
+        Url = d.SourceUrl,
+        BuyPrice = d.AskPrice!.Value,
+        Quantity = Math.Max(1, d.Quantity),
+        NetProfit = d.ProjectedNetProfit!.Value,
+        MaxBuyPrice = d.MaxBuyPrice,
+        DaysToCash = d.ProjectedDaysToCash,
+        // The sold-comp count is carried in the frozen basis line ("14 sold comps · High
+        // confidence"), because that is the form the pipeline stores its evidence in. Unparseable
+        // means unknown, never zero-and-therefore-rejected — see the evidence gate in the optimizer.
+        CompCount = CompCountFromBasis(d.ProjectedBasis),
+        Origin = BudgetOrigins.Tracked,
+        ForecastUtc = d.ProjectedUtc,
+    })
+    .ToList();
+
+static int CompCountFromBasis(string? basis)
+{
+    if (string.IsNullOrWhiteSpace(basis)) return 0;
+    var match = System.Text.RegularExpressions.Regex.Match(basis, @"(\d+)\s+sold comp");
+    return match.Success && int.TryParse(match.Groups[1].Value, out var count) ? count : 0;
+}
 
 // ── Where to sell highest ─────────────────────────────────────────────────────────────────────
 // Every other pricing screen in this app assumes the answer to "where does this sell" is eBay,

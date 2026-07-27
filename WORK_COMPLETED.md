@@ -3481,3 +3481,135 @@ what already happens today, and that no listing is promised to two different buy
   cards and summary tiles are unexercised against real listing data and real comp matches.
 - **A real applied price drop.** The apply path reuses the already-shipped repricer endpoint, but no
   drop was sent to eBay from this board.
+
+---
+
+## Sourcing Budget Optimizer — spending the money, not just ranking it (autonomous session, 2026-07-27)
+
+### The money problem
+
+Every sourcing screen in this app ranks deals: Local Deals, Roll the Dice, the Auction Sniper, the
+trend radar. Ranking answers **"which is the best deal"**. A seller standing at a cash machine with
+$500 has a different question — **"which SET"** — and the two answers are routinely different.
+
+The reason is arithmetic, not judgement. Buying down a ranked list takes the biggest profit first,
+and the biggest profit is usually also the biggest price, so the top row eats the budget and
+everything behind it becomes unaffordable. Three smaller flips that each make less can, together,
+make more. Nothing in the app (or in eBay Seller Hub) solved that, so the seller was left doing it
+by eye — which is the greedy answer, and the greedy answer leaves money on the table.
+
+Verified live this session on a realistic pool: a $450 goldmine netting $300 is the top row, so
+buying down the list spends $450 to make **$300**. The same $500 across two $250 deals makes
+**$400**. That $100 was invisible before this screen existed.
+
+### What was built
+
+`POST /api/sourcing/budget` — an exact 0/1 knapsack over the deals the seller is already looking at.
+
+**It re-prices nothing.** Candidates arrive already costed by the stack that costed them on the
+board they came from (`LocalArbitrageAnalyzer` → `ProfitCalculator` → the seller's `FeeProfile`),
+plus anything tracked at **Sourced** in the Deal Pipeline. A basket whose profit figures disagreed
+with the table the seller was just looking at would be worse than no basket, so this only decides
+which of those deals the money buys.
+
+**Three definitions of "best", all solved every time** so the trade-off is visible rather than
+argued — the seller picks, and the other two stay on screen with their numbers:
+
+| Objective | What it buys |
+|---|---|
+| Most money | The largest total profit the budget can buy, whenever each piece lands |
+| Fastest cash back | Only deals inside the 21-day `DaysToCashEstimator.FastCashDays` bar, then the most profit among those |
+| Hardest-working cash | The most profit per day of tied-up capital — needs a measured speed, so unmeasured deals sit it out |
+
+Live example of the trade being made honestly: **$260 net, all back Oct 30** versus **$165 net, all
+back Aug 15**, from the same $350.
+
+### The numbers the seller sees
+
+| Tile | What it is |
+|---|---|
+| Buy these | How many deals, under which definition of best, out of how many were in play |
+| Cash deployed | What actually leaves the wallet, and what stays in it |
+| Net profit | Total after fees and shipping, with blended ROI on the cash put in |
+| All your money back | A real date — **only when every pick has a measured speed** |
+| Tied up for | Days-to-cash weighted by the **capital in each line**, not by line count, plus turns a year |
+| Earning per day | What the whole basket earns per day of the wait, annualized at that pace |
+
+Plus the line the whole feature stands on: **"+$100 more than buying straight down the list"**,
+computed against the greedy basket rather than asserted — and it renders the tie honestly ("buying
+straight down the list lands on the same money here") when there is no lift to claim.
+
+### Deliberate limits, and the honesty rules
+
+- **The basket can never cost more than the seller said they have.** The knapsack grid is in cents
+  and item costs round **up** into it, so the rounding error is always spent on safety.
+- **A held-back reserve is never touched.** Holding back everything answers "nothing to buy with"
+  rather than dipping into it.
+- **A lot is bought whole or not at all** — the basket never buys four of the six units to make the
+  money fit, because that is not how the thing is sold.
+- **The same post is never bought twice.** A deal tracked last week and scanned again this morning
+  is one item; the live scan's price wins, and the merge is counted and reported.
+- **Nothing thin gets the seller's cash by default.** Under 3 sold comps (the same `ThinCompCount`
+  bar the arbitrage board uses) is out unless the seller ticks the box knowingly. The exception is
+  a tracked deal carrying no recorded comp count: the seller put that on their own board, so the
+  pick is **labelled** "tracked — frozen forecast" rather than overruled.
+- **Unmeasured speed is never fast and never dead.** One unmeasured pick in the basket and there is
+  no "all your money back by" date at all.
+- **Asking prices, not hoped-for prices.** The negotiation upside is reported as a separate ceiling
+  ("if all 3 sellers took your opening offer"), never folded into any profit total.
+- **Nothing is bought, tracked, offered or sent anywhere.** The screen answers with a shopping list.
+
+### Two things it says that nothing else in the app could
+
+- **"Another $125 would buy $190 more profit."** Read straight off the knapsack's own value
+  frontier — which is why deals priced just past the budget stay in the pool: unbuyable, but
+  measurable. Beyond a stretch of the budget they are dropped as out of reach.
+- **"You're $30 short of this one."** Every deal left out keeps its reason, and the near-misses
+  sort to the top: `not_enough_left` (buy it next), `objective_excluded` (it's in the other basket),
+  `crowded_out`, `thin_evidence`, `too_slow`, `loses_money`, `over_budget`.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Models/SourcingBudgetModels.cs` | **New** — `BudgetCandidate`, `BudgetPick`, `BudgetPlan`, `BudgetComparison`, `BudgetStretch`, `BudgetSkip`, request/result |
+| `Services/SourcingBudgetOptimizer.cs` | **New** — screening, dedupe, the exact knapsack, the three objectives, the greedy comparison, the stretch, plan totals. Pure |
+| `Services/DaysToCashEstimator.cs` | `TierFor` and `MaxAnnualizedRoiPercent` made public — a basket bands its speed and caps its annualized return by the same rules one deal does |
+| `Program.cs` | DI + `POST /api/sourcing/budget` + `TrackedDealCandidates` (Sourced deals, frozen forecasts, comp count read out of the stored basis line) |
+| `wwwroot/index.html` | `#budget-section`, the `Spend My Budget` nav entry, and a `Spend a budget on these…` cross-link on the Local Deals board. `app.js?v=57`, `style.css?v=48` |
+| `wwwroot/app.js` | `bindBudget`, `runBudgetPlan`, `budgetCandidateFromArbRow`, `renderBudgetSummary` / `renderBudgetLift` / `renderBudgetBasket` / `renderBudgetAlternatives` / `renderBudgetLeftOut` |
+| `wwwroot/style.css` | `.bud-*` — the lift callout, basket table, alternative cards and the left-out list; tiles and speed pills are reused |
+| `ING eBay AutoLister.Tests/SourcingBudgetOptimizerTests.cs` | **New** — 37 tests |
+
+### What the tests pin
+
+The knapsack is the only part of this app whose correctness is a mathematical claim rather than a
+judgement call, so it is checked **against the definition**: one test brute-forces all 2^8 subsets
+and asserts the basket equals the true optimum. The rest pin the money rules above — the budget is
+never exceeded (including with awkward cent prices and a coarse large-budget grid), the reserve is
+never spent, a lot is never part-bought, the same post is never bought twice, a losing or thin deal
+never gets the cash, an unmeasured deal is never counted as fast, and **the claimed lift over
+buying down the list can never be negative**.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,258 passed**, 0 failed, 0 skipped (1,221 pre-existing + 37 new) |
+| `node --check app.js` | Syntax OK |
+| Live `POST /api/sourcing/budget` (dev port 9347) | `status=ok` — the $450-goldmine trap sprung correctly: **$400 net from $500** vs **$300** buying down the list, `+$100` lift reported |
+| Live objective switch + reserve | `$50` held back → `spendable=$350`; fast-cash basket `$165 net, all back Aug 15` beside the profit basket's `$260 net, all back Oct 30` |
+| Live left-out reasons | `not_enough_left` on the $450 miner, `thin_evidence` on the 1-comp synth, `loses_money` on the laptop lot, `objective_excluded` naming the basket each one did land in |
+| Live empty pool | `no_candidates` with the sentence that says what to do about it |
+| Served assets | `budget-section`, nav entry, `bud-plan-btn`, `fb-arb-budget-btn`, `bindBudget`, `.bud-lift` all present at `v=57` / `v=48` |
+
+### Not verified
+
+- **The tracked-deal fold-in against real pipeline data.** This machine's Deal Pipeline has no cards
+  at Sourced, and seeding one would have written into the seller's real board. The mapping, the
+  comp-count-from-basis parse and the scan-wins dedupe are covered by unit tests and by a live call
+  with `includeTrackedDeals=true` returning cleanly, but not against a real tracked deal.
+- **A basket built from a real local scan in the browser.** The endpoint is verified live with real
+  request/response payloads; the rendering of the summary tiles, basket table, alternative cards and
+  left-out list was verified as served assets, not by driving the UI against a live scan.

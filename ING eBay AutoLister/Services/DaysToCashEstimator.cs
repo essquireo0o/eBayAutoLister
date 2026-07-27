@@ -37,7 +37,9 @@ public static class DaysToCashEstimator
     // A dollar-a-day figure with four decimal places is noise, and an "annualized" percentage in the
     // tens of thousands reads as a bug. Both are capped rather than dropped — the row is still fast,
     // it just stops shouting a number nobody can act on.
-    private const decimal MaxAnnualizedRoiPercent = 9999m;
+    // Public because a basket of deals annualizes its blended return the same way one deal does —
+    // see SourcingBudgetOptimizer. Two caps would mean two answers to "is this number real".
+    public const decimal MaxAnnualizedRoiPercent = 9999m;
 
     /// <summary>
     /// Listing → sale. Prefers the sell-through estimate (already nudged for price position and
@@ -94,7 +96,12 @@ public static class DaysToCashEstimator
     /// <summary>Sort key for "fastest first" — unknown speed sorts last, never as instant.</summary>
     public static int SortableDaysToCash(int? daysToCash) => daysToCash ?? int.MaxValue;
 
-    private static (string Tier, string Label) TierFor(int days) => days switch
+    /// <summary>
+    /// The speed band for a wait that is already known in days. Public so a screen holding a
+    /// days-to-cash figure it did not compute (the budget optimizer holds one per candidate) bands
+    /// it by exactly the same thresholds the row was banded by on the board it came from.
+    /// </summary>
+    public static (string Tier, string Label) TierFor(int days) => days switch
     {
         <= FastCashDays => ("fast", "⚡ Fast cash"),
         <= SteadyCashDays => ("steady", "Steady turn"),

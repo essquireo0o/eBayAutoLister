@@ -364,6 +364,7 @@
     bindInventoryHealth();
     bindWatcherOffers();
     bindRescue();
+    bindBudget();
     bindRelist();
     bindLotAnalyzer();
     bindPromoted();
@@ -474,6 +475,7 @@
     if (page !== 'inventory') $('inventory-section')?.classList.add('hidden');
     if (page !== 'offers') $('offers-section')?.classList.add('hidden');
     if (page !== 'rescue') $('rescue-section')?.classList.add('hidden');
+    if (page !== 'budget') $('budget-section')?.classList.add('hidden');
     if (page !== 'relist') $('relist-section')?.classList.add('hidden');
     if (page !== 'lots') $('lots-section')?.classList.add('hidden');
     if (page !== 'promoted') $('promoted-section')?.classList.add('hidden');
@@ -526,6 +528,10 @@
       showRescueSection();
       return;
     }
+    if (page === 'budget') {
+      showBudgetSection();
+      return;
+    }
     if (page === 'relist') {
       showRelistSection();
       return;
@@ -559,7 +565,7 @@
     openNewListingModal();
   }
 
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -3291,6 +3297,357 @@
 
   function setRescueStatus(text) {
     const el = $('rsc-status');
+    if (el) el.textContent = text || '';
+  }
+
+  // ── Spend My Budget — the sourcing basket ────────────────────────────────
+  // Every other sourcing board ranks deals; this one spends the money. The candidates are whatever
+  // the seller is already looking at — the local scan in hand plus anything tracked at Sourced —
+  // and the server solves an exact knapsack over them. Nothing is re-priced here or on the way:
+  // each candidate carries the profit figure it was given on the board it came from, so the basket
+  // can never quote a number the table beside it doesn't.
+  let budgetPlan = null;
+
+  function showBudgetSection() {
+    hideOverlaySections();
+    $('new-listing-overlay')?.classList.add('hidden');
+    $('budget-section')?.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === 'budget'));
+    renderBudgetPool();
+  }
+
+  function closeBudgetSection() {
+    $('budget-section')?.classList.add('hidden');
+    showDashboard();
+  }
+
+  function bindBudget() {
+    on('bud-plan-btn', 'click', runBudgetPlan);
+    on('bud-close', 'click', closeBudgetSection);
+    on('bud-home', 'click', closeBudgetSection);
+    // The step out of the ranked table and into an allocation, from the board itself.
+    on('fb-arb-budget-btn', 'click', () => { location.hash = 'budget'; });
+    // Switching the definition of "best" re-solves from the same pool. It is one cheap POST over
+    // numbers already computed, not a re-scan, so it can be a plain control change.
+    on('bud-objective', 'change', () => { if (budgetPlan) runBudgetPlan(); });
+    ['bud-amount', 'bud-reserve'].forEach(id => on(id, 'input', renderBudgetPool));
+    on('bud-include-tracked', 'change', renderBudgetPool);
+  }
+
+  // One board row → one buyable thing. Everything the allocation needs and nothing it doesn't:
+  // what it costs, what it nets, how long the money is gone, and what that rests on.
+  function budgetCandidateFromArbRow(row) {
+    return {
+      id: row.itemId || row.url || row.title,
+      title: row.title,
+      source: row.source,
+      sourceLabel: row.sourceLabel,
+      url: row.url,
+      imageUrl: row.imageUrl,
+      location: row.location,
+      distanceMiles: row.distanceMiles,
+      buyPrice: row.localAsk,
+      quantity: 1,
+      netProfit: row.netProfit || 0,
+      maxBuyPrice: row.maxBuyPrice,
+      // The drafted opening offer, so the basket can say what haggling would free up. A ceiling,
+      // never counted as money in any total.
+      targetOffer: row.negotiation?.openingOffer ?? null,
+      daysToCash: row.daysToCash,
+      compCount: (row.soldCompCount || 0) + (row.terapeakCompCount || 0),
+      confidenceScore: row.confidenceScore,
+      verdict: row.verdict,
+      origin: 'scan',
+    };
+  }
+
+  function budgetCandidates() {
+    return (arbitrageData?.items || []).map(budgetCandidateFromArbRow);
+  }
+
+  // What this plan is about to be built from, said before the button is pressed — an allocation
+  // over an empty pool is a confusing answer, and "you have no deals loaded" is a clear one.
+  function renderBudgetPool() {
+    const el = $('bud-pool');
+    if (!el) return;
+
+    const scanned = budgetCandidates().length;
+    const tracked = !!$('bud-include-tracked')?.checked;
+    const bits = [];
+
+    bits.push(scanned
+      ? `<strong>${scanned}</strong> deal${scanned === 1 ? '' : 's'} from your last local scan`
+      : 'No local scan loaded — run one in the Opportunity Finder to allocate across fresh deals');
+    if (tracked) bits.push('plus everything you\'ve tracked at <strong>Sourced</strong>');
+
+    el.innerHTML = `Spending across: ${bits.join(', ')}.`;
+  }
+
+  async function runBudgetPlan() {
+    const btn = $('bud-plan-btn');
+    const budget = parseFloat($('bud-amount')?.value || '0') || 0;
+    const reserve = parseFloat($('bud-reserve')?.value || '0') || 0;
+    const includeTracked = !!$('bud-include-tracked')?.checked;
+    const candidates = budgetCandidates();
+
+    if (budget <= 0) return setBudgetStatus('Type what you have to spend and I\'ll work out where it goes furthest.');
+    if (!candidates.length && !includeTracked)
+      return setBudgetStatus('There are no deals to spend it on. Run a local scan, or tick "include deals I\'ve tracked".');
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Planning…'; }
+    setBudgetStatus('Working out the best basket…');
+
+    try {
+      const res = await fetch('/api/sourcing/budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          budget,
+          reserve,
+          maxDaysToCash: parseInt($('bud-horizon')?.value || '0', 10) || 0,
+          includeThin: !!$('bud-include-thin')?.checked,
+          includeTrackedDeals: includeTracked,
+          objective: $('bud-objective')?.value || 'profit',
+          candidates,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data === 'string' ? data : 'The budget couldn\'t be planned.');
+      budgetPlan = data;
+      renderBudgetPlan(data);
+    } catch (err) {
+      budgetPlan = null;
+      $('bud-summary')?.classList.add('hidden');
+      $('bud-lift')?.classList.add('hidden');
+      $('bud-alternatives')?.classList.add('hidden');
+      $('bud-leftout')?.classList.add('hidden');
+      $('bud-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The budget couldn\'t be planned.')}</p>`;
+      setBudgetStatus('');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💵 Plan My Basket'; }
+    }
+  }
+
+  function renderBudgetPlan(data) {
+    setBudgetStatus('');
+
+    // Nothing to allocate: say which of the several reasons it is, and stop. A basket of zero
+    // deals rendered as a table reads like a failure; a sentence reads like an answer.
+    if (data.status !== 'ok' || !data.plan?.picks?.length) {
+      $('bud-summary')?.classList.add('hidden');
+      $('bud-lift')?.classList.add('hidden');
+      $('bud-alternatives')?.classList.add('hidden');
+      $('bud-results').innerHTML =
+        `<p class="opportunity-empty">${esc(data.message || 'There is no basket to build from these.')}</p>`;
+      renderBudgetLeftOut(data.leftOut || []);
+      return;
+    }
+
+    renderBudgetSummary(data);
+    renderBudgetLift(data);
+    renderBudgetBasket(data.plan);
+    renderBudgetAlternatives(data);
+    renderBudgetLeftOut(data.leftOut || []);
+  }
+
+  function renderBudgetSummary(data) {
+    const el = $('bud-summary');
+    if (!el) return;
+    const plan = data.plan;
+
+    const tiles = [
+      { label: 'Buy these', value: String(plan.picks.length),
+        sub: `${plan.objectiveLabel} · ${data.eligibleCount} deal${data.eligibleCount === 1 ? '' : 's'} were in play`,
+        tone: 'good' },
+      { label: 'Cash deployed', value: money(plan.capitalDeployed),
+        sub: plan.leftover > 0 ? `${money(plan.leftover)} stays in your pocket` : 'Every dollar of it working',
+        tone: '' },
+      { label: 'Net profit', value: money(plan.totalNetProfit),
+        sub: plan.blendedRoiPercent != null ? `${Math.round(plan.blendedRoiPercent)}% on the cash you put in` : 'after eBay fees and shipping',
+        tone: 'good' },
+      { label: 'All your money back', value: plan.allCashBackBy || '—',
+        sub: plan.allCashBackBy
+          ? `first of it around ${plan.firstCashBackBy}`
+          : `${plan.unknownSpeedCount} pick${plan.unknownSpeedCount === 1 ? '' : 's'} with no measured speed — no honest date`,
+        tone: plan.allCashBackBy ? 'good' : 'warn' },
+      { label: 'Tied up for', value: plan.weightedDaysToCash != null ? `${plan.weightedDaysToCash} days` : '—',
+        sub: plan.capitalTurnsPerYear != null ? `about ${plan.capitalTurnsPerYear} turns of this cash a year` : 'weighted by what each one costs',
+        tone: '' },
+      { label: 'Earning per day', value: plan.profitPerDay != null ? perDay(plan.profitPerDay) : '—',
+        sub: plan.annualizedRoiPercent != null ? `${Math.round(plan.annualizedRoiPercent)}% a year at this pace` : 'while the money is out',
+        tone: '' },
+    ];
+
+    el.innerHTML = tiles.map(t => `
+      <div class="inv-tile ${t.tone ? 'inv-tile-' + t.tone : ''}">
+        <div class="inv-tile-label">${esc(t.label)}</div>
+        <div class="inv-tile-value">${esc(t.value)}</div>
+        <div class="inv-tile-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+    el.classList.remove('hidden');
+  }
+
+  // The claim the feature stands on. Rendered from the server's own comparison — including when
+  // the answer is that buying down the list would have done just as well.
+  function renderBudgetLift(data) {
+    const el = $('bud-lift');
+    if (!el) return;
+    const c = data.comparison || {};
+    const won = c.extraProfit > 0;
+
+    const stretch = data.stretch
+      ? `<p class="bud-lift-sub">${esc(data.stretch.note)}</p>` : '';
+    const haggle = data.plan.negotiationUpside > 0
+      ? `<p class="bud-lift-sub">And ${money(data.plan.negotiationUpside)} more still if all ${data.plan.negotiableCount}
+         sellers took your opening offer — that's the buy side, and it costs you nothing but the asking.</p>`
+      : '';
+
+    el.className = `bud-lift ${won ? 'bud-lift-won' : 'bud-lift-tied'}`;
+    el.innerHTML = `
+      <div class="bud-lift-head">
+        ${won
+          ? `<span class="bud-lift-amount">+${money(c.extraProfit)}</span>
+             <span class="bud-lift-label">more than buying straight down the list${c.extraProfitPercent ? ` — ${Math.round(c.extraProfitPercent)}% better` : ''}</span>`
+          : `<span class="bud-lift-label">Buying straight down the list lands on the same money here. No basket beats it.</span>`}
+      </div>
+      <p class="bud-lift-sub">${esc(c.note || '')}</p>
+      ${stretch}${haggle}`;
+    el.classList.remove('hidden');
+  }
+
+  function renderBudgetBasket(plan) {
+    const wrap = $('bud-results');
+    if (!wrap) return;
+
+    wrap.innerHTML = `
+      <p class="bud-headline">${esc(plan.headline)}</p>
+      ${plan.note ? `<p class="bud-note">${esc(plan.note)}</p>` : ''}
+      <div class="fb-arb-table-wrap">
+        <table class="fb-arb-table bud-table">
+          <thead>
+            <tr>
+              <th class="fb-arb-th-rank">#</th>
+              <th>Buy this</th>
+              <th class="num">Pay</th>
+              <th class="num">Net profit</th>
+              <th class="num">ROI</th>
+              <th class="num">Days to cash</th>
+              <th class="num">Spent so far</th>
+              <th class="num">Profit so far</th>
+            </tr>
+          </thead>
+          <tbody>${plan.picks.map(budgetPickRowHtml).join('')}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2">${plan.picks.length} deal${plan.picks.length === 1 ? '' : 's'}</td>
+              <td class="num"><strong>${money(plan.capitalDeployed)}</strong></td>
+              <td class="num"><strong>${money(plan.totalNetProfit)}</strong></td>
+              <td class="num">${plan.blendedRoiPercent != null ? `${Math.round(plan.blendedRoiPercent)}%` : '—'}</td>
+              <td class="num">${plan.weightedDaysToCash != null ? `${plan.weightedDaysToCash}d avg` : '—'}</td>
+              <td class="num">${money(plan.leftover)} left</td>
+              <td class="num"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`;
+    wrap.classList.remove('hidden');
+  }
+
+  function budgetPickRowHtml(pick) {
+    const tier = SPEED_TIERS[pick.speedTier] || SPEED_TIERS.unknown;
+    const meta = [
+      pick.sourceLabel ? esc(pick.sourceLabel) : '',
+      pick.distanceMiles != null ? `${pick.distanceMiles} mi` : '',
+      pick.location ? esc(pick.location) : '',
+      // A frozen forecast is a weaker claim than a scan run five minutes ago, and the row says so.
+      pick.origin === 'tracked' ? '<span class="bud-origin">tracked — frozen forecast</span>' : '',
+    ].filter(Boolean).join(' · ');
+
+    const title = pick.url
+      ? `<a href="${esc(pick.url)}" target="_blank" rel="noopener noreferrer">${esc(pick.title)}</a>`
+      : esc(pick.title);
+
+    return `
+      <tr>
+        <td class="fb-arb-th-rank">${pick.rank}</td>
+        <td>
+          <div class="bud-pick-title">${title}${pick.quantity > 1 ? ` <span class="bud-qty">×${pick.quantity}</span>` : ''}</div>
+          <div class="fb-arb-meta">${meta}</div>
+          <div class="bud-why">${esc(pick.why)}</div>
+        </td>
+        <td class="num">${money(pick.spend)}${pick.targetOffer ? `<div class="bud-sub">offer ${money(pick.targetOffer)}</div>` : ''}</td>
+        <td class="num fb-arb-profit">${money(pick.totalNetProfit)}</td>
+        <td class="num">${pick.roiPercent != null ? `${Math.round(pick.roiPercent)}%` : '—'}</td>
+        <td class="num">${pick.daysToCash != null
+          ? `<span class="speed-days speed-${tier.cls}">${pick.daysToCash}d</span>${pick.profitPerDay ? `<span class="speed-rate">${perDay(pick.profitPerDay)}</span>` : ''}`
+          : '<span class="fb-arb-muted">—</span>'}</td>
+        <td class="num">${money(pick.cumulativeSpend)}</td>
+        <td class="num">${money(pick.cumulativeProfit)}</td>
+      </tr>`;
+  }
+
+  // The same money under the other two definitions of best. Shown side by side rather than hidden
+  // behind the control, because "less total money, back three weeks sooner" is a real trade the
+  // seller is entitled to make with their own cash.
+  function renderBudgetAlternatives(data) {
+    const el = $('bud-alternatives');
+    if (!el) return;
+
+    const alts = (data.alternatives || []).filter(p => p.picks?.length);
+    if (!alts.length) { el.classList.add('hidden'); return; }
+
+    el.innerHTML = `
+      <h3 class="bud-section-title">The same money, spent for something else</h3>
+      <div class="bud-alt-grid">
+        ${alts.map(p => `
+          <div class="bud-alt">
+            <div class="bud-alt-head">
+              <span class="bud-alt-label">${esc(p.objectiveLabel)}</span>
+              <button class="btn btn-secondary small bud-alt-btn" type="button" data-objective="${esc(p.objective)}">Use this instead</button>
+            </div>
+            <div class="bud-alt-money">
+              <span class="bud-alt-profit">${money(p.totalNetProfit)}</span>
+              <span class="bud-alt-sub">net from ${money(p.capitalDeployed)} across ${p.picks.length} deal${p.picks.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="bud-alt-sub">${p.allCashBackBy
+              ? `All of it back by ${esc(p.allCashBackBy)}`
+              : `${p.unknownSpeedCount} with no measured speed — no date on the last of it`}</div>
+            <p class="bud-alt-note">${esc(p.objectiveNote)}</p>
+          </div>`).join('')}
+      </div>`;
+    el.classList.remove('hidden');
+
+    el.querySelectorAll('.bud-alt-btn').forEach(btn => btn.addEventListener('click', () => {
+      const select = $('bud-objective');
+      if (select) select.value = btn.dataset.objective;
+      runBudgetPlan();
+    }));
+  }
+
+  // What didn't make it, and why. A sourcing screen that silently drops deals is how a real one
+  // gets missed — and "you're $30 short of this one" is the most actionable line on the page.
+  function renderBudgetLeftOut(leftOut) {
+    const el = $('bud-leftout');
+    if (!el) return;
+    if (!leftOut.length) { el.classList.add('hidden'); return; }
+
+    el.innerHTML = `
+      <h3 class="bud-section-title">Left out, and why</h3>
+      <ul class="bud-leftout-list">
+        ${leftOut.map(s => `
+          <li class="bud-leftout-item bud-reason-${esc(s.reasonCode)}">
+            <span class="bud-leftout-title">${s.url
+              ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>`
+              : esc(s.title)}</span>
+            <span class="bud-leftout-money">${money(s.buyPrice)}${s.netProfit != null ? ` · ${money(s.netProfit)} net` : ''}</span>
+            <span class="bud-leftout-reason">${esc(s.reason)}</span>
+          </li>`).join('')}
+      </ul>`;
+    el.classList.remove('hidden');
+  }
+
+  function setBudgetStatus(text) {
+    const el = $('bud-status');
     if (el) el.textContent = text || '';
   }
 

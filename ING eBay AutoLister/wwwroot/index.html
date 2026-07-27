@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=47" />
+  <link rel="stylesheet" href="style.css?v=48" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -62,6 +62,10 @@
              under the Opportunity Finder because it answers the same question with a clock on it:
              not "what could I sell" but "what closes in forty minutes for less than it's worth". -->
         <button class="nav-item" type="button" data-page="snipe"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Auction Sniper</button>
+        <!-- The only screen that spends money instead of ranking it. Every board above answers
+             "which is the best deal"; a seller with $500 has to answer "which SET", and the two
+             answers are routinely different. Sits directly under the boards it allocates across. -->
+        <button class="nav-item" type="button" data-page="budget"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Spend My Budget</button>
         <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
         <button class="nav-item" type="button" data-page="rescue"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Rescue Aging Stock</button>
@@ -1129,6 +1133,9 @@
                 <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <span id="fb-arb-shown" class="fb-arb-shown"></span>
+                <!-- The step after ranking: this table says which deal is best, and that is not the
+                     same question as how to spend a fixed amount of cash across all of them. -->
+                <button id="fb-arb-budget-btn" class="btn btn-secondary small" type="button">💵 Spend a budget on these…</button>
               </div>
               <div class="fb-arb-table-wrap">
                 <table class="fb-arb-table">
@@ -1746,6 +1753,105 @@
           </div>
         </div>
       </div>
+
+      <!-- ── Sourcing Budget Optimizer ────────────────────────────────────────────────────────
+           Every other sourcing screen ranks deals. This one spends the money: given what the
+           seller actually has, it solves for the BASKET that ends with the most profit, and shows
+           what that beats — buying straight down the ranked list until the cash runs out, which is
+           what everybody does and is routinely worth less. Backed by POST /api/sourcing/budget.
+           Read-only: nothing is bought, tracked or sent anywhere. -->
+      <section id="budget-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="bud-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home" aria-label="Back to Home"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Spend My Budget</div>
+              <h2>💵 Put Every Dollar Where It Makes The Most</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="bud-plan-btn" class="btn btn-primary" type="button">💵 Plan My Basket</button>
+            <button id="bud-close" class="nl-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+          <p class="opp-hint">
+            You have a number in your pocket. The board tells you which deal is best; it can't tell you
+            which <strong>set</strong> of deals your money should buy — and that is a different answer,
+            because the fattest deal usually eats the whole budget and blocks two smaller ones that
+            together make more. This solves it exactly, and shows you <strong>what that's worth</strong>
+            against just buying down the list until the cash runs out.
+          </p>
+
+          <div class="inv-controls">
+            <div class="opp-field inv-field-small">
+              <label for="bud-amount">I have to spend</label>
+              <input id="bud-amount" type="number" min="0" step="10" value="500" inputmode="decimal" />
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="bud-reserve">Hold back</label>
+              <input id="bud-reserve" type="number" min="0" step="10" value="0" inputmode="decimal" />
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="bud-objective">Buy for</label>
+              <select id="bud-objective">
+                <option value="profit" selected>The most money</option>
+                <option value="fast_cash">The fastest cash back</option>
+                <option value="per_day">The hardest-working cash</option>
+              </select>
+            </div>
+            <div class="opp-field inv-field-small">
+              <label for="bud-horizon">Money back within</label>
+              <select id="bud-horizon">
+                <option value="0" selected>However long it takes</option>
+                <option value="21">21 days</option>
+                <option value="45">45 days</option>
+                <option value="90">90 days</option>
+              </select>
+            </div>
+            <label class="fb-arb-check"><input id="bud-include-tracked" type="checkbox" checked /> Include deals I've tracked</label>
+            <label class="fb-arb-check"><input id="bud-include-thin" type="checkbox" /> Include thin-evidence deals</label>
+            <span id="bud-status" class="inv-status"></span>
+          </div>
+
+          <p id="bud-pool" class="bud-pool"></p>
+          </div>
+
+          <div id="bud-summary" class="inv-summary hidden"></div>
+
+          <!-- The claim the whole feature stands on, stated in dollars and computed against the
+               alternative rather than asserted. Shown even when it is zero. -->
+          <div id="bud-lift" class="bud-lift hidden"></div>
+
+          <div id="bud-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">A ranked list tells you the best deal. It doesn't tell you how to spend $500.</div>
+              <p class="state-body">Type what you have, and this works out the exact basket of deals that ends with the most profit — then shows you what that beats, how long each dollar is tied up, and what the next slice of cash would buy. It uses the deals from your last local scan plus anything you've tracked at Sourced.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('bud-plan-btn')?.click()">Plan my basket</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing is bought, offered or sent anywhere.</p>
+            </div>
+          </div>
+
+          <div id="bud-alternatives" class="bud-alts hidden"></div>
+
+          <div id="bud-leftout" class="bud-leftout hidden"></div>
+
+          <p class="bud-footnote">
+            Every profit figure here is the one the deal already carried on the board it came from — the same
+            sold comps, the same fee profile, the same days-to-cash. This screen re-prices nothing; it only
+            decides which of them your money buys. <strong>Prices are the asking prices</strong>, so anything
+            you talk off the buy side is profit on top of what the basket promises. Tracked deals carry the
+            forecast frozen when you tracked them, which is a weaker claim than a scan run five minutes ago —
+            each pick says which it is. A deal with no measured selling speed is never counted as fast money,
+            and a basket containing one never claims a date by which all your cash is back.
+          </p>
+        </div>
+      </section>
 
       <!-- ── Promoted Listings: Ad Rate Advisor ──────────────────────────────────────────────
            eBay's suggested ad rate is worked out from what the rest of the category pays. It has
@@ -3701,6 +3807,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=56"></script>
+  <script src="app.js?v=57"></script>
 </body>
 </html>

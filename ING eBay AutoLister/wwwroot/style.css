@@ -9068,3 +9068,197 @@ a.dp-card-title:hover { color: var(--teal-600); text-decoration: underline; }
   .wts-banner { flex-direction: column; align-items: flex-start; }
   .wts-banner-extra { text-align: left; }
 }
+
+/* ── Spend My Budget — the sourcing basket ────────────────────────────────────────────────────
+   The only screen that spends money rather than ranking it. Tiles, the results table and the
+   speed pills are deliberately the ones Inventory Health and the arbitrage board already use —
+   a basket costed by the same rules should look like it was. Everything below is only the parts
+   that are new here: the lift callout, the basket rows, the alternatives and the left-out list. */
+
+.bud-pool {
+  margin: 8px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+/* The claim the feature stands on, in dollars. Green when it won, quiet when the obvious way
+   would have done just as well — which it says rather than hides. */
+.bud-lift {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.bud-lift-won {
+  border-left-color: var(--success);
+  background: var(--success-soft);
+  border-color: var(--success-line);
+}
+
+.bud-lift-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bud-lift-amount {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.05;
+  color: var(--success);
+}
+
+.bud-lift-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.bud-lift-sub {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+
+.bud-headline {
+  margin: 4px 0 2px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.bud-note {
+  margin: 0 0 10px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.bud-table tfoot td {
+  border-top: 2px solid var(--line-strong);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.bud-pick-title { font-weight: 700; }
+.bud-qty { font-weight: 700; color: var(--teal-700); }
+
+/* Why this one earned its place, on the row that spends the money on it. */
+.bud-why {
+  margin-top: 3px;
+  font-size: var(--fs-2xs);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.bud-sub { font-size: var(--fs-2xs); color: var(--muted); }
+
+/* A forecast frozen weeks ago is a weaker claim than a scan run five minutes ago. */
+.bud-origin {
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 700;
+  font-size: var(--fs-2xs);
+}
+
+.bud-section-title {
+  margin: 18px 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+
+.bud-alt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.bud-alt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.bud-alt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.bud-alt-label { font-size: var(--fs-sm); font-weight: 800; color: var(--ink); }
+
+.bud-alt-money { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+.bud-alt-profit {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.bud-alt-sub { font-size: var(--fs-2xs); color: var(--muted); }
+
+.bud-alt-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+
+.bud-leftout-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bud-leftout-item {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, .6fr) minmax(200px, 2fr);
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+  font-size: var(--fs-xs);
+}
+
+/* The most actionable line on the page: a real deal the budget was a few dollars short of. */
+.bud-reason-not_enough_left { border-left-color: var(--warning); background: var(--warning-soft); }
+.bud-reason-crowded_out,
+.bud-reason-objective_excluded { border-left-color: var(--teal-700); }
+
+.bud-leftout-title { font-weight: 700; color: var(--ink); }
+.bud-leftout-money { font-weight: 700; color: var(--ink-2); }
+.bud-leftout-reason { color: var(--muted); line-height: 1.5; }
+
+.bud-footnote {
+  margin-top: 16px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .bud-leftout-item { grid-template-columns: 1fr; gap: 2px; }
+}
