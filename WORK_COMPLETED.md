@@ -4880,3 +4880,86 @@ one place.
   nothing is evicted.
 - Nothing writes to eBay. No pricing source, key or credential was touched, and no server code
   changed — this is entirely the three shipped web assets plus one test.
+
+---
+
+## Design system + identity pass — one palette, one type scale, one product
+
+The design pass in `48924c2` established real tokens. The twenty-odd feature
+commits that followed did not use them. Each new screen reached for whatever
+hex was to hand, so the app had drifted into several products sharing a
+sidebar: **157 distinct hex values** and **406 hard-coded `font-size` values**
+across 10,147 lines of CSS, including generic web reds and greens on the
+profit figures, a navy-and-pure-yellow photo editor, and a slate-grey setup
+flow. This change makes the token layer real and applies it everywhere.
+
+### What the token layer gained
+
+| Group | Added |
+|---|---|
+| Type | `--font-sans` / `--font-display` / `--font-mono`; a 13-rung integer type scale (`--fs-3xs` … `--fs-display`); weight, line-height and tracking scales |
+| Colour | Full five-step ramps for success / danger / warning / info / accent; brand teal and gold extended; `--wine`; dark-surface subsystem (`--dark-0…3`, `--on-dark*`); `--src-*` for third-party badge marks |
+| Identity | `--grad-gold`, `--grad-gold-hot`, `--grad-brand`, `--grad-brand-deep`, `--grad-hairline`, `--grad-sheen`; `--glow-gold`, `--inset-hi` |
+| Structure | Radius extended to nine rungs; space scale to `--s10`; `--e5`; `--ease-out` / `--ease-in-out` / `--ease-spring`; `--dur-0` / `--dur-4` |
+
+**No web fonts.** The app is served from localhost and must render identically
+with no network, so the stacks resolve to faces already on the machine. On
+Windows 11 headings land on *Segoe UI Variable Display* — the optical size cut
+for large text — which is most of what makes the hierarchy read as typeset
+rather than as scaled-up body copy.
+
+### What was applied
+
+- **Colour** — 362 raw hex occurrences down to 88, and every one of those 88 is
+  `#fff`. Generic Tailwind-ish greens, reds, violets and blues folded onto the
+  semantic ramps; the values that were *deliberately* third-party (eBay blue,
+  Facebook blue, Craigslist purple) are now named `--src-*` tokens rather than
+  loose hex in the middle of a component.
+- **Type** — 406 hard-coded sizes down to 1 (an 8px superscript below the
+  scale). Sizes are integers now: fractional px rasterise between hinting
+  steps, which is the difference between crisp text and slightly soft text.
+- **Motion** — nine near-identical durations collapsed to the three tokens.
+- **Radius** — nine ad-hoc corner values collapsed onto the scale.
+- **Two off-brand islands rebranded.** `editor.html` is served standalone and
+  cannot import `style.css`, so it carried its own navy/slate palette with a
+  pure-yellow accent. Its local `:root` now names the same values by another
+  name, which re-skins the whole page without touching one component rule. The
+  in-app photo editor and the license banner got the same treatment, plus the
+  gold hairline every other dark surface in the app already wore.
+- **Setup flow** — the first screen a new install shows was the last one still
+  styled in generic slate and green. Now on tokens.
+
+### Two real bugs fixed on the way
+
+1. `.failure-detail summary:focus-visible` passed `var(--focus-ring)` — a
+   `box-shadow` value — to `outline`, which the parser drops. A `summary` is
+   not covered by the global focus rule, so that control had **no visible
+   focus state at all**. Now uses `box-shadow`.
+2. `--text-strong` was used but never declared, so its rule was relying on a
+   fallback. Declared alongside the other aliases.
+
+### Verified
+
+- `dotnet build` — 0 errors (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed**.
+- **Real browser (Playwright, dev port 9345).** Every token resolves in the
+  live document; headings compute to the display face with display tracking;
+  the primary button renders its gradient. Dashboard, Settings and the
+  standalone photo editor all captured and inspected — **no console errors, no
+  page errors**.
+
+### Not verified / known limits
+
+- **`#fff` was left alone** (88 occurrences). White is white; routing it
+  through `--card` would be churn in the places it is a surface and wrong in
+  the places it is text on a dark panel.
+- **`text-wrap: balance`/`pretty` are progressive.** Modern Chromium and the
+  WebView2 the app ships against honour them; anything older simply wraps as
+  before.
+- **This is CSS and two `<style>`/inline blocks only.** No server code, no
+  `app.js`, no business logic, no test touched. `style.css?v=58`; `app.js`
+  unchanged, so its `?v=66` stands.
+- Sizes shifted by 1–2px in a handful of places where a raw value sat between
+  two rungs of the new scale. That is the point of a scale, and every shift
+  was toward the nearest rung.

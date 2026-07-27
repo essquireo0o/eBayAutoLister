@@ -7,12 +7,19 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0a0e14;--panel:#111827;--panel2:#1a2233;
-  --border:#1f2937;--border2:#2d3748;
-  --text:#f0f4f8;--text2:#9ca3af;--text3:#4b5563;
-  --gold:#ffc300;--gold-dk:#d4a017;
+  /* Mirrors the ING design tokens in style.css. This page is served
+     standalone so it cannot import them, but it must not invent a
+     second palette — these are the same values by another name. */
+  --bg:#08181b;--panel:#0d2226;--panel2:#122c31;
+  --border:#1f4249;--border2:#2b565e;
+  --text:#f6fbfb;--text2:rgba(246,251,251,.72);--text3:rgba(246,251,251,.48);
+  --gold:#c79a36;--gold-dk:#946d1f;--gold-lt:#e0bb63;--on-gold:#231904;
+  --canvas:#04171a;--canvas-check:#0d2226;
+  --font-sans:"Segoe UI Variable Text","Segoe UI",Inter,-apple-system,
+    "SF Pro Text",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --danger:#cf4b42;
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+body{font-family:var(--font-sans);
   background:var(--bg);color:var(--text);height:100vh;
   display:flex;flex-direction:column;overflow:hidden;user-select:none}
 
@@ -22,7 +29,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
 .pe-brand{display:flex;align-items:center;gap:8px;margin-right:4px}
 .pe-brand-mark{width:28px;height:28px;background:var(--gold);border-radius:6px;
   display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:900;color:#000;flex-shrink:0;letter-spacing:-.5px}
+  font-size:11px;font-weight:900;color:var(--on-gold);flex-shrink:0;letter-spacing:-.5px;
+  background-image:linear-gradient(160deg,var(--gold-lt),var(--gold) 58%,var(--gold-dk));
+  box-shadow:0 4px 12px rgba(199,154,54,.28),inset 0 1px 0 rgba(255,255,255,.45)}
 #pe-title{font-size:13px;font-weight:600;color:var(--text2);
   max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vdiv{width:1px;height:28px;background:var(--border);flex-shrink:0}
@@ -65,7 +74,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
 .sb-sep{width:30px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
 /* tooltip */
 .tool-btn::after{content:attr(title);position:absolute;left:calc(100% + 10px);top:50%;
-  transform:translateY(-50%);background:#1e2a3a;color:var(--text);
+  transform:translateY(-50%);background:var(--panel2);color:var(--text);
   font-size:11px;font-weight:600;padding:4px 9px;border-radius:5px;
   border:1px solid var(--border2);white-space:nowrap;pointer-events:none;
   opacity:0;transition:opacity .1s;z-index:100}
@@ -130,11 +139,11 @@ select:focus{border-color:var(--gold)}
 .seg-btn.on{background:var(--gold);color:#111}
 
 /* CANVAS */
-#pe-area{flex:1;position:relative;overflow:hidden;background:#070b0f;
-  background-image:linear-gradient(45deg,#0e1318 25%,transparent 25%),
-    linear-gradient(-45deg,#0e1318 25%,transparent 25%),
-    linear-gradient(45deg,transparent 75%,#0e1318 75%),
-    linear-gradient(-45deg,transparent 75%,#0e1318 75%);
+#pe-area{flex:1;position:relative;overflow:hidden;background:var(--canvas);
+  background-image:linear-gradient(45deg,var(--canvas-check) 25%,transparent 25%),
+    linear-gradient(-45deg,var(--canvas-check) 25%,transparent 25%),
+    linear-gradient(45deg,transparent 75%,var(--canvas-check) 75%),
+    linear-gradient(-45deg,transparent 75%,var(--canvas-check) 75%);
   background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}
 #pe-scroll{position:absolute;inset:0;overflow:hidden;display:flex;
   align-items:center;justify-content:center}
@@ -163,7 +172,7 @@ select:focus{border-color:var(--gold)}
 /* toast */
 #pe-toast{position:absolute;bottom:54px;left:50%;
   transform:translateX(-50%) translateY(10px);
-  background:#1e2a3a;border:1px solid var(--border2);border-radius:8px;
+  background:var(--panel2);border:1px solid var(--border2);border-radius:8px;
   padding:7px 16px;font-size:12px;color:var(--text);opacity:0;
   transition:all .22s;pointer-events:none;z-index:60;white-space:nowrap}
 #pe-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -239,7 +248,7 @@ let drawColor='#ff0000', drawSize=10, eraseSize=24;
 let blurMode='blur', blurSize=20, blurStrength=6;
 let adj={brightness:100,contrast:100,saturation:100};
 let liveFilter='';
-let shapeTool='rect', shapeColor='#ffc300', strokeWidth=3, shapeFill=false, shapeDrag=null;
+let shapeTool='rect', shapeColor='#c79a36', strokeWidth=3, shapeFill=false, shapeDrag=null;
 let textColor='#ffffff', textSize=36, textFont='Arial', textBold=true, textItalic=false, textPlacing=false;
 
 window.addEventListener('DOMContentLoaded', ()=>{
@@ -298,7 +307,7 @@ async function loadImg(url,slot,label){
     if(label)document.getElementById('pe-title').textContent=label;
     calcFitZoom();resetZoom();setTool('crop');updateHistBtns();
   };
-  img.onerror=()=>{document.getElementById('pe-load').innerHTML='<span style="color:#ef4444">Could not load image.</span>';};
+  img.onerror=()=>{document.getElementById('pe-load').innerHTML='<span style="color:#cf4b42">Could not load image.</span>';};
   img.src=dataUrl;
 }
 function blobToDataUrl(blob){
@@ -591,14 +600,14 @@ function drawCropUi(){
   const r=calcCropRect();if(!r)return;
   oCtx.fillStyle='rgba(0,0,0,0.55)';oCtx.fillRect(0,0,ov.width,ov.height);
   oCtx.clearRect(r.x,r.y,r.w,r.h);
-  oCtx.strokeStyle='#ffc300';oCtx.lineWidth=2;oCtx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
+  oCtx.strokeStyle='#c79a36';oCtx.lineWidth=2;oCtx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
   oCtx.strokeStyle='rgba(255,195,0,0.25)';oCtx.lineWidth=1;
   for(let i=1;i<3;i++){
     oCtx.beginPath();oCtx.moveTo(r.x+r.w*i/3,r.y);oCtx.lineTo(r.x+r.w*i/3,r.y+r.h);oCtx.stroke();
     oCtx.beginPath();oCtx.moveTo(r.x,r.y+r.h*i/3);oCtx.lineTo(r.x+r.w,r.y+r.h*i/3);oCtx.stroke();
   }
   [[r.x,r.y],[r.x+r.w,r.y],[r.x,r.y+r.h],[r.x+r.w,r.y+r.h]].forEach(([cx,cy])=>{
-    oCtx.fillStyle='#ffc300';oCtx.fillRect(cx-5,cy-5,10,10);
+    oCtx.fillStyle='#c79a36';oCtx.fillRect(cx-5,cy-5,10,10);
   });
   oCtx.fillStyle='rgba(255,195,0,.9)';oCtx.font='bold 12px Arial';oCtx.textAlign='left';
   oCtx.fillText(`${r.w} × ${r.h}`,r.x+4,r.y-6);

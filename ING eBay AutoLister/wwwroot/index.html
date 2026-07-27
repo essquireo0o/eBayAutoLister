@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=57" />
+  <link rel="stylesheet" href="style.css?v=58" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -141,9 +141,9 @@
           </div>
           <div style="padding:20px 24px 24px;display:grid;gap:16px">
             <p style="font-size:13px;color:var(--muted)">eBay sandbox OAuth is currently broken. Paste a User Token directly to connect — no OAuth needed.</p>
-            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px;font-size:12px;line-height:1.6">
+            <div style="background:var(--info-tint);border:1px solid var(--info-line);border-radius:var(--r-sm);padding:14px;font-size:12px;line-height:1.6">
               <strong>How to get your token:</strong><br>
-              1. <a href="https://developer.ebay.com/my/auth/?env=sandbox&index=0" target="_blank" style="color:#0064d2">Open eBay Developer Portal → User Tokens</a><br>
+              1. <a href="https://developer.ebay.com/my/auth/?env=sandbox&index=0" target="_blank" style="color:var(--src-ebay)">Open eBay Developer Portal → User Tokens</a><br>
               2. Select your app → click <strong>"Get a User Token"</strong><br>
               3. Sign in with your sandbox test account<br>
               4. Copy the token and paste it below
@@ -3788,13 +3788,13 @@
       <p class="modal-desc" id="setup-modal-desc">Your keys are saved locally on this machine — never sent anywhere except the AI service you choose.</p>
       <input id="s-license-key" type="hidden" value="" />
 
-      <div id="setup-preconfigured-notice" class="hidden" style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:#166534">
+      <div id="setup-preconfigured-notice" class="hidden" style="background:var(--success-tint);border:1px solid var(--success-line);border-radius:var(--r-sm);padding:14px 16px;margin-bottom:16px;font-size:var(--fs-sm);color:var(--success)">
         <strong>✓ eBay is pre-configured.</strong> Enter your Anthropic API key below, then click Save and Connect eBay.
       </div>
 
       <div class="setup-section" id="setup-ai-provider">
         <h3>AI Key <span style="font-weight:400;font-size:13px;color:var(--muted)">— powers listing analysis &amp; auto-fill</span></h3>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#374151;line-height:1.6">
+        <div style="background:var(--soft);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:14px;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.6">
           <strong>What this does:</strong> When you drop a photo or scan an item, AI reads the image and automatically fills in the title, description, price estimate, category, and item specifics — so you don't have to type it all manually.<br><br>
           <strong>You only need one key.</strong> Use <strong>Anthropic</strong> (recommended) <em>or</em> OpenAI — not both.
           <ul style="margin:8px 0 0 16px;padding:0">
@@ -3836,12 +3836,12 @@
           <label>RuName <span class="hint-inline">Sandbox only; Production uses the RuName you configured</span></label>
           <input id="s-runame" type="text" placeholder="YourName-AppName-PRD-xxxxxxxx" autocomplete="off" />
         </div>
-        <div id="ebay-oauth-step" class="hidden" style="margin-top:16px;padding:16px;background:#0f2a1a;border:1px solid #166534;border-radius:10px">
-          <p style="font-size:13px;font-weight:700;color:#4ade80;margin-bottom:8px">Step 2 — Copy the URL and click below</p>
-          <p style="font-size:12px;color:#86efac;margin-bottom:12px">eBay opened in a new tab. Log in, then eBay will redirect you to inglisting.com. <strong>Copy the URL from that page</strong> (Ctrl+A, Ctrl+C in the address bar), then click the button below.</p>
+        <div id="ebay-oauth-step" class="hidden" style="margin-top:16px;padding:16px;background:var(--teal-900);border:1px solid var(--teal-700);border-radius:var(--r-md)">
+          <p style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--gold-light);margin-bottom:8px">Step 2 — Copy the URL and click below</p>
+          <p style="font-size:var(--fs-xs);color:var(--on-dark-2);margin-bottom:12px">eBay opened in a new tab. Log in, then eBay will redirect you to inglisting.com. <strong>Copy the URL from that page</strong> (Ctrl+A, Ctrl+C in the address bar), then click the button below.</p>
           <button id="btn-paste-and-connect" class="btn btn-primary" type="button" style="width:100%;font-size:15px;padding:12px">📋 I've Logged In — Paste &amp; Connect</button>
           <div id="oauth-redirect-msg" style="margin-top:8px;font-size:12px"></div>
-          <textarea id="s-oauth-redirect-url" rows="2" placeholder="Or paste the full redirect URL here manually…" autocomplete="off" style="width:100%;margin-top:10px;padding:8px;border:1px solid #374151;border-radius:6px;background:#0f1117;color:#e2e8f0;font-size:12px;resize:vertical"></textarea>
+          <textarea id="s-oauth-redirect-url" rows="2" placeholder="Or paste the full redirect URL here manually…" autocomplete="off" style="width:100%;margin-top:10px;padding:8px;border:1px solid var(--dark-line);border-radius:var(--r-xs);background:var(--dark-0);color:var(--on-dark);font-size:var(--fs-xs);resize:vertical"></textarea>
         </div>
         <div class="field">
           <label>User Token <span class="hint-inline">optional</span></label>
