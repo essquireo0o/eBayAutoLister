@@ -106,9 +106,23 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
     // Below this the sold history is too sparse to call anything, however good the arithmetic.
     private const int ThinCompCount = 3;
 
-    public LocalArbitrageOpportunity Build(LocalSupplyListing listing, ResalePricing? resale, FeeProfile fees)
+    /// <summary>
+    /// Prices one listing. <paramref name="retailSalesTaxPercent"/> applies only to rows from a
+    /// retail source (the deal feeds) — a private-party buy is cash, and defaulting the parameter
+    /// keeps every caller that only ever sees local supply unchanged.
+    /// </summary>
+    public LocalArbitrageOpportunity Build(
+        LocalSupplyListing listing, ResalePricing? resale, FeeProfile fees,
+        decimal retailSalesTaxPercent = RetailBuyCosts.DefaultSalesTaxPercent)
     {
         var localAsk = listing.Price ?? 0m;
+
+        // The register's cut. Zero for every non-retail row, which is what makes this change
+        // invisible to Craigslist and Facebook: taxPercent 0 ⇒ buyCost == localAsk exactly.
+        var taxPercent = listing.IsRetail ? RetailBuyCosts.Sanitize(retailSalesTaxPercent) : 0m;
+        var salesTax = RetailBuyCosts.TaxOn(localAsk, taxPercent);
+        var buyCost = localAsk + salesTax;
+
         var row = new LocalArbitrageOpportunity
         {
             Source = listing.Source,
@@ -123,6 +137,14 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
             DistanceMiles = listing.DistanceMiles,
             PostedAgo = listing.PostedAgo,
             PostedUtc = listing.PostedUtc,
+            IsRetail = listing.IsRetail,
+            Retailer = listing.Retailer,
+            FreeShipping = listing.FreeShipping,
+            CouponCode = listing.CouponCode,
+            // Only stated where it is a real, separate cost — carrying a $0 tax line on a
+            // Craigslist row would imply the app had checked, and it hasn't.
+            SalesTax = listing.IsRetail ? salesTax : null,
+            BuyCostAllIn = listing.IsRetail ? buyCost : null,
         };
 
         if (resale is null || !resale.HasPrice)
@@ -156,8 +178,11 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
         // on one side only is how a profit estimate ends up either inflated or double-charged.
         // When the comps sold with free shipping there is no observed figure, so this falls back
         // to FeeProfile.DefaultShippingCost like every other profit path in the app.
+        // The cost basis is what actually leaves the wallet, which on a retail row includes the
+        // sales tax. ROI comes back measured against that same figure — money spent is money spent,
+        // whether it went to the retailer or to the state.
         var profit = profitCalc.Calculate(
-            supplierUnitCost: localAsk, quantity: 1, expectedSalePrice: expected,
+            supplierUnitCost: buyCost, quantity: 1, expectedSalePrice: expected,
             quickSalePrice: resale.QuickSale ?? expected,
             buyerPaidShipping: resale.AvgCompShipping, fees: fees,
             actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
@@ -167,16 +192,19 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
         row.NetProfit = profit.NetProfitPerUnit;
         row.RoiPercent = profit.RoiPercent;
         row.MarginPercent = profit.MarginPercent;
-        // Net profit falls exactly one dollar for every dollar more paid locally, so the
-        // break-even ask is the ask plus the profit — the number to negotiate against.
-        row.MaxBuyPrice = Math.Round(localAsk + profit.NetProfitPerUnit, 2);
+        // The highest ASKING price that still breaks even — the number a seller compares against
+        // the price on the shelf. Without tax that is simply the ask plus the profit, because net
+        // profit falls a dollar per dollar paid; with tax it falls (1 + rate) per dollar, so the
+        // headroom is smaller. Quoting the untaxed figure would name a price that loses money.
+        row.MaxBuyPrice = RetailBuyCosts.BreakEvenSticker(localAsk, profit.NetProfitPerUnit, taxPercent);
 
         // How long that profit takes to become money again. Computed from THIS row's net profit, so
         // two listings of the same product at different asks correctly differ in profit-per-day
         // even though they share a velocity.
         ApplyDaysToCash(row, resale);
 
-        var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, localAsk,
+        // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay.
+        var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, buyCost,
             resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
         row.Verdict = verdict;
         row.VerdictNote = note;
@@ -191,6 +219,13 @@ public sealed class LocalArbitrageAnalyzer(ProfitCalculator profitCalc)
     // no wait attached — see NegotiationAdvisor.
     private static void ApplyNegotiation(LocalArbitrageOpportunity row, ResalePricing resale)
     {
+        // Nobody at Walmart is reading your offer. Drafting one anyway would be the app's most
+        // obviously useless output, and counting its "upside" would put money on the board that
+        // cannot be won — so a retail row gets no plan, and the buy-side totals skip it. What the
+        // seller does get is MaxBuyPrice above: the shelf price to stop at, which on retail is the
+        // whole of the buy-side decision.
+        if (row.IsRetail) return;
+
         row.Negotiation = NegotiationAdvisor.Build(
             askPrice: row.LocalAsk,
             breakEvenBuyPrice: row.MaxBuyPrice ?? 0m,

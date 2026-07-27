@@ -32,6 +32,20 @@ public class LocalArbitrageOpportunity
     // Only the sources that publish a real timestamp set this (Craigslist does, Facebook doesn't).
     public DateTime? PostedUtc { get; set; }
 
+    // ── When the buy is retail, not a stranger ───────────────────────────────
+    // A clearance item off a deal feed is bought differently from a Craigslist pickup, in two ways
+    // that both cost money: the register adds sales tax, and there is nobody to haggle with. Both
+    // are priced in rather than glossed over — see Services/RetailBuyCosts.cs.
+    public bool IsRetail { get; set; }
+    public string Retailer { get; set; } = "";
+    public bool FreeShipping { get; set; }
+    public string CouponCode { get; set; } = "";
+    // Sales tax on LocalAsk, and what therefore actually leaves the wallet. Null on a private-party
+    // buy, where the ask IS the cost. Every profit figure on a retail row is computed from
+    // BuyCostAllIn, never from LocalAsk.
+    public decimal? SalesTax { get; set; }
+    public decimal? BuyCostAllIn { get; set; }
+
     // ── The eBay resale ──────────────────────────────────────────────────────
     // Blended median across whichever sources had data, and the price the profit
     // math actually used (MarketPriceEstimator's expected sale price).

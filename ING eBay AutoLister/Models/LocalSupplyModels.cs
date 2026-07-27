@@ -35,8 +35,25 @@ public class LocalSupplyListing
 
     public string Location { get; set; } = "";
     // Facebook prints a distance on the tile; Craigslist filters by distance server-side but
-    // never reports one, so this is legitimately null for Craigslist rows.
+    // never reports one, so this is legitimately null for Craigslist rows. Always null for a
+    // retail deal, which has no location at all.
     public double? DistanceMiles { get; set; }
+
+    // ── Retail supply (deal feeds) ────────────────────────────────────────────
+    // A clearance item bought from Amazon and a drill bought off a stranger for cash are the same
+    // shape to the pipeline, but they do NOT cost the same: retail charges sales tax and doesn't
+    // haggle. Rather than a second listing type, the handful of things that actually differ are
+    // carried here and read by LocalArbitrageAnalyzer — see RetailBuyCosts for what they change.
+    public bool IsRetail { get; set; }
+    // Amazon, Walmart, Best Buy — the store, not the aggregator that reported the deal (that's
+    // SourceLabel). Mirrored into Location too, because that is the field every board renders.
+    public string Retailer { get; set; } = "";
+    // Stated on the deal itself. Not folded into any cost: it means no shipping is added to the
+    // buy, which is already how an unshipped price is treated.
+    public bool FreeShipping { get; set; }
+    // The code that has to be typed for the price to be the price. Shown on the row, because a
+    // price that only exists with a code is not a price the seller can get without it.
+    public string CouponCode { get; set; } = "";
     // "Just listed", "3 hours ago" — free text as the site rendered it.
     public string PostedAgo { get; set; } = "";
     // Craigslist's feed carries a real timestamp; Facebook only ever shows relative text.
@@ -125,4 +142,8 @@ public class LocalSupplySourceInfo
     public bool RequiresConnection { get; set; }
     public bool Available { get; set; }
     public string Note { get; set; } = "";
+    // False for the online sources, whose results have nothing to do with the zip and radius on
+    // the form. The picker uses it to stop promising "within 40 miles of 89101" for a scan that
+    // searched the whole country — see ILocalSupplySource.IsLocationBased.
+    public bool LocationBased { get; set; } = true;
 }

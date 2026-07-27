@@ -174,11 +174,17 @@ builder.Services.AddSingleton<FacebookMarketplaceService>();
 // Craigslist is the same job with none of that machinery: public search, no login, an RSS feed
 // and craigslist's own postal+distance filter. See CraigslistService.
 builder.Services.AddSingleton<CraigslistService>();
-// Both sites behind one interface, so the arbitrage pipeline (grouping → comp lookup → profit →
-// ranking) never learns which site a listing came from and a third source is a registration.
+// Retail supply: the public deal feeds (Slickdeals, DealNews, TechBargains). Not local at all —
+// buy it new on clearance and sell it used-market — but the same LocalSupplyListing, so it ranks
+// in the same table. The one sourcing source that still works when the seller's own city is
+// empty. See DealFeedService / DealFeedCatalog.
+builder.Services.AddSingleton<DealFeedService>();
+// Every source behind one interface, so the arbitrage pipeline (grouping → comp lookup → profit →
+// ranking) never learns which site a listing came from and a fourth source is a registration.
 // Order matters: no-login sources first, so a seller who has connected nothing still gets
 // results from a default search. See ILocalSupplySource / LocalSupplySources.
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<CraigslistService>());
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<DealFeedService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
 builder.Services.AddSingleton<LocalSupplySources>();
 // Local sold-history lookup — read-only against the externally-maintained Marketplace.db at
@@ -1736,7 +1742,7 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
 // ever runs when someone clicks the button that says so.
 app.MapGet("/api/local/arbitrage", async (
     string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
-    string? sources, string? craigslistSite,
+    string? sources, string? craigslistSite, decimal? salesTax,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -1750,7 +1756,11 @@ app.MapGet("/api/local/arbitrage", async (
             // Bounded on both axes: the comp lookups are per-product and the scrapes are per-product
             // too, so an unbounded request would turn one click into hundreds of lookups.
             Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
-            registry.Resolve(sources), craigslistSite, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
+            registry.Resolve(sources), craigslistSite,
+            // The seller's own sales-tax rate, which applies to the retail rows and to nothing
+            // else. Clamped rather than trusted — see RetailBuyCosts.
+            RetailBuyCosts.Sanitize(salesTax),
+            marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
             profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct);
 
         return Results.Ok(result);
@@ -1790,7 +1800,10 @@ app.MapGet("/api/facebook/arbitrage", async (
         var result = await FindLocalArbitrageAsync(
             q ?? "", zip ?? "", radius ?? 40,
             Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
-            registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null, marketplace, normalizer, matcher,
+            registry.Resolve(FacebookMarketplaceParser.SourceId), craigslistSite: null,
+            // Facebook supply is never retail, so the rate is moot here — passed for the signature.
+            RetailBuyCosts.DefaultSalesTaxPercent,
+            marketplace, normalizer, matcher,
             priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
             terapeak, analyzer, log, ct);
 
@@ -3685,7 +3698,7 @@ static async Task<RelistRecoveryResult> ScanRelistRecoveryAsync(
 //     cache-only, so a product Terapeak already knows about costs nothing.
 static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     string q, string zip, int radius, int maxItems, int terapeakBudget, string? sort,
-    IReadOnlyList<ILocalSupplySource> sources, string? craigslistSite,
+    IReadOnlyList<ILocalSupplySource> sources, string? craigslistSite, decimal retailSalesTaxPercent,
     IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
@@ -3772,7 +3785,7 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
                     // a free listing is the cheapest there is, not a missing price.
                     var cheapest = g.Listings.OrderBy(l => l.IsFree ? 0m : l.Price ?? decimal.MaxValue).First();
                     var preliminary = pricing[g.Key].HasPrice
-                        ? analyzer.Build(cheapest, pricing[g.Key], feeProfile).NetProfit
+                        ? analyzer.Build(cheapest, pricing[g.Key], feeProfile, retailSalesTaxPercent).NetProfit
                         : null;
                     return (g.Key, PreliminaryProfit: preliminary, HasTerapeak: cached[g.Key], LocalAsk: g.LowestAsk);
                 }), terapeakBudget);
@@ -3786,7 +3799,7 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 
         // ── Rank ────────────────────────────────────────────────────────────────────────────────────
         var rows = groups
-            .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile)))
+            .SelectMany(g => g.Listings.Select(l => analyzer.Build(l, pricing[g.Key], feeProfile, retailSalesTaxPercent)))
             .ToList();
 
         result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);

@@ -4398,6 +4398,42 @@ textarea {
 }
 .local-badge-craigslist { background: #4a2f83; }
 .local-badge-facebook   { background: #1877f2; }
+/* Retail deal feeds. One colour for the whole source even though the badge text names the
+   aggregator (Slickdeals / DealNews / TechBargains) — the distinction that matters at a glance is
+   "this is a shop, not a person". */
+.local-badge-dealfeeds  { background: #b4530a; }
+
+/* The retail extras that only some rows have: what the register adds, the code you have to type,
+   and the store you're buying from. */
+.retail-tax {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.retail-code {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px dashed var(--warn, #b4530a);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--warn, #b4530a);
+}
+
+/* Sales tax field: only meaningful while a retail source is ticked, so it is hidden otherwise. */
+.retail-tax-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.retail-tax-row input { width: 72px; }
+.retail-tax-hint { color: var(--muted); }
 
 /* ── Facebook Marketplace local sourcing ──────────────────────────────────── */
 .fb-connect-banner { margin: 12px 0 4px; }

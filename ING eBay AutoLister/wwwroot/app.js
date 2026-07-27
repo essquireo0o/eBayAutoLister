@@ -774,6 +774,26 @@
     // The metro override only means anything to Craigslist.
     $('cl-site-row')?.classList.toggle('hidden', !picked.includes('craigslist'));
     if (picked.includes('craigslist')) loadCraigslistSites();
+    // Sales tax only changes a retail row's numbers, so the field only appears when one can appear.
+    $('retail-tax-row')?.classList.toggle('hidden', !picked.some(isRetailSource));
+    // Zip and radius mean nothing to a nationwide feed. Dimmed rather than hidden — untick the
+    // online source and they matter again, and a field that vanishes is a field people hunt for.
+    const online = picked.length > 0 && picked.every(id => !isLocationBasedSource(id));
+    ['fb-zip-input', 'fb-radius-select'].forEach(id => {
+      const el = $(id);
+      if (el) el.disabled = online;
+    });
+  }
+
+  // Which sources charge sales tax / ignore the zip. Read off /api/local/sources rather than
+  // hard-coded, so a second online source needs no change here.
+  function isLocationBasedSource(id) {
+    const source = localSources.find(s => s.id === id);
+    return source ? source.locationBased !== false : true;
+  }
+
+  function isRetailSource(id) {
+    return !isLocationBasedSource(id);
   }
 
   async function loadLocalSources() {
@@ -853,6 +873,10 @@
     const radius = localStorage.getItem('fbRadius');
     if (zip && $('fb-zip-input')) $('fb-zip-input').value = zip;
     if (radius && $('fb-radius-select')) $('fb-radius-select').value = radius;
+    // Same reason: a seller's sales-tax rate doesn't change between scans, and the default in the
+    // markup is a national average rather than their number.
+    const salesTax = localStorage.getItem('retailSalesTax');
+    if (salesTax !== null && $('retail-tax-input')) $('retail-tax-input').value = salesTax;
   }
 
   // The form values every local search shares, plus the selected sources. Craigslist's metro
@@ -863,19 +887,37 @@
     const radius = $('fb-radius-select')?.value || '40';
     const sources = selectedSourceIds();
     const site = $('cl-site-select')?.value || '';
+    const salesTax = $('retail-tax-input')?.value ?? '';
 
     localStorage.setItem('fbZip', zip);
     localStorage.setItem('fbRadius', radius);
+    if (salesTax !== '') localStorage.setItem('retailSalesTax', salesTax);
 
     const qs = `q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}` +
       `&sources=${encodeURIComponent(sources.join(','))}` +
-      (site ? `&craigslistSite=${encodeURIComponent(site)}` : '');
+      (site ? `&craigslistSite=${encodeURIComponent(site)}` : '') +
+      // Sent on every scan; the server ignores it for every non-retail row. Clamped server-side —
+      // see RetailBuyCosts.Sanitize.
+      (salesTax !== '' ? `&salesTax=${encodeURIComponent(salesTax)}` : '');
 
     return { query, zip, radius, sources, qs };
   }
 
   function sourceLabelsFor(ids) {
     return ids.map(id => localSources.find(s => s.id === id)?.label || id).join(' + ');
+  }
+
+  // "within 40 miles of 89101" is a promise, and a nationwide feed didn't keep it. Says what was
+  // actually searched: the radius only when a location-based source is in the scan, the word
+  // "nationwide" only when an online one is.
+  function scopeTextFor(ids, radius, zip) {
+    const local = ids.some(isLocationBasedSource);
+    const online = ids.some(id => !isLocationBasedSource(id));
+
+    const parts = [];
+    if (local) parts.push(`within ${radius} miles${zip ? ` of ${zip}` : ''}`);
+    if (online) parts.push('nationwide');
+    return parts.join(' and ');
   }
 
   // ── Never dead-ending the panel ──────────────────────────────────────────
@@ -945,14 +987,14 @@
 
     lastLocalRun = runLocalSearch;
 
-    if (!query) return setLocalStatus('Enter what you want to look for locally.');
+    if (!query) return setLocalStatus('Enter what you want to look for.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
     if (btn) btn.disabled = true;
     // Honest about the cost, which differs per source: Craigslist is one HTTPS request, Facebook
     // is a real browser loading a page and scrolling a grid.
-    setLocalStatus(`Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}` +
+    setLocalStatus(`Searching ${sourceLabelsFor(sources)} ${scopeTextFor(sources, radius, zip)}` +
       `${sources.includes('facebook') ? ' — Facebook opens a real page, so give it up to a minute…' : '…'}`);
 
     const { data, error } = await localFetchJson(`/api/local/search?${qs}`, LOCAL_SEARCH_TIMEOUT_MS);
@@ -1056,10 +1098,12 @@
 
     renderSourceOutcomes(data.sources);
     if (handleLocalNonResult(data)) return;
+    const scope = scopeTextFor((data.sources || []).map(s => s.id), data.radiusMiles, data.zipCode);
+
     if (!data.count) {
       setLocalStatus(data.error
-        ? `No local listings found — ${data.error}`
-        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`,
+        ? `Nothing found — ${data.error}`
+        : `Nothing found for "${data.query}" ${scope}.`,
         (data.sources || []).some(s => s.retryable));
       return;
     }
@@ -1071,8 +1115,8 @@
     // dropdown values, so this reports what was actually searched. Per-site links live in the
     // source chips above, since each site has its own results URL.
     summary.innerHTML =
-      `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} for "${esc(data.query)}" ` +
-      `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''} · ` +
+      `<strong>${data.count}</strong> listing${data.count === 1 ? '' : 's'} for "${esc(data.query)}" ` +
+      `${esc(scope)} · ` +
       `asking ${money(data.min)}–${money(data.max)} · median ${money(data.median)}`;
 
     list.innerHTML = data.items.map(item => {
@@ -1211,7 +1255,7 @@
 
     lastLocalRun = runLocalArbitrage;
 
-    if (!query) return setLocalStatus('Enter what you want to look for locally.');
+    if (!query) return setLocalStatus('Enter what you want to look for.');
     if (!sources.length) return setLocalStatus('Tick at least one place to search.');
 
     $('fb-results')?.classList.add('hidden');
@@ -1219,7 +1263,7 @@
     buttons.forEach(b => { b.disabled = true; });
     // Honest about the cost: every selected site is searched, then one sold-comp lookup per
     // distinct product, then up to five Terapeak lookups. Minutes, not seconds.
-    setLocalStatus(`Searching ${sourceLabelsFor(sources)} within ${radius} miles${zip ? ` of ${zip}` : ''}, ` +
+    setLocalStatus(`Searching ${sourceLabelsFor(sources)} ${scopeTextFor(sources, radius, zip)}, ` +
       'then pricing every result against eBay sold data — this can take a couple of minutes…');
 
     // The scan comes back already ordered the way the seller last chose to look at it. Changing
@@ -1242,17 +1286,22 @@
 
     renderSourceOutcomes(data.sources);
     if (handleLocalNonResult(data)) return;
+    // What the scan actually covered, from the sources that ran — not from the form, which may
+    // have moved since.
+    const scannedIds = (data.sources || []).map(s => s.id);
+    const scope = scopeTextFor(scannedIds, data.radiusMiles, data.zipCode);
+
     if (!data.localListingsFound) {
       setLocalStatus(data.error
-        ? `No local listings found — ${data.error}`
-        : `No local listings found for "${data.query}" within ${data.radiusMiles} miles.`,
+        ? `Nothing found — ${data.error}`
+        : `Nothing found for "${data.query}" ${scope}.`,
         (data.sources || []).some(s => s.retryable));
       return;
     }
     if (!data.count) {
       // The sites answered and the listings are real — what's missing is the pricing half, and
       // dataWarning is where the server says why (no comps source, or a pricing pass that broke).
-      setLocalStatus(`Found ${data.localListingsFound} local listing(s), but none could be priced. ` +
+      setLocalStatus(`Found ${data.localListingsFound} listing(s), but none could be priced. ` +
         (data.dataWarning || data.error || 'None of them had a price to work from.'), true);
       return;
     }
@@ -1266,8 +1315,8 @@
       .map(s => `${esc(s.label)} (${s.count})`).join(' + ');
 
     const scanned = [
-      `<strong>${data.count}</strong> local listing${data.count === 1 ? '' : 's'} priced for "${esc(data.query)}"`,
-      `within ${data.radiusMiles} miles${data.zipCode ? ` of ${esc(data.zipCode)}` : ''}`,
+      `<strong>${data.count}</strong> deal${data.count === 1 ? '' : 's'} priced for "${esc(data.query)}"`,
+      esc(scope),
       searched ? `from ${searched}` : '',
       data.goldmineCount ? `<strong class="fb-arb-hit">${data.goldmineCount} goldmine${data.goldmineCount === 1 ? '' : 's'}</strong>` : 'no goldmines this time',
       // Capital that comes back inside three weeks is capital that can buy the next one — worth its
@@ -1322,7 +1371,8 @@
       roi: (a, b) => { const x = roiOf(a), y = roiOf(b); return (x == null) - (y == null) || (x === y ? 0 : y - x); },
       margin: (a, b) => nullsLast(a, b, 'marginPercent') ?? (b.marginPercent - a.marginPercent),
       distance: (a, b) => nullsLast(a, b, 'distanceMiles') ?? (a.distanceMiles - b.distanceMiles),
-      ask: (a, b) => a.localAsk - b.localAsk,
+      // Sorted on the taxed cost, so "cheapest first" means cheapest to actually buy.
+      ask: (a, b) => paidFor(a) - paidFor(b),
       // The point of the whole feature: money that comes back soonest, and money that earns most
       // per day it is tied up. Rows that lose money stay below rows that make it in both — a fast
       // route to a loss is not a fast flip — and an unmeasured wait is never treated as instant.
@@ -1378,7 +1428,9 @@
           sourceLabel: row.sourceLabel,
           sourceUrl: row.url,
           sourceItemId: row.itemId,
-          askPrice: row.localAsk,
+          // Frozen as the cash it will actually take, tax included — the pipeline grades the buy
+          // against this later, and a sticker price would grade it against money never spent.
+          askPrice: paidFor(row),
           maxBuyPrice: row.maxBuyPrice,
           projectedSalePrice: row.ebayExpectedSale,
           projectedNetProfit: row.netProfit,
@@ -1420,7 +1472,14 @@
       row.distanceMiles != null ? `${row.distanceMiles} mi` : '',
       row.location ? esc(row.location) : '',
       row.postedAgo ? esc(row.postedAgo) : '',
-      row.originalPrice ? `was ${money(row.originalPrice)} — price dropped` : '',
+      // On a retail row the struck-through figure is the retail list price, not a seller who
+      // changed their mind — saying "price dropped" about Amazon would be nonsense.
+      row.originalPrice
+        ? (row.isRetail ? `list ${money(row.originalPrice)}` : `was ${money(row.originalPrice)} — price dropped`)
+        : '',
+      row.isRetail && row.freeShipping ? 'ships free' : '',
+      // A price that only exists with a code is not a price without it.
+      row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
     ].filter(Boolean).join(' · ');
 
     // A free item has no cost basis, so its ROI is unbounded rather than zero.
@@ -1454,7 +1513,7 @@
           </span>
         </td>
         <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
-        <td class="num">${row.localAsk > 0 ? money(row.localAsk) : 'Free'}</td>
+        <td class="num">${buyCostCell(row)}</td>
         <td class="num"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : '—'}</td>
         <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}</td>
         <td class="num fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}</td>
@@ -1486,11 +1545,35 @@
     return pipeline.deals.some(d => d.deal?.source === source && d.deal?.sourceItemId === itemId);
   }
 
+  // What actually leaves the wallet. On a private-party buy that is the asking price; on a retail
+  // buy the register adds sales tax, and every profit figure in the row was computed from the
+  // taxed number — so showing the sticker alone would leave the arithmetic looking wrong.
+  function buyCostCell(row) {
+    if (!(row.buyCostAllIn > 0)) return row.localAsk > 0 ? money(row.localAsk) : 'Free';
+
+    const tax = row.salesTax > 0
+      ? `<span class="retail-tax">${money(row.localAsk)} + ${money(row.salesTax)} tax</span>` : '';
+    return `${money(row.buyCostAllIn)}${tax ? `<br />${tax}` : ''}`;
+  }
+
+  // The cash a row ties up — the figure to sort and budget on, taxed where tax applies.
+  function paidFor(row) {
+    return row.buyCostAllIn != null ? row.buyCostAllIn : row.localAsk;
+  }
+
   // The buy-side cell: what to open at, what saying it is worth, and the way into the drafts.
   // A row we'd walk away from gets the walk badge and no button — the most useful thing this
   // feature can do on a bad deal is fail to produce a message for it.
   function offerCell(row) {
     const plan = row.negotiation;
+
+    // Nobody at Amazon is reading your offer. The honest buy-side answer on a retail row is the
+    // shelf price to stop at, which is already in the "Max to pay" column beside this one — so
+    // this says so instead of drafting a message that cannot be sent.
+    if (row.isRetail) {
+      return '<span class="fb-arb-muted" title="Retail price — there is nobody to haggle with. The number to act on is Max to pay: above that shelf price this stops making money.">retail — no haggling</span>';
+    }
+
     if (!plan || plan.verdict === 'no_data') {
       return '<span class="fb-arb-muted" title="No sold history matched this, so there is no honest number to negotiate against.">—</span>';
     }
@@ -3346,7 +3429,9 @@
       imageUrl: row.imageUrl,
       location: row.location,
       distanceMiles: row.distanceMiles,
-      buyPrice: row.localAsk,
+      // What the basket actually has to spend on it — sales tax included on a retail buy, or the
+      // budget would buy more than the money covers.
+      buyPrice: paidFor(row),
       quantity: 1,
       netProfit: row.netProfit || 0,
       maxBuyPrice: row.maxBuyPrice,

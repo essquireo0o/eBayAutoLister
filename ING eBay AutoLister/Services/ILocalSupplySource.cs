@@ -34,6 +34,17 @@ public interface ILocalSupplySource
     string AvailabilityNote { get; }
 
     /// <summary>
+    /// Whether the zip and radius on the search form mean anything to this source.
+    ///
+    /// False for the online ones (retail deal feeds ship nationwide), and a default rather than a
+    /// required member because every source that existed before one of those did is location-based
+    /// and shouldn't have to say so. What it buys is honesty in the UI: a scan that searched the
+    /// whole country must not be reported as "within 40 miles of 89101", and a seller with no local
+    /// supply at all must not be told to enter a zip code before they can look.
+    /// </summary>
+    bool IsLocationBased => true;
+
+    /// <summary>
     /// One user-initiated search. Implementations must not retry, schedule, or authenticate as a
     /// side effect: an expired session is reported (status <c>session_expired</c>), never silently
     /// re-established.
@@ -73,6 +84,6 @@ public sealed class LocalSupplySources(IEnumerable<ILocalSupplySource> sources)
     public List<LocalSupplySourceInfo> Describe() => All.Select(s => new LocalSupplySourceInfo
     {
         Id = s.Id, Label = s.Label, RequiresConnection = s.RequiresConnection,
-        Available = s.IsAvailable, Note = s.AvailabilityNote,
+        Available = s.IsAvailable, Note = s.AvailabilityNote, LocationBased = s.IsLocationBased,
     }).ToList();
 }

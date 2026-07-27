@@ -3613,3 +3613,151 @@ buying down the list can never be negative**.
 - **A basket built from a real local scan in the browser.** The endpoint is verified live with real
   request/response payloads; the rendering of the summary tiles, basket table, alternative cards and
   left-out list was verified as served assets, not by driving the UI against a live scan.
+
+---
+
+## Web Deal Scanner — retail/clearance arbitrage (autonomous session, 2026-07-27)
+
+### The money problem
+
+Every sourcing screen in this app assumed the seller has local supply. Local Deals searches
+Craigslist and Facebook Marketplace by zip and radius; Roll the Dice, the Auction Sniper and the
+Budget Optimizer all shop from what those found. That works right up until the seller's own city
+has nothing — which, verified live this session, is most searches: a `dyson v11` scan of Las Vegas
+craigslist within 40 miles returned **0 listings**.
+
+The supply exists; it just isn't local. Slickdeals, DealNews and TechBargains publish what is
+discounted at Amazon, Walmart, Best Buy, Costco and Woot right now, as public RSS — no account, no
+key, no browser. The same `dyson v11` scan against those feeds returned **21 buyable deals**, at
+prices set by a clearance shelf rather than by what the item still fetches used. That gap is the
+whole trade, and nothing in this app could see it.
+
+### What was built
+
+`DealFeedService` — a fourth `ILocalSupplySource`, ticked on in the same picker, ranked in the same
+table, priced by the same sold-comps → `ProfitCalculator` → `FeeProfile` stack. **Nothing
+downstream changed**: grouping, comp lookups, the profit maths, `LocalSupplyMerger.TakeBalanced`,
+`Rank`, the Deal Pipeline and the Budget Optimizer were already written against
+`LocalSupplyListing`, so retail supply arrives as one more source and lands in one ranked list
+beside the Craigslist rows. That is the payoff of the pluggable design, collected.
+
+Six feeds, in `DealFeedCatalog` — the only file to edit when one moves:
+
+| Feed | What it contributes |
+|---|---|
+| Slickdeals search | The only feed that honours `?q=` server-side — the seller's actual words |
+| Slickdeals front page | The community's own filter: deals voted up enough to be promoted |
+| Slickdeals clearance & closeout | End-of-line stock priced below what it still fetches used |
+| DealNews today's deals | Editorially curated, and the only feed with **structured** price/retailer/deal-type |
+| DealNews electronics | Depth where resale value concentrates |
+| TechBargains | The deepest feed (hundreds live) and the most clearance-heavy |
+
+### The two things retail costs that a cash pickup doesn't
+
+Both are priced in, because leaving either out makes every row on the board flattering:
+
+- **Sales tax.** `RetailBuyCosts`. A $200 clearance item at 7.5% costs $215, and on a flip netting
+  $60 that tax is a quarter of the margin — worst exactly on the rows nearest break-even, which are
+  the rows a verdict flips on. Cost basis, ROI and the verdict are all computed from the all-in
+  figure. Deliberately **not** on `FeeProfile`: everything there applies to every item regardless of
+  origin, and putting tax there would quietly start charging it on Craigslist cash buys too. The
+  rate is the seller's, sent with the scan and remembered by the browser like the zip and radius.
+  It defaults to 7.5% rather than 0, because 0 is a rate nobody actually pays.
+- **Nobody to haggle with.** Retail rows carry **no** negotiation plan and contribute **nothing** to
+  the board's `negotiationUpside` — money that cannot be won must not appear as money. What they get
+  instead is `MaxBuyPrice`, corrected for tax: net profit falls `(1 + rate)` dollars per sticker
+  dollar, so the untaxed `ask + profit` identity would name a shelf price at which the seller
+  actually loses money.
+
+`ILocalSupplySource.IsLocationBased` (a **default** member, so no existing source was edited) stops
+the UI promising "within 40 miles of 89101" for a scan that searched the whole country.
+
+### The parser's real job is refusal
+
+A deal feed is advertising. Most entries are not one buyable object and many dollar figures in them
+are not prices, so `DealFeedParser` drops anything it cannot read as "this item, for this amount" —
+a guessed cost basis reaches the seller as a confident, badged, ranked number that is simply false.
+
+Two of these were found **live, against the real feeds**, not imagined:
+
+- **"…Laptop $499.99 +$14.99 Shipping"** parsed to **$14.99**. A $500 laptop with a $15 cost basis
+  is a fabricated goldmine at the very top of the ranking — the one place a wrong number does the
+  most damage. Anything added to a price is now never read as the price.
+- **Posting conventions wrapped around the product** — `[Lightning Deal]`, a leading
+  `$19.99* | `, `Woot! App: $155.99 | `, a trailing `Bestbuy.com` or `at Woot!` — all reached
+  `ProductNormalizer` as part of the product identity, and a comp lookup for "Backpack at Amazon"
+  matches nothing.
+
+Also refused: gift cards, subscriptions, memberships, cruises, credit-card offers, "free w/
+purchase", and category sale roundups ("Up to 60% off Tools, from $9" — that $9 belongs to something
+unnamed). DealNews' own `dealType=sale` is trusted over any wording. A DealNews price of `0.00` is
+"not stated", never free — the same rule Craigslist's rendered `$0` gets, and for the same reason.
+**Refurbished and open-box are deliberately kept**: they are the best margins on the board.
+
+### Deliberate limits, and the honesty rules
+
+- **Never inflated.** Every ambiguity resolves toward a higher cost or no row at all.
+- **A feed that fails, fails alone.** Verified live: TechBargains rate-limited mid-scan and the
+  result came back `ok` with 21 real deals and one sentence naming the feed that didn't answer.
+- **Never dead-ends.** Per-feed errors, a scan budget that returns partial results, a block-page
+  detector for a challenge served with HTTP 200 (which parses to zero deals and would otherwise
+  read as "nothing is on sale"), and a bounded read so a feed cannot exhaust memory.
+- **No crawling.** One GET per feed per click, for the seller's own query, against the feeds these
+  sites publish for the purpose. Nothing scheduled, nothing stored, no account, no key, no retries.
+- **The same deal is not counted three times.** These aggregators repost each other, and the
+  per-source id dedupe can't see it — one Amazon price is a Slickdeals thread, a DealNews page and a
+  direct Amazon link, with three different ids.
+- **A feed that searched is trusted; a firehose is not.** Slickdeals' server-side results get the
+  same lenient treatment Craigslist's do (`FilterByRelevance`, which falls back rather than report a
+  false empty); browse feeds must match every real word of the query, because there the input is
+  hundreds of deals nobody asked about.
+- **Nothing is bought.** The screen answers with a ranked list and a link.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/DealFeedCatalog.cs` | **New** — the six feed URLs and nothing else. The one file to edit when a feed moves |
+| `Services/DealFeedSelectors.cs` | **New** — every pattern, isolated for tuning: price vs. saving vs. shipping vs. "was", junk phrases, title conventions, block phrases |
+| `Services/DealFeedParser.cs` | **New** — RSS across three dialects, price/retailer/coupon/image reading, junk refusal, query matching, cross-feed dedupe. Pure |
+| `Services/DealFeedService.cs` | **New** — the `ILocalSupplySource`: six GETs, per-feed failure isolation, scan budget, bounded reads |
+| `Services/RetailBuyCosts.cs` | **New** — sales tax, all-in cost, and the tax-corrected break-even sticker price |
+| `Services/ILocalSupplySource.cs` | `IsLocationBased` default member + carried into `Describe()` |
+| `Models/LocalSupplyModels.cs` | `IsRetail`, `Retailer`, `FreeShipping`, `CouponCode`, `LocationBased` |
+| `Models/LocalArbitrageModels.cs` | `IsRetail`, `Retailer`, `FreeShipping`, `CouponCode`, `SalesTax`, `BuyCostAllIn` |
+| `Services/LocalArbitrageAnalyzer.cs` | Retail branch: tax into the cost basis, tax-corrected `MaxBuyPrice`, no negotiation plan |
+| `Program.cs` | DI registration + `salesTax` on `/api/local/arbitrage`, threaded to `analyzer.Build` |
+| `wwwroot/index.html` | Panel retitled, sales-tax field (shown only when a retail source is ticked), `Deal` / `You pay` headers. `app.js?v=58`, `style.css?v=49` |
+| `wwwroot/app.js` | `scopeTextFor`, `isRetailSource`, `buyCostCell`, `paidFor`, retail branch in `offerCell`, retail meta (store / list price / ships free / coupon code), all-in cost into the budget basket and the tracked deal |
+| `wwwroot/style.css` | `.local-badge-dealfeeds`, `.retail-tax`, `.retail-code`, `.retail-tax-row` |
+| `ING eBay AutoLister.Tests/DealFeedParserTests.cs` | **New** — 43 tests, mostly pinning refusal |
+| `ING eBay AutoLister.Tests/RetailArbitrageTests.cs` | **New** — 21 tests on the retail money rules |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` | **Succeeded** — 0 errors (2 pre-existing `NU1903` warnings) |
+| `dotnet test` | **1,332 passed**, 0 failed, 0 skipped (1,258 pre-existing + 74 new) |
+| `node --check app.js` | Syntax OK |
+| Live `GET /api/local/sources` (dev port 9351) | `dealfeeds` present, `available=true`, `locationBased=false` |
+| Live `GET /api/local/search?q=laptop&sources=dealfeeds` | `status=ok`, 12 deals, $19.99–$1,449.99, stores named (Amazon, Woot, Best Buy, Costco, Staples, Lenovo) |
+| Live mixed scan `craigslist,dealfeeds` for `dyson v11` | craigslist **0**, dealfeeds **21** — the case the feature exists for |
+| Live partial failure | TechBargains rate-limited → `status=ok`, 21 results kept, one sentence naming the feed |
+| Live `GET /api/local/arbitrage?...&salesTax=8.25` | Tax applied to the cent ($56.96 + $4.70 = $61.66), ROI on the all-in, `maxBuyPrice=118.79` (vs. $123.89 untaxed), `negotiation=null` and `negotiableCount=0` on every retail row |
+| Live thin-evidence gating | A 108% ROI / $66.93 row badged **thin**, not goldmine, on 1 sold comp — the min-comp gate holding |
+| Served assets | `buyCostCell`, `scopeTextFor`, `retail — no haggling`, `.local-badge-dealfeeds`, `retail-tax-input` all present at `v=58` / `v=49` |
+
+### Not verified
+
+- **The rendered board in a browser.** The endpoint is verified live with real request/response
+  payloads and the assets were verified as served, but the retail row (tax line, store, coupon
+  chip, "retail — no haggling" cell) was not driven in the UI against a live scan.
+- **A retail deal carried through to a tracked deal or a budget basket.** The all-in cost is wired
+  into both and covered by unit tests, but no retail row was tracked onto the pipeline or put
+  through the knapsack from a live scan.
+- **Comp-match quality on long retail titles.** Live scans showed the existing `ComparableMatcher`
+  pricing a $500 laptop against a $35.99 comp and a $269.99 Dyson V8 against $83.75 — pre-existing
+  behaviour shared with every other board, and it errs **conservative** (those rows came back
+  `pass` / `no_data`, zero goldmines, zero claimed profit), so it understates rather than inflates.
+  Long, spec-heavy retail titles hit it harder than short classifieds titles do; worth its own pass.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=48" />
+  <link rel="stylesheet" href="style.css?v=49" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -1042,13 +1042,14 @@
             </div>
           </div>
 
-          <!-- Local sourcing: what's for sale near the seller right now, across every site they
-               pick. Craigslist needs no login at all (public search + RSS, see CraigslistService);
-               Facebook needs a one-time login to their own account because it publishes no search
-               API (FacebookMarketplaceService). Both arrive as the same LocalSupplyListing. -->
+          <!-- Sourcing: what can be bought under resale value right now, across every place the
+               seller ticks. Craigslist needs no login at all (public search + RSS, see
+               CraigslistService); the retail deal feeds need none either (public RSS, see
+               DealFeedService); Facebook needs a one-time login to their own account because it
+               publishes no search API. All three arrive as the same LocalSupplyListing. -->
           <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Local Deals — Craigslist &amp; Facebook Marketplace</h3>
-            <p class="opp-hint">Search local classifieds near you by zip code and radius, then compare what locals are asking against real eBay sold prices. Buy local, list on eBay. <strong>Craigslist needs no login.</strong></p>
+            <h3 class="opp-supplier-heading">📍 Deal Scanner — Craigslist, Facebook Marketplace &amp; retail deal feeds</h3>
+            <p class="opp-hint">Search local classifieds near you <em>and</em> what's on clearance nationwide (Slickdeals, DealNews, TechBargains), then compare every asking price against real eBay sold prices. Buy cheap, list on eBay. <strong>Only Facebook needs a login.</strong></p>
 
             <!-- Source picker, rendered from /api/local/sources so a new source appears here
                  without touching this markup. -->
@@ -1107,6 +1108,16 @@
               <span class="cl-site-hint">Only needed if the auto-picked board is the wrong metro.</span>
             </div>
 
+            <!-- Retail buys are taxed and private-party buys aren't. Shown only while a retail
+                 source is ticked, because it changes nothing on a Craigslist scan. Defaulting to a
+                 middle-of-the-road US rate rather than zero: zero is a rate nobody pays, and it
+                 would overstate every retail row on the board. See Services/RetailBuyCosts.cs. -->
+            <div id="retail-tax-row" class="retail-tax-row hidden">
+              <label for="retail-tax-input">Your sales tax</label>
+              <input id="retail-tax-input" type="number" min="0" max="15" step="0.25" value="7.5" />
+              <span class="retail-tax-hint">% — charged on retail buys, so profit is what you'd actually keep. Set 0 if your state has none.</span>
+            </div>
+
             <div id="fb-status" class="mr-status"></div>
             <div id="local-source-status" class="local-source-status"></div>
 
@@ -1142,9 +1153,11 @@
                   <thead>
                     <tr>
                       <th class="fb-arb-th-rank">#</th>
-                      <th>Local listing</th>
+                      <th>Deal</th>
                       <th>Source</th>
-                      <th class="num">Buy local</th>
+                      <!-- "You pay", not "Buy local": a retail row's figure includes the sales tax
+                           every profit number beside it was computed from. -->
+                      <th class="num">You pay</th>
                       <th class="num">Resell on eBay</th>
                       <th class="num">Fees</th>
                       <th class="num">Net profit</th>
@@ -3807,6 +3820,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=57"></script>
+  <script src="app.js?v=58"></script>
 </body>
 </html>
