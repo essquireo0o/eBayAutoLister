@@ -350,6 +350,7 @@
   async function init() {
     initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
     initOverlayMotion();      // before anything can open a modal, so the first close animates too
+    initVizTooltips();        // one delegated tooltip layer, so any chart drawn later opts in with an attribute
     initPhotoGrid();          // render 6 photo slots on page load, not just on modal open
     initPhotoEditorPaste();
     bindDashboard();
@@ -2870,50 +2871,63 @@
   }
 
   // ── Opportunity Finder insight cards ─────────────────────────────────────
-  function renderInsightList(elId, items, rowFn, emptyMsg) {
+  // The market-pulse cards. Each of these was a right-aligned column of numbers, which is a bar
+  // chart nobody drew: five percentages down a card are five separate reads, and the one thing the
+  // eye is good at — is this one twice that one? — was thrown away. One hue per card, because each
+  // card is a single series; the bar length is the whole story and colouring it by size as well
+  // would burn the only channel left on information already on screen.
+  function renderInsightBars(elId, rows, emptyMsg, note) {
     const el = $(elId);
     if (!el) return;
-    el.innerHTML = items.length
-      ? items.map(rowFn).join('')
-      : `<p class="opportunity-empty">${emptyMsg}</p>`;
+    el.innerHTML = rows.length ? vizRankBars(rows, { note }) : `<p class="opportunity-empty">${emptyMsg}</p>`;
   }
 
   async function loadHighSellThrough() {
     try {
       const data = await fetch('/api/insights/high-sell-through').then(r => r.json());
-      renderInsightList('insight-sell-through', data.items || [], it => `
-        <div class="opportunity-insight-row">
-          <span class="opportunity-insight-label">${esc(it.category)}</span>
-          <span class="opportunity-insight-value good">${it.sellThroughPercent}%</span>
-        </div>`,
-        'Not enough priced categories yet — run some Opportunity Finder searches to build this up.');
+      // Scaled 0–100, not to the best row on the board: sell-through is a rate, and stretching the
+      // top one to a full bar would make a 40% category look like everything sells.
+      renderInsightBars('insight-sell-through', (data.items || []).map(it => ({
+        label: it.category,
+        percent: it.sellThroughPercent,
+        valueText: `${it.sellThroughPercent}%`,
+        tone: 'solo',
+        tip: `${it.category}\n${it.sellThroughPercent}% of comparable listings sold rather than sat`,
+      })), 'Not enough priced categories yet — run some Opportunity Finder searches to build this up.',
+        'Bars run 0–100%: the share of listings in that category that sold rather than sat.');
     } catch { /* leave loading state — non-critical */ }
   }
 
   async function loadLowCompetition() {
     try {
       const data = await fetch('/api/insights/low-competition').then(r => r.json());
-      renderInsightList('insight-low-competition', data.items || [], it => `
-        <div class="opportunity-insight-row">
-          <span class="opportunity-insight-label">${esc(it.category)}</span>
-          <span class="opportunity-insight-value">${it.activeListings} listed · ${it.sellThroughPercent}% sell-through</span>
-        </div>`,
-        'Not enough priced categories yet — run some Opportunity Finder searches to build this up.');
+      const items = data.items || [];
+      // Here the bar IS the competition, so a short bar is the good news. Scaled to the busiest
+      // category on the card, because "few listings" only means anything next to "many".
+      const busiest = Math.max(1, ...items.map(it => it.activeListings || 0));
+      renderInsightBars('insight-low-competition', items.map(it => ({
+        label: it.category,
+        percent: ((it.activeListings || 0) / busiest) * 100,
+        valueText: `${it.activeListings} listed`,
+        tone: 'solo',
+        tip: `${it.category}\n${it.activeListings} active listings to compete with\n${it.sellThroughPercent}% sell-through`,
+      })), 'Not enough priced categories yet — run some Opportunity Finder searches to build this up.',
+        'Bar length is how many listings you would be up against — shorter is less competition.');
     } catch { /* leave loading state — non-critical */ }
   }
 
   async function loadPricingRecommendations() {
     try {
       const data = await fetch('/api/insights/pricing-recommendations').then(r => r.json());
-      renderInsightList('insight-pricing-recs', data.items || [], it => {
-        const cls = it.deltaPercent > 0 ? 'good' : 'bad';
-        const sign = it.deltaPercent > 0 ? '+' : '';
-        return `
-        <div class="opportunity-insight-row">
-          <a href="${esc(it.listingUrl)}" target="_blank" rel="noopener">${esc(it.title)}</a>
-          <span class="opportunity-insight-value ${cls}">$${it.currentPrice.toFixed(2)} → $${it.suggestedPrice.toFixed(2)} (${sign}${it.deltaPercent}%)</span>
-        </div>`;
-      }, 'No pricing gaps found yet in your active listings against cached market data.');
+      renderInsightBars('insight-pricing-recs', (data.items || []).map(it => ({
+        label: it.title,
+        href: it.listingUrl,
+        delta: it.deltaPercent,
+        deltaScale: 40,
+        valueText: `${it.deltaPercent > 0 ? '+' : ''}${it.deltaPercent}%`,
+        tip: `${it.title}\n$${it.currentPrice.toFixed(2)} → $${it.suggestedPrice.toFixed(2)}\n${it.deltaPercent > 0 ? 'Priced under' : 'Priced over'} what the market paid`,
+      })), 'No pricing gaps found yet in your active listings against cached market data.',
+        'Right of centre is room to raise the price; left of centre is a price the market is not paying.');
     } catch { /* leave loading state — non-critical */ }
   }
 
@@ -2933,12 +2947,16 @@
 
   function renderUnderpricedCard(items) {
     const top = items.filter(it => it.isUnderpriced).sort((a, b) => (b.profitPercent ?? 0) - (a.profitPercent ?? 0)).slice(0, 5);
-    renderInsightList('insight-underpriced', top, it => `
-      <div class="opportunity-insight-row">
-        <a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>
-        <span class="opportunity-insight-value good">+${it.profitPercent}%</span>
-      </div>`,
-      'No underpriced auctions in this search — try a broader keyword.');
+    const best = Math.max(1, ...top.map(it => it.profitPercent ?? 0));
+    renderInsightBars('insight-underpriced', top.map(it => ({
+      label: it.title,
+      href: it.url,
+      percent: ((it.profitPercent ?? 0) / best) * 100,
+      valueText: `+${it.profitPercent}%`,
+      tone: 'solo',
+      tip: `${it.title}\n+${it.profitPercent}% against what this normally sells for`,
+    })), 'No underpriced auctions in this search — try a broader keyword.',
+      'Bars are relative to the best find in this search, not to a fixed scale.');
   }
 
   function closeOpportunitySection() {
@@ -5207,6 +5225,7 @@
     $('er-results')?.classList.toggle('hidden', hasSales);
     $('er-stats')?.classList.toggle('hidden', !hasSales);
     $('er-chart-card')?.classList.toggle('hidden', !hasSales);
+    $('er-composition-card')?.classList.toggle('hidden', !hasSales);
     $('er-ledger-card')?.classList.toggle('hidden', !hasSales);
     $('er-honesty')?.classList.toggle('hidden', !hasSales);
 
@@ -5219,6 +5238,7 @@
 
     renderEarningsStats(s);
     renderEarningsChart();
+    renderEarningsComposition(s);
     renderEarningsLeaders();
     renderEarningsLedger();
 
@@ -5317,8 +5337,10 @@
         ? `M${x} ${top + h} L${x} ${top + r} Q${x} ${top} ${x + r} ${top} L${x + barW - r} ${top} Q${x + barW} ${top} ${x + barW} ${top + r} L${x + barW} ${top + h} Z`
         : `M${x} ${top} L${x} ${top + h - r} Q${x} ${top + h} ${x + r} ${top + h} L${x + barW - r} ${top + h} Q${x + barW} ${top + h} ${x + barW} ${top + h - r} L${x + barW} ${top} Z`;
 
-      const tip = `${m.label}: ${moneyExact(v)} net from ${m.sales} sale${m.sales === 1 ? '' : 's'}`
-        + (m.salesAwaitingCost ? ` (${m.salesAwaitingCost} still waiting on a cost)` : '');
+      // Two lines: the month, then the money. The shared chart tooltip renders the first line as
+      // its title, which is what makes every tooltip in the app read the same way.
+      const tip = `${m.label}\n${moneyExact(v)} net from ${m.sales} sale${m.sales === 1 ? '' : 's'}`
+        + (m.salesAwaitingCost ? `\n${m.salesAwaitingCost} more still waiting on a cost` : '');
 
       // Only the peak is directly labelled. A value on every column is noise, and the tooltip and
       // the table view carry the rest.
@@ -5326,8 +5348,9 @@
         ? `<text x="${(x + barW / 2).toFixed(1)}" y="${(y(v) - 8).toFixed(1)}" class="er-bar-label">${money(v)}</text>`
         : '';
 
-      return `<g class="er-bar-group"><title>${esc(tip)}</title>
-        <rect x="${(padL + i * band).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}" class="er-bar-hit" />
+      return `<g class="er-bar-group viz-band" tabindex="0" role="img"
+          aria-label="${esc(tip.replaceAll('\n', '. '))}" data-viz-tip="${esc(tip)}">
+        <rect x="${(padL + i * band).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}" class="er-bar-hit viz-hit" />
         <path d="${path}" class="${cls}" />${label}
         <text x="${(x + barW / 2).toFixed(1)}" y="${H - 26}" class="er-axis er-axis-x">${esc(m.label.split(' ')[0])}</text>
         <text x="${(x + barW / 2).toFixed(1)}" y="${H - 14}" class="er-axis er-axis-x er-axis-year">${esc(m.label.split(' ')[1] || '')}</text>
@@ -5353,6 +5376,64 @@
           <td class="num">${m.salesAwaitingCost || 0}</td>
         </tr>`).join('')}</tbody>
       </table>`;
+  }
+
+  // Where every dollar taken in ended up. The stat tiles report gross, fees, cost and net as six
+  // separate figures; this is the one relationship between them, which is the only thing a seller
+  // actually wants from those numbers — how much of what came in they kept.
+  //
+  // Two honesty rules govern it, and they are why this is not a two-line chart:
+  //
+  //   * Net profit only counts sales whose cost is known. So gross minus fees, shipping and cost
+  //     of goods does NOT equal net on a real account — the difference is proceeds sitting behind
+  //     a missing cost. That difference is drawn, in grey, as its own segment. Silently folding it
+  //     into profit is exactly the lie this whole screen exists not to tell.
+  //   * A loss cannot be a share of revenue. When costs came to more than everything taken in,
+  //     there is no whole to divide, and the card says that in a sentence rather than drawing a
+  //     bar whose parts sum past 100%.
+  function renderEarningsComposition(s) {
+    const host = $('er-composition');
+    const sub = $('er-composition-sub');
+    if (!host) return;
+
+    const gross    = Number(s.grossRevenueAllTime) || 0;
+    const fees     = Math.max(0, Number(s.feesAllTime) || 0);
+    const shipping = Math.max(0, Number(s.shippingCostAllTime) || 0);
+    const cogs     = Math.max(0, Number(s.costOfGoodsAllTime) || 0);
+    const net      = Number(s.netProfitAllTime) || 0;
+
+    if (gross <= 0 || net < 0) {
+      host.innerHTML = '';
+      if (sub) {
+        sub.textContent = net < 0
+          ? 'Costs came to more than everything taken in, so there is no share of revenue to break down yet. The chart above shows which months that happened in.'
+          : 'Nothing has come in yet, so there is nothing to break down.';
+      }
+      return;
+    }
+
+    // Whatever the four measured parts do not account for. On an account where every sale has a
+    // cost this rounds to nothing and the segment never renders.
+    const unaccounted = Math.max(0, gross - fees - shipping - cogs - net);
+    const kept = (net / gross) * 100;
+
+    const segments = [
+      { name: 'What you paid for it', value: cogs, slot: 1, tip: 'The landed cost of the goods that sold' },
+      { name: 'eBay fees', value: fees, slot: 2, tip: s.profitFromEstimatedFees ? 'Part measured from eBay, part estimated from your fee settings' : "eBay's own figures" },
+      { name: 'Shipping you paid', value: shipping, slot: 3, tip: 'What it cost you to send it, not what the buyer paid' },
+      { name: 'Waiting on a cost', value: unaccounted, slot: 'none', tip: 'Proceeds from sales with no cost recorded — this is not profit until you enter what you paid' },
+      { name: 'Net profit, kept', value: net, slot: 4, tip: 'What was left after every cost above' },
+    ].filter(seg => seg.value > 0);
+
+    host.innerHTML = vizStack(segments, { total: gross });
+    vizFitSegmentLabels(host);
+
+    if (sub) {
+      sub.textContent = `Of ${moneyExact(gross)} taken in, you kept ${moneyExact(net)} — ${kept.toFixed(1)}¢ of every dollar.`
+        + (unaccounted > 0
+          ? ` ${moneyExact(unaccounted)} is still waiting on a cost and is not counted as profit.`
+          : '');
+    }
   }
 
   // Round tick values so the axis reads 0 / 500 / 1,000 rather than 0 / 487 / 974.
@@ -6770,6 +6851,7 @@
     on('tr-scan-again', 'click', () => runTrendScan({ nextSeed: true }));
     on('tr-close', 'click', closeTrendsSection);
     on('tr-home', 'click', goHome);
+    on('tr-pulse-table-toggle', 'click', () => toggleDisclosure('tr-pulse-table', 'tr-pulse-table-toggle', 'Show as table', 'Hide table'));
     // Direction is a pure view over the scan in hand when we already have everything; it only
     // re-runs when the previous scan was narrowed server-side and the seller now wants it all.
     on('tr-direction', 'change', () => {
@@ -6812,6 +6894,7 @@
     } catch (err) {
       trendScan = null;
       $('tr-summary')?.classList.add('hidden');
+      $('tr-pulse')?.classList.add('hidden');
       $('tr-corpus')?.classList.add('hidden');
       $('tr-warning')?.classList.add('hidden');
       $('tr-more-bar')?.classList.add('hidden');
@@ -6826,6 +6909,7 @@
   function renderTrendScan() {
     if (trendScan.status === 'error') {
       $('tr-summary')?.classList.add('hidden');
+      $('tr-pulse')?.classList.add('hidden');
       $('tr-corpus')?.classList.add('hidden');
       $('tr-more-bar')?.classList.add('hidden');
       $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(trendScan.error || 'The scan failed.')}</p>`;
@@ -6847,6 +6931,7 @@
     // out with zeroed tiles would read as "we looked and found nothing" rather than "we couldn't look".
     if (trendScan.status !== 'ok') {
       $('tr-summary')?.classList.add('hidden');
+      $('tr-pulse')?.classList.add('hidden');
       $('tr-results').innerHTML = '<p class="opportunity-empty">Nothing can be read as a trend until the sold-comps data above is sorted out.</p>';
       renderTrendMoreBar();
       setTrendStatus('');
@@ -6854,6 +6939,7 @@
     }
 
     renderTrendSummary();
+    renderTrendPulse();
     renderTrendRows();
     renderTrendMoreBar();
 
@@ -6927,6 +7013,133 @@
         <div class="inv-tile-sub">${esc(t.sub)}</div>
       </div>`).join('');
     el.classList.remove('hidden');
+  }
+
+  // ── Market pulse ──────────────────────────────────────────────────────────
+  // One column per measured product, drawn from a shared zero line: above it the price rose,
+  // below it the price fell. Position carries the sign before colour does, which is what makes
+  // this readable to a reader who cannot tell the green from the red.
+  //
+  // The tiles above report "3 climbing of 21". That sentence is true of a board where everything
+  // crept up 2% and one thing fell off a cliff, and of a board where three things doubled and the
+  // rest did nothing — and a sourcer should behave completely differently in those two markets.
+  // This is the shape those numbers were hiding.
+  const TREND_PULSE_MAX_COLUMNS = 60;
+
+  function renderTrendPulse() {
+    const panel = $('tr-pulse');
+    const host = $('tr-pulse-chart');
+    const sub = $('tr-pulse-sub');
+    if (!panel || !host) return;
+
+    const measured = (trendScan.rows || [])
+      .map(r => ({ row: r, pct: Number(r.trend?.priceChangePercent) }))
+      .filter(m => Number.isFinite(m.pct))
+      .sort((a, b) => b.pct - a.pct);
+
+    // Two columns cannot show a distribution; the tiles above already say what happened.
+    if (measured.length < 3) {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    // On a very wide sweep the columns would be sub-pixel hairlines, which is a texture rather than
+    // a chart. The biggest movers in each direction are what the shape is about, so the tail is
+    // dropped and said out loud rather than drawn at a width nobody can hover.
+    const dropped = Math.max(0, measured.length - TREND_PULSE_MAX_COLUMNS);
+    const shown = dropped
+      ? [...measured].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+          .slice(0, TREND_PULSE_MAX_COLUMNS).sort((a, b) => b.pct - a.pct)
+      : measured;
+
+    const W = 940, H = 210;
+    const padL = 54, padR = 18, padT = 22, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    const values = shown.map(m => m.pct);
+    const maxV = Math.max(0, ...values);
+    const minV = Math.min(0, ...values);
+    const span = (maxV - minV) || 1;
+    const y = v => padT + plotH - ((v - minV) / span) * plotH;
+    const zeroY = y(0);
+
+    // niceTicks rounds outward, so it can hand back a tick above the tallest column — which would
+    // be drawn off the top of the plot and clipped to half a label. Only ticks the chart actually
+    // spans are drawn; the axis is allowed to stop below the peak.
+    const ticks = niceTicks(minV, maxV, 4).filter(t => t >= minV && t <= maxV);
+    const grid = ticks.map(t => `
+      <line x1="${padL}" y1="${y(t).toFixed(1)}" x2="${W - padR}" y2="${y(t).toFixed(1)}" class="viz-grid" />
+      <text x="${padL - 10}" y="${(y(t) + 4).toFixed(1)}" class="viz-axis viz-axis-y">${t > 0 ? '+' : ''}${Number.isInteger(t) ? t : t.toFixed(1)}%</text>`).join('');
+
+    const band = plotW / shown.length;
+    const barW = Math.max(2, Math.min(18, band - 2));   // capped; the leftover band stays as air
+
+    const best = values[0], worst = values[values.length - 1];
+    const columns = shown.map((m, i) => {
+      const v = m.pct;
+      const r = m.row;
+      const x = padL + i * band + (band - barW) / 2;
+      const top = v >= 0 ? y(v) : zeroY;
+      const h = Math.max(v === 0 ? 0 : 1.5, Math.abs(y(v) - zeroY));
+      const rad = Math.min(3, barW / 2, h);
+      // 3px rounded data-end, square where it meets the zero line — rounding both ends turns a
+      // small move into a pill that reads as a shape rather than as a quantity.
+      const path = v >= 0
+        ? `M${x} ${top + h} L${x} ${top + rad} Q${x} ${top} ${x + rad} ${top} L${x + barW - rad} ${top} Q${x + barW} ${top} ${x + barW} ${top + rad} L${x + barW} ${top + h} Z`
+        : `M${x} ${top} L${x} ${top + h - rad} Q${x} ${top + h} ${x + rad} ${top + h} L${x + barW - rad} ${top + h} Q${x + barW} ${top + h} ${x + barW} ${top + h - rad} L${x + barW} ${top} Z`;
+
+      const sig = TREND_SIGNALS[r.trend?.signal] || TREND_SIGNALS.unreadable;
+      const tip = `${r.product}\n${v > 0 ? '+' : ''}${v.toFixed(1)}% median sold price\n`
+        + `${r.trend?.prior?.soldCount ?? 0} → ${r.trend?.recent?.soldCount ?? 0} sold · ${sig.label}`;
+
+      // Only the two ends are labelled. A percentage over every column is chaos and goes unread;
+      // the axis carries the middle and the table carries all of it.
+      const label = (v === best && v > 0) || (v === worst && v < 0)
+        ? `<text x="${(x + barW / 2).toFixed(1)}" y="${(v >= 0 ? y(v) - 7 : y(v) + 14).toFixed(1)}" class="viz-value-label">${v > 0 ? '+' : ''}${v.toFixed(0)}%</text>`
+        : '';
+
+      // The tooltip hangs off the group, not off the hit rect. The column paints on top of its own
+      // hit rect, so a reader hovering the actual bar — the obvious thing to do — would otherwise
+      // land on an element with no tooltip on it and get nothing.
+      return `<g class="viz-band" tabindex="0" role="img"
+          aria-label="${esc(tip.replaceAll('\n', '. '))}" data-viz-tip="${esc(tip)}">
+        <rect class="viz-hit" x="${(padL + i * band).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}" />
+        <path d="${path}" class="${v >= 0 ? 'tr-pulse-up' : 'tr-pulse-down'}" />${label}
+      </g>`;
+    }).join('');
+
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="viz-svg" role="img"
+        aria-label="Change in median sold price for each of ${shown.length} measured products. Use Show as table for the values.">
+      ${grid}
+      ${columns}
+      <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" class="viz-zero" />
+      <text x="${padL}" y="${H - 10}" class="viz-axis">Each column is one product · sorted by how far it moved</text>
+    </svg>`;
+
+    const rising = values.filter(v => v > 0).length;
+    if (sub) {
+      const w = trendScan.windowDays;
+      sub.textContent =
+        `${rising} of ${shown.length} products sold for more than they did a window ago. `
+        + `Median sold price, last ${w} days against the ${w} before`
+        + (dropped ? `, showing the ${TREND_PULSE_MAX_COLUMNS} biggest movers of ${measured.length} measured.` : '.');
+    }
+
+    const table = $('tr-pulse-table');
+    if (table) table.innerHTML = `
+      <table class="viz-table">
+        <thead><tr><th>Product</th><th>Category</th><th class="num">Price change</th><th class="num">Sold before</th><th class="num">Sold now</th><th>Signal</th></tr></thead>
+        <tbody>${measured.map(({ row: r, pct }) => `<tr>
+          <td><strong>${esc(r.product)}</strong></td>
+          <td>${esc(r.nicheLabel)}</td>
+          <td class="num"><strong>${pct > 0 ? '+' : ''}${pct.toFixed(1)}%</strong></td>
+          <td class="num">${r.trend?.prior?.soldCount ?? 0}</td>
+          <td class="num">${r.trend?.recent?.soldCount ?? 0}</td>
+          <td>${esc((TREND_SIGNALS[r.trend?.signal] || TREND_SIGNALS.unreadable).label)}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+
+    panel.classList.remove('hidden');
   }
 
   function renderTrendMoreBar() {
@@ -7020,7 +7233,7 @@
         <td class="tr-trend">
           <span class="tr-signal ${s.cls}">${esc(s.label)}</span>${tentative}
           ${trendSparkline(t)}
-          <div class="tr-sub">${esc(pctText)} median${t.slopePerMonth ? ` · ${Number(t.slopePerMonth) > 0 ? '+' : ''}${money(t.slopePerMonth)}/mo trend` : ''}</div>
+          <div class="tr-sub">${Number.isFinite(pct) ? `${vizDelta(pct, { scale: 25, label: `Median sold price ${pctText}` })} ` : ''}${esc(pctText)} median${t.slopePerMonth ? ` · ${Number(t.slopePerMonth) > 0 ? '+' : ''}${money(t.slopePerMonth)}/mo trend` : ''}</div>
         </td>
         <td class="num">
           <div class="tr-strong">${money(row.ebayExpectedSale ?? row.ebayMedian)}</div>
@@ -7051,43 +7264,44 @@
 
   // Weekly medians, oldest left. Weeks with no sale are gaps in the line rather than points on it —
   // joining straight through them would draw a steady seller out of an intermittent one.
+  //
+  // Drawn through the shared spark primitive so it carries the same marks as every other line in
+  // the app: a 2px stroke, a 10% wash under it, and one end dot ringed in the surface colour so it
+  // stays legible where it lands on the line. The intermediate dots this used to draw are gone —
+  // at 32px tall they were ink on top of the shape rather than points you could read — and each
+  // week now has a full-height hover band instead, which is a target a mouse can actually hit.
   function trendSparkline(trend) {
     const points = Array.isArray(trend?.series) ? trend.series : [];
     const priced = points.filter(p => p.soldCount > 0 && p.medianPrice > 0);
     if (priced.length < 2) return '<div class="tr-spark-empty">not enough weeks to draw</div>';
 
-    const w = 108, h = 28, pad = 2;
+    const w = 120, h = 32, pad = 4;
     const values = priced.map(p => Number(p.medianPrice));
     const min = Math.min(...values), max = Math.max(...values);
-    const span = max - min || 1;
+
+    const marks = points.map(p => ({
+      value: Number(p.medianPrice),
+      gap: !(p.soldCount > 0 && p.medianPrice > 0),
+    }));
+    const body = vizSparkPaths(marks, { w, h, pad });
+
     const step = points.length > 1 ? (w - pad * 2) / (points.length - 1) : 0;
+    const hits = points.map((p, i) => {
+      const weeks = p.weeksAgo === 0 ? 'This week' : `${p.weeksAgo} week${p.weeksAgo === 1 ? '' : 's'} ago`;
+      const tip = marks[i].gap
+        ? `${weeks}\nNo sales recorded`
+        : `${weeks}\n${money(p.medianPrice)} median · ${p.soldCount} sold`;
+      return `<rect class="viz-hit" x="${Math.max(0, pad + i * step - step / 2).toFixed(1)}" y="0"
+        width="${Math.max(4, step).toFixed(1)}" height="${h}" data-viz-tip="${esc(tip)}" />`;
+    }).join('');
 
-    const xy = p => {
-      const i = points.indexOf(p);
-      const x = pad + i * step;
-      const y = h - pad - ((Number(p.medianPrice) - min) / span) * (h - pad * 2);
-      return [x.toFixed(1), y.toFixed(1)];
-    };
-
-    // One polyline per unbroken run of weeks that had sales.
-    const runs = [];
-    let run = [];
-    points.forEach(p => {
-      if (p.soldCount > 0 && p.medianPrice > 0) run.push(p);
-      else { if (run.length) runs.push(run); run = []; }
-    });
-    if (run.length) runs.push(run);
-
-    const lines = runs.filter(r => r.length > 1)
-      .map(r => `<polyline points="${r.map(p => xy(p).join(',')).join(' ')}" />`).join('');
-    const dots = priced.map(p => { const [x, y] = xy(p); return `<circle cx="${x}" cy="${y}" r="1.6" />`; }).join('');
     // Coloured from the server's signal, not re-derived from first-vs-last here — the picture has
     // to agree with the badge sitting beside it. A supply squeeze drawn in "rising green" because
     // its newest week happened to be high is the picture arguing with the sentence.
-    const tone = (TREND_SIGNALS[trend.signal] || TREND_SIGNALS.unreadable).cls.replace('tr-s-', 'tr-spark-');
+    const tone = (TREND_SIGNALS[trend.signal] || TREND_SIGNALS.unreadable).cls.replace('tr-s-', 'viz-spark-');
 
-    return `<svg class="tr-spark ${tone}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img"
-      aria-label="Weekly median sold price, ${money(min)} to ${money(max)}">${lines}${dots}</svg>`;
+    return `<svg class="tr-spark viz-spark ${tone}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img"
+      aria-label="Weekly median sold price, ${money(min)} to ${money(max)}">${body}${hits}</svg>`;
   }
 
   // Hands the product straight to Local Deals — the radar says WHAT to buy, that screen finds WHERE.
@@ -8578,6 +8792,18 @@
     const confClass  = confidenceBadgeClass(it.confidenceLevel);
     const money = v => v != null ? `$${v.toFixed(2)}` : '—';
 
+    // Sell-through is the one number on this row that is a share of a whole, so it is the one that
+    // can be drawn. A row whose sell-through could not be verified gets the neutral tone rather
+    // than the confident green one — the bar must not look more certain than the badge above it.
+    const sellThroughMeter = it.sellThroughPercent == null ? '' : `<div class="opp-sth-meter">${vizMeter(it.sellThroughPercent, {
+      tone: it.sellThroughUnverified ? 'flat' : undefined,
+      valueText: '',
+      label: `Sell-through ${it.sellThroughPercent}%`,
+      tip: `Sell-through ${it.sellThroughPercent}%\n` + (it.sellThroughUnverified
+        ? 'Could not be verified — too few comparable sold and active listings to measure'
+        : 'Share of comparable listings that sold rather than sat'),
+    })}</div>`;
+
     const warnings = (it.warnings || []).map(w => `<li class="opp-warning">⚠ ${esc(w)}</li>`).join('');
     const reasons  = (it.scoreReasons || []).map(r => `<li class="opp-reason">✓ ${esc(r)}</li>`).join('');
     const disagreement = it.marketDataDisagreement
@@ -8603,6 +8829,7 @@
         <div class="opp-cost-line"><span>Recommended price</span><strong>${money(it.recommendedListingPrice)}</strong></div>
         <div class="opp-cost-line"><span>Net resale</span><strong>${it.estimatedResalePrice != null ? `$${it.estimatedResalePrice.toFixed(2)}` : '—'}</strong></div>
         <div class="opp-cost-line"><span>Sell-through</span><strong>${it.sellThroughPercent != null ? `${it.sellThroughPercent}%` : '—'}</strong></div>
+        ${sellThroughMeter}
         <div class="opp-cost-line"><span>ROI</span><strong>${it.roiPercent != null ? `${it.roiPercent}%` : '—'}</strong></div>
         <div class="opp-cost-line profit ${profitClass}"><span>Est. profit</span><strong>${profitPct}${profitAmount}</strong></div>
         ${verifiedTag}
@@ -15005,6 +15232,232 @@
     if (upper === 'LOCAL_EDIT') return 'status-chip local';
     if (!upper || upper === 'DRAFT') return 'status-chip review';
     return 'status-chip';
+  }
+
+  // ── Data visualisation primitives ─────────────────────────────────────────
+  //
+  // Five marks, one tooltip, one rule about colour. Every chart on every money
+  // screen is built from these rather than from its own inline SVG, so the
+  // profit chart, a sell-through meter and a trend sparkline are recognisably
+  // the same drawing hand. The palette and the mark specs live in style.css
+  // under "Data visualisation" — including why the brand teal could not be
+  // slot 1 without being nudged over the chroma floor first.
+  //
+  // Three rules hold across all of them:
+  //   * the value is never trapped in a tooltip — it is always in a direct
+  //     label, the legend, or the table twin under the chart as well;
+  //   * text never wears the data colour, only the mark beside it does;
+  //   * a hit target is the whole band, never the mark, and is keyboard
+  //     reachable wherever it carries something the eye cannot already read.
+
+  // A share of a whole, drawn as a track and a fill. Tone is by threshold, not
+  // by rank, so the same percentage is always the same colour — a meter that
+  // recolours because the rest of the list changed is telling the reader
+  // something that isn't true about this row.
+  function vizToneForPercent(pct, { good = 60, mid = 30 } = {}) {
+    if (!Number.isFinite(pct)) return 'flat';
+    if (pct >= good) return 'good';
+    if (pct >= mid) return 'mid';
+    return 'low';
+  }
+
+  function vizMeter(percent, { max = 100, tone, valueText, label, tip } = {}) {
+    const pct = Number(percent);
+    if (!Number.isFinite(pct)) return '';
+    const width = Math.max(0, Math.min(100, (pct / (max || 100)) * 100));
+    const cls = tone || vizToneForPercent(pct);
+    const text = valueText != null ? valueText : `${Math.round(pct)}%`;
+    return `<div class="viz-meter viz-tone-${cls}" role="img"
+      aria-label="${esc(label || `${text} of ${max}`)}"${tip ? ` data-viz-tip="${esc(tip)}"` : ''}>
+      <span class="viz-meter-track"><span class="viz-meter-fill" style="width:${width.toFixed(1)}%"></span></span>
+      ${valueText === '' ? '' : `<span class="viz-meter-value">${esc(text)}</span>`}
+    </div>`;
+  }
+
+  // A top-five list is a bar chart that was never drawn. Each row is
+  // { label, value, valueText, percent, tone, href, tip } — `percent` is the
+  // bar length, already resolved by the caller against whichever scale is
+  // honest for that card (0–100 for a rate, set-maximum for a count).
+  function vizRankBars(rows, { note } = {}) {
+    if (!rows.length) return '';
+    const body = rows.map(r => {
+      const cls = r.tone || 'solo';
+      const name = r.href
+        ? `<a href="${esc(r.href)}" target="_blank" rel="noopener">${esc(r.label)}</a>`
+        : esc(r.label);
+      // A signed row gets the diverging chip instead of a left-anchored bar: a bar that grows from
+      // the left cannot show a price that went DOWN, and these lists contain both.
+      const mark = r.delta != null
+        ? vizDelta(r.delta, { scale: r.deltaScale, label: `${r.label}, ${r.valueText}` })
+        : `<span class="viz-rank-track"><span class="viz-rank-bar" style="width:${Math.max(0, Math.min(100, Number(r.percent) || 0)).toFixed(1)}%"></span></span>`;
+      return `<div class="viz-rank-row viz-tone-${cls}"${r.tip ? ` data-viz-tip="${esc(r.tip)}"` : ''}>
+        <span class="viz-rank-label" title="${esc(r.label)}">${name}</span>
+        ${mark}
+        <span class="viz-rank-value">${esc(r.valueText)}</span>
+      </div>`;
+    }).join('');
+    return `<div class="viz-rank">${body}</div>${note ? `<p class="viz-rank-note">${esc(note)}</p>` : ''}`;
+  }
+
+  // A signed change, drawn out from a shared centre so "+8%" and "−8%" are the
+  // same length in opposite directions. `scale` is the value that fills half
+  // the chip; anything beyond it clamps rather than rescaling the row, because
+  // one runaway outlier must not flatten every other row on the board.
+  function vizDelta(percent, { scale = 30, label } = {}) {
+    const pct = Number(percent);
+    if (!Number.isFinite(pct)) return '';
+    const frac = Math.min(1, Math.abs(pct) / (scale || 30)) * 100;
+    const text = `${pct > 0 ? '+' : pct < 0 ? '−' : ''}${Math.abs(pct).toFixed(1)}%`;
+    return `<span class="viz-delta" role="img" aria-label="${esc(label || text)}">
+      <span class="viz-delta-neg" style="width:${pct < 0 ? frac.toFixed(1) : 0}%"></span>
+      <span class="viz-delta-pos" style="width:${pct > 0 ? frac.toFixed(1) : 0}%"></span>
+    </span>`;
+  }
+
+  // One whole broken into its parts, with a legend that carries every value —
+  // so the picture is the fast read and nothing is only in the picture.
+  // Segments are { name, value, slot, tip }; `slot` is a fixed categorical
+  // position (1-4) or 'none' for the grey unmeasured share.
+  function vizStack(segments, { total, formatter = moneyExact } = {}) {
+    const sum = total || segments.reduce((a, s) => a + Math.max(0, s.value || 0), 0);
+    if (!(sum > 0)) return '';
+
+    const share = v => (Math.max(0, v || 0) / sum) * 100;
+    const bar = segments.filter(s => share(s.value) > 0).map(s => `
+      <div class="viz-seg viz-seg-${esc(String(s.slot))}" style="flex:${share(s.value).toFixed(3)} 1 0"
+        data-viz-tip="${esc(`${s.name}\n${formatter(s.value)} · ${share(s.value).toFixed(1)}% of every dollar taken in${s.tip ? `\n${s.tip}` : ''}`)}">
+        <span class="viz-seg-label">${esc(formatter(s.value))}</span>
+      </div>`).join('');
+
+    const legend = segments.map(s => `
+      <span class="viz-legend-item">
+        <span class="viz-swatch viz-swatch-${esc(String(s.slot))}"></span>
+        <span class="viz-legend-name">${esc(s.name)}</span>
+        <span class="viz-legend-value">${esc(formatter(s.value))}</span>
+        <span class="viz-legend-share">${share(s.value).toFixed(1)}%</span>
+      </span>`).join('');
+
+    return `<div class="viz-stack">${bar}</div><div class="viz-legend">${legend}</div>`;
+  }
+
+  // A label inside a coloured segment is only drawn once the browser has
+  // confirmed it fits with padding on both sides. Measuring is the only way to
+  // know: a segment's width comes from its share and the card's width, neither
+  // of which is knowable when the HTML is built. A clipped "$1,2…" is worse
+  // than no label at all, and every value is in the legend regardless.
+  function vizFitSegmentLabels(host) {
+    if (!host) return;
+    const measure = () => host.querySelectorAll('.viz-seg').forEach(seg => {
+      const label = seg.querySelector('.viz-seg-label');
+      if (!label) return;
+      seg.classList.toggle('viz-fits', seg.clientWidth > 0 && label.scrollWidth + 16 <= seg.clientWidth);
+    });
+    measure();
+    // The card can be re-measured by a window resize or by the screen it lives
+    // on being opened for the first time, which is when its width stops being
+    // zero. One observer per host, replaced on re-render.
+    host._vizFitObserver?.disconnect();
+    if (typeof ResizeObserver === 'function') {
+      host._vizFitObserver = new ResizeObserver(measure);
+      host._vizFitObserver.observe(host);
+    }
+  }
+
+  // Gap-aware sparkline. Points are { x, value, gap } in order; a gapped point
+  // breaks the line rather than being interpolated through, because joining
+  // straight across a month with no data draws a steady series out of an
+  // intermittent one. Returns the inner SVG markup — the caller owns the
+  // <svg> element so it can size and tone it.
+  function vizSparkPaths(points, { w, h, pad = 3, area = true, endDot = true }) {
+    const live = points.filter(p => !p.gap && Number.isFinite(p.value));
+    if (live.length < 2) return '';
+
+    const values = live.map(p => p.value);
+    const min = Math.min(...values), max = Math.max(...values);
+    const span = (max - min) || 1;
+    const step = points.length > 1 ? (w - pad * 2) / (points.length - 1) : 0;
+    const xy = i => [pad + i * step, h - pad - ((points[i].value - min) / span) * (h - pad * 2)];
+
+    // One run per unbroken stretch of real readings.
+    const runs = [];
+    let run = [];
+    points.forEach((p, i) => {
+      if (!p.gap && Number.isFinite(p.value)) run.push(i);
+      else { if (run.length) runs.push(run); run = []; }
+    });
+    if (run.length) runs.push(run);
+
+    const drawn = runs.filter(r => r.length > 1);
+    const lines = drawn.map(r =>
+      `<polyline class="viz-spark-line" points="${r.map(i => xy(i).map(n => n.toFixed(1)).join(',')).join(' ')}" />`).join('');
+
+    const fills = area ? drawn.map(r => {
+      const pts = r.map(i => xy(i).map(n => n.toFixed(1)).join(' ')).join(' L');
+      const [x0] = xy(r[0]), [xN] = xy(r[r.length - 1]);
+      return `<path class="viz-spark-area" d="M${x0.toFixed(1)} ${(h - pad).toFixed(1)} L${pts} L${xN.toFixed(1)} ${(h - pad).toFixed(1)} Z" />`;
+    }).join('') : '';
+
+    const lastRun = drawn[drawn.length - 1];
+    const dot = endDot && lastRun
+      ? (([x, y]) => `<circle class="viz-spark-end" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" />`)(xy(lastRun[lastRun.length - 1]))
+      : '';
+
+    return `${fills}${lines}${dot}`;
+  }
+
+  // ── One tooltip for every chart ───────────────────────────────────────────
+  // Driven off data-viz-tip, so any mark — SVG or HTML — opts in with one
+  // attribute and gets the same styled, positioned, keyboard-reachable
+  // tooltip. Newlines in the attribute become lines; the first is the title.
+  let vizTipEl = null;
+
+  function initVizTooltips() {
+    if (vizTipEl) return;
+    vizTipEl = document.createElement('div');
+    vizTipEl.className = 'viz-tip';
+    vizTipEl.setAttribute('role', 'tooltip');
+    vizTipEl.hidden = true;
+    document.body.appendChild(vizTipEl);
+
+    document.addEventListener('pointerover', e => showVizTip(e.target?.closest?.('[data-viz-tip]')));
+    document.addEventListener('pointerout', e => { if (e.target?.closest?.('[data-viz-tip]')) hideVizTip(); });
+    // Keyboard raises exactly what hover raises. A value a mouse can reach and
+    // a caret cannot is a value that isn't really there.
+    document.addEventListener('focusin', e => showVizTip(e.target?.closest?.('[data-viz-tip]')));
+    document.addEventListener('focusout', hideVizTip);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') hideVizTip(); });
+    // Anchored to a rect that scrolling moves, so it is dismissed rather than
+    // left floating over unrelated content.
+    window.addEventListener('scroll', hideVizTip, true);
+  }
+
+  function showVizTip(target) {
+    if (!target || !vizTipEl) return;
+    const raw = target.getAttribute('data-viz-tip');
+    if (!raw) return;
+
+    const [title, ...rest] = raw.split('\n');
+    vizTipEl.innerHTML = `<span class="viz-tip-title">${esc(title)}</span>` +
+      rest.map(line => `<span class="viz-tip-line">${esc(line)}</span>`).join('');
+    vizTipEl.hidden = false;
+
+    const box = target.getBoundingClientRect();
+    const tip = vizTipEl.getBoundingClientRect();
+    const margin = 8;
+    let left = box.left + box.width / 2 - tip.width / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - tip.width - margin));
+    // Above the mark by default; below it when there is no room above, so the
+    // tooltip never covers the thing it is describing.
+    const above = box.top - tip.height - margin;
+    vizTipEl.style.left = `${Math.round(left)}px`;
+    vizTipEl.style.top = `${Math.round(above > margin ? above : box.bottom + margin)}px`;
+    vizTipEl.classList.add('is-open');
+  }
+
+  function hideVizTip() {
+    if (!vizTipEl) return;
+    vizTipEl.classList.remove('is-open');
+    vizTipEl.hidden = true;
   }
 
   function money(value) {

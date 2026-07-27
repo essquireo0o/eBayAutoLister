@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=59" />
+  <link rel="stylesheet" href="style.css?v=60" />
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -2277,6 +2277,25 @@
 
           <div id="tr-summary" class="inv-summary hidden"></div>
 
+          <!-- Market pulse. The table below answers "what should I buy"; this answers the question
+               that comes first and has never had an answer on this screen — is the market moving
+               at all, or is one product carrying the whole board? Every measured product is one
+               column, drawn from a shared zero line, so a board of small climbs and a board with
+               one outlier look nothing like each other. Deliberately on the dark surface: it is a
+               reading of the market rather than a list of things to do. -->
+          <div id="tr-pulse" class="viz-panel viz-dark hidden">
+            <div class="viz-panel-head">
+              <div>
+                <p class="eyebrow">Market pulse</p>
+                <h3>How every product this scan measured actually moved</h3>
+                <p id="tr-pulse-sub" class="viz-panel-sub"></p>
+              </div>
+              <button id="tr-pulse-table-toggle" class="btn btn-ghost small" type="button" aria-expanded="false">Show as table</button>
+            </div>
+            <div id="tr-pulse-chart"></div>
+            <div id="tr-pulse-table" class="hidden"></div>
+          </div>
+
           <div id="tr-results" class="inv-results">
             <div class="state">
               <div class="state-icon"><svg aria-hidden="true"><use href="#i-opportunity"/></svg></div>
@@ -2835,6 +2854,21 @@
             </div>
             <div id="er-chart" class="er-chart"></div>
             <div id="er-chart-table" class="er-chart-table hidden"></div>
+          </div>
+
+          <!-- Where the money actually went. The stat tiles above report gross, fees and net as
+               six separate figures, which leaves the seller to do the arithmetic that matters:
+               how much of every dollar taken in they kept. One bar answers it at a glance, and
+               the legend under it carries every value so nothing is only in the picture. -->
+          <div id="er-composition-card" class="viz-panel hidden">
+            <div class="viz-panel-head">
+              <div>
+                <p class="eyebrow">Where the money went</p>
+                <h3>Every dollar taken in, all time</h3>
+                <p id="er-composition-sub" class="viz-panel-sub"></p>
+              </div>
+            </div>
+            <div id="er-composition"></div>
           </div>
 
           <div class="er-columns">
@@ -4039,6 +4073,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=67"></script>
+  <script src="app.js?v=68"></script>
 </body>
 </html>

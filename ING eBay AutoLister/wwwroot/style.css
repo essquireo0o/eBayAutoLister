@@ -8516,27 +8516,16 @@ td.skeleton-cell { padding: 0 !important; }
   cursor: help;
 }
 
+/* Marks, tones and the gap logic now come from the shared .viz-spark component
+   at the bottom of this file — this only places it in the cell. The tone
+   classes are .viz-spark-up / -early / -squeeze / -down / -flat, still named
+   to match the signal badges above so the line and the label beside it can
+   never disagree about which way this product is going. */
 .tr-spark {
   display: block;
   margin: 6px 0 2px;
   overflow: visible;
 }
-
-.tr-spark polyline { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
-.tr-spark circle   { stroke: none; }
-
-/* One tone per signal, named to match the badge classes above, so the line and the
-   label beside it can never disagree about which way this product is going. */
-.tr-spark-up      polyline { stroke: var(--success); }
-.tr-spark-up      circle   { fill: var(--success); }
-.tr-spark-early   polyline { stroke: var(--gold-dark); }
-.tr-spark-early   circle   { fill: var(--gold-dark); }
-.tr-spark-squeeze polyline { stroke: var(--warning); }
-.tr-spark-squeeze circle   { fill: var(--warning); }
-.tr-spark-down    polyline { stroke: var(--danger); }
-.tr-spark-down    circle   { fill: var(--danger); }
-.tr-spark-flat    polyline { stroke: var(--line-strong); }
-.tr-spark-flat    circle   { fill: var(--line-strong); }
 
 .tr-spark-empty {
   margin: 6px 0 2px;
@@ -10689,4 +10678,531 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   .toast-life { display: none; }
   .btn-primary::before { display: none; }
   .stat-card.is-loading strong { background-image: none; animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Data visualisation
+   ═══════════════════════════════════════════════════════════════════════
+
+   Every chart in this app draws from the tokens in this block and nothing
+   else. Before it, each money screen invented its own greens and bar
+   widths, so the profit chart, the trend sparkline and the sell-through
+   number read as three products' worth of charting bolted together.
+
+   The colours below are NOT eyeballed. They were run through the
+   colour-blindness / lightness / chroma / contrast checks and adjusted
+   until every one passed, in both modes:
+
+     light (on #ffffff)   #00789c  #946d1f  #7f4c9e  #157a55
+     dark  (on --dark-1)  #2f9cbc  #b58c3c  #a274c6  #2fa878
+
+   Slot 4 is a step darker than the app's --success-600. It carries a white
+   value label inside the fill on the composition bar, and at --success-600
+   that label came out at 4.3:1 — under the 4.5 small-text line. Darkening
+   the fill fixes the label without moving the hue, and the palette still
+   passes every check at the new step.
+
+   The brand teal (--teal-600) was the first choice for slot 1 and FAILED:
+   at OKLCH C .075 it is under the .10 chroma floor, which means a reader
+   sees it as grey and the hue stops carrying identity at all. #00789c is
+   the same teal pushed just over the floor — close enough to sit beside
+   the brand, saturated enough to be a colour.
+
+   The categorical slots are assigned in fixed order and never cycled. A
+   fifth series does not get a generated fifth hue; it folds into the
+   neutral "not accounted for" slot or the view stops being a chart. */
+:root {
+  /* Chart chrome. Grid and axis are deliberately one step off the surface:
+     scaffolding, never ink that competes with the data. */
+  --viz-surface: var(--card);
+  --viz-grid: var(--line-soft);
+  --viz-axis: var(--line-strong);
+  --viz-label: var(--muted);
+  --viz-ink: var(--ink);
+  --viz-ink-2: var(--ink-2);
+  --viz-hover: var(--soft-2);
+
+  /* Categorical — fixed order, validated. */
+  --viz-1: #00789c;
+  --viz-2: #946d1f;
+  --viz-3: #7f4c9e;
+  --viz-4: #157a55;
+  /* The "no data" slot. Grey on purpose: an unmeasured share must not look
+     like a measured one, and grey is the only honest colour for it. */
+  --viz-none: #9aa8ac;
+  --viz-none-soft: #e4eaec;
+
+  /* One-series default, and the de-emphasis step history is drawn in. */
+  --viz-solo: #00789c;
+  --viz-solo-soft: #cfe6ee;
+
+  /* Polarity. These are status, not identity — they always ship beside a
+     word ("Rising demand", "+12.4%") and a position (above or below the
+     zero line), never as the only channel. */
+  --viz-up: var(--success-600);
+  --viz-up-soft: var(--success-line);
+  --viz-down: var(--danger-600);
+  --viz-down-soft: var(--danger-line);
+  --viz-flat: var(--muted);
+  --viz-flat-soft: var(--line);
+}
+
+/* Dark chart surfaces. Re-stepped from the same hues rather than flipped:
+   an automatic inversion puts a light-mode mid-tone on a near-black panel,
+   where it either glows or disappears. Applied by container so a chart
+   dropped into the hero or an overlay header is correct without the
+   caller knowing what it is sitting on. */
+.viz-dark,
+.hero-panel,
+.opportunity-overlay-header {
+  --viz-surface: var(--dark-1);
+  --viz-grid: rgba(246, 251, 251, .13);
+  --viz-axis: rgba(246, 251, 251, .30);
+  --viz-label: var(--on-dark-2);
+  --viz-ink: var(--on-dark);
+  --viz-ink-2: var(--on-dark-2);
+  --viz-hover: rgba(246, 251, 251, .08);
+
+  --viz-1: #2f9cbc;
+  --viz-2: #b58c3c;
+  --viz-3: #a274c6;
+  --viz-4: #2fa878;
+  --viz-none: #6c8288;
+  --viz-none-soft: rgba(246, 251, 251, .14);
+
+  --viz-solo: #2f9cbc;
+  --viz-solo-soft: rgba(47, 156, 188, .30);
+
+  --viz-up: #3fbd8b;
+  --viz-up-soft: rgba(63, 189, 139, .32);
+  --viz-down: #e0796a;
+  --viz-down-soft: rgba(224, 121, 106, .32);
+  --viz-flat: var(--on-dark-3);
+  --viz-flat-soft: rgba(246, 251, 251, .16);
+}
+
+/* ── The panel a chart lives in ──────────────────────────────────────── */
+.viz-panel {
+  position: relative;
+  margin-bottom: var(--s5);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  overflow: hidden;
+}
+
+/* The dark variant is the same panel wearing the product's own dark
+   surface — the gold hairline and the deep teal wash it uses everywhere
+   else, so a chart band reads as this app and not as an embed. */
+.viz-panel.viz-dark {
+  border-color: var(--dark-line);
+  background: var(--grad-brand-deep), var(--dark-1);
+  box-shadow: var(--e3);
+}
+
+.viz-panel.viz-dark::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: var(--grad-hairline);
+}
+
+.viz-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+.viz-panel-head h3 {
+  margin: var(--s1) 0 0;
+  font-size: var(--fs-lg);
+  color: var(--viz-ink);
+  letter-spacing: var(--tracking-snug);
+}
+
+.viz-panel-sub {
+  margin: var(--s2) 0 0;
+  max-width: 68ch;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--viz-ink-2);
+}
+
+.viz-panel.viz-dark .eyebrow { color: var(--gold-pale); }
+
+/* A ghost button on a dark panel needs its own steps — the light one
+   disappears against the teal. */
+.viz-panel.viz-dark .btn-ghost {
+  color: var(--on-dark-2);
+  border-color: var(--dark-line-strong);
+  background: rgba(246, 251, 251, .05);
+}
+
+.viz-panel.viz-dark .btn-ghost:hover {
+  color: var(--on-dark);
+  background: rgba(246, 251, 251, .12);
+}
+
+.viz-svg { display: block; width: 100%; height: auto; }
+
+/* ── Shared chart chrome ─────────────────────────────────────────────── */
+.viz-grid { stroke: var(--viz-grid); stroke-width: 1; }
+.viz-zero { stroke: var(--viz-axis); stroke-width: 1; }
+
+.viz-axis {
+  font-size: var(--fs-2xs);
+  fill: var(--viz-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-axis-y { text-anchor: end; }
+.viz-axis-x { text-anchor: middle; }
+
+/* Text never wears the data colour. The mark beside it carries identity;
+   a light categorical hue used as type is simply unreadable. */
+.viz-value-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  fill: var(--viz-ink);
+  text-anchor: middle;
+}
+
+/* The hit target is the whole band, never the 12px column — a thin mark
+   is far too small to land on, with a mouse or a caret. The band carries
+   the tooltip and the tab stop; the rect inside it is only the wash that
+   shows which band you are on, because the column paints over its own
+   rect and a hover on the column itself has to count. */
+.viz-hit { fill: transparent; cursor: default; }
+.viz-band:hover .viz-hit,
+.viz-band:focus-visible .viz-hit { fill: var(--viz-hover); }
+.viz-band { outline: none; }
+.viz-band:focus-visible .viz-hit { stroke: var(--gold); stroke-width: 2; }
+
+/* ── Meter — one share of one whole ──────────────────────────────────── */
+/* The unfilled track is a lighter step of the fill's own ramp, so the
+   state reads across the whole bar rather than only across the fill. */
+.viz-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+}
+
+.viz-meter-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  min-width: 40px;
+  border-radius: var(--r-pill);
+  background: var(--viz-flat-soft);
+  overflow: hidden;
+}
+
+.viz-meter-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--viz-flat);
+  transition: width var(--dur-2) var(--ease-out);
+}
+
+.viz-meter-value {
+  flex-shrink: 0;
+  min-width: 3.2em;
+  text-align: right;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--viz-ink-2);
+}
+
+.viz-tone-good .viz-meter-track { background: var(--success-line); }
+.viz-tone-good .viz-meter-fill  { background: var(--success-600); }
+.viz-tone-mid  .viz-meter-track { background: var(--warning-line); }
+.viz-tone-mid  .viz-meter-fill  { background: var(--warning-600); }
+.viz-tone-low  .viz-meter-track { background: var(--danger-line); }
+.viz-tone-low  .viz-meter-fill  { background: var(--danger-600); }
+.viz-tone-solo .viz-meter-track { background: var(--viz-solo-soft); }
+.viz-tone-solo .viz-meter-fill  { background: var(--viz-solo); }
+
+/* ── Ranked bars — the shape a top-five list should have been ────────── */
+.viz-rank { display: flex; flex-direction: column; gap: 2px; }
+
+.viz-rank-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px auto;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s2);
+  border-radius: var(--r-sm);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.viz-rank-row:hover { background: var(--viz-hover); }
+
+.viz-rank-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--viz-ink);
+}
+
+.viz-rank-label a { color: inherit; text-decoration: none; }
+.viz-rank-label a:hover { text-decoration: underline; }
+
+.viz-rank-track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--viz-flat-soft);
+  overflow: hidden;
+}
+
+/* Grows from a single baseline at the left; the rounded end is the data
+   end, and the end at the baseline stays square. */
+.viz-rank-bar {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-top-right-radius: var(--r-pill);
+  border-bottom-right-radius: var(--r-pill);
+  background: var(--viz-solo);
+}
+
+.viz-tone-good .viz-rank-track { background: var(--success-line); }
+.viz-tone-good .viz-rank-bar   { background: var(--success-600); }
+.viz-tone-mid  .viz-rank-track { background: var(--warning-line); }
+.viz-tone-mid  .viz-rank-bar   { background: var(--warning-600); }
+.viz-tone-low  .viz-rank-track { background: var(--danger-line); }
+.viz-tone-low  .viz-rank-bar   { background: var(--danger-600); }
+
+.viz-rank-value {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--viz-ink-2);
+  white-space: nowrap;
+}
+
+.viz-rank-note {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-normal);
+  color: var(--muted);
+}
+
+/* ── Diverging chip — a signed change, drawn from a shared centre ────── */
+/* Two half-tracks meeting at a centre rule: a "+8%" and a "−8%" are the
+   same length in opposite directions, which is the only way the eye can
+   compare them. A single left-anchored bar cannot show sign at all. */
+.viz-delta {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  width: 72px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--viz-flat-soft);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.viz-delta-neg { justify-self: end; height: 100%; background: var(--viz-down); border-radius: var(--r-pill) 0 0 var(--r-pill); }
+.viz-delta-pos { justify-self: start; height: 100%; background: var(--viz-up); border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+
+/* ── Composition bar — where one whole was spent ─────────────────────── */
+.viz-stack {
+  display: flex;
+  width: 100%;
+  height: 34px;
+  /* White does the separating. A stroke around each segment would add ink
+     that isn't data; a 2px gap in the surface colour separates two
+     neighbouring steps just as well and stays quiet. */
+  gap: 2px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.viz-seg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 3px;
+  padding: 0 var(--s2);
+  overflow: hidden;
+  cursor: default;
+}
+
+.viz-seg:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.viz-seg:last-child  { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+
+.viz-seg-1 { background: var(--viz-1); }
+.viz-seg-2 { background: var(--viz-2); }
+.viz-seg-3 { background: var(--viz-3); }
+.viz-seg-4 { background: var(--viz-4); }
+.viz-seg-none { background: var(--viz-none); }
+
+/* An in-segment label is rendered only when JS has measured that it fits
+   with padding on both sides — a clipped "$1,2…" is worse than no label,
+   and the legend below carries every value anyway. */
+.viz-seg-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: #fff;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.viz-seg.viz-fits .viz-seg-label { opacity: 1; }
+
+/* A label set inside a filled mark is the one place text does sit on the
+   data colour, so it picks white or ink by the fill's own luminance rather
+   than always being white. The grey "not measured" slot is light enough
+   that white on it lands at 2.5:1 — unreadable, and on the one segment a
+   seller most needs to notice. */
+.viz-seg-none .viz-seg-label { color: var(--ink); }
+.viz-dark .viz-seg-label { color: var(--dark-0); }
+
+.viz-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s6);
+  margin-top: var(--s4);
+}
+
+.viz-legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--fs-sm);
+}
+
+.viz-swatch {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  transform: translateY(1px);
+}
+
+.viz-swatch-1 { background: var(--viz-1); }
+.viz-swatch-2 { background: var(--viz-2); }
+.viz-swatch-3 { background: var(--viz-3); }
+.viz-swatch-4 { background: var(--viz-4); }
+.viz-swatch-none { background: var(--viz-none); }
+
+.viz-legend-name  { color: var(--viz-ink-2); }
+.viz-legend-value { font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; color: var(--viz-ink); }
+.viz-legend-share { font-size: var(--fs-2xs); color: var(--viz-label); font-variant-numeric: tabular-nums; }
+
+/* ── Sparkline ───────────────────────────────────────────────────────── */
+.viz-spark { display: block; overflow: visible; }
+.viz-spark-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke: var(--viz-solo);
+}
+
+/* A wash, never a saturated block — it says "under the line", it is not a
+   second thing to read. */
+.viz-spark-area { fill: var(--viz-solo); opacity: .10; stroke: none; }
+
+/* The end dot carries a ring in the surface colour so it stays legible
+   where it crosses the line or another point. */
+.viz-spark-end {
+  fill: var(--viz-solo);
+  stroke: var(--viz-surface);
+  stroke-width: 2;
+}
+
+.viz-spark-up      { --viz-solo: var(--success-600); }
+.viz-spark-early   { --viz-solo: var(--gold-dark); }
+.viz-spark-squeeze { --viz-solo: var(--warning-600); }
+.viz-spark-down    { --viz-solo: var(--danger-600); }
+.viz-spark-flat    { --viz-solo: var(--muted); }
+
+/* ── Market pulse columns ────────────────────────────────────────────── */
+/* Polarity, not identity — so these are the status steps rather than a
+   categorical slot. Colour is the second channel here, never the first:
+   the column's side of the zero line already says which way it went, which
+   is what keeps the chart readable to someone who cannot separate the two
+   hues at all. */
+.tr-pulse-up   { fill: var(--viz-up); }
+.tr-pulse-down { fill: var(--viz-down); }
+
+/* ── Tooltip ─────────────────────────────────────────────────────────── */
+/* One tooltip element for the whole app, driven off data-viz-tip. It
+   enhances and never gates: every value it shows is also in a direct
+   label, the legend, or the table view under the chart. Keyboard focus
+   raises exactly what hover raises. */
+.viz-tip {
+  position: fixed;
+  z-index: 3000;
+  max-width: 280px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-sm);
+  background: var(--dark-0);
+  color: var(--on-dark);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  box-shadow: var(--e4);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+
+.viz-tip.is-open { opacity: 1; transform: translateY(0); }
+.viz-tip-title { display: block; font-weight: var(--fw-semibold); }
+.viz-tip-line  { display: block; color: var(--on-dark-2); font-variant-numeric: tabular-nums; }
+
+/* ── Chart table twin ────────────────────────────────────────────────── */
+.viz-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+
+.viz-table th,
+.viz-table td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--viz-grid);
+  text-align: left;
+  color: var(--viz-ink-2);
+}
+
+.viz-table th { color: var(--viz-label); font-weight: var(--fw-semibold); }
+.viz-table td.num,
+.viz-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.viz-table td strong { color: var(--viz-ink); }
+
+/* ── Sell-through meter where it sits in a result row ────────────────── */
+.opp-sth-meter { margin: -2px 0 var(--s2); }
+
+@media (max-width: 720px) {
+  .viz-rank-row { grid-template-columns: minmax(0, 1fr) 56px auto; }
+  .viz-legend { gap: var(--s2) var(--s4); }
+}
+
+/* Where hue cannot be trusted — forced-colours mode strips background
+   images and paints everything from the system palette — the marks fall
+   back to system colours and keep their outlines, so a bar is still a bar
+   and the legend swatches are still visible. */
+@media (forced-colors: active) {
+  .viz-seg,
+  .viz-rank-bar,
+  .viz-meter-fill,
+  .viz-swatch { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .viz-tip { border: 1px solid CanvasText; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viz-meter-fill,
+  .viz-seg-label,
+  .viz-tip { transition: none; }
 }

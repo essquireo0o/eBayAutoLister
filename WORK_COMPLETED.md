@@ -5056,3 +5056,155 @@ browser check asserting the spinner still computes to `opacity: 1`.
   it is not wired into CI.
 - `style.css?v=59`, `app.js?v=67`. No server code, no business logic, no
   pricing, key or credential touched.
+
+---
+
+## Charts pass — turn the numbers into pictures (autonomous session, 2026-07-27)
+
+Every money screen in this app was already computing the right numbers and then
+printing them as text. Five percentages down an insight card are five separate
+reads; a "gross sales / eBay fees / net profit" tile row leaves the seller to do
+the one piece of arithmetic that actually matters. Nothing here changes a number,
+an endpoint, or a rule — it changes what the existing numbers look like.
+
+No capability changes. **No server code was touched.**
+
+### A visualisation layer, not five more charts
+
+The three charts that existed (the monthly profit columns, the dashboard
+sparkline, the trend sparkline) had each been drawn by hand in the session that
+needed them, with their own greens, their own stroke widths and their own idea of
+a tooltip. This adds one layer they all draw from:
+
+| Piece | What it is |
+|---|---|
+| `vizMeter` | one share of one whole; severity fill on a lighter step of its own ramp |
+| `vizRankBars` | a top-five list drawn as the bar chart it always was |
+| `vizDelta` | a signed change, growing out from a shared centre so `+8%` and `-8%` are the same length in opposite directions |
+| `vizStack` | one whole broken into its parts, with a legend that carries every value |
+| `vizSparkPaths` | gap-aware line + 10% wash + one surface-ringed end dot |
+| `viz-tip` | one delegated tooltip for the whole app, driven by `data-viz-tip` |
+
+Colour, marks and spacing live in `style.css` under **Data visualisation** as
+`--viz-*` tokens. Nothing below that block invents a hex value.
+
+### The palette was computed, not chosen
+
+The four categorical slots were run through lightness-band, chroma-floor,
+colour-blind-separation, normal-vision and contrast checks in both modes:
+
+```
+light (on #ffffff)   #00789c  #946d1f  #7f4c9e  #157a55
+dark  (on --dark-1)  #2f9cbc  #b58c3c  #a274c6  #2fa878
+```
+
+Two results worth recording, because both were counter-intuitive:
+
+- **The brand teal cannot be a chart colour.** `--teal-600` is OKLCH C .075,
+  under the .10 chroma floor — which means a reader sees it as *grey* and the hue
+  carries no identity at all. `#00789c` is the same teal pushed just over the
+  floor.
+- **`--success-600` was too light to hold a label.** The composition bar prints
+  the value inside the fill, and white on `--success-600` measures 4.3:1 — under
+  the 4.5 line for small text. Slot 4 is a step darker; the hue did not move and
+  the palette still passes every check.
+
+The grey "not measured" slot is deliberately *below* the chroma floor. It is
+supposed to read as absent, and its label is set in ink rather than white,
+because white on it lands at 2.5:1 — on the one segment a seller most needs to
+notice.
+
+### What was drawn
+
+**Money Made — "Where the money went".** One bar: what you paid, eBay fees,
+shipping, what is still waiting on a cost, and what you kept, against every
+dollar taken in. Two honesty rules shape it. Net profit only counts sales whose
+cost is known, so gross minus fees, shipping and cost does **not** equal net on a
+real account; the difference is drawn in grey as its own segment rather than
+folded into profit. And a loss cannot be a share of revenue — when costs exceeded
+everything taken in, the card says so in a sentence instead of drawing a bar
+whose parts sum past 100%.
+
+**Rising Now — "Market pulse".** A new dark band above the results. One column
+per measured product, from a shared zero line, sorted by how far it moved. The
+tiles above say "3 climbing of 21", which is equally true of a board where
+everything crept up 2% and one thing collapsed, and of a board where three things
+doubled — and a sourcer should behave completely differently in those two
+markets. This is the shape those tiles were hiding. Has a table twin.
+
+**Opportunity Finder — the insight cards.** High Sell-Through, Low Competition,
+Underpriced Auctions and Pricing Recommendations are now ranked bars with a note
+under each saying what the bar length means (0-100% for a rate; relative to the
+busiest category for a count; a diverging chip for a signed price gap). One hue
+per card — each card is a single series, and colouring bars by size as well would
+burn the only free channel on information the length already shows.
+
+**Opportunity rows.** Sell-through gets a severity meter under the figure. A row
+whose sell-through could not be verified gets the neutral tone: the bar must not
+look more certain than the badge above it.
+
+**Trend sparkline.** Rebuilt on the shared primitive — 2px stroke, a wash under
+the line, one end dot ringed in the surface colour. The intermediate dots are
+gone (at 32px tall they were ink on top of the shape) and every week now has a
+full-height hover band instead, which is a target a mouse can hit. The gap logic
+and the server-driven tone are unchanged.
+
+### One bug caught in the browser, not in review
+
+The tooltip was first hung off the invisible hit rect. The column paints **on top
+of its own hit rect**, and `closest()` walks ancestors, not siblings — so
+hovering the actual bar, the obvious thing to do, found no `data-viz-tip` and
+showed nothing. Only the sliver of empty band above the bar worked. The tooltip
+and the tab stop now sit on the enclosing `g` element, so the rect, the column
+and the label all resolve to the same target. The same latent bug was in the
+profit chart's new tooltip and is fixed there too.
+
+A second one caught by looking at the render: `niceTicks` rounds outward, so on a
+board topping out at +31.4% it returned a +40% tick that drew off the top of the
+plot and clipped to half a label. Ticks are now filtered to the span the chart
+actually covers.
+
+### Files touched
+
+| File | What changed |
+|---|---|
+| `wwwroot/style.css` | `--viz-*` token block (light + `.viz-dark` re-steps), `.viz-panel`, `.viz-meter`, `.viz-rank`, `.viz-delta`, `.viz-stack`, `.viz-spark`, `.viz-tip`, `.viz-table`, `.tr-pulse-*`; the old hand-rolled `.tr-spark` marks deleted in favour of the shared component |
+| `wwwroot/app.js` | viz primitives + `initVizTooltips`; `renderEarningsComposition`; `renderTrendPulse`; `renderInsightBars` replacing `renderInsightList`; `trendSparkline` rebuilt; sell-through meter on opportunity rows; tooltips on the profit chart |
+| `wwwroot/index.html` | `#er-composition-card`, `#tr-pulse` band + table toggle. `style.css?v=60`, `app.js?v=68` |
+
+### Verified
+
+- `dotnet build` — 0 errors (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1713 passed, 0 failed.** No test added or changed; this is
+  entirely presentation.
+- **Real browser (Playwright/Chromium, wwwroot served on 9413 with every `/api`
+  call stubbed).** Composition bar: 5 segments, widths proportional, every
+  in-fill label measured as fitting, legend carries all five values, sub-line
+  states the 22.5c-per-dollar read and the amount still awaiting a cost. Market
+  pulse: 18 columns, dark tokens resolve on the dark panel (axis
+  `rgba(246,251,251,.72)`, up `#3fbd8b`, down `#e0796a`), hover raises the
+  styled tooltip with the band highlighted, table toggle renders all 18 rows.
+  Profit chart: keyboard focus on a column raises the same tooltip. Trend rows:
+  7 sparklines with 14 area runs (gaps preserved), 7 end dots, 7 delta chips.
+  Insight cards: 14 ranked rows, 4 diverging chips. **No page errors, no console
+  errors.**
+- **Re-run at 1024px wide under `reducedMotion: 'reduce'`.** The 63px grey
+  segment correctly drops its in-fill label (needs 66px) while the other four
+  keep theirs; cards reflow to two columns; meter transitions compute to ~0s.
+
+### Not verified / known limits
+
+- **The dark chart tokens are exercised by one surface.** `.viz-dark` also
+  applies inside `.hero-panel` and `.opportunity-overlay-header`, but the market
+  pulse band is the only chart currently living on a dark surface, so that is the
+  only place the dark steps were seen rendered.
+- **The composition bar is all-time only.** The summary carries no per-month
+  fee/cost split, so there is no honest way to draw it per month without a server
+  change.
+- **Seasonal Demand is still a text card.** It is a list of category names, not a
+  measurement — there is nothing in it to plot.
+- **None of this is covered by `dotnet test`.** It is CSS and DOM behaviour; the
+  browser run above is the only thing covering it, and it is not wired into CI.
+- `style.css?v=60`, `app.js?v=68`. No server code, no business logic, no pricing,
+  key or credential touched.
