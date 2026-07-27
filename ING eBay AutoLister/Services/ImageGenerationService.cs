@@ -34,7 +34,7 @@ public class ImageGenerationService(
             "local_sd" => await GenerateLocalSdAsync(title, visualDescription, c, refImageBase64, refMimeType),
             "dalle"    => await GenerateDalleAsync(title, visualDescription, c),
             _          => throw new InvalidOperationException(
-                              "Image generation is disabled. Enable it in Settings → Image Generation.")
+                              "Image generation is off. Turn it on in Settings → Image generation (optional).")
         };
     }
 

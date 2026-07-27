@@ -11,6 +11,11 @@
   let cachedPolicies = null; // { fulfillmentPolicies, paymentPolicies, returnPolicies }
   let viewMode = 'cards';
   let isConnected = false;
+  // The two things setup is actually about. Held here because three surfaces report them — the
+  // setup modal, the Settings page card and the dashboard checklist — and they must never
+  // disagree about whether the seller is ready to list.
+  let hasAnthropicKey = false;
+  let hasBusinessPolicies = false;
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -356,6 +361,7 @@
     initPhotoEditorPaste();
     bindDashboard();
     bindSetup();
+    bindSetupChecklist();
     bindNewListingModal();
     bindImageGenSetup();
     bindPgImggen();
@@ -972,9 +978,19 @@
     $('settings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setActiveNavItem('settings');
     markWorkspaceTabOpen('settings');
+    await refreshRequiredState();
     await loadSettingsStatus();
     await loadTerapeakStatus();
     await loadFacebookStatus();
+  }
+
+  // The header chip on an optional connect strip. Three strips, one look, so "connected" means
+  // the same thing at a glance whichever one you are reading.
+  function setConnectState(id, on, onText, offText) {
+    const chip = $(id);
+    if (!chip) return;
+    chip.textContent = on ? onText : offText;
+    chip.classList.toggle('is-on', !!on);
   }
 
   const TERAPEAK_BANNERS = [
@@ -1016,6 +1032,7 @@
       const data = await fetch('/api/terapeak/status').then(r => r.json());
       TERAPEAK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintTerapeakBanner($(statusId), $(connectId), $(disconnectId), data));
+      setConnectState('pg-terapeak-state', data.connected, 'Connected', 'Not connected');
     } catch (err) {
       TERAPEAK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
@@ -1094,6 +1111,7 @@
       const data = await fetch('/api/facebook/status').then(r => r.json());
       FACEBOOK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintFacebookBanner($(statusId), $(connectId), $(disconnectId), data));
+      setConnectState('pg-facebook-state', data.connected, 'Connected', 'Not connected');
       // A Facebook connect/disconnect changes what the source list says about itself.
       loadLocalSources();
       return data;
@@ -3137,9 +3155,14 @@
     runLocalArbitrage();
   }
 
+  // Opening Settings from the top bar lands on whichever required step is still outstanding.
   async function openSetupWithPolicies(status) {
-    openSetup(status);
-    if (isConnected) loadPolicies(false);
+    if (status) {
+      openSetup(status);
+      if (isConnected) loadPolicies(false);
+      return;
+    }
+    openSetupAt(hasAnthropicKey ? 'policies' : 'key');
   }
 
   async function showLogsSection() {
@@ -10215,9 +10238,9 @@
     try {
       const status = await fetch('/api/setup/status').then(r => r.json());
       await populateSetupFields(status);
-      updateSetupChecklist(!!status.hasAnthropicKey, isConnected, !!status.hasOpenAiKey);
-      if (!status.isComplete) {
-        addActivity('Finish setup', 'Complete the 2 steps on the home page to activate.');
+      renderRequiredState(!!status.hasAnthropicKey, !!status.hasBusinessPolicies);
+      if (!status.isReadyToList) {
+        addActivity('Finish setup', 'Two steps on the home page — your Claude key and your eBay business policies.');
       }
       // No startup pop-up: the home-page "2 steps to activate" checklist handles
       // entering the Claude key and connecting eBay directly on the dashboard.
@@ -10238,44 +10261,33 @@
       setValue('s-payment', f.ebayPaymentPolicyId);
       setValue('s-return', f.ebayReturnPolicyId);
       if ($('s-license-key')) $('s-license-key').placeholder = f.hasLicenseKey ? `(saved: ${f.licenseKeyPreview} — leave blank to keep)` : 'ING-FREE-XXXX or ING-PRO-XXXX';
-      $('s-anthropic-key').placeholder = f.hasAnthropicKey ? '(saved - leave blank to keep)' : 'sk-ant-...';
-      if ($('s-openai-key')) $('s-openai-key').placeholder = f.hasOpenAiKey ? '(saved - leave blank to keep)' : 'sk-...';
-      // Image generation settings — API Credentials modal
-      setVal('s-image-gen-mode', f.imageGenMode || 'disabled');
-      setVal('s-local-sd-endpoint', f.localSdEndpoint || 'http://127.0.0.1:7860');
-      setVal('s-local-sd-backend', f.localSdBackend || 'automatic1111');
-      setModelSelect('s-local-sd-model', f.localSdModelName || '');
-      setValue('s-image-prompt', f.imagePromptTemplate || '');
-      applyImageGenModeVisibility(f.imageGenMode || 'disabled');
-      applyComfyUiModelVisibility(f.localSdBackend || 'automatic1111');
-      // Image generation settings — Settings page (pg- fields)
+      $('s-anthropic-key').placeholder = f.hasAnthropicKey ? '(saved — leave blank to keep)' : 'sk-ant-...';
+      if ($('s-openai-key')) $('s-openai-key').placeholder = f.hasOpenAiKey ? '(saved — leave blank to keep)' : 'sk-...';
+      // Image generation is optional and lives in its own strip on the Settings page — nowhere
+      // in this modal, so it can never read as a step between a new seller and their first listing.
       const pgMode = computePgImggenMode(f.imageGenMode, f.localSdBackend);
       setVal('pg-imggen-mode', pgMode);
       applyPgImggenVisibility(pgMode);
       setVal('pg-imggen-endpoint', f.localSdEndpoint || 'http://127.0.0.1:7860');
       setModelSelect('pg-imggen-model', f.localSdModelName || '');
-      $('s-client-secret').placeholder = f.hasEbayClientSecret ? '(saved - leave blank to keep)' : 'PRD-abc123...';
-      $('s-user-token').placeholder = f.hasEbayUserToken ? '(saved - leave blank to keep)' : 'AgAAAA...';
-      // eBay developer section hides when eBay app creds are pre-configured.
-      // AI provider section stays visible until the user has their own Anthropic key.
+      setValue('pg-image-prompt', f.imagePromptTemplate || '');
+      renderImageGenState(pgMode);
+      $('s-client-secret').placeholder = f.hasEbayClientSecret ? '(saved — leave blank to keep)' : 'PRD-abc123...';
+      $('s-user-token').placeholder = f.hasEbayUserToken ? '(saved — leave blank to keep)' : 'AgAAAA...';
+      // The eBay developer block hides entirely when the build ships with app credentials — those
+      // are ING's keys, not the seller's, and an empty box for them reads as homework.
       const ebayPreconfigured = f.hasEbayClientId && f.hasEbayClientSecret;
-      const fullyPreconfigured = f.hasAnthropicKey && ebayPreconfigured;
-      document.getElementById('setup-ai-provider')?.classList.toggle('hidden', fullyPreconfigured);
       document.getElementById('setup-ebay-developer')?.classList.toggle('hidden', ebayPreconfigured);
       $('btn-paste-token')?.classList.toggle('hidden', ebayPreconfigured);
       const notice = document.getElementById('setup-preconfigured-notice');
-      const modalDesc = document.getElementById('setup-modal-desc');
-      if (fullyPreconfigured) {
+      if (ebayPreconfigured && !f.hasAnthropicKey) {
         notice?.classList.remove('hidden');
-        if (notice) notice.innerHTML = '<strong>✓ All credentials configured.</strong> Click <strong>Save and Connect eBay</strong> below to link your eBay account.';
-        if (modalDesc) modalDesc.textContent = 'All credentials are configured. Connect your eBay account to get started.';
-      } else if (ebayPreconfigured) {
-        notice?.classList.remove('hidden');
-        if (notice) notice.innerHTML = '<strong>✓ eBay is pre-configured.</strong> Enter your Anthropic API key above to enable AI listing analysis (<a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#0369a1">get one at console.anthropic.com</a>), then click Save and Connect eBay.';
-        if (modalDesc) modalDesc.textContent = 'Enter your Anthropic API key, then connect your eBay account to get started.';
+        if (notice) notice.innerHTML = '<strong>✓ eBay app access is already set up for you.</strong> Step 1 below is the only key you have to fetch yourself.';
       } else {
         notice?.classList.add('hidden');
       }
+
+      renderRequiredState(!!f.hasAnthropicKey, !!f.hasBusinessPolicies);
       // Listing defaults — Settings page
       setVal('pg-default-zip',          f.defaultPostalCode      || '');
       setVal('pg-default-country',      f.defaultCountry         || 'US');
@@ -10297,6 +10309,41 @@
         }
       }
     } catch {}
+  }
+
+  /**
+   * The two required steps, painted wherever they are reported: the numbered cards in the setup
+   * modal, the "Required setup" card on the Settings page, and the dashboard checklist. One
+   * function so those three can't drift — a green tick on the dashboard over an empty key field
+   * in the modal is worse than no tick at all.
+   */
+  function renderRequiredState(keyDone, policiesDone) {
+    hasAnthropicKey     = !!keyDone;
+    hasBusinessPolicies = !!policiesDone;
+
+    paintRequiredPill('setup-req-key',      'setup-req-key-state',      hasAnthropicKey,     'Saved', 'Needed');
+    paintRequiredPill('setup-req-policies', 'setup-req-policies-state', hasBusinessPolicies, 'Chosen', 'Needed');
+    paintRequiredPill('pg-required-key',      'pg-required-key-state',      hasAnthropicKey,     'Saved', 'Needed');
+    paintRequiredPill('pg-required-policies', 'pg-required-policies-state', hasBusinessPolicies, 'Chosen', 'Needed');
+
+    updateSetupChecklist(hasAnthropicKey, isConnected, hasBusinessPolicies);
+  }
+
+  function paintRequiredPill(rowId, pillId, done, doneText, pendingText) {
+    $(rowId)?.classList.toggle('is-done', done);
+    const pill = $(pillId);
+    if (!pill) return;
+    pill.textContent = done ? `✓ ${doneText}` : pendingText;
+    pill.classList.toggle('is-done', done);
+  }
+
+  // Re-reads the server rather than trusting what was just typed: a save can be partially
+  // accepted (a key that saved, policies that didn't), and the pills have to show what's stored.
+  async function refreshRequiredState() {
+    try {
+      const status = await fetch('/api/setup/status').then(r => r.json());
+      renderRequiredState(!!status.hasAnthropicKey, !!status.hasBusinessPolicies);
+    } catch { /* leave the last known state up rather than blanking it */ }
   }
 
   // ── Fees & Costs (Settings) ────────────────────────────────────────────────
@@ -10468,6 +10515,11 @@
     on('setup-overlay', 'click', e => {
       if (e.target === $('setup-overlay')) $('setup-overlay')?.classList.add('hidden');
     });
+    // Escape closes it, like every other overlay here — the modal is now something a seller opens
+    // to read as much as to type in, and a screen you can only leave with the mouse is a trap.
+    $('setup-overlay')?.addEventListener('keydown', e => {
+      if (e.key === 'Escape') $('setup-overlay')?.classList.add('hidden');
+    });
 
     on('btn-connect', 'click', async () => {
       try {
@@ -10506,23 +10558,85 @@
     on('s-payment-sel',     'change', () => { const v = $('s-payment-sel')?.value;     if (v) set('s-payment',     v); });
     on('s-return-sel',      'change', () => { const v = $('s-return-sel')?.value;      if (v) set('s-return',      v); });
 
-    on('s-image-gen-mode', 'change', e => applyImageGenModeVisibility(e.target.value));
-    on('s-local-sd-backend', 'change', e => applyComfyUiModelVisibility(e.target.value));
-    on('btn-test-sd', 'click', async () => {
-      const msg = $('sd-test-msg');
-      if (msg) { msg.textContent = 'Testing...'; msg.className = 'sd-test-msg'; }
-      try {
-        const res = await fetch('/api/image-gen/test').then(r => r.json());
-        if (msg) { msg.textContent = res.message; msg.className = 'sd-test-msg ' + (res.online ? 'ok' : 'error'); }
-      } catch (err) {
-        if (msg) { msg.textContent = `Error: ${err.message}`; msg.className = 'sd-test-msg error'; }
-      }
+    // An API key is a long opaque string that is easy to paste twice or mistype the end of, and
+    // it saves masked, so there has to be a way to look at what you typed. Toggling the input
+    // type keeps the value and the label, and aria-pressed says which state the button is in.
+    on('s-anthropic-reveal', 'click', () => {
+      const input = $('s-anthropic-key');
+      const btn   = $('s-anthropic-reveal');
+      if (!input || !btn) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.textContent = show ? 'Hide' : 'Show';
+      btn.setAttribute('aria-pressed', String(show));
+      input.focus();
     });
+
+    // "Set these up separately" has to actually go somewhere, or it's just a sentence.
+    on('setup-goto-optional', 'click', () => {
+      $('setup-overlay')?.classList.add('hidden');
+      navigateTo('settings');
+      setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
+    });
+  }
+
+  // ── Dashboard setup checklist ──────────────────────────────────────────────
+  // Bound here rather than with inline onclick handlers: step 1 has to open the modal *and* land
+  // the cursor in the key field, which is the whole difference between "here is a settings screen"
+  // and "type your key here".
+  function bindSetupChecklist() {
+    on('setup-checklist-dismiss', 'click', () => $('setup-checklist')?.classList.add('hidden'));
+    on('step1-btn', 'click', () => openSetupAt('key'));
+    on('step2-btn', 'click', () => {
+      if (isConnected) openSetupAt('policies');
+      else $('btn-connect')?.click();
+    });
+    on('setup-extras-btn', 'click', () => {
+      navigateTo('settings');
+      setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
+    });
+    on('pg-open-required', 'click', () => openSetupAt(hasAnthropicKey ? 'policies' : 'key'));
   }
 
   function openSetup(status) {
     $('setup-overlay')?.classList.remove('hidden');
+    // Connected sellers are here to change a setting, not to log in again — the button says which.
+    setText('btn-save-setup', isConnected ? 'Save Settings' : 'Save and Connect eBay');
     if (status) populateSetupFields(status);
+    else refreshRequiredState();
+  }
+
+  // Opens the modal already scrolled and focused on the step being asked for, so the button that
+  // said "Enter Key" leads to a caret in the key box rather than to a screen to search.
+  function openSetupWithFocus(step) {
+    openSetup(null);
+    const card = step === 'policies' ? $('setup-req-policies') : $('setup-req-key');
+    setTimeout(() => {
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // The first control that can actually take focus — Load Policies is disabled while it
+      // fetches, and focusing a disabled or hidden element silently leaves focus where it was,
+      // back on the dashboard button behind the modal.
+      const control = [...card.querySelectorAll('input, select, textarea, button')]
+        .find(el => !el.disabled && el.offsetParent !== null);
+      (control || card).focus();
+    }, 120);
+  }
+
+  function openSetupAt(step) {
+    openSetupWithFocus(step);
+    if (isConnected) loadPolicies(false);
+  }
+
+  // Brings one of the optional connect strips into view and gives it focus, so arriving from the
+  // dashboard or the modal lands on the card that was promised.
+  function focusSettingsCard(cardId) {
+    const card = $(cardId);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('is-flagged');
+    setTimeout(() => card.classList.remove('is-flagged'), 1600);
+    card.querySelector('select, input, button')?.focus();
   }
 
   async function saveSetup() {
@@ -10543,11 +10657,8 @@
       ebayPaymentPolicyId: $('s-payment').value.trim(),
       ebayReturnPolicyId: $('s-return').value.trim(),
       ebayUserToken: $('s-user-token').value.trim(),
-      imageGenMode: $('s-image-gen-mode')?.value || 'disabled',
-      localSdEndpoint: $('s-local-sd-endpoint')?.value.trim() || '',
-      localSdBackend: $('s-local-sd-backend')?.value || 'automatic1111',
-      localSdModelName: $('s-local-sd-model')?.value.trim() || '',
-      imagePromptTemplate: $('s-image-prompt')?.value.trim() || '',
+      // Image generation is saved from its own strip on the Settings page and is deliberately
+      // absent here — an omitted field is left untouched by the server (see CredentialsPatch).
     };
 
     // If the user pasted an OAuth redirect URL into the token field, exchange it first
@@ -10589,6 +10700,14 @@
       });
       if (!res.ok) throw new Error(await res.text());
       const status = await res.json();
+
+      // The key box empties on a successful save so the "(saved)" placeholder is what's left —
+      // a field still holding the typed key implies it wasn't stored.
+      if (status.hasAnthropicKey && $('s-anthropic-key')) {
+        $('s-anthropic-key').value = '';
+        $('s-anthropic-key').placeholder = '(saved — leave blank to keep)';
+      }
+      renderRequiredState(!!status.hasAnthropicKey, !!status.hasBusinessPolicies);
 
       const hasEbayCreds = status.hasEbayClientId && status.hasEbayClientSecret;
       if (!hasEbayCreds) {
@@ -12104,30 +12223,44 @@
     updateSetupChecklist(null, connected, null);
   }
 
-  function updateSetupChecklist(hasAiKey, hasEbay, hasOpenAi) {
+  /**
+   * The dashboard checklist: exactly the two required steps, and nothing optional.
+   *
+   * Step 2 is eBay *and* its business policies, because the policies can't be loaded until the
+   * account is connected — splitting them into two rows would show a new seller a step they are
+   * not yet allowed to do. The row's copy and button swap between the two halves instead.
+   */
+  function updateSetupChecklist(keyDone, hasEbay, policiesDone) {
     const checklist = $('setup-checklist');
     if (!checklist) return;
 
-    // A partial refresh (e.g. eBay-only, which passes null for the key steps)
-    // must not wipe a step it knows nothing about, so an omitted argument keeps
-    // that step's current state instead of collapsing to false.
-    const step1Done = hasAiKey  !== null && hasAiKey  !== undefined ? !!hasAiKey  : isSetupStepDone('step1');
-    const step2Done = hasEbay   !== null && hasEbay   !== undefined ? !!hasEbay   : isConnected;
-    const step3Done = hasOpenAi !== null && hasOpenAi !== undefined ? !!hasOpenAi : isSetupStepDone('step3');
+    // A partial refresh (e.g. eBay-only, which passes null for the other two) must not wipe a
+    // step it knows nothing about, so an omitted argument keeps the last known state.
+    const step1Done   = keyDone      != null ? !!keyDone      : hasAnthropicKey;
+    const connected   = hasEbay      != null ? !!hasEbay      : isConnected;
+    const hasPolicies = policiesDone != null ? !!policiesDone : hasBusinessPolicies;
+    const step2Done   = connected && hasPolicies;
 
-    // The done look lives in .setup-step.is-done, so a step can go back to
-    // pending if the key is later cleared — the old inline styles were
-    // one-way and left a green tick on a step that no longer applied.
+    // The done look lives in .setup-step.is-done, so a step can go back to pending if the key is
+    // later cleared — the old inline styles were one-way and left a green tick on a step that no
+    // longer applied.
     markSetupStep('step1', step1Done, 'Key saved');
-    markSetupStep('step2', step2Done, 'Connected');
-    markSetupStep('step3', step3Done, 'Key saved');
+    markSetupStep('step2', step2Done, 'Ready');
 
-    // Hide checklist once the two required steps are done (step 3 is optional)
-    if (step1Done && step2Done) {
-      checklist.classList.add('hidden');
-    } else {
-      checklist.classList.remove('hidden');
+    setText('step2-copy', !connected
+      ? 'Log into eBay, then choose the shipping, payment and return policy your listings publish under.'
+      : hasPolicies
+        ? 'eBay is connected and your shipping, payment and return policies are set.'
+        : 'eBay is connected. Now pick the shipping, payment and return policy every listing publishes under — click Load Policies, then choose one of each.');
+
+    const step2Btn = $('step2-btn');
+    if (step2Btn && !step2Done) {
+      step2Btn.textContent = connected ? 'Choose policies →' : 'Log into eBay →';
+      step2Btn.dataset.pendingLabel = step2Btn.textContent;
+      step2Btn.disabled = false;
     }
+
+    checklist.classList.toggle('hidden', step1Done && step2Done);
 
     renderDashStatus();
   }
@@ -12139,10 +12272,11 @@
    * on the page rather than kept in a second variable that can drift from it.
    */
   function renderDashStatus() {
-    setDashChip('dash-chip-ebay', isConnected,
-      'Connected to eBay', 'eBay not connected');
-    setDashChip('dash-chip-ai', isSetupStepDone('step1'),
-      'AI key saved', 'AI key needed');
+    setDashChip('dash-chip-ebay', isConnected && hasBusinessPolicies,
+      'eBay connected · policies set',
+      isConnected ? 'eBay connected · policies needed' : 'eBay not connected');
+    setDashChip('dash-chip-ai', hasAnthropicKey,
+      'Claude key saved', 'Claude key needed');
   }
 
   function setDashChip(id, on, onText, offText) {
@@ -12152,10 +12286,6 @@
     chip.classList.toggle('is-off', !on);
     const text = chip.querySelector('.dash-chip-text');
     if (text) text.textContent = on ? onText : offText;
-  }
-
-  function isSetupStepDone(prefix) {
-    return $(`${prefix}-row`)?.classList.contains('is-done') === true;
   }
 
   function markSetupStep(prefix, done, doneLabel) {
@@ -15040,7 +15170,11 @@
     nlSetResult('', 'Not found on eBay — publishing again is safe.');
   }
 
-  // ── Settings page: Image Generation section ──────────────────
+  // ── Settings page: the optional Image Generation strip ───────
+  // The only place image generation is configured. It used to be configured here *and* at the top
+  // of the setup modal, which meant two sets of fields for one setting, and the modal copy of it
+  // sat above the API key — so the first thing a new seller was asked to decide was whether they
+  // wanted a Stable Diffusion server, before anything told them what the app needed to run at all.
 
   function computePgImggenMode(imageGenMode, localSdBackend) {
     if (imageGenMode === 'dalle') return 'dalle';
@@ -15064,6 +15198,21 @@
     }
   }
 
+  // The chip on the strip's header: what image generation is doing right now, in the same shape
+  // as the Terapeak and Facebook connect states beside it.
+  function renderImageGenState(pgMode) {
+    const chip = $('pg-imggen-state');
+    if (!chip) return;
+    const labels = {
+      disabled: 'Off',
+      a1111:    'On · local AUTOMATIC1111',
+      comfyui:  'On · local ComfyUI',
+      dalle:    'On · OpenAI DALL·E 3',
+    };
+    chip.textContent = labels[pgMode] || 'Off';
+    chip.classList.toggle('is-on', pgMode !== 'disabled');
+  }
+
   async function savePgImggen() {
     const pgMode   = $('pg-imggen-mode')?.value || 'disabled';
     const endpoint = $('pg-imggen-endpoint')?.value.trim() || '';
@@ -15084,22 +15233,20 @@
       imageGenMode = 'disabled'; localSdBackend = 'automatic1111'; localSdEndpoint = '';
     }
 
-    const body = { imageGenMode, localSdBackend };
+    // Only the image-generation fields go up: this is an optional strip, and a save from it must
+    // not touch the required setup. Everything absent from the body is left as it is on the server.
+    const body = { imageGenMode, localSdBackend, localSdModelName: model };
     if (localSdEndpoint) body.localSdEndpoint = localSdEndpoint;
-    if (model)           body.localSdModelName = model;
+    const prompt = $('pg-image-prompt')?.value.trim();
+    if (prompt !== undefined) body.imagePromptTemplate = prompt;
 
     try {
       const res = await fetch('/api/setup/save', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       if (!res.ok) throw new Error(await res.text());
-      if (msg) { msg.textContent = 'Saved.'; msg.className = 'sd-test-msg ok'; }
-      // Sync API Credentials modal fields
-      setVal('s-image-gen-mode', imageGenMode);
-      setVal('s-local-sd-backend', localSdBackend);
-      if (localSdEndpoint) setVal('s-local-sd-endpoint', localSdEndpoint);
-      applyImageGenModeVisibility(imageGenMode);
-      applyComfyUiModelVisibility(localSdBackend);
+      if (msg) { msg.textContent = pgMode === 'disabled' ? 'Saved — image generation is off.' : 'Saved.'; msg.className = 'sd-test-msg ok'; }
+      renderImageGenState(pgMode);
       addActivity('Image generation settings saved', pgMode === 'disabled' ? 'Disabled' : pgMode);
     } catch (err) {
       if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
@@ -15208,19 +15355,15 @@
 
     on('imggen-btn-test', 'click', testImageGenConnection);
     on('imggen-btn-save', 'click', saveImageGenSettings);
-    on('btn-open-imggen-setup', 'click', openImageGenSetup);
     on('nl-imggen-setup-link',  'click', openImageGenSetup);
-    on('s-btn-load-models', 'click', () => {
-      const endpoint = $('s-local-sd-endpoint')?.value.trim();
-      loadComfyModels(endpoint, 's-local-sd-model', 'sd-test-msg');
-    });
   }
 
   function openImageGenSetup() {
-    // Pre-fill from saved settings
-    const endpoint = $('s-local-sd-endpoint')?.value || 'http://127.0.0.1:7860';
-    const backend  = $('s-local-sd-backend')?.value  || 'automatic1111';
-    const model    = $('s-local-sd-model')?.value    || '';
+    // Pre-fill from the Settings-page strip, the one place these are configured.
+    const pgMode   = $('pg-imggen-mode')?.value || 'disabled';
+    const backend  = pgMode === 'comfyui' ? 'comfyui' : 'automatic1111';
+    const endpoint = $('pg-imggen-endpoint')?.value || (backend === 'comfyui' ? 'http://127.0.0.1:8188' : 'http://127.0.0.1:7860');
+    const model    = $('pg-imggen-model')?.value    || '';
     if ($('imggen-endpoint')) $('imggen-endpoint').value = endpoint;
     if ($('imggen-backend'))  $('imggen-backend').value  = backend;
     if ($('imggen-model'))    $('imggen-model').value    = model;
@@ -15335,13 +15478,13 @@
       });
       if (!res.ok) throw new Error(await res.text());
 
-      // Sync settings panel fields
-      if ($('s-image-gen-mode'))    $('s-image-gen-mode').value    = 'local_sd';
-      if ($('s-local-sd-endpoint')) $('s-local-sd-endpoint').value = endpoint;
-      if ($('s-local-sd-backend'))  $('s-local-sd-backend').value  = backend;
-      if ($('s-local-sd-model'))    setModelSelect('s-local-sd-model', model);
-      applyImageGenModeVisibility('local_sd');
-      applyComfyUiModelVisibility(backend);
+      // Sync the Settings-page strip, which is where this setting lives.
+      const pgMode = backend === 'comfyui' ? 'comfyui' : 'a1111';
+      setVal('pg-imggen-mode', pgMode);
+      applyPgImggenVisibility(pgMode);
+      setVal('pg-imggen-endpoint', endpoint);
+      setModelSelect('pg-imggen-model', model);
+      renderImageGenState(pgMode);
 
       addActivity('Local image generation enabled', 'Backend: ' + backend + '; Endpoint: ' + endpoint);
       closeImageGenSetup();
@@ -15968,16 +16111,6 @@
   function setVal(id, val) {
     const el = $(id);
     if (el) el.value = val;
-  }
-
-  function applyImageGenModeVisibility(mode) {
-    const fields = $('s-local-sd-fields');
-    if (fields) fields.style.display = (mode === 'local_sd') ? '' : 'none';
-  }
-
-  function applyComfyUiModelVisibility(backend) {
-    const field = $('s-comfyui-model-field');
-    if (field) field.style.display = (backend === 'comfyui') ? '' : 'none';
   }
 
   async function safePost(url, payload) {

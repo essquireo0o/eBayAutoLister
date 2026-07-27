@@ -59,6 +59,60 @@ public class Credentials
     public string MarketCompsApiKey { get; set; } = "";
 }
 
+/// <summary>
+/// A partial settings save: every property is nullable, and <c>null</c> means "this screen wasn't
+/// showing that field — leave it alone".
+///
+/// Settings are written from six places (the setup modal, the image-generation strip, listing
+/// defaults, fees, the license box, the pasted eBay token), and each posts only the fields it owns.
+/// Binding those posts to <see cref="Credentials"/> made an absent field indistinguishable from a
+/// deliberately emptied one, so the fields that are legitimately clearable — the business policy
+/// IDs, the listing defaults, the image-generation mode — were reset to blank on every save that
+/// didn't happen to include them. Saving the optional image generation settings wiped the required
+/// eBay policies; activating a license wiped both.
+/// </summary>
+public class CredentialsPatch
+{
+    public string? AnthropicApiKey { get; set; }
+    public string? OpenAiApiKey { get; set; }
+
+    public string? ImageGenMode { get; set; }
+    public string? LocalSdEndpoint { get; set; }
+    public string? LocalSdBackend { get; set; }
+    public string? LocalSdModelName { get; set; }
+    public string? ImagePromptTemplate { get; set; }
+
+    public string? EbayClientId { get; set; }
+    public string? EbayDevId { get; set; }
+    public string? EbayClientSecret { get; set; }
+    public string? EbayRuName { get; set; }
+    public bool?   EbaySandbox { get; set; }
+    public string? EbayFulfillmentPolicyId { get; set; }
+    public string? EbayPaymentPolicyId { get; set; }
+    public string? EbayReturnPolicyId { get; set; }
+    public string? EbayUserToken { get; set; }
+    public string? EbayRefreshToken { get; set; }
+
+    public string?  DefaultPostalCode { get; set; }
+    public string?  DefaultCountry { get; set; }
+    public string?  DefaultPackageType { get; set; }
+    public int?     DefaultHandlingTimeDays { get; set; }
+    public decimal? DefaultWeightLbs { get; set; }
+    public decimal? DefaultWeightOz { get; set; }
+    public decimal? DefaultLengthIn { get; set; }
+    public decimal? DefaultWidthIn { get; set; }
+    public decimal? DefaultHeightIn { get; set; }
+    public string?  DefaultFulfillmentPolicyId { get; set; }
+    public bool?    DefaultBestOffer { get; set; }
+
+    public string? LicenseKey { get; set; }
+    public string? StripeSecretKey { get; set; }
+    public string? StripePublishableKey { get; set; }
+    public string? StripeWebhookSecret { get; set; }
+    public string? MarketCompsApiUrl { get; set; }
+    public string? MarketCompsApiKey { get; set; }
+}
+
 public class CredentialsStore
 {
     private readonly string _filePath;
@@ -66,65 +120,83 @@ public class CredentialsStore
     private static readonly JsonSerializerOptions _opts = new() { WriteIndented = true };
 
     public CredentialsStore(IWebHostEnvironment env)
+        : this(Path.Combine(env.ContentRootPath, "credentials.json")) { }
+
+    public CredentialsStore(string filePath)
     {
-        _filePath = Path.Combine(env.ContentRootPath, "credentials.json");
+        _filePath = filePath;
         _data = Load();
     }
 
     public Credentials Get() => _data;
 
-    public void Save(Credentials creds)
+    public void Save(CredentialsPatch patch)
     {
-        // Secrets: only overwrite when non-empty
-        if (!string.IsNullOrWhiteSpace(creds.AnthropicApiKey))  _data.AnthropicApiKey  = creds.AnthropicApiKey;
-        if (!string.IsNullOrWhiteSpace(creds.OpenAiApiKey))     _data.OpenAiApiKey     = creds.OpenAiApiKey;
-        // Image generation — non-secret settings always update; endpoint only when non-empty
-        _data.ImageGenMode   = creds.ImageGenMode ?? "disabled";
-        _data.LocalSdBackend = creds.LocalSdBackend ?? "automatic1111";
-        _data.LocalSdModelName = creds.LocalSdModelName ?? "";
-        if (!string.IsNullOrWhiteSpace(creds.LocalSdEndpoint))      _data.LocalSdEndpoint      = creds.LocalSdEndpoint;
-        if (!string.IsNullOrWhiteSpace(creds.ImagePromptTemplate))   _data.ImagePromptTemplate  = creds.ImagePromptTemplate;
-        if (!string.IsNullOrWhiteSpace(creds.EbayClientSecret)) _data.EbayClientSecret = creds.EbayClientSecret;
-        if (!string.IsNullOrWhiteSpace(creds.EbayUserToken))
+        // Secrets: present but blank means "keep what's stored". These fields are never rendered
+        // back into the page — they show a "(saved)" placeholder — so an untouched one posts empty.
+        SetSecret(patch.AnthropicApiKey,      v => _data.AnthropicApiKey      = v);
+        SetSecret(patch.OpenAiApiKey,         v => _data.OpenAiApiKey         = v);
+        SetSecret(patch.EbayClientSecret,     v => _data.EbayClientSecret     = v);
+        SetSecret(patch.EbayRefreshToken,     v => _data.EbayRefreshToken     = v);
+        SetSecret(patch.LicenseKey,           v => _data.LicenseKey           = v);
+        SetSecret(patch.StripeSecretKey,      v => _data.StripeSecretKey      = v);
+        SetSecret(patch.StripePublishableKey, v => _data.StripePublishableKey = v);
+        SetSecret(patch.StripeWebhookSecret,  v => _data.StripeWebhookSecret  = v);
+        SetSecret(patch.MarketCompsApiUrl,    v => _data.MarketCompsApiUrl    = v);
+        SetSecret(patch.MarketCompsApiKey,    v => _data.MarketCompsApiKey    = v);
+
+        if (!string.IsNullOrWhiteSpace(patch.EbayUserToken))
         {
             // Reject OAuth redirect URLs — they are NOT bearer tokens
-            if (creds.EbayUserToken.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            if (patch.EbayUserToken.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
                     "The pasted value is an OAuth redirect URL, not a bearer token. " +
                     "Use the 'Paste eBay Token' button and paste the full URL — it will be exchanged automatically.");
-            _data.EbayUserToken = creds.EbayUserToken;
+            _data.EbayUserToken = patch.EbayUserToken.Trim();
         }
-        if (!string.IsNullOrWhiteSpace(creds.EbayRefreshToken)) _data.EbayRefreshToken = creds.EbayRefreshToken;
-        // Non-secret strings: merge — only update when non-empty so a blank settings save cannot wipe production credentials
-        if (!string.IsNullOrWhiteSpace(creds.EbayClientId))     _data.EbayClientId     = creds.EbayClientId;
-        if (!string.IsNullOrWhiteSpace(creds.EbayDevId))        _data.EbayDevId        = creds.EbayDevId;
-        if (!string.IsNullOrWhiteSpace(creds.EbayRuName))       _data.EbayRuName       = creds.EbayRuName;
-        // EbaySandbox: only update when ClientId is also being explicitly provided
-        if (!string.IsNullOrWhiteSpace(creds.EbayClientId))     _data.EbaySandbox      = creds.EbaySandbox;
-        // Policy IDs: always update — these are legitimately clearable
-        _data.EbayFulfillmentPolicyId = creds.EbayFulfillmentPolicyId;
-        _data.EbayPaymentPolicyId     = creds.EbayPaymentPolicyId;
-        _data.EbayReturnPolicyId      = creds.EbayReturnPolicyId;
-        // Listing defaults: always update
-        _data.DefaultPostalCode       = creds.DefaultPostalCode ?? "";
-        _data.DefaultCountry          = string.IsNullOrWhiteSpace(creds.DefaultCountry) ? "US" : creds.DefaultCountry;
-        _data.DefaultPackageType      = string.IsNullOrWhiteSpace(creds.DefaultPackageType) ? "PACKAGE_THICK_ENVELOPE" : creds.DefaultPackageType;
-        _data.DefaultHandlingTimeDays = creds.DefaultHandlingTimeDays > 0 ? creds.DefaultHandlingTimeDays : 1;
-        _data.DefaultWeightLbs             = creds.DefaultWeightLbs;
-        _data.DefaultWeightOz              = creds.DefaultWeightOz;
-        _data.DefaultLengthIn              = creds.DefaultLengthIn;
-        _data.DefaultWidthIn               = creds.DefaultWidthIn;
-        _data.DefaultHeightIn              = creds.DefaultHeightIn;
-        _data.DefaultFulfillmentPolicyId   = creds.DefaultFulfillmentPolicyId ?? "";
-        _data.DefaultBestOffer             = creds.DefaultBestOffer;
-        if (!string.IsNullOrWhiteSpace(creds.LicenseKey))          _data.LicenseKey          = creds.LicenseKey;
-        if (!string.IsNullOrWhiteSpace(creds.StripeSecretKey))      _data.StripeSecretKey      = creds.StripeSecretKey;
-        if (!string.IsNullOrWhiteSpace(creds.StripePublishableKey)) _data.StripePublishableKey = creds.StripePublishableKey;
-        if (!string.IsNullOrWhiteSpace(creds.StripeWebhookSecret))  _data.StripeWebhookSecret  = creds.StripeWebhookSecret;
-        if (!string.IsNullOrWhiteSpace(creds.MarketCompsApiUrl))     _data.MarketCompsApiUrl     = creds.MarketCompsApiUrl;
-        if (!string.IsNullOrWhiteSpace(creds.MarketCompsApiKey))     _data.MarketCompsApiKey     = creds.MarketCompsApiKey;
+
+        // eBay app identifiers: also keep-if-blank. They sit behind "Advanced" and are usually
+        // pre-configured, so an empty box there means "I didn't touch this", never "delete it".
+        SetSecret(patch.EbayClientId, v => _data.EbayClientId = v);
+        SetSecret(patch.EbayDevId,    v => _data.EbayDevId    = v);
+        SetSecret(patch.EbayRuName,   v => _data.EbayRuName   = v);
+        if (patch.EbaySandbox is { } sandbox) _data.EbaySandbox = sandbox;
+
+        // Business policies: clearable, so an empty string that was actually sent does clear them.
+        if (patch.EbayFulfillmentPolicyId is not null) _data.EbayFulfillmentPolicyId = patch.EbayFulfillmentPolicyId.Trim();
+        if (patch.EbayPaymentPolicyId     is not null) _data.EbayPaymentPolicyId     = patch.EbayPaymentPolicyId.Trim();
+        if (patch.EbayReturnPolicyId      is not null) _data.EbayReturnPolicyId      = patch.EbayReturnPolicyId.Trim();
+
+        // Image generation — optional, and saved from its own strip on the Settings page.
+        if (patch.ImageGenMode        is not null) _data.ImageGenMode     = Fallback(patch.ImageGenMode, "disabled");
+        if (patch.LocalSdBackend      is not null) _data.LocalSdBackend   = Fallback(patch.LocalSdBackend, "automatic1111");
+        if (patch.LocalSdModelName    is not null) _data.LocalSdModelName = patch.LocalSdModelName.Trim();
+        if (patch.LocalSdEndpoint     is not null) _data.LocalSdEndpoint  = Fallback(patch.LocalSdEndpoint, "http://127.0.0.1:7860");
+        if (patch.ImagePromptTemplate is not null) _data.ImagePromptTemplate = patch.ImagePromptTemplate.Trim();
+
+        // Listing defaults: clearable too — a seller who empties the ZIP means it.
+        if (patch.DefaultPostalCode       is not null) _data.DefaultPostalCode  = patch.DefaultPostalCode.Trim();
+        if (patch.DefaultCountry          is not null) _data.DefaultCountry     = Fallback(patch.DefaultCountry, "US");
+        if (patch.DefaultPackageType      is not null) _data.DefaultPackageType = Fallback(patch.DefaultPackageType, "PACKAGE_THICK_ENVELOPE");
+        if (patch.DefaultHandlingTimeDays is { } days) _data.DefaultHandlingTimeDays = days > 0 ? days : 1;
+        if (patch.DefaultWeightLbs is { } lbs)    _data.DefaultWeightLbs = lbs;
+        if (patch.DefaultWeightOz  is { } oz)     _data.DefaultWeightOz  = oz;
+        if (patch.DefaultLengthIn  is { } length) _data.DefaultLengthIn  = length;
+        if (patch.DefaultWidthIn   is { } width)  _data.DefaultWidthIn   = width;
+        if (patch.DefaultHeightIn  is { } height) _data.DefaultHeightIn  = height;
+        if (patch.DefaultFulfillmentPolicyId is not null) _data.DefaultFulfillmentPolicyId = patch.DefaultFulfillmentPolicyId.Trim();
+        if (patch.DefaultBestOffer is { } bestOffer)      _data.DefaultBestOffer           = bestOffer;
+
         Persist();
     }
+
+    private static void SetSecret(string? value, Action<string> assign)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) assign(value.Trim());
+    }
+
+    private static string Fallback(string value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
     public SetupStatus GetStatus() => new()
     {
@@ -134,6 +206,10 @@ public class CredentialsStore
         HasEbayRuName       = !string.IsNullOrWhiteSpace(_data.EbayRuName),
         HasEbayUserToken    = !string.IsNullOrWhiteSpace(_data.EbayUserToken),
         HasEbayRefreshToken = !string.IsNullOrWhiteSpace(_data.EbayRefreshToken),
+        HasBusinessPolicies = !string.IsNullOrWhiteSpace(_data.EbayFulfillmentPolicyId)
+                           && !string.IsNullOrWhiteSpace(_data.EbayPaymentPolicyId)
+                           && !string.IsNullOrWhiteSpace(_data.EbayReturnPolicyId),
+        HasOpenAiKey        = !string.IsNullOrWhiteSpace(_data.OpenAiApiKey),
         EbaySandbox         = _data.EbaySandbox
     };
 
@@ -241,6 +317,9 @@ public class CredentialsStore
         EbayFulfillmentPolicyId = _data.EbayFulfillmentPolicyId,
         EbayPaymentPolicyId     = _data.EbayPaymentPolicyId,
         EbayReturnPolicyId      = _data.EbayReturnPolicyId,
+        HasBusinessPolicies     = !string.IsNullOrWhiteSpace(_data.EbayFulfillmentPolicyId)
+                               && !string.IsNullOrWhiteSpace(_data.EbayPaymentPolicyId)
+                               && !string.IsNullOrWhiteSpace(_data.EbayReturnPolicyId),
         HasAnthropicKey         = !string.IsNullOrWhiteSpace(_data.AnthropicApiKey),
         HasOpenAiKey            = !string.IsNullOrWhiteSpace(_data.OpenAiApiKey),
         ImageGenMode            = _data.ImageGenMode ?? "disabled",
@@ -289,8 +368,15 @@ public class SetupStatus
     public bool HasEbayRuName { get; set; }
     public bool HasEbayUserToken { get; set; }
     public bool HasEbayRefreshToken { get; set; }
+    public bool HasBusinessPolicies { get; set; }
+    public bool HasOpenAiKey { get; set; }
     public bool EbaySandbox { get; set; }
     public bool IsComplete => HasAnthropicKey && HasEbayClientId && HasEbayClientSecret && (HasEbayRuName || !EbaySandbox);
+
+    /// The two things a seller actually has to do: pay for the AI, and tell eBay how the item
+    /// ships, is paid for and is returned. Everything else on the Settings screen is optional or
+    /// already filled in for them.
+    public bool IsReadyToList => HasAnthropicKey && HasBusinessPolicies;
 }
 
 public class PublicFields
@@ -302,6 +388,7 @@ public class PublicFields
     public string EbayFulfillmentPolicyId { get; set; } = "";
     public string EbayPaymentPolicyId { get; set; } = "";
     public string EbayReturnPolicyId { get; set; } = "";
+    public bool HasBusinessPolicies { get; set; }
     public bool HasAnthropicKey { get; set; }
     public bool HasOpenAiKey { get; set; }
     public string ImageGenMode { get; set; } = "disabled";

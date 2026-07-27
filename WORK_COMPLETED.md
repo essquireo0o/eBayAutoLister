@@ -5759,3 +5759,163 @@ and refused rather than published.
 - `queue_forever.py` was already untracked at the start of the session and is
   unrelated to this work; it was **left untracked** rather than swept into this
   commit.
+
+---
+
+## Setup that says what it needs — two required steps, everything else optional (autonomous session, 2026-07-27)
+
+### The problem
+
+A new seller opened Settings and the first thing on the screen was **Image
+Generation** — a mode picker, a Stable Diffusion endpoint and a prompt template,
+above everything the app actually needs to run. The Anthropic key was further
+down inside a paragraph of prose headed "AI Key", the eBay business policies were
+last, and neither said it was required. The optional thing looked mandatory and
+the mandatory things looked like details.
+
+Underneath the layout was a data bug with the same shape. `/api/setup/save` bound
+its body to `Credentials`, whose properties are non-nullable with defaults, so a
+screen posting only its own fields could not be told apart from a screen posting
+*blank* ones. The policy IDs, the listing defaults and the image-generation mode
+were "always update" — so:
+
+- Saving the **optional** image-generation settings **cleared the required eBay
+  business policies** and every listing default (ZIP, weights, dimensions, Best
+  Offer).
+- Activating a license — a post of `{ licenseKey }` alone — cleared the same
+  fields.
+- Pasting an eBay token did too.
+
+The next publish then failed with an eBay error about a missing policy, on a
+screen that had never mentioned policies.
+
+### The change
+
+**One partial-save model (`CredentialsPatch`)**
+
+- Every property is nullable, and `null` means *this screen wasn't showing that
+  field — leave it alone*. Absent is not empty, which is the whole fix.
+- Secrets (`AnthropicApiKey`, `OpenAiApiKey`, client secret, refresh token,
+  licence, Stripe, comps API) keep the "blank means keep" rule they had, and are
+  now **trimmed** — a pasted key carries a trailing newline more often than not.
+- Clearable fields (policy IDs, listing defaults, image-gen mode) still clear
+  when an empty value was **actually sent**, so emptying the ZIP still empties it.
+- The OAuth-redirect-URL-in-the-token-field guard is unchanged.
+- `CredentialsStore` gained a `(string filePath)` constructor beside the
+  `IWebHostEnvironment` one, so the store is testable without a web host.
+- `SetupStatus` gained `HasBusinessPolicies`, `HasOpenAiKey` and
+  `IsReadyToList` (key and policies) — the two required steps, named on the
+  server rather than inferred in three places in the browser.
+
+**The Settings modal — the two required steps, and nothing else**
+
+- `REQUIRED — 2 STEPS`, then two numbered cards, each with a live state pill
+  (`✓ SAVED` / `NEEDED`):
+  1. **Enter your Claude (Anthropic) API key** — a full-width monospace field
+     bound to the same `CredentialsStore.AnthropicApiKey` as before, a **Show /
+     Hide** toggle (`aria-pressed`, keeps the value, returns focus to the input),
+     and a *Where to get it* line: console.anthropic.com → API keys, what the key
+     starts with, and roughly what it costs.
+  2. **Choose your eBay business policies** — Load Policies, the three selectors,
+     and the manual policy-ID boxes folded into a `<details>` so the normal path
+     is three dropdowns rather than six controls.
+- **Image generation is gone from this modal entirely.** In its place, one line
+  naming the optional extras and a link to the Settings page.
+- The eBay developer keys, the OpenAI key and the manual user token moved into a
+  collapsed `Advanced` `<details>`.
+- Keyboard: Escape closes it (it had no key handler at all), every field has a
+  real `<label for>`, and opening from a checklist button scrolls the step into
+  view and focuses its first *enabled, visible* control — the required cards
+  carry `tabindex="-1"` as the fallback, because focusing a disabled Load
+  Policies button silently left focus on the dashboard behind the modal.
+- The save button reads **Save Settings** when eBay is already connected, rather
+  than telling a connected seller to connect again.
+
+**Image generation as an optional connect strip**
+
+- Now a card on the Settings page in the same shape as Terapeak and Facebook:
+  heading, `OPTIONAL` tag, a state chip (`OFF` / `ON · local ComfyUI` / …),
+  a sentence saying the app works fine without it, then the controls.
+- It owns the prompt template too (`pg-image-prompt`), so all four image-gen
+  settings live in one place instead of two.
+- Terapeak and Facebook gained matching `CONNECTED` / `NOT CONNECTED` chips.
+- The Settings page opens with a **Required setup** card (gold edge, the same two
+  pills) above the optional strips, so the page has the same shape as the modal.
+
+**Onboarding**
+
+- The dashboard checklist is now exactly two required rows plus a dashed
+  *Optional extras* strip (`ANY TIME` — image generation · Terapeak · Facebook)
+  that jumps to the Settings page and flags the card it promised.
+- Step 3 was "OpenAI key", which is needed by nobody who isn't generating photos.
+- Step 2 is eBay **and** its policies in one row, because policies can't be
+  loaded before the account is connected; its copy and button swap through
+  *Log into eBay →* to *Choose policies →* to *✓ Ready*.
+- The hero chips read `Claude key saved` and `eBay connected · policies needed`,
+  off the same state the checklist uses.
+
+**Incidental fixes found on the way**
+
+- `wwwroot/index.html` had an **unclosed `div`**: the Image Generation card was
+  never closed, so Terapeak, Facebook, Fees & Costs and Listing Defaults were all
+  nested inside it, with a stray closing tag at the end of the section. The page
+  is now tag-balanced (checked with a stack parser over the whole file).
+- `/api/setup/status` was already being read for `hasOpenAiKey`, which the server
+  never sent — it does now.
+- The image-generation "disabled" error pointed at *Settings → Image Generation*,
+  a heading that no longer exists; it names the optional strip.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/CredentialsStore.cs` | **`CredentialsPatch`** + patch-based `Save`; `(string)` ctor; `HasBusinessPolicies`, `HasOpenAiKey`, `IsReadyToList`; `HasBusinessPolicies` on `PublicFields` |
+| `Program.cs` | `/api/setup/save` binds `CredentialsPatch` |
+| `Services/ImageGenerationService.cs` | The disabled-mode message names the new location |
+| `wwwroot/index.html` | Modal rebuilt around the two required steps; image gen moved out to its own optional strip; required-setup card; checklist rewritten; unclosed div fixed; `app.js?v=73`, `style.css?v=65` |
+| `wwwroot/app.js` | `renderRequiredState` / `paintRequiredPill` / `refreshRequiredState`, `openSetupWithFocus` / `openSetupAt` / `focusSettingsCard`, `bindSetupChecklist`, `renderImageGenState`, `setConnectState`; `updateSetupChecklist` reworked to (key, eBay, policies); image gen reads and writes only the `pg-` fields; dead `s-image-gen-*` handling and `applyImageGenModeVisibility` / `applyComfyUiModelVisibility` / `isSetupStepDone` removed |
+| `wwwroot/style.css` | Required cards and pills, optional connect strips and state chips, advanced/manual disclosures, the checklist extras row |
+| `Tests/CredentialsStoreTests.cs` | **New** — 18 cases |
+
+### Verified
+
+- `dotnet build` — **0 errors** (the 2 `NU1903` SQLite advisory warnings are the
+  pre-existing baseline).
+- `dotnet test` — **1782 passed, 0 failed** (1764 before this session).
+- `node --check` on `app.js`; a tag-stack parse of `index.html` reports balanced.
+- **The app was built and driven in a real browser** (Playwright, dev port 9451)
+  against this machine's live credentials — which have a Claude key and eBay
+  connected but **no business policies**, exactly the half-finished state the
+  redesign is for:
+  - The checklist showed step 1 `✓ Key saved` and step 2 pending with *"eBay is
+    connected. Now pick the shipping, payment and return policy…"* and a
+    **Choose policies →** button; the hero chips read `Claude key saved` and
+    `eBay connected · policies needed`.
+  - That button opened the modal, loaded **42 fulfillment, 1 payment, 4 return
+    policies** from the real account, and left focus on the fulfilment selector.
+  - The modal contains **no image-generation controls** — its only selects are
+    the three policy pickers.
+  - Show/Hide flipped the key field to `text` with `aria-pressed="true"`;
+    Escape closed the modal.
+  - The Settings page listed `Required setup`, then `Image generation OPTIONAL`
+    (`OFF`), `Terapeak sold comps OPTIONAL` (`NOT CONNECTED`),
+    `Facebook Marketplace OPTIONAL` (`NOT CONNECTED`), then Fees and Defaults.
+  - **Zero console errors** across the whole run, in both light and dark themes.
+
+### Not verified / known limits
+
+- **Nothing was saved during the browser run.** The dev instance writes to the
+  real `credentials.json`, so every check was read-only; the partial-save
+  semantics are covered by the 18 new unit tests against a temp file, not by a
+  click in the live app.
+- **The UI is served from embedded resources**, so `dotnet run --no-build` serves
+  the wwwroot of the last *build* — an edit made after building is invisible
+  until you rebuild. This cost a confusing round of "the fix didn't take".
+- This machine's stored `imageGenMode` is `"openai"`, a legacy value no server
+  branch matches — image generation was already off in practice, and the strip
+  says `OFF` rather than inventing a state for it. The first save from the strip
+  normalises it.
+- **No UI test covers any of this.** The browser pass was manual driving, not an
+  automated regression.
+- `queue_forever.py` was already untracked at the start of the session and is
+  unrelated to this work; it was **left untracked**.

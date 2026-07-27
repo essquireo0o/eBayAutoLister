@@ -561,7 +561,9 @@ app.MapPost("/api/stripe/checkout/annual", async (StripeService stripe, HttpCont
 app.MapGet("/api/setup/status", (CredentialsStore store) => Results.Ok(store.GetStatus()));
 app.MapGet("/api/setup/fields", (CredentialsStore store) => Results.Ok(store.GetPublicFields()));
 
-app.MapPost("/api/setup/save", (Credentials body, CredentialsStore store) =>
+// A partial save: the body carries only the fields the screen that posted it owns, and anything
+// absent is left as it was (see CredentialsPatch).
+app.MapPost("/api/setup/save", (CredentialsPatch body, CredentialsStore store) =>
 {
     store.Save(body);
     return Results.Ok(store.GetStatus());

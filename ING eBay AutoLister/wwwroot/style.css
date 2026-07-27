@@ -3779,7 +3779,242 @@ textarea {
 
 .view-ebay-link:hover { color: var(--gold); }
 
-.imggen-settings-card { padding-bottom: 18px; }
+/* ── Settings page cards + optional connect strips ────────────
+   Required setup, then the optional strips, in that order and looking different
+   from each other: the required card carries the brand's gold edge, an optional
+   one is a plain card with a state chip. Nothing optional should be able to look
+   like something you are behind on. */
+.settings-card { padding-bottom: 18px; }
+
+#pg-required-card {
+  border-top: 3px solid var(--gold);
+  border-radius: var(--r-lg);
+  margin-top: 18px;
+  padding: 18px 22px;
+  background: var(--card);
+}
+
+.settings-card-copy {
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.settings-card-copy strong { color: var(--ink); font-weight: 650; }
+
+.settings-card-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.pg-required-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.pg-required-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+.pg-required-item.is-done { opacity: .7; }
+
+.pg-required-text {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.pg-required-text strong { color: var(--ink); font-weight: 650; }
+
+.pg-required-state,
+.setup-req-state,
+.connect-state {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--soft-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+.pg-required-state.is-done,
+.setup-req-state.is-done,
+.connect-state.is-on {
+  border-color: var(--success-line);
+  background: var(--success-tint);
+  color: var(--success);
+}
+
+.settings-optional-eyebrow {
+  margin: 26px 0 -4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .13em;
+}
+
+.connect-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: 10px;
+}
+.connect-card-head h3 { margin-bottom: 0; }
+
+.connect-tag {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--soft-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+/* Arriving from the dashboard or the setup modal: say which card was meant. */
+.connect-card.is-flagged,
+.settings-card.is-flagged {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: var(--r-md);
+}
+
+/* ── Setup modal: the two required steps ─────────────────────── */
+.setup-notice {
+  margin: 14px 22px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--success-line);
+  border-radius: var(--r-sm);
+  background: var(--success-tint);
+  color: var(--success);
+  font-size: var(--fs-sm);
+}
+
+.setup-req-eyebrow {
+  margin: 18px 22px 0;
+  color: var(--gold-ink);
+  font-size: var(--fs-xs);
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .13em;
+}
+
+.setup-req {
+  margin: 12px 22px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+}
+.setup-req.is-done { border-color: var(--success-line); }
+
+.setup-req-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  margin-bottom: 14px;
+}
+
+.setup-req-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--r-pill);
+  background: var(--teal-800);
+  color: var(--gold-note);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+.setup-req.is-done .setup-req-num { background: var(--success); color: var(--success-tint); }
+
+.setup-req-heading { flex: 1; min-width: 0; }
+.setup-req-heading h3 { margin-bottom: 3px; }
+
+.setup-req-sub {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+/* The key field is the single most important input in the app; it gets the room. */
+.setup-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.setup-key-row input {
+  flex: 1;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.setup-key-row .btn { flex-shrink: 0; }
+
+.setup-req-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+.setup-req-hint strong { color: var(--ink); }
+.setup-req-hint code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--soft-2);
+  color: var(--brand-ink);
+}
+
+.setup-policy-manual {
+  margin-top: 12px;
+}
+.setup-policy-manual > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.setup-policy-manual[open] > summary { margin-bottom: 10px; }
+
+.setup-optional-note {
+  margin: 18px 22px 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.setup-advanced { margin: 16px 22px 0; }
+.setup-advanced > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--soft);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+.setup-advanced > summary:hover { border-color: var(--line-strong); }
+.setup-advanced[open] > summary { margin-bottom: 6px; }
+.setup-advanced .setup-section { padding-left: 0; padding-right: 0; }
 
 /* ── License nag banner ──────────────────────────────────────── */
 .license-nag {
@@ -7117,6 +7352,34 @@ td.skeleton-cell { padding: 0 !important; }
 }
 
 .setup-step .btn { flex-shrink: 0; }
+
+/* The optional extras: one line, visibly not a step. Dashed rather than filled, so it reads as
+   an aside to the two numbered rows above it rather than as the one still outstanding. */
+.setup-extras {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+  padding: var(--s3) var(--s4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+}
+
+.setup-extras-label {
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+}
+
+.setup-extras-copy {
+  flex: 1;
+  min-width: 200px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.setup-extras .btn { flex-shrink: 0; }
 
 /* ── Shared surface polish ────────────────────────────────────────── */
 .opp-supplier-panel {

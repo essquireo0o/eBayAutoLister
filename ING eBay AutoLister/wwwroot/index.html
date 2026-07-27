@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=64" />
+  <link rel="stylesheet" href="style.css?v=65" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -218,41 +218,46 @@
         -->
         <div id="recovery-banner" class="recovery-banner hidden" role="status" aria-live="polite"></div>
 
-        <!-- Setup checklist — hidden once both required steps complete -->
+        <!-- Setup checklist — hidden once both required steps complete.
+             Two required steps and nothing else: the optional extras are named
+             underneath as extras, so a brand-new seller can tell in one read what
+             they have to do from what they may do later. Buttons are wired in
+             app.js (bindSetupChecklist) rather than inline, so the key step can
+             open the modal *and* put the cursor in the key field. -->
         <div id="setup-checklist" class="setup-checklist hidden">
-          <button onclick="document.getElementById('setup-checklist').classList.add('hidden')" title="Dismiss" aria-label="Dismiss setup checklist" class="setup-dismiss" type="button">&times;</button>
-          <p class="setup-title">Get started — 2 steps to activate</p>
-          <p class="setup-sub">Step 3 is optional — you can always add it later in Settings.</p>
+          <button id="setup-checklist-dismiss" title="Dismiss" aria-label="Dismiss setup checklist" class="setup-dismiss" type="button">&times;</button>
+          <p class="setup-title">Get started — 2 required steps</p>
+          <p class="setup-sub">Do these two and you can list. Everything else in this app is optional.</p>
           <div class="setup-steps">
 
-            <!-- Step 1: AI key -->
+            <!-- Step 1: the Claude key -->
             <div id="step1-row" class="setup-step">
               <div id="step1-icon" class="setup-step-num">1</div>
               <div class="setup-step-body">
-                <div class="setup-step-title">Enter your AI API key</div>
-                <div class="setup-step-copy">Powers listing analysis — AI reads your product photo and fills in title, description, price, and category automatically. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a> (~$5 gets hundreds of listings).</div>
+                <div class="setup-step-title">Enter your Claude (Anthropic) API key</div>
+                <div class="setup-step-copy">This is the AI. It reads your product photo and fills in the title, description, price and category. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a> — about $5 covers hundreds of listings.</div>
               </div>
-              <button id="step1-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-primary" type="button">Enter Key →</button>
+              <button id="step1-btn" class="btn btn-primary" type="button">Enter Key →</button>
             </div>
 
-            <!-- Step 2: eBay -->
+            <!-- Step 2: eBay — the login and the policies it unlocks are one step,
+                 because policies cannot be loaded until eBay is connected. The
+                 button and copy swap between the two halves in updateSetupChecklist. -->
             <div id="step2-row" class="setup-step">
               <div id="step2-icon" class="setup-step-num">2</div>
               <div class="setup-step-body">
-                <div class="setup-step-title">Connect your eBay account</div>
-                <div class="setup-step-copy">Log into eBay so the app can import your listings and publish new ones directly to your store.</div>
+                <div class="setup-step-title" id="step2-title">Connect eBay and pick your business policies</div>
+                <div class="setup-step-copy" id="step2-copy">Log into eBay, then choose the shipping, payment and return policy your listings publish under.</div>
               </div>
-              <button id="step2-btn" onclick="$('btn-connect')?.click()" class="btn btn-primary" type="button">Log into eBay →</button>
+              <button id="step2-btn" class="btn btn-primary" type="button">Log into eBay →</button>
             </div>
 
-            <!-- Step 3: OpenAI (optional) -->
-            <div id="step3-row" class="setup-step setup-step--optional">
-              <div id="step3-icon" class="setup-step-num">3</div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">OpenAI key <span class="setup-tag">Optional</span></div>
-                <div class="setup-step-copy">Only needed if you want AI to <strong>generate product photos</strong> from scratch using DALL·E 3. Skip this if you'll photograph your own items. Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com</a>.</div>
-              </div>
-              <button id="step3-btn" onclick="document.getElementById('setup-overlay').classList.remove('hidden')" class="btn btn-secondary" type="button">Add Key →</button>
+            <!-- The optional extras, named so they read as extras rather than as a
+                 third step someone is behind on. -->
+            <div class="setup-extras">
+              <span class="setup-extras-label">Optional extras <span class="setup-tag">Any time</span></span>
+              <span class="setup-extras-copy">AI photo generation · Terapeak sold comps · Facebook Marketplace sourcing</span>
+              <button id="setup-extras-btn" class="btn btn-ghost small" type="button">Set up extras →</button>
             </div>
 
           </div>
@@ -3330,26 +3335,62 @@
         </div>
         <div id="settings-status" class="settings-list"></div>
 
-        <!-- Image Generation settings — visible directly on the Settings page -->
-        <div class="setup-section imggen-settings-card">
-          <h3>Image Generation</h3>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Generate AI product photos automatically when creating a new listing. Uses your local Stable Diffusion server or OpenAI DALL-E.</p>
+        <!-- ── Required setup ─────────────────────────────────────────────────
+             The same two steps as the modal, restated where a seller who came
+             looking for "settings" will find them, with live state rather than a
+             second copy of the fields. -->
+        <div class="setup-section settings-card" id="pg-required-card">
+          <h3>Required setup</h3>
+          <p class="settings-card-copy">Two things make the app work. Everything below this card is optional.</p>
+          <ol class="pg-required-list">
+            <li class="pg-required-item" id="pg-required-key">
+              <span class="pg-required-state" id="pg-required-key-state">Needed</span>
+              <span class="pg-required-text"><strong>Your Claude (Anthropic) API key</strong> — the AI that reads your photo and writes the listing.</span>
+            </li>
+            <li class="pg-required-item" id="pg-required-policies">
+              <span class="pg-required-state" id="pg-required-policies-state">Needed</span>
+              <span class="pg-required-text"><strong>Your eBay business policies</strong> — the shipping, payment and return policy every listing publishes under.</span>
+            </li>
+          </ol>
+          <div class="imggen-test-row">
+            <button id="pg-open-required" class="btn btn-primary" type="button">Open required setup</button>
+            <span id="pg-required-msg" class="sd-test-msg"></span>
+          </div>
+        </div>
+
+        <!-- ── Optional connect strips ────────────────────────────────────────
+             Image generation used to sit at the top of the setup modal, above the
+             key that makes the app run, which read as something you had to deal
+             with before you could list anything. It is a connect strip now — the
+             same shape as Terapeak and Facebook, in the row of things you add
+             when you want them and never before. -->
+        <p class="settings-optional-eyebrow">Optional — add any of these later, in any order</p>
+
+        <div class="setup-section settings-card connect-card" id="pg-imggen-card">
+          <div class="connect-card-head">
+            <h3>Image generation <span class="connect-tag">Optional</span></h3>
+            <span id="pg-imggen-state" class="connect-state">Off</span>
+          </div>
+          <p class="settings-card-copy">
+            Draws a product photo when you have none of your own — a local Stable Diffusion server on this PC,
+            or OpenAI DALL·E. Listings work perfectly with your own photos; leave this off and nothing else changes.
+          </p>
           <div class="form-grid">
             <div class="field">
-              <label>Mode</label>
+              <label for="pg-imggen-mode">Mode</label>
               <select id="pg-imggen-mode">
-                <option value="disabled">Disabled (no AI photos)</option>
+                <option value="disabled">Off (use my own photos)</option>
                 <option value="a1111">Local AUTOMATIC1111 (port 7860)</option>
                 <option value="comfyui">Local ComfyUI (port 8188)</option>
-                <option value="dalle">OpenAI DALL-E 3</option>
+                <option value="dalle">OpenAI DALL·E 3 (needs an OpenAI key)</option>
               </select>
             </div>
             <div id="pg-imggen-endpoint-wrap" class="field" style="display:none">
-              <label>Local Server Endpoint</label>
+              <label for="pg-imggen-endpoint">Local Server Endpoint</label>
               <input id="pg-imggen-endpoint" type="text" placeholder="http://127.0.0.1:7860" autocomplete="off" />
             </div>
             <div id="pg-imggen-model-wrap" class="field" style="display:none">
-              <label>ComfyUI Checkpoint</label>
+              <label for="pg-imggen-model">ComfyUI Checkpoint</label>
               <div style="display:flex;gap:6px;align-items:center">
                 <select id="pg-imggen-model" style="flex:1">
                   <option value="">— click Load to fetch models —</option>
@@ -3357,22 +3398,31 @@
                 <button id="pg-imggen-load-models" class="btn btn-ghost small" type="button">Load Models</button>
               </div>
             </div>
+            <div class="field full-width">
+              <label for="pg-image-prompt">Image prompt template <span class="hint-inline">use {ITEM} for the product name</span></label>
+              <textarea id="pg-image-prompt" rows="2" placeholder="Professional ecommerce product photo of {ITEM}, white seamless background, studio lighting, realistic detail, marketplace listing photography, no text, no watermarks" autocomplete="off"></textarea>
+            </div>
           </div>
           <div class="imggen-test-row" style="margin-top:14px">
-            <button id="pg-imggen-save" class="btn btn-primary" type="button">Save Settings</button>
+            <button id="pg-imggen-save" class="btn btn-primary" type="button">Save image settings</button>
             <button id="pg-imggen-test" class="btn btn-secondary" type="button">Test Connection</button>
             <span id="pg-imggen-msg" class="sd-test-msg"></span>
           </div>
-          <p style="font-size:12px;color:var(--muted);margin-top:12px">
+          <p class="settings-card-note">
             Need a local AI image server?
             <a href="https://lykos.ai/" target="_blank" rel="noopener noreferrer" class="link-ext">Download Stability Matrix (easiest setup) ↗</a>
             &nbsp;&nbsp;
             <button id="pg-imggen-guide" class="btn btn-ghost small" type="button">Full Setup Guide</button>
           </p>
+        </div>
+
         <!-- Terapeak — real sold-comp data via a saved logged-in session (no public API exists) -->
-        <div class="setup-section imggen-settings-card">
-          <h3>Terapeak (Sold Comps)</h3>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        <div class="setup-section settings-card connect-card" id="pg-terapeak-card">
+          <div class="connect-card-head">
+            <h3>Terapeak sold comps <span class="connect-tag">Optional</span></h3>
+            <span id="pg-terapeak-state" class="connect-state">Not connected</span>
+          </div>
+          <p class="settings-card-copy">
             eBay doesn't offer a Terapeak API, so this logs into eBay once in a real browser window and saves that
             session locally to read real sold-price data for Auto-Fill. Your eBay password is never seen or stored by this app.
           </p>
@@ -3385,9 +3435,12 @@
 
         <!-- Facebook Marketplace — local sourcing supply, same saved-session approach as
              Terapeak because Facebook has no public search API either. -->
-        <div class="setup-section imggen-settings-card">
-          <h3>Facebook Marketplace (Local Sourcing)</h3>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        <div class="setup-section settings-card connect-card" id="pg-facebook-card">
+          <div class="connect-card-head">
+            <h3>Facebook Marketplace <span class="connect-tag">Optional</span></h3>
+            <span id="pg-facebook-state" class="connect-state">Not connected</span>
+          </div>
+          <p class="settings-card-copy">
             Facebook has no Marketplace search API, so this logs into <strong>your own</strong> Facebook account once in a real
             browser window and saves that session locally to search local listings by zip code and radius. Your Facebook password
             is never seen or stored by this app, and nothing is ever searched or posted without you clicking.
@@ -3397,14 +3450,15 @@
             <button id="pg-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             <span id="pg-facebook-status" class="sd-test-msg">Not connected — local sourcing search is unavailable.</span>
           </div>
-          <p style="font-size:13px;color:var(--muted);margin-top:12px">
+          <p class="settings-card-note">
             Not connecting Facebook doesn't switch local sourcing off: <strong>Craigslist searches with no login at all</strong>
             and needs nothing set up here. Connect Facebook to search both at once.
           </p>
         </div>
 
-        <!-- Listing Defaults — pre-filled into every new listing -->
-        <div class="setup-section imggen-settings-card">
+        <!-- Fees &amp; Costs and Listing Defaults — one card: both are the numbers stamped onto
+             every listing, and neither is part of getting started. -->
+        <div class="setup-section settings-card">
           <!-- Fees &amp; Costs — the numbers behind every net-profit figure in the app. Saving here
                re-prices the listing editor, market research, local arbitrage, lot analysis,
                inventory health and watcher offers at once (they share one FeeProfile). -->
@@ -3550,7 +3604,6 @@
             <button id="pg-defaults-save" class="btn btn-primary" type="button">Save Defaults</button>
             <span id="pg-defaults-msg" class="sd-test-msg"></span>
           </div>
-        </div>
         </div>
       </section>
 
@@ -3953,34 +4006,121 @@
         <h2>Settings</h2>
         <button id="btn-close-setup" class="modal-close" type="button" title="Close">X</button>
       </div>
-      <p class="modal-desc" id="setup-modal-desc">Your keys are saved locally on this machine — never sent anywhere except the AI service you choose.</p>
+      <p class="modal-desc" id="setup-modal-desc">Two things to fill in — your Claude API key, and the eBay business policies your listings ship under. Everything is saved on this PC only.</p>
       <input id="s-license-key" type="hidden" value="" />
 
-      <div id="setup-preconfigured-notice" class="hidden" style="background:var(--success-tint);border:1px solid var(--success-line);border-radius:var(--r-sm);padding:14px 16px;margin-bottom:16px;font-size:var(--fs-sm);color:var(--success)">
-        <strong>✓ eBay is pre-configured.</strong> Enter your Anthropic API key below, then click Save and Connect eBay.
+      <div id="setup-preconfigured-notice" class="hidden setup-notice">
+        <strong>✓ eBay is pre-configured.</strong> Enter your Claude API key below, then click Save and Connect eBay.
       </div>
 
-      <div class="setup-section" id="setup-ai-provider">
-        <h3>AI Key <span style="font-weight:400;font-size:13px;color:var(--muted)">— powers listing analysis &amp; auto-fill</span></h3>
-        <div style="background:var(--soft);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:14px;font-size:var(--fs-sm);color:var(--ink-2);line-height:1.6">
-          <strong>What this does:</strong> When you drop a photo or scan an item, AI reads the image and automatically fills in the title, description, price estimate, category, and item specifics — so you don't have to type it all manually.<br><br>
-          <strong>You only need one key.</strong> Use <strong>Anthropic</strong> (recommended) <em>or</em> OpenAI — not both.
-          <ul style="margin:8px 0 0 16px;padding:0">
-            <li><strong>Anthropic Claude</strong> — best for listing analysis. ~$5 gets you hundreds of listings. <a href="https://console.anthropic.com/settings/keys" target="_blank" class="link-ext">Get key at console.anthropic.com</a></li>
-            <li style="margin-top:4px"><strong>OpenAI</strong> — alternative option, also supports DALL-E photo generation. <a href="https://platform.openai.com/api-keys" target="_blank" class="link-ext">Get key at platform.openai.com</a></li>
-          </ul>
-        </div>
-        <div class="field">
-          <label>Anthropic API Key <span class="hint-inline">— recommended</span></label>
-          <input id="s-anthropic-key" type="password" placeholder="sk-ant-..." autocomplete="off" />
-        </div>
-        <div class="field">
-          <label>OpenAI API Key <span class="hint-inline">— optional alternative (also enables DALL-E photo generation)</span></label>
-          <input id="s-openai-key" type="password" placeholder="sk-..." autocomplete="off" />
-        </div>
-      </div>
+      <!-- ── The two required steps ──────────────────────────────────────────
+           These are the whole of setup. Everything else this modal used to open
+           with — image generation, the eBay developer keys, the alternate AI
+           provider — is either optional or already filled in, and pushing it
+           below the fold is the point: a new seller who reads only the top of
+           this screen has still done the two things that make the app work. -->
+      <p class="setup-req-eyebrow">Required — 2 steps</p>
 
-      <div class="setup-section" id="setup-ebay-developer">
+      <section class="setup-req" id="setup-req-key" tabindex="-1" aria-labelledby="setup-req-key-h">
+        <div class="setup-req-head">
+          <span class="setup-req-num" aria-hidden="true">1</span>
+          <div class="setup-req-heading">
+            <h3 id="setup-req-key-h">Enter your Claude (Anthropic) API key</h3>
+            <p class="setup-req-sub">This key is the AI. It reads your photo and writes the title, description, item specifics and suggested price — without it, nothing auto-fills.</p>
+          </div>
+          <span id="setup-req-key-state" class="setup-req-state">Needed</span>
+        </div>
+
+        <div class="field setup-key-field">
+          <label for="s-anthropic-key">Claude / Anthropic API key</label>
+          <div class="setup-key-row">
+            <input id="s-anthropic-key" type="password" placeholder="sk-ant-..." autocomplete="off"
+                   spellcheck="false" aria-describedby="setup-req-key-hint" />
+            <button id="s-anthropic-reveal" class="btn btn-ghost small" type="button"
+                    aria-pressed="false" aria-controls="s-anthropic-key">Show</button>
+          </div>
+          <p class="setup-req-hint" id="setup-req-key-hint">
+            <strong>Where to get it:</strong>
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" class="link-ext">console.anthropic.com → API keys ↗</a>
+            — sign in, click <em>Create key</em>, copy it, paste it here. It starts with <code>sk-ant-</code>, and about $5 of credit covers hundreds of listings.
+          </p>
+        </div>
+      </section>
+
+      <section class="setup-req" id="setup-req-policies" tabindex="-1" aria-labelledby="setup-req-policies-h">
+        <div class="setup-req-head">
+          <span class="setup-req-num" aria-hidden="true">2</span>
+          <div class="setup-req-heading">
+            <h3 id="setup-req-policies-h">Choose your eBay business policies</h3>
+            <p class="setup-req-sub">Every listing publishes under a shipping, payment and return policy from your own eBay account. Connect eBay, click Load Policies, then pick one of each.</p>
+          </div>
+          <span id="setup-req-policies-state" class="setup-req-state">Needed</span>
+        </div>
+
+        <div class="policy-load-row">
+          <button id="btn-load-policies" class="btn btn-secondary" type="button">Load Policies from eBay</button>
+          <span id="policy-load-msg" class="sd-test-msg"></span>
+          <a href="https://www.ebay.com/sh/m/businesspolicy" target="_blank" rel="noopener noreferrer" class="policy-hub-link">Manage in Seller Hub ↗</a>
+        </div>
+
+        <div id="policy-selects" class="setup-grid hidden">
+          <div class="field">
+            <label for="s-fulfillment-sel">Shipping / Fulfillment Policy</label>
+            <select id="s-fulfillment-sel"><option value="">— Select policy —</option></select>
+          </div>
+          <div class="field">
+            <label for="s-payment-sel">Payment Policy</label>
+            <select id="s-payment-sel"><option value="">— Select policy —</option></select>
+          </div>
+          <div class="field">
+            <label for="s-return-sel">Return Policy</label>
+            <select id="s-return-sel"><option value="">— Select policy —</option></select>
+          </div>
+        </div>
+
+        <details class="setup-policy-manual">
+          <summary>Or paste the policy IDs by hand</summary>
+          <div class="setup-grid">
+            <div class="field">
+              <label for="s-fulfillment">Fulfillment Policy ID</label>
+              <input id="s-fulfillment" type="text" placeholder="e.g. 12345678" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="s-payment">Payment Policy ID</label>
+              <input id="s-payment" type="text" placeholder="e.g. 12345678" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="s-return">Return Policy ID</label>
+              <input id="s-return" type="text" placeholder="e.g. 12345678" autocomplete="off" />
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- ── Optional, and said so ───────────────────────────────────────────
+           The optional extras don't live in this modal at all — they are connect
+           strips on the Settings page, so nothing optional can be mistaken for a
+           step that has to be finished before the app works. -->
+      <p class="setup-optional-note">
+        Optional extras — AI photo generation, Terapeak sold comps and Facebook Marketplace — set up
+        separately on the <button id="setup-goto-optional" class="link-btn" type="button">Settings page</button>.
+        None of them are needed to list.
+      </p>
+
+      <details class="setup-advanced" id="setup-advanced">
+        <summary>Advanced — eBay developer keys, alternate AI provider, manual token</summary>
+
+        <div class="setup-section" id="setup-ai-provider">
+          <h3>OpenAI key <span class="hint-inline">— optional</span></h3>
+          <p class="setup-req-sub">Not needed for listing. Only used if you pick DALL·E for image generation, or prefer OpenAI over Claude for analysis.</p>
+          <div class="field">
+            <label for="s-openai-key">OpenAI API Key</label>
+            <input id="s-openai-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+            <p class="setup-req-hint"><a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" class="link-ext">platform.openai.com → API keys ↗</a></p>
+          </div>
+        </div>
+
+        <div class="setup-section" id="setup-ebay-developer">
         <h3>eBay Developer</h3>
         <div class="setup-env">
           <label class="toggle-label">
@@ -4005,102 +4145,18 @@
           <input id="s-runame" type="text" placeholder="YourName-AppName-PRD-xxxxxxxx" autocomplete="off" />
         </div>
         <div id="ebay-oauth-step" class="hidden" style="margin-top:16px;padding:16px;background:var(--teal-900);border:1px solid var(--teal-700);border-radius:var(--r-md)">
-          <p style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--gold-light);margin-bottom:8px">Step 2 — Copy the URL and click below</p>
+          <p style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--gold-light);margin-bottom:8px">Copy the URL and click below</p>
           <p style="font-size:var(--fs-xs);color:var(--on-dark-2);margin-bottom:12px">eBay opened in a new tab. Log in, then eBay will redirect you to inglisting.com. <strong>Copy the URL from that page</strong> (Ctrl+A, Ctrl+C in the address bar), then click the button below.</p>
           <button id="btn-paste-and-connect" class="btn btn-primary" type="button" style="width:100%;font-size:15px;padding:12px">📋 I've Logged In — Paste &amp; Connect</button>
           <div id="oauth-redirect-msg" style="margin-top:8px;font-size:12px"></div>
           <textarea id="s-oauth-redirect-url" rows="2" placeholder="Or paste the full redirect URL here manually…" autocomplete="off" style="width:100%;margin-top:10px;padding:8px;border:1px solid var(--dark-line);border-radius:var(--r-xs);background:var(--dark-0);color:var(--on-dark);font-size:var(--fs-xs);resize:vertical"></textarea>
         </div>
         <div class="field">
-          <label>User Token <span class="hint-inline">optional</span></label>
+          <label for="s-user-token">User Token <span class="hint-inline">optional</span></label>
           <input id="s-user-token" type="password" placeholder="AgAAAA..." autocomplete="off" />
         </div>
-      </div>
-
-      <div class="setup-section">
-        <h3>Image Generation</h3>
-        <button id="btn-open-imggen-setup" class="btn btn-secondary" type="button" style="margin-bottom:14px">Open Setup Guide</button>
-        <div class="field">
-          <label>Mode</label>
-          <select id="s-image-gen-mode">
-            <option value="disabled">Disabled (no AI photos)</option>
-            <option value="local_sd">Local Stable Diffusion</option>
-            <option value="dalle">OpenAI DALL-E 3</option>
-          </select>
         </div>
-
-        <div id="s-local-sd-fields" style="display:none">
-          <div class="field" style="margin-top:12px">
-            <label>Backend</label>
-            <select id="s-local-sd-backend">
-              <option value="automatic1111">AUTOMATIC1111 (WebUI)</option>
-              <option value="comfyui">ComfyUI</option>
-            </select>
-          </div>
-          <div class="field" style="margin-top:12px">
-            <label>Local Server Endpoint</label>
-            <input id="s-local-sd-endpoint" type="text" placeholder="http://127.0.0.1:7860" autocomplete="off" />
-          </div>
-          <div id="s-comfyui-model-field" class="field" style="display:none;margin-top:12px">
-            <label>ComfyUI Checkpoint</label>
-            <div style="display:flex;gap:6px;align-items:center">
-              <select id="s-local-sd-model" style="flex:1">
-                <option value="">— click Load to fetch models —</option>
-              </select>
-              <button id="s-btn-load-models" class="btn btn-ghost small" type="button">Load Models</button>
-            </div>
-          </div>
-          <div class="modal-actions compact-actions" style="margin-top:12px">
-            <div id="sd-test-msg" class="sd-test-msg"></div>
-            <button id="btn-test-sd" class="btn btn-secondary" type="button">Test Local Image Server</button>
-          </div>
-        </div>
-
-        <div class="field" style="margin-top:12px">
-          <label>Image Prompt Template <span class="hint-inline">use {ITEM} for the product name</span></label>
-          <textarea id="s-image-prompt" rows="3" placeholder="Professional ecommerce product photo of {ITEM}, white seamless background, studio lighting, realistic detail, marketplace listing photography, no text, no watermarks" autocomplete="off"></textarea>
-        </div>
-      </div>
-
-      <div class="setup-section">
-        <h3>eBay Business Policies</h3>
-
-        <div class="policy-load-row">
-          <button id="btn-load-policies" class="btn btn-secondary" type="button">Load Policies from eBay</button>
-          <span id="policy-load-msg" class="sd-test-msg"></span>
-          <a href="https://www.ebay.com/sh/m/businesspolicy" target="_blank" rel="noopener noreferrer" class="policy-hub-link">Manage in Seller Hub ↗</a>
-        </div>
-
-        <div id="policy-selects" class="setup-grid hidden">
-          <div class="field">
-            <label>Shipping / Fulfillment Policy</label>
-            <select id="s-fulfillment-sel"><option value="">— Select policy —</option></select>
-          </div>
-          <div class="field">
-            <label>Payment Policy</label>
-            <select id="s-payment-sel"><option value="">— Select policy —</option></select>
-          </div>
-          <div class="field">
-            <label>Return Policy</label>
-            <select id="s-return-sel"><option value="">— Select policy —</option></select>
-          </div>
-        </div>
-
-        <div class="setup-grid" style="margin-top:10px">
-          <div class="field">
-            <label>Fulfillment Policy ID <span class="hint-inline">auto-filled above or paste manually</span></label>
-            <input id="s-fulfillment" type="text" placeholder="e.g. 12345678" autocomplete="off" />
-          </div>
-          <div class="field">
-            <label>Payment Policy ID <span class="hint-inline">auto-filled above or paste manually</span></label>
-            <input id="s-payment" type="text" placeholder="e.g. 12345678" autocomplete="off" />
-          </div>
-          <div class="field">
-            <label>Return Policy ID <span class="hint-inline">auto-filled above or paste manually</span></label>
-            <input id="s-return" type="text" placeholder="e.g. 12345678" autocomplete="off" />
-          </div>
-        </div>
-      </div>
+      </details>
 
       <div class="modal-actions">
         <div id="setup-status-msg"></div>
@@ -4207,6 +4263,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=72"></script>
+  <script src="app.js?v=73"></script>
 </body>
 </html>
