@@ -7173,6 +7173,11 @@ app.MapPost("/api/work/autosave", (WorkAutosaveRequest req, WorkRecoveryStore wo
             "The app could not tell which draft to save against.",
             "Reload the page — your current work is still on screen.");
 
+    // A blank tab that was opened and closed is not work. Refused before the write, and quietly —
+    // this is the normal answer for an untouched form, not an anomaly worth a line in the log.
+    if (!WorkRecoveryStore.IsWorthRecovering(req.Stage, req.Label, req.Payload))
+        return Results.Ok(new { saved = false, reason = "empty" });
+
     try
     {
         var saved = work.Save(new WorkSnapshot
@@ -7244,6 +7249,26 @@ app.MapPost("/api/work/discard", (WorkDiscardRequest req, WorkRecoveryStore work
     catch (Exception ex)
     {
         var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        return FailureJson(failure);
+    }
+});
+
+// Clearing the banner in one action. Without this, a seller facing eight finished-with drafts has to
+// confirm eight discards — so they do it once and leave the rest there for good.
+app.MapPost("/api/work/discard-all", (WorkRecoveryStore work, ActionLog log) =>
+{
+    try
+    {
+        // Drafts only. The published rows in this table are the publish journal PublishGuard reads to
+        // refuse a duplicate, and tidying the banner must not cost the seller that protection.
+        var discarded = work.DiscardAll();
+        if (discarded > 0) log.Add("Info", "All recovered drafts discarded", $"{discarded} draft(s) cleared.");
+        return Results.Ok(new { discarded });
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        log.Add("Warning", "Could not clear recovered drafts", $"{failure.Kind} — {failure.Technical}");
         return FailureJson(failure);
     }
 });

@@ -200,6 +200,30 @@
     return workKey;
   }
 
+  // The fields that hold the seller's own work. Everything else the form sends — condition, package
+  // type, quantity, handling time, country, format, duration — is a control with a default, so an
+  // untouched blank tab already has values for all of them and its payload is full size. Sizing the
+  // payload cannot tell a blank tab from real work; naming these can. Mirrors ContentFields in
+  // WorkRecoveryStore.cs, which enforces the same rule server-side.
+  const AUTOSAVE_CONTENT_FIELDS = [
+    'title', 'subtitle', 'description', 'conditionDescription',
+    'brand', 'mpn', 'upc', 'ean', 'isbn', 'sku',
+    'category', 'categoryId', 'secondaryCategoryId',
+    'price', 'itemSpecifics', 'imageUrls',
+  ];
+
+  function hasAutosaveContent(draft) {
+    return AUTOSAVE_CONTENT_FIELDS.some(field => {
+      const value = draft?.[field];
+      if (value == null) return false;
+      if (typeof value === 'string') return value.trim() !== '';
+      if (typeof value === 'number') return value !== 0;   // 0 is an untyped price, not a price of 0
+      if (Array.isArray(value)) return value.some(Boolean);
+      if (typeof value === 'object') return Object.values(value).some(v => v !== '' && v != null);
+      return Boolean(value);
+    });
+  }
+
   function scheduleAutosave() {
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => { flushAutosave(false); }, AUTOSAVE_DEBOUNCE_MS);
@@ -210,18 +234,22 @@
   // listing and losing it.
   function flushAutosave(useBeacon) {
     clearTimeout(autosaveTimer);
-    let payload;
+    let draft, payload;
     try {
-      payload = JSON.stringify(buildNlPayload());
+      draft = buildNlPayload();
+      payload = JSON.stringify(draft);
     } catch { return; }
 
     // A no-op save is still a database write and a Prune pass. Skip when nothing changed.
     if (payload === lastAutosavePayload) return;
 
-    const title = ($('nl-title')?.value || '').trim();
-    // An empty form is not work worth recovering, and offering it back as "unfinished work" on every
-    // launch would train sellers to dismiss the banner without reading it.
-    if (!title && payload.length < 400) return;
+    // An empty form is not work worth recovering. This used to be a size test (`length < 400`), which
+    // a blank tab sails past on its defaults alone — so opening the modal and closing it again left an
+    // "Untitled listing" behind, and a banner that cries wolf on every launch is one nobody reads on
+    // the launch it is holding a real Claude-written listing.
+    if (!hasAutosaveContent(draft)) return;
+
+    const title = (draft.title || '').trim();
 
     lastAutosavePayload = payload;
     const body = { key: currentWorkKey(), label: title || 'Untitled listing', payload, stage: 'editing' };
@@ -282,16 +310,24 @@
         </li>`;
     }).join('');
 
+    // Offered only when there is more than one, so it does not sit beside a single row's own Discard
+    // saying the same thing twice.
+    const discardAll = items.length > 1
+      ? '<div class="recovery-bulk"><button type="button" class="btn btn-ghost small" '
+        + `id="recovery-discard-all">Discard all ${items.length}</button></div>`
+      : '';
+
     banner.innerHTML =
       `<div class="recovery-head">${items.length === 1
           ? 'An unfinished listing was recovered'
           : `${items.length} unfinished listings were recovered`}</div>` +
       '<p class="recovery-sub">These were being written when the app last closed. Nothing was lost.</p>' +
-      `<ul class="recovery-list">${rows}</ul>`;
+      `<ul class="recovery-list">${rows}</ul>` + discardAll;
     banner.classList.remove('hidden');
 
     banner.querySelectorAll('[data-recover]').forEach(btn =>
       btn.addEventListener('click', () => restoreWork(items[Number(btn.dataset.recover)])));
+    $('recovery-discard-all')?.addEventListener('click', () => discardAllWork(items.length));
     banner.querySelectorAll('[data-recover-check]').forEach(btn =>
       btn.addEventListener('click', () => checkRecoveredPublish(items[Number(btn.dataset.recoverCheck)])));
     banner.querySelectorAll('[data-recover-discard]').forEach(btn =>
@@ -349,6 +385,23 @@
     if (!confirm(`Discard "${item.label || 'this draft'}"? This cannot be undone.`)) return;
     await callApi('/api/work/discard', { method: 'POST', body: { key: item.key }, timeoutMs: 15000 });
     if (workKey === item.key) { workKey = null; lastAutosavePayload = ''; }
+    loadRecoverableWork();
+  }
+
+  // One action for a banner full of drafts the seller has finished with. The count is in the prompt
+  // because this is the one recovery action that cannot be undone one row at a time.
+  async function discardAllWork(count) {
+    if (!confirm(`Discard all ${count} recovered drafts? This cannot be undone.`)) return;
+
+    const { ok, data, failure } = await callApi('/api/work/discard-all', { method: 'POST', timeoutMs: 20000 });
+    if (!ok) {
+      addActivity('Could not clear the recovered drafts', failure?.whatHappened || 'Nothing was discarded.');
+      return;
+    }
+    // The draft being edited now may have been one of them, so stop autosaving into a row that is gone.
+    workKey = null;
+    lastAutosavePayload = '';
+    addActivity('Recovered drafts cleared', `${data?.discarded ?? count} draft(s) discarded.`);
     loadRecoverableWork();
   }
 

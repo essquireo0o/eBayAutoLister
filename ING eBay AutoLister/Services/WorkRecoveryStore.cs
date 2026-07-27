@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace ING_eBay_AutoLister.Services;
@@ -88,6 +89,110 @@ public sealed class WorkRecoveryStore
         Initialize();
     }
 
+    // ── What counts as work worth recovering ────────────────────────────────
+
+    /// <summary>
+    /// Labels that mean "this draft was never named" rather than naming it. The client sends one of
+    /// these when the title box is empty, and older builds send them too, so they are recognised here
+    /// rather than trusted as content.
+    /// </summary>
+    private static readonly HashSet<string> PlaceholderLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "untitled listing", "untitled", "(untitled)", "new listing", "draft",
+    };
+
+    /// <summary>
+    /// The fields that carry a seller's own work. Everything else in a listing payload — condition,
+    /// package type, quantity, handling time, country, format, duration — is a control with a default
+    /// the form fills in for itself, so an untouched blank tab already has values for all of them.
+    /// Weighing the payload by size cannot tell those apart from real work; naming the fields can.
+    /// </summary>
+    private static readonly string[] ContentFields =
+    {
+        "title", "subtitle", "description", "conditionDescription",
+        "brand", "mpn", "upc", "ean", "isbn", "sku",
+        "category", "categoryId", "secondaryCategoryId",
+        "price", "itemSpecifics", "imageUrls",
+    };
+
+    /// <summary>
+    /// A payload the app does not recognise as a listing has to be judged by size instead. Small
+    /// enough that `{}` and a couple of empty keys do not qualify, large enough that anything with
+    /// actual text in it does.
+    /// </summary>
+    public const int MinimumOpaquePayloadChars = 40;
+
+    /// <summary>
+    /// Whether this row is worth offering back to the seller, as opposed to being the residue of a
+    /// blank tab that was opened and closed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This exists because the banner's credibility is the whole feature. Opening the AI listing modal
+    /// and closing it again used to leave a full-sized payload behind — every control already holds its
+    /// default — so the next launch announced an "unfinished listing" called <c>Untitled listing</c>
+    /// with nothing in it. A seller who is shown that twice stops reading the banner, and then the one
+    /// launch where it is holding a real Claude-written listing goes unread too.
+    /// </para>
+    /// <para>
+    /// Only <see cref="WorkStage.Editing"/> rows are judged. A row that reached <c>publishing</c> or
+    /// <c>failed</c> means something was actually sent to eBay, and that must be surfaced whatever its
+    /// payload looks like — an unresolved publish is the most important row in the table.
+    /// </para>
+    /// </remarks>
+    public static bool IsWorthRecovering(string? stage, string? label, string? payload)
+    {
+        if (!string.IsNullOrWhiteSpace(stage) && stage != WorkStage.Editing) return true;
+
+        // A name the seller typed is content in its own right, even before the rest is filled in.
+        var name = (label ?? "").Trim();
+        if (name.Length > 0 && !PlaceholderLabels.Contains(name)) return true;
+
+        var text = (payload ?? "").Trim();
+        if (text.Length == 0) return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                var recognised = false;
+                foreach (var field in ContentFields)
+                {
+                    if (!document.RootElement.TryGetProperty(field, out var value)) continue;
+                    recognised = true;
+                    if (HasContent(value)) return true;
+                }
+
+                // Recognised as a listing payload and every content field was empty: a blank tab.
+                // Unrecognised means some other caller's shape, which this list cannot speak for — fall
+                // through to size rather than throw that caller's work away.
+                if (recognised) return false;
+            }
+        }
+        catch (JsonException)
+        {
+            // Not JSON. Judged by size below, same as an unrecognised shape.
+        }
+
+        return text.Length >= MinimumOpaquePayloadChars;
+    }
+
+    /// <inheritdoc cref="IsWorthRecovering(string?, string?, string?)"/>
+    public static bool IsWorthRecovering(WorkSnapshot snapshot) =>
+        IsWorthRecovering(snapshot.Stage, snapshot.Label, snapshot.Payload);
+
+    private static bool HasContent(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => !string.IsNullOrWhiteSpace(value.GetString()),
+        // 0 is what the form reports for an untyped price, not a price of zero.
+        JsonValueKind.Number => value.TryGetDouble(out var number) && number != 0,
+        JsonValueKind.Array  => value.EnumerateArray().Any(HasContent),
+        JsonValueKind.Object => value.EnumerateObject().Any(p => HasContent(p.Value)),
+        JsonValueKind.True   => true,
+        _ => false,
+    };
+
     // ── Autosave ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -95,15 +200,23 @@ public sealed class WorkRecoveryStore
     /// key.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Returns rather than throws on an oversized payload. This is called from a debounced autosave
     /// the seller never sees; surfacing a hard error there would interrupt them mid-sentence to
     /// report a problem with a background save. The rejection is logged by the endpoint instead, and
     /// the seller's on-screen work is untouched either way.
+    /// </para>
+    /// <para>
+    /// An empty draft is refused for the same reason and by the same route: nothing is written, so
+    /// nothing is offered back. Note that this refuses the <em>write</em>, not the existing row — a
+    /// seller who clears the form keeps the last save that had something in it.
+    /// </para>
     /// </remarks>
     public bool Save(WorkSnapshot snapshot)
     {
         if (string.IsNullOrWhiteSpace(snapshot.Key)) return false;
         if (System.Text.Encoding.UTF8.GetByteCount(snapshot.Payload ?? "") > MaxPayloadBytes) return false;
+        if (!IsWorthRecovering(snapshot)) return false;
 
         var now = DateTimeOffset.UtcNow;
         snapshot.UpdatedUtc = now;
@@ -157,25 +270,42 @@ public sealed class WorkRecoveryStore
     /// Every listing that was being written and never made it live, newest first.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <c>publishing</c> is included, and that is the important case: a row still marked publishing
     /// means the app went down between sending the listing and hearing back. The seller needs both
     /// the work back and to be told the publish outcome is unknown, rather than the row being hidden
     /// on the assumption it succeeded.
+    /// </para>
+    /// <para>
+    /// Empty drafts are left out, and the filter is applied here as well as in <see cref="Save"/>
+    /// because rows written before that rule existed are still in the table. Judging them on read
+    /// means the banner is clean on the next launch rather than the next save.
+    /// </para>
     /// </remarks>
     public List<WorkSnapshot> Recoverable(int limit = 10)
     {
+        var wanted = Math.Clamp(limit, 1, MaxRecoverableRows);
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
+        // Fetched up to the table's own cap rather than to `wanted`, so drafts dropped by the
+        // worth-recovering filter do not leave the banner short of rows it could have shown.
         command.CommandText = Select + """
              WHERE stage <> 'published'
              ORDER BY updated_at DESC
              LIMIT @limit;
             """;
-        command.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, MaxRecoverableRows));
+        command.Parameters.AddWithValue("@limit", MaxRecoverableRows);
 
         var rows = new List<WorkSnapshot>();
         using var reader = command.ExecuteReader();
-        while (reader.Read()) rows.Add(Read(reader));
+        while (reader.Read())
+        {
+            var row = Read(reader);
+            if (!IsWorthRecovering(row)) continue;
+            rows.Add(row);
+            if (rows.Count == wanted) break;
+        }
         return rows;
     }
 
@@ -189,6 +319,33 @@ public sealed class WorkRecoveryStore
             command.CommandText = "DELETE FROM work_in_progress WHERE key = @key;";
             command.Parameters.AddWithValue("@key", key);
             return command.ExecuteNonQuery() > 0;
+        }
+    }
+
+    /// <summary>
+    /// Throws away every recoverable draft at once and reports how many went. Returns the number
+    /// deleted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A seller who comes back to a banner holding eight drafts they have finished with should not
+    /// have to confirm eight separate discards to get their dashboard back — and the one who does that
+    /// once will leave the rest sitting there forever instead.
+    /// </para>
+    /// <para>
+    /// Deliberately scoped to the same rows <see cref="Recoverable"/> offers: <c>published</c> rows are
+    /// the publish journal, and <see cref="PublishGuard"/> reads them to answer "did this already go
+    /// live?". Clearing the banner must not cost the seller their duplicate protection.
+    /// </para>
+    /// </remarks>
+    public int DiscardAll()
+    {
+        lock (_writeLock)
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM work_in_progress WHERE stage <> 'published';";
+            return command.ExecuteNonQuery();
         }
     }
 
@@ -324,7 +481,9 @@ public sealed class WorkRecoveryStore
 
     // ── Housekeeping ────────────────────────────────────────────────────────
 
-    public int Prune()
+    public int Prune() => PruneRetention() + PruneEmptyDrafts();
+
+    private int PruneRetention()
     {
         lock (_writeLock)
         {
@@ -346,6 +505,51 @@ public sealed class WorkRecoveryStore
             command.Parameters.AddWithValue("@draft_before", (now - DraftRetention).ToString("O"));
             command.Parameters.AddWithValue("@keep", MaxRecoverableRows);
             return command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Deletes drafts that hold nothing worth recovering, and reports how many went.
+    /// </summary>
+    /// <remarks>
+    /// Reads then deletes by key, because "is there anything in this?" is a question about the shape of
+    /// a JSON payload and SQL cannot answer it — a blank tab's payload is the same size as a filled
+    /// one's. The scan is over drafts only, and drafts are capped at
+    /// <see cref="MaxRecoverableRows"/>, so this stays a few dozen rows however long the app runs.
+    /// </remarks>
+    private int PruneEmptyDrafts()
+    {
+        var doomed = new List<string>();
+
+        using (var connection = OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT key, label, payload FROM work_in_progress WHERE stage = 'editing';";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                if (!IsWorthRecovering(WorkStage.Editing, reader.GetString(1), reader.GetString(2)))
+                    doomed.Add(reader.GetString(0));
+            }
+        }
+
+        if (doomed.Count == 0) return 0;
+
+        lock (_writeLock)
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var removed = 0;
+            foreach (var key in doomed)
+            {
+                using var delete = connection.CreateCommand();
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM work_in_progress WHERE key = @key AND stage = 'editing';";
+                delete.Parameters.AddWithValue("@key", key);
+                removed += delete.ExecuteNonQuery();
+            }
+            transaction.Commit();
+            return removed;
         }
     }
 

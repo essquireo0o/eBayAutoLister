@@ -7918,6 +7918,16 @@ td.skeleton-cell { padding: 0 !important; }
   margin-left: auto;
 }
 
+/* Below the list and right-aligned, away from the per-row Restore buttons: it clears every
+   draft at once, so it must not be the button a hurried click lands on. */
+.recovery-bulk {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--info-line);
+}
+
 /* A photo problem that does not stop the listing. Amber, and it stays put — the old
    version auto-hid after four seconds, which is how a listing reached eBay with no
    picture and nobody remembered being told. */

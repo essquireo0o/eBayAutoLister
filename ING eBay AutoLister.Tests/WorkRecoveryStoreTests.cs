@@ -22,6 +22,28 @@ public class WorkRecoveryStoreTests : IDisposable
     private static WorkSnapshot Draft(string key = "wip-1", string label = "Antminer S19", string payload = """{"title":"Antminer S19"}""")
         => new() { Key = key, Label = label, Payload = payload };
 
+    // Writes a row straight into the table, past Save's own checks. This is how a row left by an
+    // earlier build gets into the tests: the store's rules have to hold for rows it did not write.
+    private void WriteRowDirectly(string key, string stage, string label, string payload)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO work_in_progress
+                (key, label, stage, payload, fingerprint, listing_id, last_error,
+                 attempt_count, created_at, updated_at)
+            VALUES (@key, @label, @stage, @payload, '', '', '', 0, @now, @now);
+            """;
+        command.Parameters.AddWithValue("@key", key);
+        command.Parameters.AddWithValue("@label", label);
+        command.Parameters.AddWithValue("@stage", stage);
+        command.Parameters.AddWithValue("@payload", payload);
+        command.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
     // ── Round trip ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -156,6 +178,159 @@ public class WorkRecoveryStoreTests : IDisposable
         Assert.True(store.Discard("wip-1"));
         Assert.Null(store.Get("wip-1"));
         Assert.False(store.Discard("wip-1"));
+    }
+
+    [Fact]
+    public void Discarding_everything_clears_the_banner_in_one_action()
+    {
+        var store = NewStore();
+        for (var i = 0; i < 6; i++) store.Save(Draft($"wip-{i}", $"Draft {i}"));
+
+        Assert.Equal(6, store.DiscardAll());
+        Assert.Empty(store.Recoverable());
+        Assert.Equal(0, store.DiscardAll());   // nothing left, and asking again is harmless
+    }
+
+    // Clearing the banner must not cost the seller their duplicate protection: the published rows in
+    // this table are the journal PublishGuard reads to answer "did this already go live?".
+    [Fact]
+    public void Discarding_everything_leaves_the_publish_journal_alone()
+    {
+        var store = NewStore();
+        store.Save(Draft("wip-live", "Already listed"));
+        store.RecordPublished("wip-live", "fp-live", "555");
+        store.Save(Draft("wip-draft", "Still being written"));
+
+        Assert.Equal(1, store.DiscardAll());
+        Assert.Equal("555", store.FindPublished("fp-live", TimeSpan.FromMinutes(30))?.ListingId);
+    }
+
+    // ── Empty drafts ────────────────────────────────────────────────────────
+    //
+    // The banner's credibility is the whole feature. Opening the AI listing modal and closing it again
+    // leaves behind a full-sized payload — every control already holds its default — so a size test
+    // reads a blank tab as work and the next launch announces an "unfinished listing" with nothing in
+    // it. A seller shown that twice stops reading the banner, and then the launch where it is holding a
+    // real Claude-written listing goes unread too.
+
+    // A blank tab's payload: form defaults only, no title, and well over any plausible size threshold.
+    private const string BlankTabPayload = """
+        {"title":"","subtitle":"","category":"","categoryId":"","secondaryCategoryId":"",
+         "condition":"USED_EXCELLENT","conditionDescription":"","brand":"","mpn":"","upc":"","ean":"",
+         "isbn":"","description":"","price":0,"quantity":1,"packageType":"PACKAGE_THICK_ENVELOPE",
+         "weightLbs":0,"weightOz":0,"handlingTimeBusinessDays":1,"itemLocationCountry":"US",
+         "listingFormat":"FIXED_PRICE","durationDays":7,"itemSpecifics":{},"imageUrls":[]}
+        """;
+
+    [Fact]
+    public void An_untouched_blank_form_is_not_saved_as_recoverable_work()
+    {
+        var store = NewStore();
+
+        Assert.False(store.Save(new WorkSnapshot
+        {
+            Key = "wip-blank", Label = "Untitled listing", Payload = BlankTabPayload,
+        }));
+        Assert.Null(store.Get("wip-blank"));
+        Assert.Empty(store.Recoverable());
+    }
+
+    // The rule cannot be about size: this payload is far bigger than the 400 characters the old check
+    // used as its threshold, and holds nothing at all.
+    [Fact]
+    public void A_blank_form_is_rejected_despite_being_large()
+    {
+        Assert.True(BlankTabPayload.Length > 400);
+        Assert.False(WorkRecoveryStore.IsWorthRecovering(WorkStage.Editing, "Untitled listing", BlankTabPayload));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Untitled listing")]
+    [InlineData("untitled")]
+    public void A_placeholder_label_is_not_mistaken_for_content(string label)
+    {
+        Assert.False(WorkRecoveryStore.IsWorthRecovering(WorkStage.Editing, label, BlankTabPayload));
+    }
+
+    // The other half of the rule, and the half that matters more: anything the seller actually put in
+    // has to survive. A single filled field is enough.
+    [Theory]
+    [InlineData("""{"title":"Antminer S19","description":"","price":0}""")]
+    [InlineData("""{"title":"","description":"Hashes at 95 TH/s","price":0}""")]
+    [InlineData("""{"title":"","description":"","price":1499.99}""")]
+    [InlineData("""{"title":"","brand":"Bitmain"}""")]
+    [InlineData("""{"title":"","itemSpecifics":{"Model":"S19 Pro"}}""")]
+    [InlineData("""{"title":"","imageUrls":["/generated-photos/a.jpg"]}""")]
+    public void A_draft_with_anything_in_it_is_kept(string payload)
+    {
+        var store = NewStore();
+
+        Assert.True(store.Save(new WorkSnapshot { Key = "wip-1", Label = "Untitled listing", Payload = payload }));
+        Assert.Single(store.Recoverable());
+    }
+
+    [Fact]
+    public void A_named_draft_is_kept_even_before_anything_else_is_filled_in()
+    {
+        var store = NewStore();
+
+        Assert.True(store.Save(new WorkSnapshot
+        {
+            Key = "wip-1", Label = "Antminer S19", Payload = BlankTabPayload,
+        }));
+        Assert.Equal("Antminer S19", Assert.Single(store.Recoverable()).Label);
+    }
+
+    // Blank rows written before this rule existed are still in the table, so the filter has to apply on
+    // read too — otherwise the banner stays cluttered until each one happens to be saved over.
+    [Fact]
+    public void An_empty_draft_already_in_the_database_is_not_offered_back()
+    {
+        var store = NewStore();
+        store.Save(Draft("wip-real"));
+        WriteRowDirectly("wip-blank", WorkStage.Editing, "Untitled listing", BlankTabPayload);
+
+        Assert.Equal("wip-real", Assert.Single(store.Recoverable()).Key);
+    }
+
+    [Fact]
+    public void An_empty_draft_already_in_the_database_is_pruned_away()
+    {
+        var store = NewStore();
+        WriteRowDirectly("wip-blank", WorkStage.Editing, "Untitled listing", BlankTabPayload);
+
+        Assert.True(store.Prune() > 0);
+        Assert.Null(store.Get("wip-blank"));
+    }
+
+    // The exception that keeps the rule safe. A row past `editing` means something really was sent to
+    // eBay, and an unresolved publish is the most important row in the table — it must surface whatever
+    // its payload looks like.
+    [Theory]
+    [InlineData(WorkStage.Publishing)]
+    [InlineData(WorkStage.Failed)]
+    public void A_publish_attempt_is_never_treated_as_an_empty_draft(string stage)
+    {
+        var store = NewStore();
+        WriteRowDirectly("wip-sent", stage, "", "");
+
+        Assert.True(WorkRecoveryStore.IsWorthRecovering(stage, "", ""));
+        Assert.Equal("wip-sent", Assert.Single(store.Recoverable()).Key);
+        Assert.NotNull(store.Get("wip-sent"));   // and Prune, which Recoverable does not run, left it
+    }
+
+    // A payload shape this rule does not recognise cannot be judged field by field, so it is judged by
+    // size — throwing away another caller's work because the field list has not heard of it would be
+    // the same bug in the other direction.
+    [Fact]
+    public void An_unrecognised_payload_shape_is_kept_when_it_holds_anything_substantial()
+    {
+        Assert.True(WorkRecoveryStore.IsWorthRecovering(
+            WorkStage.Editing, "", """{"someOtherDraftKind":"a good deal of text the app does not parse"}"""));
+        Assert.False(WorkRecoveryStore.IsWorthRecovering(WorkStage.Editing, "", "{}"));
+        Assert.False(WorkRecoveryStore.IsWorthRecovering(WorkStage.Editing, "", ""));
     }
 
     // ── The publish journal ─────────────────────────────────────────────────

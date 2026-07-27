@@ -6126,3 +6126,145 @@ its title from the button's text without picking the number up with it):
   under `bin/Debug`, not to any installed instance's data.
 - `queue_forever.py` was already untracked at the start of the session and is
   unrelated to this work; it was **left untracked**.
+
+---
+
+## The recovery banner stops crying wolf — no more empty "Untitled listing" drafts (autonomous session, 2026-07-27)
+
+### The problem
+
+The crash-recovery banner is the app's promise that a Claude-written listing —
+real API spend, a minute or two of waiting — cannot be lost to a stray Ctrl+W.
+That promise is worth exactly what the banner's credibility is worth, and the
+banner was undermining itself.
+
+The client's "is this worth saving?" test was a **size** test:
+
+```js
+if (!title && payload.length < 400) return;
+```
+
+`buildNlPayload()` serialises every control on the form, and most of those
+controls **hold a default before the seller touches anything**: `condition`,
+`packageType`, `quantity`, `handlingTimeBusinessDays`, `itemLocationCountry`,
+`listingFormat`, `durationDays`. An untouched blank tab is already ~500
+characters of JSON. So opening the AI listing modal, looking at it, and closing
+it again sailed past that check and wrote a row — and the next launch announced
+*"An unfinished listing was recovered"* over a draft called **Untitled listing**
+with nothing whatsoever in it.
+
+That is the worst available failure mode for this feature. A seller shown a false
+alarm twice stops reading the banner, and then the one launch where it is holding
+a real listing goes unread too. It also compounds: every blank open added another
+row, and clearing them was one `confirm()` per row, so nobody did — the banner
+became permanent furniture on the dashboard.
+
+### What was built
+
+**1. A rule that names the fields instead of weighing the bytes.**
+`WorkRecoveryStore.IsWorthRecovering(stage, label, payload)` is now the single
+definition of "worth recovering", and it asks the question size cannot: *did the
+seller put anything in?* It parses the payload and checks the fields that carry
+the seller's own work — `title`, `subtitle`, `description`,
+`conditionDescription`, `brand`, `mpn`, `upc`, `ean`, `isbn`, `sku`, `category`,
+`categoryId`, `secondaryCategoryId`, `price`, `itemSpecifics`, `imageUrls` — and
+nothing else. Everything omitted is a control with a default; a blank tab has
+values for all of them and content in none.
+
+Four deliberate edges:
+
+- **A name is content.** A draft labelled `Antminer S19` is kept even if nothing
+  else is filled in. But `Untitled listing`, `untitled`, `new listing`, `draft`
+  and blank are recognised as *placeholders* — the client still sends
+  `Untitled listing` as a display label, and older builds already wrote rows with
+  it, so the label is matched against a placeholder list rather than trusted as
+  evidence of work.
+- **A `price` of `0` is not a price.** The form reports `parseFloat(…) || 0` for
+  an untyped box, so zero is absence, not a free item.
+- **Only `editing` rows are judged, ever.** A row at `publishing` or `failed`
+  means something really was sent to eBay. The row still marked `publishing` is
+  the most important row in the table — the app went down between sending a
+  listing and hearing back — and it surfaces whatever its payload looks like.
+  Skipping that exemption would have turned a UI-tidiness change into a
+  lost-listing bug.
+- **An unrecognised payload shape falls back to size.** If the JSON is some other
+  caller's shape (none of the content fields present at all), it is judged on
+  length rather than discarded, because throwing away work the field list has not
+  heard of is the same bug pointed the other way.
+
+The rule is enforced at **all four** places it can matter, which is the point of
+having one predicate: the client skips the autosave, the `/api/work/autosave`
+endpoint refuses the write (quietly — an untouched form is the normal case, not
+an anomaly worth a log line), `Save()` refuses it again for any other caller, and
+`Recoverable()` filters on read. That last one is what makes the fix retroactive:
+rows written by earlier builds are already in the table, and judging them on read
+means the banner is clean on the **next launch** rather than the next save.
+`Prune()` then deletes them for good, so the table converges too. `Save()`
+refuses the *write*, not the existing row — a seller who selects-all and deletes
+keeps the last save that had something in it.
+
+**2. "Discard all N".** A `/api/work/discard-all` endpoint over a new
+`WorkRecoveryStore.DiscardAll()`, and a button below the list — offered only when
+there is more than one row, so it never sits beside a single row's own Discard
+saying the same thing twice. It is set apart under a divider and right-aligned,
+away from the per-row **Restore** buttons, because a hurried click must not land
+on it, and the count is in the confirmation prompt (`Discard all 6 recovered
+drafts?`) because this is the one recovery action that cannot be undone a row at
+a time.
+
+`DiscardAll()` is scoped to `stage <> 'published'` — the same rows the banner
+offers. The `published` rows in this table are the **publish journal**, which
+`PublishGuard` reads to answer "did this already go live?" after a restart.
+Tidying the banner must not cost the seller their duplicate-publish protection,
+and there is a test that says so.
+
+### Files
+
+| File | Change |
+|---|---|
+| `Services/WorkRecoveryStore.cs` | `IsWorthRecovering` + `ContentFields` / `PlaceholderLabels` / `MinimumOpaquePayloadChars`; the `Save` guard; `Recoverable` filters on read and over-fetches so the banner is never left short; `DiscardAll()`; `Prune()` split into `PruneRetention` + `PruneEmptyDrafts` |
+| `Program.cs` | `/api/work/autosave` refuses empty drafts before the write (`reason: "empty"`); new `/api/work/discard-all` |
+| `wwwroot/app.js` | `AUTOSAVE_CONTENT_FIELDS` + `hasAutosaveContent()` replace the `length < 400` test; the `Discard all` button and `discardAllWork()` |
+| `wwwroot/style.css` | `.recovery-bulk` — divider, right-aligned, below the list |
+| `wwwroot/index.html` | `app.js?v=75`, `style.css?v=67` |
+| `Tests/WorkRecoveryStoreTests.cs` | An **Empty drafts** section — the blank-tab payload, the placeholder labels, six "anything in it survives" cases, the retroactive read filter, the prune, the `publishing`/`failed` exemption, the unrecognised-shape fallback — plus two `DiscardAll` tests |
+
+### Verified
+
+- `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` —
+  **0 errors** (the 2 `NU1903` SQLite advisory warnings are the pre-existing
+  baseline).
+- `dotnet test` — **1887 passed, 0 failed** (1867 before this change).
+  `WorkRecoveryStoreTests` went 20 → 40 cases and **every pre-existing one still
+  passes untouched**, including the round-trip, bounds and publish-journal tests
+  that now run `Save` through the new guard.
+- `node --check` on `app.js`.
+- The load-bearing assertion is `A_blank_form_is_rejected_despite_being_large`:
+  it asserts the blank-tab payload **is longer than 400 characters** and is still
+  refused. That test fails against the old rule, which is the point of it.
+
+### Not verified / known limits
+
+- **Not driven in a browser.** The banner markup, the button and the confirmation
+  were not exercised in a real page this session. The rule they sit on is covered
+  by unit tests, but the `.recovery-bulk` layout is unreviewed at 640px and in
+  dark mode beyond inheriting `--info-line` and `.btn-ghost`.
+- **The content-field list is duplicated**, once in `app.js` and once in
+  `WorkRecoveryStore.cs`, with a comment in each pointing at the other. Adding a
+  new content-bearing field to the form and not to both lists means a draft
+  holding only that field is treated as empty. The server copy is the one that
+  decides, so the failure is a skipped save, not a lost row that was written.
+- **A field the list omits is not recoverable on its own.** Someone who types
+  only a package weight and closes the tab gets nothing back. That is the trade
+  taken on purpose: retyping a weight costs seconds, and a banner that fires for
+  one is the problem this change exists to remove.
+- **`PruneEmptyDrafts` reads then deletes** rather than doing it in SQL, because
+  "is there anything in this?" is a question about the shape of a JSON payload and
+  a blank tab's payload is the same size as a filled one's. It scans drafts only,
+  and drafts are capped at `MaxRecoverableRows` (40), so it stays a few dozen rows
+  however long the app runs.
+- **`Discard all` has no undo.** It is a `confirm()` with a count and nothing
+  more — consistent with the per-row Discard it replaces, but a seller who clicks
+  past the prompt loses every draft in the banner.
+- `queue_forever.py` was untracked before this session and is unrelated to this
+  work; it was **left untracked** again.
