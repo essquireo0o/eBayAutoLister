@@ -3024,12 +3024,22 @@ textarea {
 .nl-ai-modify-go:hover   { opacity: .88; }
 .nl-ai-modify-go.loading { opacity: .6; cursor: wait; }
 
+/* The modal's one scroller: everything between the pinned header and the pinned footer.
+   flex:1 + min-height:0 is what lets it actually shrink inside the flex column — without the
+   min-height a flex item refuses to go below its content height and the scrollbar never appears. */
+.nl-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .new-listing-body {
   display: grid;
   grid-template-columns: 360px 1fr;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  /* Sizes to its content and scrolls with the page above it. It used to be flex:1 with its own
+     hidden overflow, which handed the form whatever height the blocks above hadn't already taken —
+     about 115px on a normal window — and trapped 864px of fields inside it. */
+  align-items: start;
 }
 
 .nl-image-panel {
@@ -3039,8 +3049,10 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  overflow-y: auto;
   flex-shrink: 0;
+  /* Deliberately not sticky and not its own scroller. Sticky reads well until the photo column is
+     itself taller than the window, at which point its lower half is unreachable — the same trap
+     this change removes, moved to a different element. Both columns just flow. */
 }
 
 .nl-panel-label {
@@ -3234,7 +3246,7 @@ textarea {
 }
 
 .nl-form-panel {
-  overflow-y: auto;
+  /* No scroller of its own — .nl-scroll above carries the whole screen now. */
   padding: 20px 28px 40px;
 }
 
@@ -4320,7 +4332,23 @@ textarea {
   display: flex;
   gap: var(--s2);
   flex-shrink: 0;
+  align-items: center;
 }
+
+/* Where the "Import eBay Sales" button used to be. Deliberately not styled as a button and not
+   placed like one: there is nothing to press, and a report that looks pressable is a worse lie
+   than no report. Sits quiet when everything is current and only gains colour when it doesn't. */
+.er-auto-status {
+  font-size: var(--fs-xs);
+  color: rgba(255, 255, 255, .72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40ch;
+}
+.er-auto-status.is-ok      { color: var(--success-tint); }
+.er-auto-status.is-waiting { color: var(--gold-note); }
+.er-auto-status.is-problem { color: var(--gold-note); font-weight: 650; }
 
 .opportunity-overlay-body {
   flex: 1;
@@ -5970,6 +5998,19 @@ textarea {
   text-overflow: ellipsis;
   margin-top: 2px;
 }
+
+/* Whether the live listing was actually read. Wraps rather than truncates: the failure message
+   names what is missing and what happens if it stays missing, and a truncated warning is a
+   warning that didn't work. */
+.edit-drawer-detail-status {
+  margin-top: 4px;
+  font-size: var(--fs-2xs);
+  line-height: 1.45;
+  color: var(--on-dark-3);
+}
+.edit-drawer-detail-status.is-ok    { color: var(--success-tint); }
+.edit-drawer-detail-status.is-busy  { color: var(--on-dark-3); }
+.edit-drawer-detail-status.is-warn  { color: var(--gold-note); font-weight: 650; }
 
 .edit-drawer-dirty {
   display: none;
@@ -13645,3 +13686,86 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   border-top: 1px solid rgba(255, 255, 255, .07);
 }
 .fb-picks-narrow { max-width: 150px; }
+
+/* ── Listing Copilot ────────────────────────────────────────────────────────
+   Proposed changes, shown before anything is applied. The was/now pair is the
+   whole point of the screen, so it reads as one line rather than two columns. */
+.copilot-summary {
+  padding: 12px 14px;
+  margin: 12px 0;
+  border-radius: 10px;
+  background: var(--surface-2, rgba(255,255,255,.04));
+  border: 1px solid var(--border, rgba(255,255,255,.1));
+  font-size: var(--fs-sm, .9rem);
+}
+.copilot-error {
+  padding: 12px 14px;
+  margin: 12px 0;
+  border-radius: 10px;
+  background: rgba(220, 60, 60, .12);
+  border: 1px solid rgba(220, 60, 60, .35);
+  font-size: var(--fs-sm, .9rem);
+}
+.copilot-actions {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  margin-top: 16px;
+}
+.copilot-card {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface-2, rgba(255,255,255,.04));
+  border: 1px solid var(--border, rgba(255,255,255,.1));
+}
+.copilot-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.copilot-card-head h3 { margin: 0; font-size: var(--fs-md, 1rem); }
+.copilot-count {
+  flex: none;
+  font-size: var(--fs-xs, .78rem);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3, rgba(255,255,255,.08));
+  white-space: nowrap;
+}
+.copilot-why {
+  font-size: var(--fs-xs, .78rem);
+  color: var(--on-dark-2, rgba(255,255,255,.65));
+  margin: 8px 0 10px;
+  line-height: 1.5;
+}
+.copilot-result { flex: 1 1 auto; margin-bottom: 12px; }
+.copilot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.copilot-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.07));
+  font-size: var(--fs-xs, .78rem);
+}
+.copilot-list li:last-child { border-bottom: 0; }
+.copilot-was  { text-decoration: line-through; opacity: .6; }
+.copilot-arrow{ opacity: .5; }
+.copilot-now  { font-weight: 600; }
+.copilot-title{ font-weight: 600; }
+.copilot-issue{ width: 100%; opacity: .65; }
+.copilot-clean{ font-size: var(--fs-xs, .78rem); opacity: .7; margin: 0; }
+.copilot-more { font-size: var(--fs-xs, .78rem); opacity: .6; margin: 6px 0 0; }
+.copilot-apply { align-self: flex-start; }
+.copilot-apply[disabled] { opacity: .45; cursor: not-allowed; }
+.copilot-foot { margin-top: 16px; }

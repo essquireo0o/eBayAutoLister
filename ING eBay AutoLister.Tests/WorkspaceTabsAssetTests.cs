@@ -26,15 +26,40 @@ public class WorkspaceTabsAssetTests
             $"Dashboard instead of opening the feature): {string.Join(", ", missing)}");
     }
 
+    /// <summary>
+    /// Pages deliberately taken out of the sidebar at the seller's request, which still work on
+    /// their own URL. Only the nav buttons were removed — the screens, routes and endpoints are
+    /// untouched, so a deep link still opens them; the tab just falls back to its route key for a
+    /// title. Put a button back and the entry comes out of this list.
+    /// </summary>
+    private static readonly string[] HiddenByRequest =
+        ["inventory", "lots", "relist", "trends", "wheretosell"];
+
     [Fact]
     public void EveryWorkspaceTabHasASidebarEntry()
     {
         // Title and icon are read off the sidebar button, so a registered page with no sidebar
-        // entry gets a tab labelled with its own route key and the default icon.
-        var orphans = RegisteredPages().Except(SidebarPages()).ToList();
+        // entry gets a tab labelled with its own route key and the default icon. That is accepted
+        // for the pages hidden on purpose above, and a bug for anything else — this still catches
+        // a page registered with a typo'd or missing nav button.
+        var orphans = RegisteredPages().Except(SidebarPages()).Except(HiddenByRequest).ToList();
 
         Assert.True(orphans.Count == 0,
             $"registered pages with no sidebar entry to take a title and icon from: {string.Join(", ", orphans)}");
+    }
+
+    [Fact]
+    public void ThePagesHiddenOnPurposeAreStillRegisteredAndStillReachable()
+    {
+        // The other half of the bargain: hiding a nav button must not quietly delete the feature.
+        // If one is ever really removed, this fails and the allowlist gets trimmed with it, rather
+        // than silently permitting an orphan that no longer exists.
+        var registered = RegisteredPages().ToHashSet();
+        var vanished = HiddenByRequest.Where(p => !registered.Contains(p)).ToList();
+
+        Assert.True(vanished.Count == 0,
+            "pages on the hidden-by-request list are no longer registered at all, so they are not "
+            + $"reachable by URL either — drop them from the list: {string.Join(", ", vanished)}");
     }
 
     [Fact]

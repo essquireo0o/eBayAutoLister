@@ -4524,12 +4524,20 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     // were found and a sentence saying pricing is what failed, rather than a dead scan.
     try
     {
+        // Listings that aren't the product — a repair service, a manual, a core charge — are dropped
+        // before anything prices them. They carry the product's own part number, so the comps matcher
+        // scores them as exact hits and a $1 service ad against an $899 board ranks first on the
+        // whole scan at five-figure ROI. Screened here rather than per-source: it is the same junk
+        // whichever site it came from. See NonItemListingDetector for why this is phrases, not words.
+        var screened = search.Items.Where(i => i.Price is > 0 || i.IsFree).ToList();
+        var goods = screened.Where(i => !NonItemListingDetector.IsNotTheItem(i.Title)).ToList();
+        result.NotTheItemCount = screened.Count - goods.Count;
+
         // A listing with no parseable price has no cost basis, so there is no profit to compute for
         // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
         // out across sources rather than applied to one flat cheapest-first list, which would spend
         // the whole budget on whichever site returned the most rows.
-        var priceable = LocalSupplyMerger.TakeBalanced(
-            search.Items.Where(i => i.Price is > 0 || i.IsFree), maxItems);
+        var priceable = LocalSupplyMerger.TakeBalanced(goods, maxItems);
         result.ItemsAnalyzed = priceable.Count;
 
         // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
@@ -6814,6 +6822,159 @@ app.MapGet("/api/ebay/policies", async (EbayService ebay, ActionLog log) =>
     }
 });
 
+// The AI half of the Copilot: rewrite listings for search, as DRAFTS.
+//
+// Three deliberate limits, because this is the one action here that spends money and touches the
+// eBay account:
+//   • It takes explicit listing ids. There is no "do everything" path, so a bulk rewrite can only
+//     ever happen because the seller picked the listings and pressed the button.
+//   • It writes Seller Hub drafts and never revises a live listing. An SEO rewrite is a judgement
+//     call about someone else's inventory; the seller publishes, or doesn't.
+//   • One listing failing does not abandon the rest, and every outcome is reported per listing —
+//     a bulk job that half-worked and said "done" would be worse than one that failed outright.
+app.MapPost("/api/copilot/improve-seo", async (
+    CopilotSeoRequest req, EbayService ebay, ClaudeService claude, ActionLog log) =>
+{
+    var ids = (req.ListingIds ?? []).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToList();
+    if (ids.Count == 0) return Results.BadRequest(new { error = "No listings were selected." });
+
+    // A cap the seller can see beats an unbounded loop they cannot stop: each listing is a Claude
+    // call plus two eBay calls, and the browser is waiting on all of it.
+    const int MaxPerRun = 25;
+    var capped = ids.Count > MaxPerRun;
+    if (capped) ids = ids.Take(MaxPerRun).ToList();
+
+    var results = new List<object>();
+    var drafted = 0;
+
+    foreach (var id in ids)
+    {
+        try
+        {
+            var current = await ebay.GetItemAsync(id);
+            var before = current.Title ?? "";
+
+            var improved = await claude.ImproveSeoAsync(
+                System.Text.Json.JsonSerializer.Deserialize<ImproveSeoRequest>(
+                    System.Text.Json.JsonSerializer.Serialize(current))!);
+
+            // eBay rejects an over-length title outright, so the deterministic trim is applied on
+            // top of the model's answer rather than trusting it to have counted.
+            improved.Title = ListingCopilot.TidyTitle(improved.Title);
+
+            if (string.IsNullOrWhiteSpace(improved.Title))
+            {
+                results.Add(new { listingId = id, ok = false, reason = "The rewrite came back empty." });
+                continue;
+            }
+
+            var draftReq = System.Text.Json.JsonSerializer.Deserialize<PostListingRequest>(
+                System.Text.Json.JsonSerializer.Serialize(improved))!;
+
+            var draft = await ebay.CreateSellerHubDraftAsync(draftReq);
+            drafted++;
+            results.Add(new
+            {
+                listingId = id,
+                ok = true,
+                before,
+                after = improved.Title,
+                draftId = draft.DraftId,
+                sellerHubUrl = draft.SellerHubUrl,
+            });
+        }
+        catch (Exception ex)
+        {
+            var shortError = ex.Message.Length > 200 ? ex.Message[..200] + "…" : ex.Message;
+            log.Add("Warning", "Copilot SEO rewrite failed", $"{id}: {shortError}");
+            results.Add(new { listingId = id, ok = false, reason = shortError });
+        }
+    }
+
+    log.Add("Info", "Copilot SEO rewrite finished",
+        $"{drafted} draft(s) created from {ids.Count} listing(s). Nothing live was changed.");
+
+    return Results.Ok(new
+    {
+        requested = ids.Count,
+        drafted,
+        failed = ids.Count - drafted,
+        capped,
+        maxPerRun = MaxPerRun,
+        note = "Drafts only — no live listing was revised. Publish them from eBay Seller Hub.",
+        results,
+    });
+});
+
+// Listing Copilot: what is wrong across the whole account, and exactly what would change.
+// Read-only by design — this endpoint renames nothing and revises nothing. The seller reads the
+// plan and applies it deliberately, because a bulk edit across a live store that ran on page load
+// would be indistinguishable from an accident.
+app.MapGet("/api/copilot/scan", async (EbayService ebay, ActionLog log) =>
+{
+    try
+    {
+        var policies = await ebay.GetBusinessPoliciesAsync();
+        var listings = await ebay.GetListingsAsync();
+
+        var shippingRenames = ListingCopilot.PlanPolicyRenames(policies.FulfillmentPolicies);
+        var paymentRenames  = ListingCopilot.PlanPolicyRenames(policies.PaymentPolicies);
+        var returnRenames   = ListingCopilot.PlanPolicyRenames(policies.ReturnPolicies);
+
+        var reviewed = listings.Select(l =>
+        {
+            var issues = ListingCopilot.AuditTitle(l.Title)
+                .Concat(ListingCopilot.AuditCategory(l.CategoryId, l.Category))
+                .ToList();
+            return new
+            {
+                l.ListingId,
+                l.OfferId,
+                l.Sku,
+                l.Title,
+                l.Category,
+                l.CategoryId,
+                l.Price,
+                tidiedTitle = ListingCopilot.TidyTitle(l.Title),
+                issues,
+            };
+        })
+        .Where(x => x.issues.Count > 0)
+        .ToList();
+
+        // "Category not loaded" is a gap in what we fetched, not a fault in the seller's account.
+        // It is counted and named separately so the categories card can say the honest thing
+        // instead of reporting every listing as broken.
+        var categoryUnknown = reviewed.Count(x => x.issues.Any(i => i.Code == "category_unknown"));
+
+        return Results.Ok(new
+        {
+            scannedListings = listings.Count,
+            policies = new
+            {
+                shipping = shippingRenames,
+                payment  = paymentRenames,
+                returns  = returnRenames,
+                total    = shippingRenames.Count + paymentRenames.Count + returnRenames.Count,
+            },
+            listings = reviewed,
+            listingsNeedingWork = reviewed.Count(x => x.issues.Any(i => i.Code != "category_unknown")),
+            categoryUnknown,
+            // Said in the payload rather than left to the UI to remember: eBay's own category tree
+            // belongs to eBay. A seller can move a listing between categories; they cannot rename
+            // or reorder the categories themselves.
+            categoryNote = "eBay's category tree cannot be renamed or reordered by a seller. "
+                         + "What this checks is whether each listing sits in a category that earns it views.",
+            policyError = policies.Error,
+        });
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Listing Copilot scan failed", ex.Message);
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapGet("/api/ebay/token-status", (CredentialsStore store) =>
     Results.Ok(new
     {
@@ -7804,6 +7965,27 @@ load();
 </html>
 """;
     return Results.Content(html, "text/html");
+});
+
+// The full detail of one live listing, for the edit drawer.
+//
+// The listings grid is filled from GetMyeBaySelling, which is a SUMMARY call: it returns the title,
+// price, quantity and a gallery thumbnail and nothing else. Description, condition, category, brand
+// and every item specific come back empty. Opening the editor on one of those rows therefore showed
+// a blank description and no specifics for a listing that has both on eBay — the seller was being
+// asked to edit a listing they could not see.
+//
+// GetItem is the call that has those fields, and it is per-item, which is why the grid can't use it
+// (87 listings would be 87 calls). One item, opened deliberately, is exactly when it is affordable.
+app.MapGet("/api/ebay/listing-detail", async (string itemId, EbayService ebay, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(itemId))
+        return BadInputJson("No listing was named",
+            "The editor asked eBay for a listing without saying which one.",
+            "Reopen the listing from the grid.");
+
+    return await Guarded(FailureDomain.Ebay, "Read live eBay listing", log, async () =>
+        new { ok = true, data = await ebay.GetItemAsync(itemId) });
 });
 
 // ── eBay Sniper ───────────────────────────────────────────────────────────────

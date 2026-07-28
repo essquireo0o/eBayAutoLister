@@ -679,15 +679,26 @@
     snipe:       { section: 'snipe-section',         open: showSnipeSection,
                    onShow: startSnipeTicker, onHide: stopSnipeTicker },
     budget:      { section: 'budget-section',        open: showBudgetSection },
-    inventory:   { section: 'inventory-section',     open: showInventorySection },
     offers:      { section: 'offers-section',        open: showOffersSection },
     rescue:      { section: 'rescue-section',        open: showRescueSection },
-    relist:      { section: 'relist-section',        open: showRelistSection },
-    lots:        { section: 'lots-section',          open: showLotsSection },
     promoted:    { section: 'promoted-section',      open: showPromotedSection },
+    copilot:     { section: 'copilot-section',       open: showCopilotSection },
     shipping:    { section: 'shipping-section',      open: showShippingSection },
-    wheretosell: { section: 'wts-section',           open: showWhereToSellSection },
-    trends:      { section: 'trends-section',        open: showTrendsSection },
+
+    // These five have no sidebar entry — they were removed from the nav — so they carry their own
+    // title and icon. Everything else takes both off its nav button, which is why renaming a
+    // feature in the sidebar renames its tab with nothing to keep in sync. A page reachable only
+    // by URL still has to open as a properly labelled tab rather than one reading "wheretosell".
+    inventory:   { section: 'inventory-section', open: showInventorySection,
+                   title: 'Inventory Health', icon: '#i-inventory' },
+    relist:      { section: 'relist-section',    open: showRelistSection,
+                   title: 'Lost Sales',       icon: '#i-money' },
+    lots:        { section: 'lots-section',      open: showLotsSection,
+                   title: 'Lot Analyzer',     icon: '#i-opportunity' },
+    wheretosell: { section: 'wts-section',       open: showWhereToSellSection,
+                   title: 'Where to Sell',    icon: '#i-money' },
+    trends:      { section: 'trends-section',    open: showTrendsSection,
+                   title: 'Rising Now',       icon: '#i-opportunity' },
     activity:    { scrollTo: 'activity-list', scrollBlock: 'center' },
     logs:        { section: 'logs-section',          open: showLogsSection, refresh: loadLogs },
     settings:    { section: 'settings-section',      open: showSettingsSection },
@@ -699,7 +710,8 @@
   let workspaceTabCounter = 0;
 
   // Title and icon come off the sidebar entry rather than a second list here, so renaming a
-  // feature in the nav renames its tab and there is nothing to keep in sync.
+  // feature in the nav renames its tab and there is nothing to keep in sync. A page with no nav
+  // entry falls back to the title/icon on its own registry entry — see the five above.
   function workspaceNavItem(page) {
     return document.querySelector('.nav-item[data-page="' + page + '"]');
   }
@@ -707,12 +719,13 @@
   function newWorkspaceTab(page) {
     workspaceTabCounter++;
     const nav = workspaceNavItem(page);
+    const def = WORKSPACE_PAGES[page] || {};
     const tab = {
       id: workspaceTabCounter,
       page,
-      title: nav ? nav.textContent.trim() : page,
-      icon: nav?.querySelector('use')?.getAttribute('href') || '#i-dashboard',
-      pinned: !!WORKSPACE_PAGES[page]?.pinned,
+      title: (nav ? nav.textContent.trim() : '') || def.title || page,
+      icon: nav?.querySelector('use')?.getAttribute('href') || def.icon || '#i-dashboard',
+      pinned: !!def.pinned,
       loaded: false
     };
     workspaceTabs.push(tab);
@@ -1467,6 +1480,7 @@
     on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-arb-sort', 'change', renderArbitrageRows);
     on('fb-arb-category', 'change', renderArbitrageRows);
+    on('fb-arb-price', 'change', renderArbitrageRows);
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
     on('fb-arb-fast-only', 'change', renderArbitrageRows);
     on('fb-arb-warranty-only', 'change', renderArbitrageRows);
@@ -2208,6 +2222,12 @@
       data.manualValuationCount
         ? `${data.manualValuationCount} could not be valued from sold data — priced by hand, with a search link on each`
         : '',
+      // The junk that was kept off the board. Said out loud because these listings carry the real
+      // part number and would otherwise have ranked first: a $1 "repair evaluation" priced against
+      // the $899 board it services is a five-figure ROI that cannot be bought.
+      data.notTheItemCount
+        ? `${data.notTheItemCount} hidden — repair services, manuals and core charges, not the item itself`
+        : '',
     ].filter(Boolean).join(' · ');
     // How many of the priced rows are guesses. Said in the summary as well as on the rows, because
     // a board where most of the percentages are estimates is a different board from one where two
@@ -2272,6 +2292,18 @@
     // deliberately. Server-side ids, so the filter and the fee model can't disagree about what a
     // row is.
     if (category) rows = rows.filter(r => (r.categoryId || 'anything') === category);
+
+    // Price band. Measured on paidFor() — the taxed, all-in cost — so "under $100" means under $100
+    // out of pocket, not under $100 on a sticker that becomes $108 at the till. An open-ended top
+    // band ("10000-") has no upper bound rather than a zero one.
+    const band = $('fb-arb-price')?.value || '';
+    if (band) {
+      const [lo, hi] = band.split('-');
+      const min = parseFloat(lo) || 0;
+      const max = hi === '' || hi == null ? Infinity : parseFloat(hi);
+      rows = rows.filter(r => { const paid = paidFor(r); return paid >= min && paid <= max; });
+    }
+
     if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
     // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
     if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
@@ -5707,17 +5739,21 @@
     setActiveNavItem('earnings');
     markWorkspaceTabOpen('earnings');
     if (!earnings) loadEarnings();
+    // Always re-read, even when the figures are already cached: the importer may have run since
+    // this tab was last looked at, and "updated 3 hours ago" is only true if it is re-checked.
+    loadEarningsAutoStatus();
+    startEarningsAutoPolling();
   }
 
   function closeEarningsSection() {
     $('er-log-modal')?.classList.add('hidden');
+    stopEarningsAutoPolling();
     closeWorkspacePage('earnings');
   }
 
   function bindEarnings() {
     on('er-close', 'click', closeEarningsSection);
     on('er-home', 'click', goHome);
-    on('er-import-btn', 'click', importEarnings);
     on('er-log-btn', 'click', openFlipLogger);
     on('er-log-cancel', 'click', closeFlipLogger);
     on('er-log-cancel-2', 'click', closeFlipLogger);
@@ -5799,47 +5835,77 @@
     }
   }
 
-  async function importEarnings() {
-    const btn = $('er-import-btn');
-    const days = $('er-days')?.value || '90';
-    if (btn) { btn.disabled = true; btn.textContent = 'Reading eBay…'; }
-    setEarningsStatus('Reading your completed orders from eBay…');
-    showEarningsNotice('');
+  // ── The automatic import ───────────────────────────────────────────────────
+  // There is no import button any more. EarningsAutoImport pulls sold orders as soon as eBay is
+  // connected and refreshes every few hours, so the screen's job is not to offer the action — it is
+  // to say whether the figures below are current, which is the one thing a button could never tell
+  // you. Read-only: this polls a status the server already keeps, and starts nothing.
+  let earningsAutoTimer = null;
+  const EARNINGS_AUTO_POLL_MS = 30000;
 
-    try {
-      const { res, body } = await safePost(`/api/earnings/import?days=${days}`, {});
-      if (!res.ok) throw new Error(typeof body === 'string' ? body : (body.error || 'The import failed.'));
+  async function loadEarningsAutoStatus() {
+    const el = $('er-auto-status');
+    if (!el) return null;
 
-      const imp = body.import || {};
-      if (imp.status !== 'ok') {
-        // not_connected / reconnect / error all mean "we couldn't ask", which is a different thing
-        // from "you made nothing" and must never be rendered as a zeroed total.
-        showEarningsNotice(imp.message || 'eBay could not be reached.');
-        setEarningsStatus('');
-        return;
-      }
+    const { data } = await localFetchJson('/api/earnings/auto-status', 15000);
+    if (!data) { el.textContent = ''; return null; }
 
-      earnings = body.earnings;
-      renderEarnings();
-      renderDashboardEarnings();
-
-      const bits = [`${imp.linesImported} sold item${imp.linesImported === 1 ? '' : 's'} from ${imp.ordersRead} order${imp.ordersRead === 1 ? '' : 's'}`];
-      if (imp.linesAdded) bits.push(`${imp.linesAdded} new`);
-      if (imp.linesUpdated) bits.push(`${imp.linesUpdated} already tracked`);
-      setEarningsStatus(bits.join(' · '));
-
-      showEarningsNotice(
-        imp.feesReportedByEbay
-          ? 'eBay reported its actual fees on these orders, so the profit below is measured, not estimated.'
-          : 'eBay did not report fees on these orders, so fees are estimated from your Fees & Costs settings.',
-        imp.feesReportedByEbay ? 'good' : undefined);
-    } catch (err) {
-      showEarningsNotice(err.message || 'The import failed.');
-      setEarningsStatus('');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '⬇ Import eBay Sales'; }
-    }
+    renderEarningsAutoStatus(data);
+    return data;
   }
+
+  function renderEarningsAutoStatus(s) {
+    const el = $('er-auto-status');
+    if (!el) return;
+
+    // Not connected is the only state with something for the seller to DO, so it is the only one
+    // that reads as a prompt rather than as a report.
+    if (!s.ebayConnected) {
+      el.textContent = 'Connect eBay and your sales appear here on their own';
+      el.className = 'er-auto-status is-waiting';
+      return;
+    }
+
+    // A failure that has already been retried is not worth alarming anyone about; a failure with
+    // nothing behind it is, because then the totals below are empty for a reason.
+    if (s.lastStatus && s.lastStatus !== 'ok' && !s.lastSuccessUtc) {
+      el.textContent = s.lastMessage || 'eBay could not be reached — retrying on its own';
+      el.className = 'er-auto-status is-problem';
+      return;
+    }
+
+    if (!s.lastSuccessUtc) {
+      el.textContent = 'Reading your eBay sales…';
+      el.className = 'er-auto-status is-waiting';
+      return;
+    }
+
+    el.textContent = `✓ Sales updated ${radarAgo(s.lastSuccessUtc)} — this keeps itself current`;
+    el.className = 'er-auto-status is-ok';
+  }
+
+  function startEarningsAutoPolling() {
+    stopEarningsAutoPolling();
+    // Only while the screen is open. The importer runs whether anyone is looking or not; this is
+    // just the readout, and a readout nobody can see is a timer for nothing.
+    earningsAutoTimer = setInterval(async () => {
+      if ($('earnings-section')?.classList.contains('hidden')) { stopEarningsAutoPolling(); return; }
+      const before = earnings?.summary?.salesAllTime ?? 0;
+      const status = await loadEarningsAutoStatus();
+      // A finished import means new rows underneath — reload them rather than leaving a screen that
+      // says "updated just now" above figures from before the update.
+      if (status?.lastSuccessUtc && status.lastSuccessUtc !== lastEarningsSuccessSeen) {
+        lastEarningsSuccessSeen = status.lastSuccessUtc;
+        if (before >= 0) await loadEarnings(true);
+      }
+    }, EARNINGS_AUTO_POLL_MS);
+  }
+
+  function stopEarningsAutoPolling() {
+    if (earningsAutoTimer) { clearInterval(earningsAutoTimer); earningsAutoTimer = null; }
+  }
+
+  let lastEarningsSuccessSeen = null;
 
   function renderEarnings() {
     if (!earnings) return;
@@ -5883,7 +5949,7 @@
     const sub = $('er-hero-sub');
     if (!sub) return;
     if (!hasSales) {
-      sub.textContent = 'this month — import your sales to start the count';
+      sub.textContent = 'this month — your eBay sales appear here on their own';
       return;
     }
 
@@ -9909,6 +9975,183 @@
     closeWorkspacePage('promoted');
   }
 
+  // ── Listing Copilot ─────────────────────────────────────────────────────────
+  // Scan-first, always. This renders the full list of proposed changes and applies nothing on its
+  // own; each apply is a separate deliberate click on that action's own button. A bulk edit across
+  // a live store that ran on page load would be indistinguishable from an accident.
+  let copilotBound = false;
+  let copilotScan = null;
+
+  function showCopilotSection() {
+    hideOverlaySections();
+    $('copilot-section')?.classList.remove('hidden');
+    setActiveNavItem('copilot');
+    markWorkspaceTabOpen('copilot');
+    if (!copilotBound) { bindCopilot(); copilotBound = true; }
+  }
+
+  function closeCopilotSection() {
+    closeWorkspacePage('copilot');
+  }
+
+  function bindCopilot() {
+    on('copilot-scan-btn', 'click', runCopilotScan);
+    on('copilot-close', 'click', closeCopilotSection);
+    on('copilot-home', 'click', goHome);
+    on('copilot-seo-apply', 'click', runCopilotSeoRewrite);
+  }
+
+  // The AI rewrite. Drafts only — nothing live is touched — and only for the listings the scan
+  // actually flagged, so the button can never mean "rewrite my whole account".
+  async function runCopilotSeoRewrite() {
+    if (!copilotScan) return;
+
+    const ids = (copilotScan.listings || [])
+      .filter(l => (l.issues || []).some(i => i.code.indexOf('title_') === 0))
+      .map(l => l.listingId)
+      .filter(Boolean);
+
+    if (!ids.length) return;
+
+    const btn = $('copilot-seo-apply');
+    const out = $('copilot-seo-result');
+    if (!confirm(
+      'Rewrite ' + Math.min(ids.length, 25) + ' listing title' + (ids.length === 1 ? '' : 's') +
+      ' with AI?\n\nEach one is saved as an eBay draft for you to publish. No live listing is changed.')) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Writing drafts…'; }
+
+    try {
+      const res = await fetch('/api/copilot/improve-seo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingIds: ids })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Rewrite failed');
+
+      if (out) {
+        out.innerHTML =
+          '<p class="copilot-clean"><strong>' + data.drafted + '</strong> draft' +
+          (data.drafted === 1 ? '' : 's') + ' created' +
+          (data.failed ? ', <strong>' + data.failed + '</strong> failed' : '') +
+          (data.capped ? ' (capped at ' + data.maxPerRun + ' per run)' : '') +
+          '. Publish them from eBay Seller Hub — nothing live was changed.</p>' +
+          '<ul class="copilot-list">' + (data.results || []).map(r =>
+            r.ok
+              ? '<li><span class="copilot-was">' + esc(r.before || '') + '</span>' +
+                '<span class="copilot-arrow">→</span>' +
+                '<span class="copilot-now">' + esc(r.after || '') + '</span></li>'
+              : '<li><span class="copilot-title">' + esc(r.listingId) + '</span>' +
+                '<span class="copilot-issue">' + esc(r.reason || 'failed') + '</span></li>'
+          ).join('') + '</ul>';
+      }
+    } catch (e) {
+      const err = $('copilot-error');
+      if (err) { err.classList.remove('hidden'); err.textContent = 'Rewrite failed: ' + e.message; }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Create drafts'; }
+    }
+  }
+
+  async function runCopilotScan() {
+    const btn = $('copilot-scan-btn');
+    const err = $('copilot-error');
+    const summary = $('copilot-summary');
+
+    err?.classList.add('hidden');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Reading your account…'; }
+
+    try {
+      const res = await fetch('/api/copilot/scan');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Scan failed');
+
+      copilotScan = data;
+      renderCopilotScan(data);
+
+      if (summary) {
+        summary.classList.remove('hidden');
+        summary.innerHTML =
+          '<strong>' + data.scannedListings + '</strong> live listings read. ' +
+          '<strong>' + data.listingsNeedingWork + '</strong> need work, ' +
+          '<strong>' + data.policies.total + '</strong> policies would be renamed. ' +
+          '<em>Nothing has been changed.</em>';
+      }
+    } catch (e) {
+      if (err) {
+        err.classList.remove('hidden');
+        err.textContent = 'Could not scan: ' + e.message +
+          (/token|auth|connect/i.test(String(e.message)) ? ' — check eBay is connected in Settings.' : '');
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan My Account'; }
+    }
+  }
+
+  function renderCopilotScan(data) {
+    // Policies
+    const pol = (data.policies.shipping || [])
+      .concat(data.policies.payment || [], data.policies.returns || []);
+    setText('copilot-policies-count', pol.length ? pol.length + ' to rename' : 'all tidy');
+    $('copilot-policies-result').innerHTML = pol.length
+      ? '<ul class="copilot-list">' + pol.map(p =>
+          '<li><span class="copilot-was">' + esc(p.currentName) + '</span>' +
+          '<span class="copilot-arrow">→</span>' +
+          '<span class="copilot-now">' + esc(p.proposedName) + '</span></li>').join('') + '</ul>'
+      : '<p class="copilot-clean">Every policy name is already consistent.</p>';
+
+    // Categories and titles are split apart so neither action claims credit for the other's
+    // findings — the counts on the two cards have to mean what they say.
+    // "Not loaded" is a gap in what eBay's bulk call returns, not a fault in the account. Saying
+    // so plainly beats reporting every listing as broken, which is what confident-and-wrong looks
+    // like from the seller's side.
+    const cat = (data.listings || []).filter(l =>
+      (l.issues || []).some(i => i.code.indexOf('category_') === 0 && i.code !== 'category_unknown'));
+    const unknown = data.categoryUnknown || 0;
+
+    setText('copilot-categories-count',
+      cat.length ? cat.length + ' listings' : (unknown ? 'needs a deeper scan' : 'all placed well'));
+
+    $('copilot-categories-result').innerHTML = cat.length
+      ? '<ul class="copilot-list">' + cat.slice(0, 25).map(l =>
+          '<li><span class="copilot-title">' + esc(l.title || '(no title)') + '</span>' +
+          '<span class="copilot-issue">' + esc(
+            (l.issues.find(i => i.code.indexOf('category_') === 0) || {}).summary || '') + '</span></li>')
+          .join('') + '</ul>' +
+        (cat.length > 25 ? '<p class="copilot-more">…and ' + (cat.length - 25) + ' more</p>' : '')
+      : unknown
+        ? '<p class="copilot-clean">eBay\'s bulk listing call does not return the category, so ' +
+          unknown + ' listings could not be judged from this scan. Checking them needs a per-item ' +
+          'lookup — not run automatically, because it is one eBay call per listing.</p>'
+        : '<p class="copilot-clean">Every listing sits in a real category.</p>';
+
+    const seo = (data.listings || []).filter(l =>
+      (l.issues || []).some(i => i.code.indexOf('title_') === 0));
+    setText('copilot-seo-count', seo.length ? seo.length + ' listings' : 'all good');
+    $('copilot-seo-result').innerHTML = seo.length
+      ? '<ul class="copilot-list">' + seo.slice(0, 25).map(l =>
+          '<li><span class="copilot-was">' + esc(l.title || '') + '</span>' +
+          (l.tidiedTitle && l.tidiedTitle !== l.title
+            ? '<span class="copilot-arrow">→</span><span class="copilot-now">' + esc(l.tidiedTitle) + '</span>'
+            : '') +
+          '<span class="copilot-issue">' + esc(
+            l.issues.filter(i => i.code.indexOf('title_') === 0).map(i => i.summary).join(' · ')) +
+          '</span></li>').join('') + '</ul>' +
+        (seo.length > 25 ? '<p class="copilot-more">…and ' + (seo.length - 25) + ' more</p>' : '')
+      : '<p class="copilot-clean">Every title uses its keyword budget well.</p>';
+
+    // Only the AI rewrite has a working apply path today, so only its button comes alive. The
+    // other two stay disabled rather than looking clickable and doing nothing.
+    const seoBtn = $('copilot-seo-apply');
+    if (seoBtn) {
+      seoBtn.disabled = seo.length === 0;
+      seoBtn.textContent = seo.length
+        ? 'Create drafts for ' + Math.min(seo.length, 25) + ' listing' + (Math.min(seo.length, 25) === 1 ? '' : 's')
+        : 'Nothing to rewrite';
+    }
+  }
+
   function bindPromoted() {
     on('ad-scan-btn', 'click', runAdRateScan);
     on('ad-close', 'click', closePromotedSection);
@@ -13633,7 +13876,103 @@
     if ($('edit-drawer')) openEditDrawer(listing);
     else $('form-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+    // The grid's data is a summary — no description, no specifics, no condition. Go and get the
+    // real thing, or the seller is editing a listing they cannot see. Deliberately after the drawer
+    // is already open and populated: the fields it CAN fill appear instantly, and the rest arrive a
+    // moment later rather than the whole editor waiting on one eBay call.
+    hydrateListingFromEbay(listing);
+
     addActivity('Edit opened', listing.title || listing.sku || listing.listingId || 'Listing selected');
+  }
+
+  /**
+   * Fills in what GetMyeBaySelling could not: description, condition, category, brand/MPN and item
+   * specifics, read from the live listing with GetItem.
+   *
+   * Only ever fills fields the summary left BLANK. It is not a refresh and must not behave like one
+   * — price and quantity in particular are current in the grid and stale in nothing, and quietly
+   * overwriting a figure the seller is looking at is worse than the gap this closes.
+   *
+   * A failure here is not fatal and is not shouted about: nothing is lost, because a blank field is
+   * omitted from the revise entirely (EbayService.BuildReviseFixedPriceItemXml) rather than sent as
+   * an empty value. The seller is told, because "the description box is empty" and "the description
+   * box could not be loaded" call for different reactions.
+   */
+  async function hydrateListingFromEbay(listing) {
+    const itemId = listing?.listingId || '';
+    if (!itemId || (listing?.status || '').toUpperCase() === 'SAMPLE') return;
+
+    // Nothing to go and get if the grid already carried the detail (a locally-created listing).
+    const d = listing.data || {};
+    if (d.description && Object.keys(d.itemSpecifics || {}).length) return;
+
+    setDrawerDetailStatus('Reading the full listing from eBay…', 'busy');
+
+    const { data, error } = await localFetchJson(
+      `/api/ebay/listing-detail?itemId=${encodeURIComponent(itemId)}`, 45000);
+
+    if (!data?.ok || !data.data) {
+      setDrawerDetailStatus(
+        `Couldn't read this listing's description and specifics from eBay${error ? ` — ${error}` : ''}. ` +
+        'Anything you leave blank is left alone on eBay, not cleared.', 'warn');
+      return;
+    }
+
+    // The drawer may have been closed, or a different listing opened, while eBay was answering.
+    if (activeListingId !== itemId) return;
+
+    const full = data.data;
+
+    // Filled when the SUMMARY had nothing, not when the box looks empty. The two differ on the
+    // condition dropdown, which fillForm always sets to a default — reading the DOM there would
+    // see "USED_EXCELLENT" and conclude the seller had chosen it, when nobody had.
+    const summary = listing.data || {};
+    const filled = [];
+    const fillFrom = (id, summaryValue, liveValue, label) => {
+      if (summaryValue || !liveValue) return;
+      const el = $(id);
+      if (!el) return;
+      el.value = liveValue;
+      filled.push(label);
+    };
+
+    fillFrom('f-description', summary.description, full.description, 'description');
+    fillFrom('f-category-id', summary.categoryId, full.categoryId, 'category');
+    fillFrom('f-category', summary.category, full.category, 'category name');
+    fillFrom('f-condition', summary.condition, full.condition, 'condition');
+    fillFrom('f-condition-desc', summary.conditionDescription, full.conditionDescription, 'condition notes');
+    fillFrom('f-brand', summary.brand, full.brand, 'brand');
+    fillFrom('f-mpn', summary.mpn, full.mpn, 'MPN');
+
+    // Item specifics are rows, not a field. Only added when there are none on screen — the seller
+    // may have started typing their own in the seconds this call was in flight.
+    const specifics = full.itemSpecifics || {};
+    const count = Object.keys(specifics).length;
+    if (count && !Object.keys(collectSpecifics()).length) {
+      const list = $('specifics-list');
+      if (list) {
+        Object.entries(specifics).forEach(([k, v]) => addSpecificRow(k, v));
+        filled.push(`${count} item specific${count === 1 ? '' : 's'}`);
+      }
+    }
+
+    // Re-baseline: these values came from eBay, not from the seller, so the drawer must not claim
+    // unsaved changes and must not prompt on close.
+    markDrawerClean();
+
+    setDrawerDetailStatus(
+      filled.length
+        ? `Loaded from your live listing: ${filled.join(', ')}.`
+        : 'This listing is already showing everything eBay has for it.',
+      'ok');
+  }
+
+  function setDrawerDetailStatus(text, kind) {
+    const el = $('edit-drawer-detail-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'edit-drawer-detail-status' + (kind ? ` is-${kind}` : '');
+    el.classList.toggle('hidden', !text);
   }
 
   function updateStats() {

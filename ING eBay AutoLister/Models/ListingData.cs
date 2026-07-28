@@ -406,3 +406,16 @@ public class SniperBidRequest
     public string  ItemId  { get; set; } = "";
     public decimal MaxBid  { get; set; }
 }
+
+/// <summary>
+/// The listings the seller picked for an AI rewrite on the Listing Copilot screen.
+/// </summary>
+/// <remarks>
+/// Ids rather than a flag, deliberately: there is no "improve everything" request this API can
+/// receive, so a bulk rewrite of someone's whole account cannot happen by accident or by a stray
+/// call. The seller scans, sees the list, and chooses.
+/// </remarks>
+public class CopilotSeoRequest
+{
+    public List<string> ListingIds { get; set; } = [];
+}

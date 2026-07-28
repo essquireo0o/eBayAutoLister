@@ -102,6 +102,7 @@
              have I made" and "what's still out there" — the two halves of the same question. -->
         <button class="nav-item" type="button" data-page="pipeline"><svg class="nav-icon" aria-hidden="true"><use href="#i-pipeline"/></svg>Deal Pipeline</button>
         <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
+        <button class="nav-item" type="button" data-page="copilot"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>Listing Copilot</button>
         <button class="nav-item" type="button" data-page="ai"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
 
@@ -127,24 +128,20 @@
              "which is the best deal"; a seller with $500 has to answer "which SET", and the two
              answers are routinely different. Sits directly under the boards it allocates across. -->
         <button class="nav-item" type="button" data-page="budget"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Spend My Budget</button>
-        <button class="nav-item" type="button" data-page="inventory"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Inventory Health</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
         <button class="nav-item" type="button" data-page="rescue"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Rescue Aging Stock</button>
-        <!-- Sits with Inventory Health and Offers to Watchers because it is the third view of the
-             same inventory — and the only one that can see the listings that ENDED. -->
-        <button class="nav-item" type="button" data-page="relist"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Lost Sales</button>
-        <button class="nav-item" type="button" data-page="lots"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Lot Analyzer</button>
         <button class="nav-item" type="button" data-page="promoted"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Ad Rate Advisor</button>
         <!-- The cost every other screen in this app used to guess at. Until this existed, one flat
              shipping figure was applied to a phone case and a 40 lb miner alike, underneath every
              profit number here at once — so it sits with the money tools, because that is what it
              fixes: not shipping, but every figure that shipping was quietly wrong inside. -->
         <button class="nav-item" type="button" data-page="shipping"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Ship Smart</button>
-        <!-- The only screen that questions the assumption every other screen makes: that the item
-             belongs on eBay. Sits with the money tools because that is what it is about — the same
-             item, the same buyer, a different amount of it left after fees. -->
-        <button class="nav-item" type="button" data-page="wheretosell"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Where to Sell</button>
-        <button class="nav-item" type="button" data-page="trends"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Rising Now</button>
+
+        <!-- Five entries were removed from this list at the seller's request: Inventory Health
+             (#inventory), Lost Sales (#relist), Lot Analyzer (#lots), Where to Sell (#wheretosell)
+             and Rising Now (#trends). Only the nav buttons are gone — the screens, their routes and
+             their endpoints are all untouched, so each one still opens on its own URL and anything
+             that deep-links to it still works. Put a button back and the feature returns as it was. -->
 
         <p class="nav-group-label">Account</p>
         <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
@@ -559,6 +556,22 @@
             <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <button id="nl-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
+
+          <!--
+            One scroller for the whole screen, between the pinned header and the pinned footer.
+
+            Before this, the modal was a fixed-height flex column and every block below —
+            the action cards, the sold-comps strip, the failure panel — took its natural height
+            first, leaving whatever remained to .new-listing-body. On a 950px window that remainder
+            was about 115px, so the actual listing form became a 115px window onto 864px of fields,
+            and the wheel did nothing unless the pointer was inside that sliver. Scrolling the page
+            was the obvious thing to try and the one thing that didn't work.
+
+            Now everything between the header and the footer scrolls together, the way the page
+            reads. The two columns below size to their content instead of each being its own
+            trapped scroller — see .nl-scroll in style.css.
+          -->
+          <div class="nl-scroll">
 
           <!-- Action cards — outcome-driven, not generic form fields -->
           <div class="nl-url-section">
@@ -1030,6 +1043,8 @@
 
           </div><!-- /.new-listing-body -->
 
+          </div><!-- /.nl-scroll -->
+
           <div class="new-listing-footer">
 
             <!-- Listing readiness: what eBay requires and what costs sales, checked here
@@ -1432,6 +1447,20 @@
                 <label for="fb-arb-category">Category</label>
                 <select id="fb-arb-category">
                   <option value="">All categories</option>
+                </select>
+                <!-- What the item costs to buy. Bands rather than two number boxes because the
+                     question is "am I shopping $20 items or $2,000 items today", not "filter
+                     between 137 and 419" — and the size of the buy is the single thing that
+                     decides whether a day's flipping is worth doing. Filters on the taxed,
+                     all-in cost, the same figure the Local price column and the ask sort use, so
+                     a row can't be inside the band in one place and outside it in another. -->
+                <label for="fb-arb-price">Price range</label>
+                <select id="fb-arb-price">
+                  <option value="" selected>Any price</option>
+                  <option value="10-100">$10 – $100</option>
+                  <option value="100-1000">$100 – $1,000</option>
+                  <option value="1000-10000">$1,000 – $10,000</option>
+                  <option value="10000-">$10,000+</option>
                 </select>
                 <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
@@ -2317,6 +2346,94 @@
             <strong>break-even lift</strong> beside it is straight arithmetic and holds whatever the model
             thinks. Ad rates are set in eBay Seller Hub → Marketing; this app never changes a campaign.
           </p>
+        </div>
+      </section>
+
+      <!-- ── Listing Copilot — account-wide cleanup, proposed before it is applied ─────────────
+           Every action here is scan-first. The screen shows the full list of what would change and
+           changes nothing until the seller clicks the apply button for that specific action; a bulk
+           edit across a live store that ran on page load would be indistinguishable from an accident.
+      -->
+      <section id="copilot-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="copilot-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Listing Copilot</div>
+              <h2>🤖 Fix The Whole Account At Once</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="copilot-scan-btn" class="btn btn-primary" type="button">🔍 Scan My Account</button>
+            <button id="copilot-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="opp-supplier-panel">
+            <p class="opp-hint">
+              Every action below <strong>shows you the full list of changes first</strong> and applies
+              nothing until you say so. Listing rewrites are saved as <strong>eBay drafts</strong> you
+              publish yourself — an SEO rewrite is a judgement call, and the judgement stays yours.
+            </p>
+
+            <div id="copilot-summary" class="copilot-summary hidden"></div>
+            <div id="copilot-error" class="copilot-error hidden"></div>
+
+            <div id="copilot-actions" class="copilot-actions">
+
+              <article class="copilot-card" data-action="policies">
+                <div class="copilot-card-head">
+                  <h3>📦 Tidy every shipping &amp; business policy</h3>
+                  <span class="copilot-count" id="copilot-policies-count">—</span>
+                </div>
+                <p class="copilot-why">
+                  Policies pile up as <em>“ship”</em>, <em>“Ship 2”</em>, <em>“FREE SHIP!!”</em>,
+                  <em>“copy of ship 2”</em>. The dropdown is alphabetical, so near-duplicates scatter and
+                  the wrong one gets picked at listing time. This gives them one predictable shape so the
+                  related ones sort together.
+                </p>
+                <div class="copilot-result" id="copilot-policies-result"></div>
+                <button class="btn btn-secondary copilot-apply" id="copilot-policies-apply" type="button" disabled>Apply renames</button>
+              </article>
+
+              <article class="copilot-card" data-action="categories">
+                <div class="copilot-card-head">
+                  <h3>🗂️ Put every listing in a category that earns views</h3>
+                  <span class="copilot-count" id="copilot-categories-count">—</span>
+                </div>
+                <p class="copilot-why">
+                  eBay's category tree belongs to eBay — it cannot be renamed or reordered by a seller.
+                  What you control is <strong>which category each listing sits in</strong>, and that is what
+                  this checks: missing categories, and catch-all <em>“Other”</em> categories that carry no
+                  buyer filters so the listing misses every refined search.
+                </p>
+                <div class="copilot-result" id="copilot-categories-result"></div>
+                <button class="btn btn-secondary copilot-apply" id="copilot-categories-apply" type="button" disabled>Review suggestions</button>
+              </article>
+
+              <article class="copilot-card" data-action="seo">
+                <div class="copilot-card-head">
+                  <h3>✨ Rewrite every title for search</h3>
+                  <span class="copilot-count" id="copilot-seo-count">—</span>
+                </div>
+                <p class="copilot-why">
+                  Titles are the biggest ranking lever you control, and unused characters are unused
+                  keywords. This finds titles over eBay's 80-character limit, titles leaving half the
+                  budget empty, and filler like <em>L@@K</em> or <em>FREE SHIPPING</em> that nobody searches
+                  for. Results are saved as drafts for you to publish.
+                </p>
+                <div class="copilot-result" id="copilot-seo-result"></div>
+                <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Create drafts</button>
+              </article>
+
+            </div>
+
+            <p class="opp-hint copilot-foot">
+              Scanning is read-only and costs nothing. It reads your live policies and listings straight
+              from eBay, so what you see is the account as it stands right now.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -3372,7 +3489,12 @@
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
-            <button id="er-import-btn" class="btn btn-primary" type="button">⬇ Import eBay Sales</button>
+            <!-- No import button. Sold orders arrive on their own: EarningsAutoImport pulls them
+                 the moment eBay is connected and refreshes every few hours, so there is nothing
+                 here for the seller to remember to press. What replaces the button is the one
+                 thing a button can't tell you — whether it is actually up to date. Written by
+                 renderEarningsAutoStatus from /api/earnings/auto-status. -->
+            <span id="er-auto-status" class="er-auto-status" role="status" aria-live="polite">Checking eBay…</span>
             <button id="er-log-btn" class="btn btn-secondary" type="button">＋ Log a Flip</button>
             <button id="er-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
           </div>
@@ -3386,7 +3508,7 @@
             <div class="er-hero-main">
               <p class="er-hero-label">You've made with ING</p>
               <p id="er-hero-month" class="er-hero-figure">$0</p>
-              <p id="er-hero-sub" class="er-hero-sub">this month — connect eBay and import your sales to start the count</p>
+              <p id="er-hero-sub" class="er-hero-sub">this month — connect eBay and your sales start counting themselves</p>
             </div>
             <div class="er-hero-side">
               <div class="er-hero-stat">
@@ -3404,18 +3526,13 @@
             </div>
           </div>
 
+          <!-- The "import sales from the last N days" picker used to live here. It drove the
+               import button's window, and with the import automatic there is nothing left for it
+               to change — EarningsAutoImport re-reads a rolling 90 days every few hours, which is
+               wide enough that a missed day heals itself. A control that no longer changes
+               anything is worse than no control, so it is gone rather than disabled. -->
           <div class="opp-supplier-panel">
             <div class="inv-controls">
-              <div class="opp-field inv-field-small">
-                <label for="er-days">Import sales from</label>
-                <select id="er-days">
-                  <option value="30">The last 30 days</option>
-                  <option value="90" selected>The last 90 days</option>
-                  <option value="180">The last 6 months</option>
-                  <option value="365">The last year</option>
-                  <option value="730">The last 2 years</option>
-                </select>
-              </div>
               <span id="er-status" class="inv-status"></span>
             </div>
           </div>
@@ -3485,12 +3602,11 @@
             <div class="state">
               <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
               <div class="state-title">Prove it made you money.</div>
-              <p class="state-body">Import your completed eBay sales and this becomes a running total of what you've actually earned — sale price, the fee eBay really charged, what you paid for it, and the net left over. Sold something off-platform? Log it here too.</p>
+              <p class="state-body">Your completed eBay sales land here on their own — sale price, the fee eBay really charged, what you paid for it, and the net left over. Nothing to import and nothing to press. Sold something off-platform? Log it here too.</p>
               <div class="state-actions">
-                <button class="btn btn-primary" type="button" onclick="document.getElementById('er-import-btn')?.click()">Import eBay sales</button>
                 <button class="btn btn-secondary" type="button" onclick="document.getElementById('er-log-btn')?.click()">Log a flip by hand</button>
               </div>
-              <p class="state-hint">Read-only on eBay. Importing sales never lists, relists or reprices anything.</p>
+              <p class="state-hint">Read-only on eBay. Reading your sales never lists, relists or reprices anything.</p>
             </div>
           </div>
 
@@ -4438,6 +4554,11 @@
       <div class="edit-drawer-heading">
         <div id="edit-drawer-title" class="edit-drawer-title">Edit Listing</div>
         <div id="edit-drawer-sub" class="edit-drawer-sub"></div>
+        <!-- The listings grid is a summary — it has no description and no item specifics — so the
+             editor goes and reads the live listing when it opens. This says whether that worked,
+             because a blank description box means two very different things depending on the
+             answer. Written by setDrawerDetailStatus. -->
+        <div id="edit-drawer-detail-status" class="edit-drawer-detail-status hidden" role="status" aria-live="polite"></div>
       </div>
       <span class="edit-drawer-dirty" aria-live="polite">Unsaved</span>
       <button id="edit-drawer-close" class="edit-drawer-close" type="button"
