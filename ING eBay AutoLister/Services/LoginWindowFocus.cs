@@ -30,6 +30,7 @@ public static class LoginWindowFocus
 {
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int dwProcessId);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool SetWindowPos(
         IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
@@ -79,13 +80,25 @@ public static class LoginWindowFocus
             {
                 foreach (var hwnd in NewBrowserWindows(launchedAfter))
                 {
-                    if (pinned.Contains(hwnd)) continue;
-                    pinned.Add(hwnd);
-                    firstPinnedAt ??= DateTime.UtcNow;
-                    // Topmost first, then activate: the pin survives whatever else is competing
-                    // for the foreground during Chrome's first second.
-                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                    SetForegroundWindow(hwnd);
+                    if (!pinned.Contains(hwnd))
+                    {
+                        pinned.Add(hwnd);
+                        firstPinnedAt ??= DateTime.UtcNow;
+                        // Topmost first, then activate: the pin survives whatever else is competing
+                        // for the foreground during Chrome's first second.
+                        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                        SetForegroundWindow(hwnd);
+                    }
+                    else if (GetForegroundWindow() != hwnd)
+                    {
+                        // Something took the foreground back while Chrome was still starting. This
+                        // re-assert is what replaced the browser-side minimize->normal burst, which
+                        // won the same races by visibly strobing the window through the whole page
+                        // load. Guarded by the foreground check so a window that is already correct
+                        // is left completely alone — an unconditional call here would fight the
+                        // user for focus while they type.
+                        SetForegroundWindow(hwnd);
+                    }
                 }
 
                 // Timed from the window appearing, not from the click: Chrome's own startup lag

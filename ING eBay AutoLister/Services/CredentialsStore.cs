@@ -349,14 +349,59 @@ public class CredentialsStore
     private static string PreviewLicenseKey(string key) =>
         string.IsNullOrWhiteSpace(key) ? "" : key[..Math.Min(8, key.Length)] + "****";
 
-    private void Persist() =>
-        File.WriteAllText(_filePath, JsonSerializer.Serialize(_data, _opts));
+    /// <summary>
+    /// Set when the file on disk existed but could not be read. While true, nothing is written
+    /// back — see <see cref="Persist"/>. This is the difference between "a bad read cost you one
+    /// session" and "a bad read cost you every account you have ever connected".
+    /// </summary>
+    private bool _loadFailedWithFilePresent;
+
+    /// <summary>True when this store refused to load an existing file and is protecting it from being overwritten.</summary>
+    public bool IsProtectingUnreadableFile => _loadFailedWithFilePresent;
+
+    private void Persist()
+    {
+        // The one case where saving is the wrong thing to do. If a file exists that we could not
+        // parse, the in-memory state is empty defaults — and writing those over the file would
+        // destroy the only copy of the seller's tokens to record that we failed to read them.
+        if (_loadFailedWithFilePresent) return;
+
+        // Atomic: the path never contains a partially-written file, and the previous contents are
+        // kept as .bak. See AtomicFile for why WriteAllText was not safe enough for this file.
+        AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(_data, _opts));
+    }
 
     private Credentials Load()
     {
-        if (!File.Exists(_filePath)) return new();
-        try { return JsonSerializer.Deserialize<Credentials>(File.ReadAllText(_filePath)) ?? new(); }
-        catch { return new(); }
+        var fileExisted = File.Exists(_filePath) || File.Exists(AtomicFile.BackupPathFor(_filePath));
+
+        // Falls through to the .bak when the main file is missing, empty, or not valid JSON —
+        // a half-written file from before atomic saves existed lands exactly here.
+        var text = AtomicFile.ReadWithRecovery(_filePath, IsParseableCredentials);
+        if (text is not null)
+        {
+            try
+            {
+                var loaded = JsonSerializer.Deserialize<Credentials>(text);
+                if (loaded is not null) return loaded;
+            }
+            catch (JsonException) { /* falls through to the guard below */ }
+        }
+
+        // Nothing readable. If there was never a file, this is a first run and empty is correct.
+        // If there WAS one, refuse to overwrite it and say so.
+        _loadFailedWithFilePresent = fileExisted;
+        return new();
+    }
+
+    private static bool IsParseableCredentials(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException) { return false; }
     }
 }
 

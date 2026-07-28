@@ -193,6 +193,11 @@ public static class CraigslistParser
         // One result block per <a class="cl-app-anchor ..."> / <li class="cl-static-search-result">.
         // Matched with a regex rather than an HTML parser because this is the fallback path for a
         // fallback page — taking a parser dependency to read four fields isn't worth it.
+        // Thumbnails come from elsewhere in this same response — see ThumbnailsByTitle. The static
+        // list carries no <img> at all (measured: 0 image tags across 322 rows), which is why every
+        // Craigslist row used to render the empty box.
+        var thumbs = ThumbnailsByTitle(html);
+
         var blocks = Regex.Matches(html,
             @"<li[^>]*class=""[^""]*cl-static-search-result[^""]*""[^>]*>(.*?)</li>",
             RegexOptions.Singleline | RegexOptions.IgnoreCase);
@@ -228,6 +233,7 @@ public static class CraigslistParser
                 PriceText = text,
                 IsFree = price is null && (freeBoard || LooksFree(title)),
                 Location = location.Length > 0 ? location : place,
+                ImageUrl = LookupThumbnail(thumbs, title, cleanTitle),
             };
 
             if (listing.Title.Length == 0) continue;
@@ -237,6 +243,88 @@ public static class CraigslistParser
 
         return listings;
     }
+
+    /// <summary>
+    /// Post thumbnails, keyed by post title, read out of the search page this parser already has.
+    ///
+    /// Craigslist's no-JavaScript results list — the one <see cref="ParseStaticHtml"/> reads — has
+    /// no images in it whatsoever: measured live, 0 <c>&lt;img&gt;</c> tags and 0 image URLs across
+    /// 322 rows. That is why every Craigslist and free-board row rendered the empty 📦 box.
+    ///
+    /// The pictures are in the SAME response, in the schema.org JSON-LD block Craigslist emits for
+    /// search engines (<c>ld_searchpage_results</c>): 291 of 291 items there carried an
+    /// <c>image[]</c>. So this costs no extra request, follows nobody into a post page, and keeps
+    /// "one search is one request" exactly as it was — the bytes were already downloaded and
+    /// thrown away.
+    ///
+    /// Keyed by title rather than by position on purpose. The two lists are NOT the same length
+    /// (322 static rows against 291 JSON-LD entries on the same page), so joining by index would
+    /// slide every row after the first gap onto somebody else's photo — and the wrong picture is
+    /// worse than no picture. A title collision at worst shows another listing of the same thing.
+    /// </summary>
+    private static Dictionary<string, string> ThumbnailsByTitle(string html)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var block = Regex.Match(html,
+            @"<script[^>]*id=""ld_searchpage_results""[^>]*>(.*?)</script>",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        if (!block.Success) return map;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(block.Groups[1].Value);
+            if (!doc.RootElement.TryGetProperty("itemListElement", out var list) ||
+                list.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return map;
+
+            foreach (var element in list.EnumerateArray())
+            {
+                if (!element.TryGetProperty("item", out var item)) continue;
+                if (!item.TryGetProperty("name", out var nameEl)) continue;
+                if (!item.TryGetProperty("image", out var images) ||
+                    images.ValueKind != System.Text.Json.JsonValueKind.Array) continue;
+
+                var name = nameEl.GetString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                // First photo only. The rest are the same item from other angles, and a sourcing
+                // table shows one thumbnail per row.
+                var first = images.EnumerateArray().FirstOrDefault().GetString();
+                if (string.IsNullOrWhiteSpace(first)) continue;
+
+                // First title wins, matching the dedupe rule used everywhere else.
+                map.TryAdd(NormalizeTitleKey(name), first);
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Craigslist changed the block's shape. Rows render with the empty box exactly as they
+            // did before this existed — a missing thumbnail must never fail a search.
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// The raw feed title and the cleaned one are both tried: the JSON-LD carries the post's own
+    /// title, which is what the raw one still is before <see cref="CleanTitle"/> strips the
+    /// trailing place name off it.
+    /// </summary>
+    private static string LookupThumbnail(Dictionary<string, string> thumbs, string rawTitle, string cleanTitle)
+    {
+        if (thumbs.Count == 0) return "";
+        if (thumbs.TryGetValue(NormalizeTitleKey(rawTitle), out var byRaw)) return byRaw;
+        if (thumbs.TryGetValue(NormalizeTitleKey(cleanTitle), out var byClean)) return byClean;
+        return "";
+    }
+
+    /// <summary>
+    /// Collapses whitespace and drops punctuation so a title that differs only in spacing or in a
+    /// stray dash still matches. Deliberately not fuzzy: a near-match here is the wrong photo.
+    /// </summary>
+    private static string NormalizeTitleKey(string title) =>
+        Regex.Replace(WebUtilityDecode(title ?? "").ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim();
 
     /// <summary>
     /// Turns parsed posts into a search result: duplicates dropped (craigslist repeats posts

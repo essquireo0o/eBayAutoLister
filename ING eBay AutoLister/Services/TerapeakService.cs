@@ -12,7 +12,26 @@ namespace ING_eBay_AutoLister.Services;
 public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 {
     private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "terapeak-session.json");
-    private volatile bool _loginInProgress;
+
+    // Interlocked, not a volatile bool: "check the flag, then set it" is two separate steps, so
+    // clicks that land together all read "not running" and each launch a browser window. The same
+    // bug in the Facebook service put five login windows on screen from one click.
+    private int _loginInProgress;
+
+    /// <summary>
+    /// Where the login window opens, and it has to be eBay's sign-in form — NOT the research page.
+    /// Sending a cookie-less browser to /sh/research gets it bounced to eBay's bot-check splash
+    /// (measured: two redirects, ending on /splashui/captcha with no sign-in form anywhere), so the
+    /// window showed a CAPTCHA instead of a login and the six-minute wait could never end.
+    ///
+    /// The ru= return parameter is doing real work, not decoration: it makes eBay land the seller
+    /// on /sh/research immediately after sign-in, which is exactly the URL the wait loop below
+    /// watches for. Without it the success condition is only ever met by accident.
+    /// </summary>
+    private const string ResearchUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD";
+
+    private static string LoginUrl =>
+        "https://signin.ebay.com/ws/eBayISAPI.dll?SignIn&ru=" + Uri.EscapeDataString(ResearchUrl);
 
     // Windows blocks a background process from stealing focus by default — without a foreground
     // grant the login browser can open behind the app window with no visible indication it
@@ -24,18 +43,19 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     private static string PlaywrightDir => NodeRuntime.PlaywrightDir;
 
     public bool IsConnected => File.Exists(_sessionPath);
-    public bool IsLoginInProgress => _loginInProgress;
+    public bool IsLoginInProgress => Volatile.Read(ref _loginInProgress) == 1;
     public string? LastLoginError { get; private set; }
 
     // ── One-time interactive login ────────────────────────────────────────────
 
     public (bool Started, string Message) StartLogin()
     {
-        if (_loginInProgress)
+        // Claim the slot and test the claim in one operation, so a second caller loses the race
+        // outright rather than both deciding they won it.
+        if (Interlocked.CompareExchange(ref _loginInProgress, 1, 0) == 1)
             return (false, "A login window is already open — finish logging in there.");
 
         LastLoginError = null;
-        _loginInProgress = true;
         _ = Task.Run(RunLoginProcessAsync);
         return (true, "A browser window just opened — log into eBay there. If you don't see it, Alt+Tab or check the taskbar for it. It closes itself once you're in.");
     }
@@ -63,14 +83,29 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             // Not awaited: the burst keeps lifting the window while the page loads underneath it,
             // which is exactly when the window loses the focus race and ends up buried.
             "  raiseBurst().catch(() => {});\n" +
+            // A swallowed navigation failure is how the Facebook version of this produced a blank
+            // window the seller watched for six minutes before being told they had cancelled it.
+            // Report it instead.
+            "  let navError = null;\n" +
             "  try {\n" +
-            "    await page.goto('https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD', { waitUntil: 'domcontentloaded', timeout: 30000 });\n" +
-            "  } catch (_) {}\n" +
+            $"    await page.goto('{LoginUrl}', {{ waitUntil: 'domcontentloaded', timeout: 30000 }});\n" +
+            "  } catch (e) { navError = String((e && e.message) || e).split('\\n')[0]; }\n" +
+            "  const haveForm = await page.$('#userid, input[name=\"userid\"], #pass, input[name=\"pass\"]').catch(() => null);\n" +
+            "  if (navError && !haveForm) {\n" +
+            "    process.stdout.write('NAVFAIL: ' + navError);\n" +
+            "    try { await browser.close(); } catch (_) {}\n" +
+            "    return;\n" +
+            "  }\n" +
+            // eBay answers automated-looking traffic with a bot-check splash. It is solvable by the
+            // person sitting there, so this is not a failure — but it must be NAMED, or the window
+            // just looks broken while it waits.
+            "  let sawCaptcha = page.url().includes('/splashui/captcha');\n" +
             "  const deadline = Date.now() + 6 * 60 * 1000;\n" +
             "  let sinceFocus = 0;\n" +
             "  while (Date.now() < deadline) {\n" +
             "    if (!browser.isConnected()) break;\n" + // user closed the window manually
             "    if (page.url().includes('/sh/research')) break;\n" +
+            "    if (page.url().includes('/splashui/captcha')) sawCaptcha = true;\n" +
             "    await page.waitForTimeout(1000).catch(() => {});\n" +
             // Re-assert the window to the front every ~5s for the whole wait, not just once at
             // page load — a CAPTCHA/"verify you're human" interstitial can appear well after the
@@ -89,10 +124,13 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             "  if (browser.isConnected() && page.url().includes('/sh/research')) {\n" +
             "    await page.waitForTimeout(1500);\n" +
             "    const state = await ctx.storageState();\n" +
-            $"    require('fs').writeFileSync('{sessionPathEscaped}', JSON.stringify(state));\n" +
+            // Temp-file-then-rename rather than a straight write: a crash mid-save used to leave a
+            // truncated session file, which reads as "not connected" and costs the seller the eBay
+            // login they just finished.
+            "    " + AtomicFile.NodeWriteJs(sessionPathEscaped, "JSON.stringify(state)") + "\n" +
             "    process.stdout.write('SAVED');\n" +
             "  } else {\n" +
-            "    process.stdout.write('CANCELLED');\n" +
+            "    process.stdout.write(sawCaptcha ? 'CAPTCHA' : 'CANCELLED');\n" +
             "  }\n" +
             "  try { await browser.close(); } catch (_) {}\n" +
             "})();\n";
@@ -123,7 +161,21 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
                 log.Add("Info", "Terapeak connected", "Session saved — sold comps will now use real Terapeak data.");
             else
             {
-                LastLoginError = string.IsNullOrWhiteSpace(stderr) ? (stdout.Length > 0 ? stdout : "Login window was closed before signing in.") : stderr;
+                // The script's outcome tokens are for this method, not for a human. Passing them
+                // through raw is how the UI ends up reporting "connect failed: CANCELLED".
+                LastLoginError = stdout switch
+                {
+                    "CANCELLED" => "Login window was closed before signing in — click Connect and stay in the window until it closes itself.",
+                    "CAPTCHA" => "eBay showed a \"verify you're human\" check instead of the sign-in form. "
+                        + "Click Connect again and complete that check in the window — it closes itself once you're signed in.",
+                    var s when s.StartsWith("NAVFAIL:") =>
+                        $"eBay's sign-in page wouldn't load ({s["NAVFAIL:".Length..].Trim()}). "
+                        + "This is eBay's end, not your account — try again in a minute.",
+                    var s when !string.IsNullOrWhiteSpace(s) => s,
+                    _ => string.IsNullOrWhiteSpace(stderr)
+                        ? "Login window was closed before signing in."
+                        : stderr,
+                };
                 log.Add("Warning", "Terapeak login not completed", LastLoginError);
             }
         }
@@ -138,7 +190,7 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         }
         finally
         {
-            _loginInProgress = false;
+            Volatile.Write(ref _loginInProgress, 0);
         }
     }
 

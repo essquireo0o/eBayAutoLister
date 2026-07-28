@@ -48,15 +48,18 @@ public static class NodeRuntime
     /// scripts. Paste it into a script that already has <c>ctx</c> (BrowserContext) and
     /// <c>page</c> in scope; both Terapeak and Facebook Marketplace embed this exact text.
     ///
-    /// Why a burst and not a single call: <c>page.bringToFront()</c> only focuses the tab inside
-    /// Chrome, and even the CDP minimize->normal cycle — which does move the real OS window —
-    /// loses races against Windows' focus rules, the app's own window, and Chrome's own startup
-    /// window placement, which happens over the first second or two of the browser's life. One
-    /// attempt at t=0 therefore lands *behind* the app often enough that sellers reported the
-    /// login as "not connecting" while the window was sitting there, buried. Repeating the hard
-    /// cycle a handful of times across the first ~5 seconds wins those races.
+    /// The hard cycle is minimize->normal, which is the only in-browser call that actually lifts
+    /// the OS window — and it is VISIBLE: the window drops to the taskbar and springs back. Doing
+    /// it repeatedly made the login window strobe for the first five seconds, right while eBay's
+    /// CAPTCHA page was loading, which reads as a broken app rather than a helpful one.
     ///
-    /// Why it stops after ~5 seconds: a window that keeps re-raising itself steals focus and
+    /// So it now fires ONCE, at t=0, while the window is still blank — a flash of an empty window
+    /// nobody is looking at yet costs nothing. Winning the focus races that follow is
+    /// <see cref="LoginWindowFocus.PinNewBrowserWindowBriefly"/>'s job: it holds the window topmost
+    /// natively and re-asserts foreground only when something steals it, none of which is visible.
+    /// The gentle <c>bringToFront()</c> calls in between are tab-level only and never move a window.
+    ///
+    /// Why it still stops after ~5 seconds: a window that keeps re-raising itself steals focus and
     /// eats keystrokes while someone is typing a password or clearing a CAPTCHA. Grabbing
     /// attention is a startup behaviour only — the wait loops that follow use bare
     /// <c>bringToFront()</c> at a much slower cadence, which does not disturb typing.
@@ -76,17 +79,16 @@ public static class NodeRuntime
               await s.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
             } catch (_) {}
           }
-          // Launch-time only: hard lifts at these offsets, gentle focus in between, then STOP —
-          // never extend this past the window below or it will interrupt the user mid-login.
+          // Launch-time only: ONE hard lift while the window is still blank, then gentle
+          // tab-focus only. The hard cycle is visible, so repeating it strobes the window in the
+          // user's face for the whole page load — LoginWindowFocus does the durable, invisible
+          // version of this natively. Never move raise(true) into the loop, and never add another.
           const RAISE_BURST_MS = 5000;
           async function raiseBurst() {
-            const hardAt = [0, 400, 1200, 2400, 4000];
+            await raise(true);
             const start = Date.now();
-            let next = 0;
             while (Date.now() - start < RAISE_BURST_MS) {
-              const elapsed = Date.now() - start;
-              if (next < hardAt.length && elapsed >= hardAt[next]) { next++; await raise(true); }
-              else await raise(false);
+              await raise(false);
               await page.waitForTimeout(250).catch(() => {});
             }
           }
@@ -113,6 +115,12 @@ public static class NodeRuntime
                 WorkingDirectory       = PlaywrightDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
+                // Node writes UTF-8. Without saying so, .NET decodes it with the console's legacy
+                // code page and every non-ASCII character arrives mangled — a Marketplace listing
+                // for a "Luminária" came back as "LuminÃ¡ria". It corrupts the JSON these scripts
+                // emit, so it is a data bug, not a display one.
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding  = System.Text.Encoding.UTF8,
                 UseShellExecute        = false,
                 CreateNoWindow         = true
             };
