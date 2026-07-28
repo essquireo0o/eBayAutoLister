@@ -20,9 +20,25 @@ public static class FacebookMarketplaceSelectors
     public const string SearchUrlTemplate =
         "https://www.facebook.com/marketplace/search/?query={query}&radius_in_km={radiusKm}&sortBy=creation_time_descend&exact=false";
 
-    // Where the one-time login lands. Reaching a /marketplace URL that isn't a login or a
-    // checkpoint is what the login script treats as "signed in".
-    public const string LoginLandingUrl = "https://www.facebook.com/marketplace/you/selling";
+    // Where the one-time login lands, and it must be the login form itself — NOT a Marketplace
+    // URL. The login browser opens with no cookies, and Facebook answers a logged-out hit on
+    // any /marketplace page with an endless www→m→www bounce (measured: 19 redirects, then
+    // ERR_TOO_MANY_REDIRECTS), which leaves the window sitting on about:blank with no way to
+    // sign in. /login/ serves the form directly, with zero redirects, logged out.
+    //
+    // Signed-in detection does not read this URL at all — it waits for Facebook's own c_user
+    // cookie — so where the browser ends up after sign-in doesn't matter here.
+    public const string LoginLandingUrl = "https://www.facebook.com/login/";
+
+    // Tried if the landing URL fails to load at all. Same form, different entry point: if
+    // Facebook is redirect-looping one of these, it is usually still serving the other.
+    public const string LoginFallbackUrl = "https://www.facebook.com/login.php";
+
+    // Marketplace's front page — "Today's picks". No query, no filters: it is whatever Facebook
+    // has decided to show THIS account near its own saved location, which is exactly what the
+    // seller sees when they open Marketplace themselves. Worth reading precisely because it is not
+    // a search: it surfaces local supply the seller would never have thought to type.
+    public const string PicksUrl = "https://www.facebook.com/marketplace/";
 
     // Result tiles. Every Marketplace tile is an anchor to /marketplace/item/<id>/ regardless
     // of which grid layout is being A/B tested, which makes the href the most durable hook
@@ -106,6 +122,128 @@ public static class FacebookMarketplaceSelectors
         apply                = ApplySelectors,
         scrollPasses         = ScrollPasses,
     });
+
+    // ── Every filter Marketplace itself offers ────────────────────────────────
+    // Facebook refuses to be embedded — it answers every Marketplace URL with
+    // "X-Frame-Options: DENY", so putting their page inside this one is not possible in any
+    // browser. What IS possible is offering the same controls, because Marketplace drives its own
+    // filters entirely through query-string parameters. These are those parameters.
+    //
+    // The values are Facebook's own strings, not this app's: sortBy=price_ascend, not "cheapest".
+    // Anything else here would be a translation layer to get wrong on the day they add an option.
+
+    public static readonly (string Value, string Label)[] SortOptions =
+    [
+        ("",                      "Best match"),
+        ("creation_time_descend", "Newest first"),
+        ("price_ascend",          "Price: low to high"),
+        ("price_descend",         "Price: high to low"),
+        ("distance_ascend",       "Closest first"),
+    ];
+
+    public static readonly (string Value, string Label)[] ConditionOptions =
+    [
+        ("",               "Any condition"),
+        ("new",            "New"),
+        ("used_like_new",  "Used — like new"),
+        ("used_good",      "Used — good"),
+        ("used_fair",      "Used — fair"),
+    ];
+
+    public static readonly (string Value, string Label)[] DateListedOptions =
+    [
+        ("",   "Any time"),
+        ("1",  "Last 24 hours"),
+        ("7",  "Last 7 days"),
+        ("30", "Last 30 days"),
+    ];
+
+    public static readonly (string Value, string Label)[] DeliveryOptions =
+    [
+        ("",              "Any delivery"),
+        ("local_pick_up", "Local pickup only"),
+        ("shipping",      "Shipped to you"),
+    ];
+
+    /// <summary>
+    /// Marketplace's own category boards. Slugs are what Facebook puts in the path — a category
+    /// search is a different URL, not a filter on the search one.
+    /// </summary>
+    public static readonly (string Slug, string Label)[] CategoryOptions =
+    [
+        ("",              "All categories"),
+        ("vehicles",      "Vehicles"),
+        ("apparel",       "Apparel"),
+        ("electronics",   "Electronics"),
+        ("furniture",     "Home & furniture"),
+        ("garden",        "Home improvement & garden"),
+        ("toys",          "Toys & games"),
+        ("sportinggoods", "Sporting goods"),
+        ("tools",         "Tools"),
+        ("musical",       "Musical instruments"),
+        ("propertyrentals", "Property rentals"),
+        ("free",          "Free stuff"),
+    ];
+
+    /// <summary>
+    /// One Marketplace browse, expressed the way Facebook expresses it. Empty strings mean "don't
+    /// send that parameter at all" rather than "send an empty one", which Marketplace treats as a
+    /// filter set to nothing and returns zero results for.
+    /// </summary>
+    public record BrowseFilters(
+        string Query = "",
+        string CategorySlug = "",
+        decimal? MinPrice = null,
+        decimal? MaxPrice = null,
+        string Condition = "",
+        string DaysListed = "",
+        string Delivery = "",
+        string SortBy = "",
+        int RadiusMiles = 40)
+    {
+        public bool IsPicks => string.IsNullOrWhiteSpace(Query) && string.IsNullOrWhiteSpace(CategorySlug);
+    }
+
+    /// <summary>
+    /// Builds the Marketplace URL for <paramref name="f"/>. Three shapes, because Facebook uses
+    /// three: the picks feed, a category board, and a keyword search.
+    /// </summary>
+    public static string BuildBrowseUrl(BrowseFilters f)
+    {
+        var km = (int)Math.Round(FacebookMarketplaceParser.NearestSupportedRadius(f.RadiusMiles) * 1.60934);
+
+        var query = new List<string>();
+        void Add(string key, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) query.Add($"{key}={Uri.EscapeDataString(value)}");
+        }
+
+        Add("radius_in_km", km.ToString());
+        if (f.MinPrice is > 0) Add("minPrice", ((int)f.MinPrice).ToString());
+        if (f.MaxPrice is > 0) Add("maxPrice", ((int)f.MaxPrice).ToString());
+        Add("itemCondition", f.Condition);
+        Add("daysSinceListed", f.DaysListed);
+        Add("deliveryMethod", f.Delivery);
+        Add("sortBy", f.SortBy);
+
+        string basePath;
+        if (!string.IsNullOrWhiteSpace(f.Query))
+        {
+            basePath = "https://www.facebook.com/marketplace/search/";
+            query.Insert(0, $"query={Uri.EscapeDataString(f.Query)}");
+            query.Add("exact=false");
+        }
+        else if (!string.IsNullOrWhiteSpace(f.CategorySlug))
+        {
+            basePath = $"https://www.facebook.com/marketplace/category/{Uri.EscapeDataString(f.CategorySlug)}/";
+        }
+        else
+        {
+            basePath = PicksUrl;
+        }
+
+        return query.Count == 0 ? basePath : $"{basePath}?{string.Join("&", query)}";
+    }
 
     public static string BuildSearchUrl(string query, int radiusMiles)
     {

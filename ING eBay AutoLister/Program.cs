@@ -196,6 +196,9 @@ builder.Services.AddSingleton<StripeService>();
 builder.Services.AddSingleton<AnalyticsStore>();
 builder.Services.AddSingleton<TerapeakService>();
 builder.Services.AddSingleton<TerapeakPriceCache>();
+// Facebook sold/pending sightings. Deliberately NOT registered anywhere near IMarketplaceRepository:
+// what it holds are asking prices, and the comp path must only ever see real eBay sale prices.
+builder.Services.AddSingleton<FacebookSoldStore>();
 // Local sourcing — Facebook Marketplace has no public search API, so this uses the same
 // saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
@@ -1856,6 +1859,45 @@ app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terape
 // thought to type turns up. One page load, and only when asked for.
 app.MapGet("/api/facebook/picks", async (FacebookMarketplaceService facebook, CancellationToken ct) =>
     Results.Ok(await facebook.BrowsePicksAsync(ct)));
+
+// Marketplace with its own filters applied. Facebook cannot be embedded — every Marketplace URL
+// is served X-Frame-Options: DENY, so no browser will render their page inside this one — but all
+// of their filters are query-string parameters, so the same controls reach the same results here.
+app.MapGet("/api/facebook/browse", async (
+    string? q, string? category, decimal? minPrice, decimal? maxPrice, string? condition,
+    string? daysListed, string? delivery, string? sortBy, int? radius,
+    FacebookMarketplaceService facebook, CancellationToken ct) =>
+{
+    // Whitelisted against Facebook's own option lists: these go into a URL Facebook parses, and an
+    // invented value returns an empty board that looks exactly like "nothing for sale near you".
+    static string Pick((string Value, string Label)[] options, string? wanted) =>
+        options.Any(o => o.Value == wanted) ? wanted! : "";
+
+    var filters = new FacebookMarketplaceSelectors.BrowseFilters(
+        Query:        (q ?? "").Trim(),
+        CategorySlug: Pick(FacebookMarketplaceSelectors.CategoryOptions.Select(c => (c.Slug, c.Label)).ToArray(), category),
+        MinPrice:     minPrice is > 0 ? minPrice : null,
+        MaxPrice:     maxPrice is > 0 ? maxPrice : null,
+        Condition:    Pick(FacebookMarketplaceSelectors.ConditionOptions, condition),
+        DaysListed:   Pick(FacebookMarketplaceSelectors.DateListedOptions, daysListed),
+        Delivery:     Pick(FacebookMarketplaceSelectors.DeliveryOptions, delivery),
+        SortBy:       Pick(FacebookMarketplaceSelectors.SortOptions, sortBy),
+        RadiusMiles:  Math.Clamp(radius ?? 40, 1, 500));
+
+    return Results.Ok(await facebook.BrowseAsync(filters, ct));
+});
+
+// The filter lists themselves, so the browser renders Facebook's own options rather than a second
+// copy of them that drifts the day Marketplace adds one.
+app.MapGet("/api/facebook/browse-options", () => Results.Ok(new
+{
+    categories = FacebookMarketplaceSelectors.CategoryOptions.Select(c => new { value = c.Slug, label = c.Label }),
+    conditions = FacebookMarketplaceSelectors.ConditionOptions.Select(c => new { value = c.Value, label = c.Label }),
+    dates      = FacebookMarketplaceSelectors.DateListedOptions.Select(c => new { value = c.Value, label = c.Label }),
+    delivery   = FacebookMarketplaceSelectors.DeliveryOptions.Select(c => new { value = c.Value, label = c.Label }),
+    sorts      = FacebookMarketplaceSelectors.SortOptions.Select(c => new { value = c.Value, label = c.Label }),
+    radii      = FacebookMarketplaceSelectors.SupportedRadiiMiles,
+}));
 
 app.MapPost("/api/facebook/connect", (FacebookMarketplaceService facebook) =>
 {
@@ -6806,6 +6848,17 @@ app.MapGet("/api/ebay/listings", async (EbayService ebay, ActionLog log) =>
 app.MapGet("/api/local-db/status", (ListingDatabase db) => Results.Ok(db.GetStatus()));
 
 app.MapGet("/api/local-listings/placeholder", () => Results.Ok(PlaceholderListings.Get()));
+
+// Facebook items seen marked Sold or Pending, gathered as a by-product of searches already run.
+// The response says what these prices are in the payload itself, not just in a comment, because
+// the one way this feature does damage is by being read as sold comps.
+app.MapGet("/api/facebook/sold", (FacebookSoldStore store, string? q, int? limit) => Results.Ok(new
+{
+    priceMeaning = "last asking price when seen marked sold — Facebook publishes no sale prices",
+    usableAsComps = false,
+    total = store.Count(),
+    items = store.Recent(q, limit ?? 100),
+}));
 
 app.MapGet("/api/photos/default-folders", (PhotoLibrary photos) => Results.Ok(photos.GetDefaultFolders()));
 

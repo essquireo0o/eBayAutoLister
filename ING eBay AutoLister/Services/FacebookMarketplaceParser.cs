@@ -31,6 +31,12 @@ public static class FacebookMarketplaceParser
     private static readonly string[] NoiseLines =
         ["sponsored", "see more", "free shipping", "shipping available", "save", "message", "featured"];
 
+    // Badges that mean the item is spoken for. Before this they fell through to `prose`, where a
+    // four-letter word could not win the longest-line contest for Title but could still be picked
+    // up as Location — so a sold item quietly became a buyable row located in "Sold".
+    private static readonly string[] SoldLines =
+        ["sold", "pending", "sale pending", "sold out", "no longer available"];
+
     public static int NearestSupportedRadius(int requestedMiles)
     {
         var options = FacebookMarketplaceSelectors.SupportedRadiiMiles;
@@ -62,6 +68,13 @@ public static class FacebookMarketplaceParser
         {
             var line = (raw ?? "").Trim();
             if (line.Length == 0 || NoiseLines.Contains(line.ToLowerInvariant())) continue;
+
+            if (SoldLines.Contains(line.ToLowerInvariant()))
+            {
+                listing.IsSold = true;
+                if (listing.SoldStateText.Length == 0) listing.SoldStateText = line;
+                continue;
+            }
 
             if (line.Equals("free", StringComparison.OrdinalIgnoreCase))
             {
@@ -127,9 +140,16 @@ public static class FacebookMarketplaceParser
         IEnumerable<FacebookRawCard> cards, string query, string zip, int radiusMiles)
     {
         var parsed = (cards ?? []).Select(ParseCard).Where(l => l is not null).Select(l => l!);
-        var items = LocalSupplyResults.Dedupe(parsed);
+        var all = LocalSupplyResults.Dedupe(parsed);
 
-        items = FilterByRelevance(items, query);
+        all = FilterByRelevance(all, query);
+
+        // Split before anything is summarised. A sold tile still shows a price, so leaving it in
+        // would put an item nobody can buy into the ranked deals AND drag the local ask median
+        // toward a number that is no longer on offer.
+        var sold  = all.Where(i => i.IsSold).ToList();
+        var items = all.Where(i => !i.IsSold).ToList();
+
         items = [.. items.OrderBy(i => i.Price ?? 0m)];
 
         var (min, median, max) = LocalSupplyResults.Summarize(items);
@@ -145,6 +165,7 @@ public static class FacebookMarketplaceParser
             SearchUrl   = FacebookMarketplaceSelectors.BuildSearchUrl(query, radiusMiles),
             ScopeLabel  = string.IsNullOrWhiteSpace(zip) ? "" : $"within {NearestSupportedRadius(radiusMiles)} mi of {zip}",
             Items       = items,
+            SoldItems   = sold,
             Min = min, Median = median, Max = max,
         };
     }
