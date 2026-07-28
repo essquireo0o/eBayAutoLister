@@ -199,6 +199,10 @@ builder.Services.AddSingleton<TerapeakPriceCache>();
 // Facebook sold/pending sightings. Deliberately NOT registered anywhere near IMarketplaceRepository:
 // what it holds are asking prices, and the comp path must only ever see real eBay sale prices.
 builder.Services.AddSingleton<FacebookSoldStore>();
+
+// Singleton because the run outlives the request that started it: a whole-account rewrite takes
+// minutes, and the browser polls it rather than holding the connection open.
+builder.Services.AddSingleton<CopilotSeoJob>();
 // Local sourcing — Facebook Marketplace has no public search API, so this uses the same
 // saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
@@ -6822,6 +6826,68 @@ app.MapGet("/api/ebay/policies", async (EbayService ebay, ActionLog log) =>
     }
 });
 
+// Apply the policy renames.
+//
+// The browser sends ids, never names: the plan is recomputed here from the policies as they stand
+// right now, and a rename only happens where the freshly computed plan still agrees. That means a
+// stale page cannot write a name derived from data that has since changed, and no caller can put
+// an arbitrary string on a policy through this endpoint.
+app.MapPost("/api/copilot/rename-policies", async (
+    CopilotRenameRequest req, EbayService ebay, ActionLog log) =>
+{
+    var wanted = (req.PolicyIds ?? []).Where(s => !string.IsNullOrWhiteSpace(s)).ToHashSet();
+    if (wanted.Count == 0) return Results.BadRequest(new { error = "No policies were selected." });
+
+    var policies = await ebay.GetBusinessPoliciesAsync();
+
+    var groups = new (string Kind, List<PolicyInfo> List)[]
+    {
+        ("fulfillment_policy", policies.FulfillmentPolicies),
+        ("payment_policy",     policies.PaymentPolicies),
+        ("return_policy",      policies.ReturnPolicies),
+    };
+
+    var results = new List<object>();
+    var renamed = 0;
+
+    foreach (var (kind, list) in groups)
+    {
+        // Planned per group, because eBay's uniqueness rule is per policy type.
+        foreach (var r in ListingCopilot.PlanPolicyRenames(list))
+        {
+            if (!wanted.Contains(r.PolicyId)) continue;
+
+            var error = await ebay.RenamePolicyAsync(kind, r.PolicyId, r.ProposedName);
+            if (error is null) renamed++;
+
+            results.Add(new
+            {
+                policyId = r.PolicyId,
+                kind,
+                before = r.CurrentName,
+                after = r.ProposedName,
+                ok = error is null,
+                reason = error,
+            });
+        }
+    }
+
+    log.Add("Info", "Copilot policy renames finished",
+        $"{renamed} of {results.Count} renamed.");
+
+    return Results.Ok(new
+    {
+        requested = wanted.Count,
+        renamed,
+        failed = results.Count - renamed,
+        skipped = wanted.Count - results.Count,
+        note = results.Count < wanted.Count
+            ? "Some selected policies no longer needed renaming and were left alone."
+            : null,
+        results,
+    });
+});
+
 // The AI half of the Copilot: rewrite listings for search, as DRAFTS.
 //
 // Three deliberate limits, because this is the one action here that spends money and touches the
@@ -6832,78 +6898,51 @@ app.MapGet("/api/ebay/policies", async (EbayService ebay, ActionLog log) =>
 //     call about someone else's inventory; the seller publishes, or doesn't.
 //   • One listing failing does not abandon the rest, and every outcome is reported per listing —
 //     a bulk job that half-worked and said "done" would be worse than one that failed outright.
-app.MapPost("/api/copilot/improve-seo", async (
-    CopilotSeoRequest req, EbayService ebay, ClaudeService claude, ActionLog log) =>
+// Rewrite the seller's listings for search - titles, subtitles, the full HTML description and the
+// item specifics - as eBay DRAFTS.
+//
+// Started once and polled, because a whole account runs for minutes and a request that long dies in
+// the browser, taking the completed work with it: the seller would pay for every rewrite and receive
+// none of them. Sending no ids means every live listing.
+app.MapPost("/api/copilot/improve-seo/start", (CopilotSeoRequest req, CopilotSeoJob job) =>
 {
-    var ids = (req.ListingIds ?? []).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToList();
-    if (ids.Count == 0) return Results.BadRequest(new { error = "No listings were selected." });
-
-    // A cap the seller can see beats an unbounded loop they cannot stop: each listing is a Claude
-    // call plus two eBay calls, and the browser is waiting on all of it.
-    const int MaxPerRun = 25;
-    var capped = ids.Count > MaxPerRun;
-    if (capped) ids = ids.Take(MaxPerRun).ToList();
-
-    var results = new List<object>();
-    var drafted = 0;
-
-    foreach (var id in ids)
+    var run = job.Start(req.ListingIds);
+    return Results.Ok(new
     {
-        try
-        {
-            var current = await ebay.GetItemAsync(id);
-            var before = current.Title ?? "";
+        started = true,
+        alreadyRunning = run.Done > 0 && !run.Finished,
+        stage = run.Stage,
+        total = run.Total,
+        note = "Drafts only - no live listing is revised. Publish them from eBay Seller Hub.",
+    });
+});
 
-            var improved = await claude.ImproveSeoAsync(
-                System.Text.Json.JsonSerializer.Deserialize<ImproveSeoRequest>(
-                    System.Text.Json.JsonSerializer.Serialize(current))!);
-
-            // eBay rejects an over-length title outright, so the deterministic trim is applied on
-            // top of the model's answer rather than trusting it to have counted.
-            improved.Title = ListingCopilot.TidyTitle(improved.Title);
-
-            if (string.IsNullOrWhiteSpace(improved.Title))
-            {
-                results.Add(new { listingId = id, ok = false, reason = "The rewrite came back empty." });
-                continue;
-            }
-
-            var draftReq = System.Text.Json.JsonSerializer.Deserialize<PostListingRequest>(
-                System.Text.Json.JsonSerializer.Serialize(improved))!;
-
-            var draft = await ebay.CreateSellerHubDraftAsync(draftReq);
-            drafted++;
-            results.Add(new
-            {
-                listingId = id,
-                ok = true,
-                before,
-                after = improved.Title,
-                draftId = draft.DraftId,
-                sellerHubUrl = draft.SellerHubUrl,
-            });
-        }
-        catch (Exception ex)
-        {
-            var shortError = ex.Message.Length > 200 ? ex.Message[..200] + "…" : ex.Message;
-            log.Add("Warning", "Copilot SEO rewrite failed", $"{id}: {shortError}");
-            results.Add(new { listingId = id, ok = false, reason = shortError });
-        }
-    }
-
-    log.Add("Info", "Copilot SEO rewrite finished",
-        $"{drafted} draft(s) created from {ids.Count} listing(s). Nothing live was changed.");
+app.MapGet("/api/copilot/improve-seo/status", (CopilotSeoJob job) =>
+{
+    var run = job.Current;
+    if (run is null) return Results.Ok(new { running = false, everRun = false });
 
     return Results.Ok(new
     {
-        requested = ids.Count,
-        drafted,
-        failed = ids.Count - drafted,
-        capped,
-        maxPerRun = MaxPerRun,
-        note = "Drafts only — no live listing was revised. Publish them from eBay Seller Hub.",
-        results,
+        running = !run.Finished,
+        everRun = true,
+        stage = run.Stage,
+        total = run.Total,
+        done = run.Done,
+        drafted = run.Drafted,
+        skipped = run.Skipped,
+        failed = run.Failed,
+        error = run.Error,
+        startedAt = run.StartedAt,
+        finishedAt = run.FinishedAt,
+        results = run.Results.Reverse().Take(60),
     });
+});
+
+app.MapPost("/api/copilot/improve-seo/cancel", (CopilotSeoJob job) =>
+{
+    job.Cancel();
+    return Results.Ok(new { ok = true, note = "Stopping after the listing in progress. Drafts already made are kept." });
 });
 
 // Listing Copilot: what is wrong across the whole account, and exactly what would change.

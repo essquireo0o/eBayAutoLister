@@ -1066,6 +1066,70 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             errors.Count > 0 ? string.Join("; ", errors) : null);
     }
 
+    /// <summary>
+    /// Renames one business policy, changing nothing else about it.
+    /// </summary>
+    /// <param name="kind">
+    /// <c>fulfillment_policy</c>, <c>payment_policy</c> or <c>return_policy</c>.
+    /// </param>
+    /// <remarks>
+    /// eBay's PUT replaces the whole policy, so sending only a name would blank every shipping
+    /// service, cost and handling time on it. This reads the policy back first and edits the one
+    /// field, so a rename cannot quietly destroy a seller's shipping setup — the failure mode that
+    /// matters here is not "the rename failed", it is "the rename worked and took the rates with it".
+    /// </remarks>
+    public async Task<string?> RenamePolicyAsync(string kind, string policyId, string newName)
+    {
+        if (kind is not ("fulfillment_policy" or "payment_policy" or "return_policy"))
+            return $"Unknown policy type '{kind}'.";
+        if (string.IsNullOrWhiteSpace(policyId)) return "No policy id.";
+        if (string.IsNullOrWhiteSpace(newName))  return "No new name.";
+
+        var token = await GetOrRefreshTokenAsync();
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Add("X-EBAY-C-MARKETPLACE-ID", "EBAY_US");
+
+        var url = $"{BaseUrl}/sell/account/v1/{kind}/{policyId}";
+
+        var getRes = await client.GetAsync(url);
+        var current = await getRes.Content.ReadAsStringAsync();
+        if (!getRes.IsSuccessStatusCode)
+            return $"Could not read policy {policyId}: HTTP {(int)getRes.StatusCode} {current[..Math.Min(200, current.Length)]}";
+
+        // Rebuild the object with the name swapped and every other property copied verbatim.
+        using var doc = JsonDocument.Parse(current);
+        var buffer = new MemoryStream();
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.NameEquals("name")) continue;   // replaced below
+                prop.WriteTo(w);
+            }
+            w.WriteString("name", newName);
+            w.WriteEndObject();
+        }
+
+        var payload = new StringContent(
+            System.Text.Encoding.UTF8.GetString(buffer.ToArray()),
+            System.Text.Encoding.UTF8, "application/json");
+
+        var putRes = await client.PutAsync(url, payload);
+        var putBody = await putRes.Content.ReadAsStringAsync();
+
+        if (!putRes.IsSuccessStatusCode)
+        {
+            log.Add("Warning", "Policy rename failed",
+                $"{kind} {policyId}: HTTP {(int)putRes.StatusCode} {putBody[..Math.Min(300, putBody.Length)]}");
+            return $"HTTP {(int)putRes.StatusCode}: {putBody[..Math.Min(200, putBody.Length)]}";
+        }
+
+        log.Add("Info", "Policy renamed", $"{kind} {policyId} is now \"{newName}\".");
+        return null;
+    }
+
     private async Task<(List<PolicyInfo> Policies, string? Error)> FetchPoliciesAsync(
         HttpClient client, string endpoint, string arrayName, string idField)
     {

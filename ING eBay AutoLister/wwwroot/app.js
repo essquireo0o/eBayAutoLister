@@ -10001,57 +10001,80 @@
     on('copilot-seo-apply', 'click', runCopilotSeoRewrite);
   }
 
-  // The AI rewrite. Drafts only — nothing live is touched — and only for the listings the scan
-  // actually flagged, so the button can never mean "rewrite my whole account".
+  // The AI rewrite: every live listing, rewritten for search - title, subtitle, the full HTML
+  // description and the item specifics - and saved as eBay drafts. Started once and polled, because
+  // a whole account runs for minutes: holding a fetch open that long loses the completed work, and
+  // the seller would have paid for every rewrite and received none of them.
+  let copilotSeoPoll = null;
+
   async function runCopilotSeoRewrite() {
-    if (!copilotScan) return;
-
-    const ids = (copilotScan.listings || [])
-      .filter(l => (l.issues || []).some(i => i.code.indexOf('title_') === 0))
-      .map(l => l.listingId)
-      .filter(Boolean);
-
-    if (!ids.length) return;
-
-    const btn = $('copilot-seo-apply');
-    const out = $('copilot-seo-result');
+    const total = copilotScan ? copilotScan.scannedListings : 0;
     if (!confirm(
-      'Rewrite ' + Math.min(ids.length, 25) + ' listing title' + (ids.length === 1 ? '' : 's') +
-      ' with AI?\n\nEach one is saved as an eBay draft for you to publish. No live listing is changed.')) return;
-
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Writing drafts…'; }
+      'Rewrite ' + (total || 'all') + ' listing' + (total === 1 ? '' : 's') + ' with AI?\n\n' +
+      'Each gets a new title, a new HTML description and filled-in item specifics, saved as an eBay ' +
+      'draft for you to publish.\n\nNo live listing is changed. This takes a few minutes and costs ' +
+      'one Claude call per listing.')) return;
 
     try {
-      const res = await fetch('/api/copilot/improve-seo', {
+      const res = await fetch('/api/copilot/improve-seo/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingIds: ids })
+        body: JSON.stringify({ listingIds: [] })      // empty = every live listing
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Rewrite failed');
+      if (!res.ok) throw new Error(data.error || 'Could not start');
+      pollCopilotSeo();
+    } catch (e) {
+      const err = $('copilot-error');
+      if (err) { err.classList.remove('hidden'); err.textContent = 'Rewrite failed to start: ' + e.message; }
+    }
+  }
+
+  function pollCopilotSeo() {
+    if (copilotSeoPoll) clearInterval(copilotSeoPoll);
+    copilotSeoPoll = setInterval(refreshCopilotSeoStatus, 2500);
+    refreshCopilotSeoStatus();
+  }
+
+  async function refreshCopilotSeoStatus() {
+    const out = $('copilot-seo-result');
+    const btn = $('copilot-seo-apply');
+
+    try {
+      const res = await fetch('/api/copilot/improve-seo/status');
+      const s = await res.json();
+      if (!s.everRun) return;
+
+      if (btn) {
+        btn.disabled = s.running;
+        btn.textContent = s.running ? '⏳ Rewriting…' : 'Rewrite all my listings';
+      }
+
+      if (!s.running && copilotSeoPoll) { clearInterval(copilotSeoPoll); copilotSeoPoll = null; }
+
+      const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+      const head = s.running
+        ? '<p class="copilot-clean"><strong>' + s.done + ' of ' + s.total + '</strong> (' + pct + '%) — ' +
+          esc(s.stage) + '. ' + s.drafted + ' drafted, ' + s.skipped + ' already good' +
+          (s.failed ? ', ' + s.failed + ' failed' : '') + '.</p>'
+        : '<p class="copilot-clean"><strong>' + s.drafted + '</strong> draft' + (s.drafted === 1 ? '' : 's') +
+          ' created, ' + s.skipped + ' already good' + (s.failed ? ', <strong>' + s.failed + '</strong> failed' : '') +
+          '. Publish them from eBay Seller Hub — nothing live was changed.</p>';
 
       if (out) {
-        out.innerHTML =
-          '<p class="copilot-clean"><strong>' + data.drafted + '</strong> draft' +
-          (data.drafted === 1 ? '' : 's') + ' created' +
-          (data.failed ? ', <strong>' + data.failed + '</strong> failed' : '') +
-          (data.capped ? ' (capped at ' + data.maxPerRun + ' per run)' : '') +
-          '. Publish them from eBay Seller Hub — nothing live was changed.</p>' +
-          '<ul class="copilot-list">' + (data.results || []).map(r =>
+        out.innerHTML = head +
+          '<div class="copilot-bar"><span style="width:' + pct + '%"></span></div>' +
+          '<ul class="copilot-list">' + (s.results || []).map(r =>
             r.ok
               ? '<li><span class="copilot-was">' + esc(r.before || '') + '</span>' +
                 '<span class="copilot-arrow">→</span>' +
-                '<span class="copilot-now">' + esc(r.after || '') + '</span></li>'
+                '<span class="copilot-now">' + esc(r.after || '') + '</span>' +
+                (r.note ? '<span class="copilot-issue">' + esc(r.note) + '</span>' : '') + '</li>'
               : '<li><span class="copilot-title">' + esc(r.listingId) + '</span>' +
-                '<span class="copilot-issue">' + esc(r.reason || 'failed') + '</span></li>'
+                '<span class="copilot-issue">' + esc(r.note || 'failed') + '</span></li>'
           ).join('') + '</ul>';
       }
-    } catch (e) {
-      const err = $('copilot-error');
-      if (err) { err.classList.remove('hidden'); err.textContent = 'Rewrite failed: ' + e.message; }
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Create drafts'; }
-    }
+    } catch { /* a dropped poll is not worth interrupting a run that is still going */ }
   }
 
   async function runCopilotScan() {
@@ -10143,12 +10166,15 @@
 
     // Only the AI rewrite has a working apply path today, so only its button comes alive. The
     // other two stay disabled rather than looking clickable and doing nothing.
+    // The rewrite runs over the whole account, not just the titles this scan flagged: the pass also
+    // rewrites descriptions and fills item specifics, and a listing whose title is already fine is
+    // exactly the one whose description most often is not.
     const seoBtn = $('copilot-seo-apply');
     if (seoBtn) {
-      seoBtn.disabled = seo.length === 0;
-      seoBtn.textContent = seo.length
-        ? 'Create drafts for ' + Math.min(seo.length, 25) + ' listing' + (Math.min(seo.length, 25) === 1 ? '' : 's')
-        : 'Nothing to rewrite';
+      seoBtn.disabled = !data.scannedListings;
+      seoBtn.textContent = data.scannedListings
+        ? 'Rewrite all ' + data.scannedListings + ' listings'
+        : 'No listings found';
     }
   }
 

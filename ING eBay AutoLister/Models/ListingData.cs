@@ -419,3 +419,22 @@ public class CopilotSeoRequest
 {
     public List<string> ListingIds { get; set; } = [];
 }
+
+/// <summary>
+/// The policies the seller chose to rename on the Listing Copilot screen.
+/// </summary>
+/// <remarks>
+/// Ids only, never names. The server recomputes the plan from the policies as they stand and
+/// renames only where its own plan still agrees, so a stale page cannot write a name derived from
+/// data that has since changed and no caller can put an arbitrary string on a policy.
+/// </remarks>
+public class CopilotRenameRequest
+{
+    public List<string> PolicyIds { get; set; } = [];
+}
+
+/// <summary>The listings to look up categories for, or to re-categorise.</summary>
+public class CopilotCategoryRequest
+{
+    public List<string> ListingIds { get; set; } = [];
+}

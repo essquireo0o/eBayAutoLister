@@ -13769,3 +13769,20 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .copilot-apply { align-self: flex-start; }
 .copilot-apply[disabled] { opacity: .45; cursor: not-allowed; }
 .copilot-foot { margin-top: 16px; }
+
+/* Progress for the whole-account rewrite. A run takes minutes; a page with no visible
+   movement reads as frozen, and a frozen page gets reloaded mid-run. */
+.copilot-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3, rgba(255,255,255,.08));
+  overflow: hidden;
+  margin: 10px 0 12px;
+}
+.copilot-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0f766e, #14b8a6);
+  transition: width .4s ease;
+}
