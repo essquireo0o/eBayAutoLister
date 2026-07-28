@@ -99,13 +99,34 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             // eBay answers automated-looking traffic with a bot-check splash. It is solvable by the
             // person sitting there, so this is not a failure — but it must be NAMED, or the window
             // just looks broken while it waits.
-            "  let sawCaptcha = page.url().includes('/splashui/captcha');\n" +
-            "  const deadline = Date.now() + 6 * 60 * 1000;\n" +
+            // The clock is measured from the last sign of progress, not from launch. A fixed
+            // six-minute budget started counting before eBay had even decided to show a bot check,
+            // so a seller who got the challenge two minutes in was solving it against a timer that
+            // was already half gone — and the completed login was thrown away at the end. The
+            // seller reads that as "Terapeak keeps disconnecting", because the file is only ever
+            // written on reaching /sh/research.
+            //
+            // So: IDLE_MS of no movement ends it, any URL change restarts it, and the first sight
+            // of a CAPTCHA grants a fresh CAPTCHA_MS from when the challenge actually appeared.
+            // HARD_CAP_MS is the ceiling that keeps a walked-away-from window from living forever;
+            // NodeRuntime's own timeout sits above it so this loop is always what ends the wait.
+            "  const IDLE_MS = 6 * 60 * 1000, CAPTCHA_MS = 10 * 60 * 1000, HARD_CAP_MS = 20 * 60 * 1000;\n" +
+            "  const startedAt = Date.now();\n" +
+            "  let lastUrl = page.url();\n" +
+            "  let sawCaptcha = lastUrl.includes('/splashui/captcha');\n" +
+            "  let deadline = Date.now() + (sawCaptcha ? CAPTCHA_MS : IDLE_MS);\n" +
             "  let sinceFocus = 0;\n" +
-            "  while (Date.now() < deadline) {\n" +
+            "  while (Date.now() < deadline && (Date.now() - startedAt) < HARD_CAP_MS) {\n" +
             "    if (!browser.isConnected()) break;\n" + // user closed the window manually
-            "    if (page.url().includes('/sh/research')) break;\n" +
-            "    if (page.url().includes('/splashui/captcha')) sawCaptcha = true;\n" +
+            "    const url = page.url();\n" +
+            "    if (url.includes('/sh/research')) break;\n" +
+            // Moving between pages is the seller working, so give them the full window again.
+            "    if (url !== lastUrl) { lastUrl = url; deadline = Date.now() + IDLE_MS; }\n" +
+            // Only on the FIRST sighting: re-arming every tick would pin the wait to the hard cap
+            // whenever a challenge is left on screen.
+            "    if (url.includes('/splashui/captcha') && !sawCaptcha) {\n" +
+            "      sawCaptcha = true; deadline = Date.now() + CAPTCHA_MS;\n" +
+            "    }\n" +
             "    await page.waitForTimeout(1000).catch(() => {});\n" +
             // Re-assert the window to the front every ~5s for the whole wait, not just once at
             // page load — a CAPTCHA/"verify you're human" interstitial can appear well after the
@@ -140,7 +161,9 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             // Grant foreground rights before launch so the Chrome window this spawns can raise
             // itself above whatever the user is currently looking at, instead of opening
             // silently behind it. Only needed here — ScrapeAsync's browser is headless.
-            var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(7), "terapeak_login",
+            // Above the script's own HARD_CAP_MS (20 min) on purpose: the loop should always be
+            // what ends the wait, so the outcome is a named token rather than a killed process.
+            var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(22), "terapeak_login",
                 beforeStart: () =>
                 {
                     LoginWindowFocus.Grant();
@@ -149,7 +172,7 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 
             if (run.TimedOut)
             {
-                LastLoginError = "No login completed within 7 minutes.";
+                LastLoginError = "No login completed within 22 minutes.";
                 log.Add("Warning", "Terapeak login timed out", LastLoginError);
                 return;
             }
