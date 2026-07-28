@@ -13607,3 +13607,41 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   overflow: hidden;
 }
 .fb-pick-loc { padding: 0 9px; font-size: 12px; color: #9fb3ac; }
+
+/* Placeholder tiles while the Marketplace feed loads. The call drives a real page load and takes
+   about thirty seconds; an empty strip for that long reads as broken rather than as busy. */
+.fb-pick-skeleton {
+  pointer-events: none;
+  border-color: rgba(255, 255, 255, .05);
+}
+.fb-pick-skeleton .fb-pick-img {
+  animation: fbPickPulse 1.4s ease-in-out infinite;
+}
+@keyframes fbPickPulse {
+  0%, 100% { opacity: .35; }
+  50%      { opacity: .7; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-pick-skeleton .fb-pick-img { animation: none; }
+}
+
+/* Marketplace's own filters, rebuilt as controls. Facebook serves X-Frame-Options: DENY on every
+   Marketplace URL, so their page cannot be embedded here by any browser — these reach the same
+   results through the query-string parameters their own filters use. */
+.fb-picks-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+  margin-top: 12px;
+}
+.fb-picks-q { flex: 1 1 260px; min-width: 0; }
+.fb-picks-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, .07);
+}
+.fb-picks-narrow { max-width: 150px; }

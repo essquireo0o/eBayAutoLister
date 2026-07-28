@@ -453,6 +453,11 @@
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
     await checkSetupOnLoad();
+    // The checklist's extras row now carries live Connect buttons, so their state has to be known
+    // on the dashboard and not only once Settings is opened. Not awaited: neither button's state
+    // blocks anything else on the page, and a slow status check shouldn't hold up the listings.
+    loadTerapeakStatus();
+    loadFacebookStatus();
     await checkLicenseStatus();
     await checkTrialStatus();
 
@@ -1056,6 +1061,7 @@
   const TERAPEAK_BANNERS = [
     ['pg-terapeak-status', 'pg-terapeak-connect', 'pg-terapeak-disconnect'],
     ['opp-terapeak-status', 'opp-terapeak-connect', 'opp-terapeak-disconnect'],
+    ['setup-terapeak-status', 'setup-terapeak-connect', 'setup-terapeak-disconnect'],
   ];
 
   // There is no auto-connect and no background scraping — unattended, continuous automated
@@ -1093,6 +1099,13 @@
       TERAPEAK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintTerapeakBanner($(statusId), $(connectId), $(disconnectId), data));
       setConnectState('pg-terapeak-state', data.connected, 'Connected', 'Not connected');
+      // Step 3 on the dashboard checklist. No -btn id for this prefix, so markSetupStep only
+      // flips the row and its number to a tick — the Connect/Disconnect pair is already being
+      // shown or hidden by paintTerapeakBanner above.
+      markSetupStep('step3', data.connected, 'Connected');
+      const row3 = $('step3-row');
+      if (row3) row3.dataset.known = '1';
+      refreshChecklistVisibility();
     } catch (err) {
       TERAPEAK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
@@ -1139,6 +1152,7 @@
   const FACEBOOK_BANNERS = [
     ['pg-facebook-status', 'pg-facebook-connect', 'pg-facebook-disconnect'],
     ['fb-connect-status', 'fb-connect-btn', 'fb-disconnect-btn'],
+    ['setup-facebook-status', 'setup-facebook-connect', 'setup-facebook-disconnect'],
   ];
 
   function paintFacebookBanner(statusEl, connectBtn, disconnectBtn, data) {
@@ -1172,6 +1186,10 @@
       FACEBOOK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintFacebookBanner($(statusId), $(connectId), $(disconnectId), data));
       setConnectState('pg-facebook-state', data.connected, 'Connected', 'Not connected');
+      markSetupStep('step4', data.connected, 'Connected');
+      const row4 = $('step4-row');
+      if (row4) row4.dataset.known = '1';
+      refreshChecklistVisibility();
       // A Facebook connect/disconnect changes what the source list says about itself.
       loadLocalSources();
       return data;
@@ -1454,6 +1472,12 @@
     on('fb-arb-warranty-only', 'change', renderArbitrageRows);
     on('ebay-scan-btn', 'click', runEbayScan);
     on('fb-picks-btn', 'click', () => loadFacebookPicks(true));
+    on('fb-picks-search-btn', 'click', () => loadFacebookPicks(true));
+    on('fb-picks-query', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); loadFacebookPicks(true); } });
+    // Changing a filter is the search: a dropdown that needs a second click to take effect
+    // is how people conclude a filter does nothing.
+    ['fb-picks-category','fb-picks-sort','fb-picks-condition','fb-picks-date','fb-picks-delivery','fb-picks-radius']
+      .forEach(id => on(id, 'change', () => loadFacebookPicks(true)));
     restoreEbayScanFilters();
     // Enter in the eBay box scans, rather than doing nothing on a one-field form.
     on('ebay-scan-query', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runEbayScan(); } });
@@ -1870,6 +1894,56 @@
   // The one place on this screen that shows real local supply without being asked a question
   // first. Click-loaded, never polled — same rule as every other Facebook read here.
   let fbPicksLoaded = false;
+  let fbPicksOptionsLoaded = false;
+
+  // Facebook's own filter lists, fetched rather than hard-coded — an option Marketplace adds is
+  // then a server edit, not a second list in the browser to forget about.
+  async function loadFacebookBrowseOptions() {
+    if (fbPicksOptionsLoaded) return;
+    const { data } = await localFetchJson('/api/facebook/browse-options', 20000);
+    if (!data) return;
+    fbPicksOptionsLoaded = true;
+
+    const fill = (id, options, selected) => {
+      const el = $(id);
+      if (!el) return;
+      el.innerHTML = options.map(o =>
+        `<option value="${esc(o.value)}"${o.value === selected ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    };
+    fill('fb-picks-category', data.categories, '');
+    fill('fb-picks-sort', data.sorts, '');
+    fill('fb-picks-condition', data.conditions, '');
+    fill('fb-picks-date', data.dates, '');
+    fill('fb-picks-delivery', data.delivery, '');
+
+    const radius = $('fb-picks-radius');
+    if (radius) {
+      radius.innerHTML = (data.radii || []).map(m =>
+        `<option value="${m}"${m === 40 ? ' selected' : ''}>${m} miles</option>`).join('');
+    }
+  }
+
+  function facebookBrowseQuery() {
+    const val = id => ($(id)?.value || '').trim();
+    const num = id => {
+      const v = parseFloat($(id)?.value);
+      return isFinite(v) && v > 0 ? v : null;
+    };
+    const min = num('fb-picks-min');
+    const max = num('fb-picks-max');
+    const parts = [];
+    const add = (k, v) => { if (v !== '' && v !== null && v !== undefined) parts.push(`${k}=${encodeURIComponent(v)}`); };
+    add('q', val('fb-picks-query'));
+    add('category', val('fb-picks-category'));
+    add('condition', val('fb-picks-condition'));
+    add('daysListed', val('fb-picks-date'));
+    add('delivery', val('fb-picks-delivery'));
+    add('sortBy', val('fb-picks-sort'));
+    add('radius', val('fb-picks-radius'));
+    add('minPrice', min);
+    add('maxPrice', max);
+    return { qs: parts.join('&'), min, max };
+  }
 
   async function loadFacebookPicks(force) {
     const grid = $('fb-picks-grid');
@@ -1878,15 +1952,32 @@
     if (!grid) return;
     if (fbPicksLoaded && !force) return;
 
-    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-    if (status) status.textContent = 'Opening your Marketplace feed — this runs a real page load, so give it a moment…';
+    await loadFacebookBrowseOptions();
 
-    const { data, error } = await localFetchJson('/api/facebook/picks', 150000);
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    if (status) status.textContent = 'Opening your Marketplace feed — this drives a real page load, so it takes about half a minute…';
+    // Placeholder tiles rather than an empty strip: this call takes ~30s, and a panel that shows
+    // nothing at all for that long reads as broken rather than as busy.
+    grid.innerHTML = Array.from({ length: 12 },
+      () => '<div class="fb-pick-card fb-pick-skeleton"><div class="fb-pick-img fb-pick-img-empty"></div></div>').join('');
+
+    const { qs, min, max } = facebookBrowseQuery();
+    if (min !== null && max !== null && min > max) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+      grid.innerHTML = '';
+      if (status) status.textContent = 'The minimum price is above the maximum — swap them and search again.';
+      return;
+    }
+
+    // One endpoint for both: with no filters set this IS the picks feed, which is what makes the
+    // blank search meaningful here rather than an error.
+    const { data, error } = await localFetchJson(`/api/facebook/browse?${qs}`, 150000);
 
     if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
 
     if (!data) {
       if (status) status.textContent = `Couldn't load your Marketplace picks. ${error || ''}`.trim();
+      grid.innerHTML = '';
       return;
     }
     if (data.status === 'not_connected' || data.status === 'session_expired') {
@@ -1903,7 +1994,7 @@
     fbPicksLoaded = true;
     if (status) status.textContent = '';
     const sub = $('fb-picks-sub');
-    if (sub) sub.textContent = `${data.items.length} listings Facebook is showing your account right now. Click one to open it on Marketplace.`;
+    if (sub) sub.textContent = `${data.items.length} listings — ${data.scopeLabel || 'your Marketplace feed'}. Click one to open it on Marketplace.`;
 
     grid.innerHTML = data.items.map(item => `
       <a class="fb-pick-card" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="${esc(item.title)}">
@@ -3384,6 +3475,10 @@
     loadLowCompetition();
     loadPricingRecommendations();
     loadSeasonalDemand();
+    // Opening this screen is the ask — a panel headed "here is what's for sale near you" that
+    // shows nothing until you find a button is just a button. Once per session (see fbPicksLoaded);
+    // Refresh is there for a second look, and it still never runs on a timer.
+    loadFacebookPicks(false);
   }
 
   // ── Opportunity Finder insight cards ─────────────────────────────────────
@@ -7508,6 +7603,11 @@
     radarStatus = data;
     renderRadarStatus();
     renderRadarWatches();
+    // The feed's empty state is chosen by whether any watch exists, which is knowledge that arrives
+    // here rather than with the alerts. refreshRadar loads both at once, so on a first paint the
+    // alert render can win the race, read no watches, and leave "Create your first watch" standing
+    // above a watch that is already running. Re-rendering once the watch list is known settles it.
+    renderRadarAlerts();
     return data;
   }
 
@@ -7842,12 +7942,21 @@
     const chosen = (csv || '').split(',').map(s => s.trim()).filter(Boolean);
     const list = radarSourceList.length ? radarSourceList : [{ id: 'craigslist', label: 'Craigslist', available: true, note: '' }];
 
-    el.innerHTML = list.filter(s => s.locationBased !== false).map(s => {
+    // Every registered source is offered, nationwide ones included. This used to filter on
+    // `locationBased !== false`, which quietly hid eBay and the retail deal feeds — the watch form
+    // has a zip and a radius, so anything that ignores them looked like it didn't belong. It does:
+    // the scan pipeline is written against ILocalSupplySource and never asks which site a row came
+    // from, LocalSupplySources.Resolve already accepts any id, and DealRadarMatcher's driving-
+    // distance rule only applies to rows that actually carry a distance. The one real difference is
+    // that the zip and radius mean nothing to them, so say that on the row rather than removing it.
+    el.innerHTML = list.map(s => {
       const on = chosen.length ? chosen.includes(s.id) : s.id === 'craigslist';
-      const note = s.available ? '' : ` <span class="rad-source-note">${esc(s.note || 'not connected')}</span>`;
+      const note = !s.available ? (s.note || 'not connected')
+                 : s.locationBased === false ? 'nationwide — zip and radius don\'t apply'
+                 : '';
       return `<label class="rad-check rad-source">
                 <input type="checkbox" value="${esc(s.id)}" ${on ? 'checked' : ''} />
-                ${esc(s.label)}${note}
+                ${esc(s.label)}${note ? ` <span class="rad-source-note">${esc(note)}</span>` : ''}
               </label>`;
     }).join('');
   }
@@ -11899,7 +12008,14 @@
   // the cursor in the key field, which is the whole difference between "here is a settings screen"
   // and "type your key here".
   function bindSetupChecklist() {
-    on('setup-checklist-dismiss', 'click', () => $('setup-checklist')?.classList.add('hidden'));
+    on('setup-checklist-dismiss', 'click', () => {
+      const checklist = $('setup-checklist');
+      if (!checklist) return;
+      // Recorded, not just hidden: the two optional status calls re-run the visibility check, and
+      // a dismissed panel that reappears a second later reads as a bug.
+      checklist.dataset.dismissed = '1';
+      checklist.classList.add('hidden');
+    });
     on('step1-btn', 'click', () => openSetupAt('key'));
     on('step2-btn', 'click', () => {
       if (isConnected) openSetupAt('policies');
@@ -11909,6 +12025,13 @@
       navigateTo('settings');
       setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
     });
+    // The same two logins as the Settings strips, connected from where people first look for
+    // them. paintTerapeakBanner/paintFacebookBanner drive all three copies off one status call,
+    // so connecting here leaves Settings and the Opportunity Finder already correct.
+    on('setup-terapeak-connect', 'click', terapeakConnect);
+    on('setup-terapeak-disconnect', 'click', terapeakDisconnect);
+    on('setup-facebook-connect', 'click', facebookConnect);
+    on('setup-facebook-disconnect', 'click', facebookDisconnect);
     on('pg-open-required', 'click', () => openSetupAt(hasAnthropicKey ? 'policies' : 'key'));
   }
 
@@ -12647,11 +12770,18 @@
 
   // A placeholder/SAMPLE listing (see PlaceholderListings.cs) has no real offerId and a
   // fabricated listingId — it was never actually published to eBay, so it must never be
-  // eligible for a live revision call (EbayService.UpdateListingAsync would otherwise send
-  // ReviseInventoryStatus for a listingId that doesn't exist on eBay).
+  // eligible for a live revision call. Status is what identifies one: every placeholder is
+  // built with Status = "SAMPLE", and they carry a SKU of their own, so the SKU proves nothing.
+  //
+  // An eBay ItemID on its own is enough to revise. This used to demand `listingId && sku`, which
+  // is not what the server requires and not what eBay requires: UpdateListingAsync routes a
+  // listing with no offerId to ReviseFixedPriceItemAsync, whose XML targets <ItemID> and never
+  // mentions a SKU. GetMyeBaySelling only reports a SKU when the seller set a custom label, so
+  // for a normal imported catalogue this test failed on nearly every row — and a failed test
+  // hid the Save Changes button, leaving an edited listing with no way to publish it at all.
   function canReviseOnEbay(listing) {
     if ((listing.status || '').toUpperCase() === 'SAMPLE') return false;
-    return !!(listing.offerId || (listing.listingId && listing.sku));
+    return !!(listing.offerId || listing.listingId);
   }
 
   // ── Take-home: all-in net, break-even and the offer floor ──────────────────
@@ -13477,8 +13607,21 @@
 
     $('btn-post')?.classList.add('hidden');
     $('btn-create-ebay-draft')?.classList.add('hidden');
-    $('btn-update')?.classList.toggle('hidden', !canReviseOnEbay(listing));
     $('btn-new-listing')?.classList.remove('hidden');
+
+    // Shown and disabled rather than hidden when a listing can't be revised. Hiding it left the
+    // editor with nothing but "New Listing" under a form full of edits, which reads as "this app
+    // cannot publish" rather than "this particular listing was never on eBay". The reason belongs
+    // on the button that isn't working.
+    const revisable  = canReviseOnEbay(listing);
+    const updateBtn  = $('btn-update');
+    if (updateBtn) {
+      updateBtn.classList.remove('hidden');
+      updateBtn.disabled = !revisable;
+      updateBtn.title = revisable
+        ? 'Push these changes to your live eBay listing'
+        : 'This is a sample listing — it was never published to eBay, so there is nothing to revise.';
+    }
 
     const d = listing.data || {};
     fillForm(d);
@@ -13574,9 +13717,35 @@
       step2Btn.disabled = false;
     }
 
-    checklist.classList.toggle('hidden', step1Done && step2Done);
+    refreshChecklistVisibility();
 
     renderDashStatus();
+  }
+
+  /**
+   * The panel goes away when there is nothing left in it — all four rows ticked — rather than as
+   * soon as the two required ones are. Picking your policies used to take steps 3 and 4 off the
+   * screen with it, which is the whole reason those two logins were hard to find.
+   *
+   * State is read off the rows themselves, so this needs no second copy of what is already known.
+   * An optional row whose status hasn't come back yet counts as done, or a seller with everything
+   * finished would see the panel flash on every page load while the two status calls are in
+   * flight. Dismissing is final: a later status refresh must not put the panel back.
+   */
+  function refreshChecklistVisibility() {
+    const checklist = $('setup-checklist');
+    if (!checklist) return;
+    if (checklist.dataset.dismissed === '1') { checklist.classList.add('hidden'); return; }
+
+    const settled = id => {
+      const row = $(id);
+      if (!row) return true;
+      if (row.classList.contains('setup-step--optional') && row.dataset.known !== '1') return true;
+      return row.classList.contains('is-done');
+    };
+
+    checklist.classList.toggle('hidden',
+      ['step1-row', 'step2-row', 'step3-row', 'step4-row'].every(settled));
   }
 
   /**

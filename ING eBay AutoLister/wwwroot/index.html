@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=80" />
+  <link rel="stylesheet" href="style.css?v=82" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -241,8 +241,8 @@
              open the modal *and* put the cursor in the key field. -->
         <div id="setup-checklist" class="setup-checklist hidden">
           <button id="setup-checklist-dismiss" title="Dismiss" aria-label="Dismiss setup checklist" class="setup-dismiss" type="button">&times;</button>
-          <p class="setup-title">Get started — 2 required steps</p>
-          <p class="setup-sub">Do these two and you can list. Everything else in this app is optional.</p>
+          <p class="setup-title">Get started</p>
+          <p class="setup-sub">Steps 1 and 2 are all you need to list. Steps 3 and 4 are optional — they add real sold-comp pricing and local sourcing.</p>
           <div class="setup-steps">
 
             <!-- Step 1: the Claude key -->
@@ -267,11 +267,37 @@
               <button id="step2-btn" class="btn btn-primary" type="button">Log into eBay →</button>
             </div>
 
-            <!-- The optional extras, named so they read as extras rather than as a
-                 third step someone is behind on. -->
+            <!-- Steps 3 and 4: the two logins, as steps rather than as a footnote.
+                 They are numbered because that is where people look for them, and
+                 tagged Optional because neither one blocks listing. The status line
+                 IS the step copy — paintTerapeakBanner/paintFacebookBanner write it,
+                 the same call that paints the Settings and Opportunity-Finder strips,
+                 so all three copies of these controls always agree. -->
+            <div id="step3-row" class="setup-step setup-step--optional">
+              <div id="step3-icon" class="setup-step-num">3</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Connect Terapeak sold comps <span class="setup-tag">Optional</span></div>
+                <div class="setup-step-copy" id="setup-terapeak-status">Checking Terapeak connection…</div>
+              </div>
+              <button id="setup-terapeak-connect" class="btn btn-primary" type="button">Connect Terapeak →</button>
+              <button id="setup-terapeak-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
+            </div>
+
+            <div id="step4-row" class="setup-step setup-step--optional">
+              <div id="step4-icon" class="setup-step-num">4</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Connect Facebook Marketplace <span class="setup-tag">Optional</span></div>
+                <div class="setup-step-copy" id="setup-facebook-status">Checking Facebook connection…</div>
+              </div>
+              <button id="setup-facebook-connect" class="btn btn-primary" type="button">Connect Facebook →</button>
+              <button id="setup-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
+            </div>
+
+            <!-- What's left of the extras line: AI photo generation only, now that the
+                 two logins have rows of their own. -->
             <div class="setup-extras">
               <span class="setup-extras-label">Optional extras <span class="setup-tag">Any time</span></span>
-              <span class="setup-extras-copy">AI photo generation · Terapeak sold comps · Facebook Marketplace sourcing</span>
+              <span class="setup-extras-copy">AI photo generation · listing defaults · fee profile</span>
               <button id="setup-extras-btn" class="btn btn-ghost small" type="button">Set up extras →</button>
             </div>
 
@@ -1589,6 +1615,53 @@
               </div>
               <button id="fb-picks-btn" class="btn btn-secondary small" type="button">Load picks</button>
             </div>
+            <!-- Marketplace's own filters, rebuilt as controls. Facebook serves every Marketplace
+                 URL with X-Frame-Options: DENY, so their page cannot be embedded in this one by
+                 any browser — but all of their filters are query-string parameters, so the same
+                 options reach the same results. The lists come from /api/facebook/browse-options
+                 rather than being hard-coded here, so an option Facebook adds is a server edit. -->
+            <div class="fb-picks-search">
+              <div class="opp-field fb-picks-q">
+                <label for="fb-picks-query">Search Marketplace</label>
+                <input id="fb-picks-query" type="text" placeholder="Leave blank for today's picks" />
+              </div>
+              <div class="opp-field">
+                <label for="fb-picks-category">Category</label>
+                <select id="fb-picks-category"></select>
+              </div>
+              <div class="opp-field">
+                <label for="fb-picks-sort">Sort by</label>
+                <select id="fb-picks-sort"></select>
+              </div>
+              <button id="fb-picks-search-btn" class="btn btn-primary opp-search-submit" type="button">Search</button>
+            </div>
+            <div class="fb-picks-filters">
+              <div class="opp-field fb-picks-narrow">
+                <label for="fb-picks-min">Min $</label>
+                <input id="fb-picks-min" type="number" min="0" step="1" placeholder="any" />
+              </div>
+              <div class="opp-field fb-picks-narrow">
+                <label for="fb-picks-max">Max $</label>
+                <input id="fb-picks-max" type="number" min="0" step="1" placeholder="any" />
+              </div>
+              <div class="opp-field">
+                <label for="fb-picks-condition">Condition</label>
+                <select id="fb-picks-condition"></select>
+              </div>
+              <div class="opp-field">
+                <label for="fb-picks-date">Date listed</label>
+                <select id="fb-picks-date"></select>
+              </div>
+              <div class="opp-field">
+                <label for="fb-picks-delivery">Delivery</label>
+                <select id="fb-picks-delivery"></select>
+              </div>
+              <div class="opp-field fb-picks-narrow">
+                <label for="fb-picks-radius">Radius</label>
+                <select id="fb-picks-radius"></select>
+              </div>
+            </div>
+
             <div id="fb-picks-status" class="mr-status"></div>
             <div id="fb-picks-grid" class="fb-picks-grid"></div>
           </div>
@@ -4636,6 +4709,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=80"></script>
+  <script src="app.js?v=82"></script>
 </body>
 </html>
