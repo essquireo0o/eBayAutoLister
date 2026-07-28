@@ -63,10 +63,11 @@ and are unrelated to this session's work.
 ```
 Build : dotnet build "ING eBay AutoLister.slnx" -c Debug
 Test  : dotnet test  "ING eBay AutoLister.slnx" -c Debug --no-build
-Run   : AUTOLISTER_DEV_PORT=9332 ./bin/Debug/net10.0-windows/AutoListerB1.exe
+Run   : ./bin/Debug/net10.0-windows/AutoListerB1.exe
 ```
 
-`AUTOLISTER_DEV_PORT` runs a second instance on another port beside the installed app (which uses port 9332).
+The app always binds port 9332 — there is no port override. If a copy is already running it focuses
+that one instead of starting a second server; stop the installed app first to run a dev build.
 
 ---
 
@@ -280,10 +281,11 @@ not committed, not reverted.
 cd "C:\Users\nsquires\source\repos\ING eBay AutoLister"
 git checkout feature/edit-drawer-market-images-ui
 dotnet build "ING eBay AutoLister.slnx" -c Debug
-AUTOLISTER_DEV_PORT=9332 ./ING\ eBay\ AutoLister/bin/Debug/net10.0-windows/AutoListerB1.exe
+./ING\ eBay\ AutoLister/bin/Debug/net10.0-windows/AutoListerB1.exe
 ```
 
-Port 9332 belongs to the installed app — set AUTOLISTER_DEV_PORT to another port for a dev instance.
+Port 9332 is the only port the app uses. Stop the installed app before running a dev build — a
+second launch detects the running one and opens the browser at it rather than starting a server.
 `wwwroot` files are embedded resources, so **UI edits require a rebuild** to take effect.
 - Phase 8 — AI Listing workflow improvements
 - Phase 9 — GUI polish pass

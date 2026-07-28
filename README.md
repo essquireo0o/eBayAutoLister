@@ -177,6 +177,13 @@ In **Settings → Listing Defaults**, pre-fill your postal code, default handlin
 - Try opening `http://localhost:9332` manually
 - Check that **AutoListerB1.exe** is running (Task Manager) — look for the ING tray icon; it auto-starts on login
 
+**"ING AutoLister is not able to start" — port 9332 is in use**
+- The app only ever runs on `http://localhost:9332`. eBay sign-in redirects back to that exact
+  address, so it can't move to a different port when that one is busy.
+- If it's another copy of ING AutoLister, launching again just opens the browser at the copy that's
+  already running — nothing to fix.
+- Otherwise, close whatever program took the port and start the app again.
+
 **eBay token expired**
 - Settings → click **Connect eBay Account** again
 
@@ -186,6 +193,14 @@ In **Settings → Listing Defaults**, pre-fill your postal code, default handlin
 
 **Publish fails with "Developer account not authorized"**
 - You need to open a ticket with eBay to enable production API access (see Step 2c above)
+
+**Where your settings and connections are stored**
+- Everything the app saves lives in one folder: `%LOCALAPPDATA%\ING AutoLister` — your API key and
+  eBay tokens (`credentials.json`), the saved Terapeak and Facebook sign-ins, the listing database
+  (`App_Data`), and generated photos.
+- It's the same folder no matter which copy of the exe you launch, so updating or moving the app
+  never loses a connection. (The optional background Windows service uses
+  `%ProgramData%\ING AutoLister` instead — it runs as the system account, which has no user folder.)
 
 **Uninstalling**
 - Use **Add or Remove Programs** → **ING AutoLister** → Uninstall, or run `Uninstall-INGAutoLister.bat`

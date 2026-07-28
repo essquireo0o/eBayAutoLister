@@ -1,0 +1,122 @@
+# ---------------------------------------------------------------------------------------------
+# claude-queue batch: prove the Facebook Marketplace scrape actually returns listings, and check
+# Terapeak for the same class of bug that was just found in Facebook's login.
+#
+# Context from the session that created this file (2026-07-27):
+#   • Facebook login was broken since the feature was first committed. LoginLandingUrl pointed at
+#     https://www.facebook.com/marketplace/you/selling — a logged-in-only page. A cookie-less
+#     browser hitting it gets an endless www→m→www bounce (measured: 19 redirects, then
+#     ERR_TOO_MANY_REDIRECTS) and lands on about:blank, so the login window could never sign in.
+#     Fixed to https://www.facebook.com/login/ with LoginFallbackUrl as a second entry point.
+#   • The user has now logged in successfully. facebook-session.json exists in AppPaths.DataHome
+#     (%LOCALAPPDATA%\ING AutoLister) — the first successful Facebook connect on this machine.
+#   • Because no session ever existed before, the SEARCH path has never once run against a real
+#     logged-in Facebook page. Its selectors are therefore unproven, not proven.
+#   • Terapeak uses the same saved-browser-session mechanism and has never connected either — no
+#     terapeak-session.json has ever existed. It may have the same kind of landing-URL bug.
+#
+# Run:
+#   python C:/Users/nsquires/source/repos/claude-queue/claude-queue.py batch tasks-marketplace-terapeak.yaml
+#   python C:/Users/nsquires/source/repos/claude-queue/claude-queue.py worker --save-output
+# ---------------------------------------------------------------------------------------------
+tasks:
+
+  # ── 1. Does the Marketplace scrape actually return listings? ────────────────────────────────
+  - session: "fb-marketplace-search-verify"
+    priority: 16
+    max_attempts: 3
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    prompt: |
+      GUARDRAILS - FULL AUTONOMY. NEVER ask the user anything, NEVER wait for input, NEVER stop to
+      confirm. Decide and proceed. Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on
+      branch auto/queue-features-20260726. Work ONLY in this repo.
+      You MAY load %LOCALAPPDATA%\ING AutoLister\facebook-session.json to run real searches. You must
+      NEVER print, log, echo, commit or paste any cookie, token or value from it - report only
+      booleans, counts, lengths and HTTP status codes. Never commit that file.
+      You CANNOT type the user's Facebook password. If the session has expired and a human must sign
+      in again, record NEEDS-HUMAN and stop that line of work - NEVER fake a pass, NEVER weaken a
+      check so it passes.
+      Facebook rules that must not be broken: user-driven pace only, ONE page load per search, no
+      crawling, no enumeration, no bulk export, nothing on a timer. Cap any verification run at a
+      handful of searches spread over time - this is a correctness check, not a scrape.
+      BEFORE finishing run BOTH:
+        dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug
+        dotnet test  "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"
+      Fail -> git checkout -- . ; git clean -fd ; STOP. Green -> git add -A && git commit.
+      Bump the ?v= in wwwroot/index.html if you changed wwwroot/app.js. Never git push.
+
+      TASK: The Facebook Marketplace SEARCH path has never run against a real logged-in page,
+      because until today no session ever existed. Prove it works, and fix what doesn't.
+      Start the app (it binds localhost:9332 and nowhere else) and call
+      GET /api/facebook/search?q=<term>&zip=<zip>&radius=20 for a few realistic terms - something
+      commonly listed locally (furniture, a game console) and something from the user's own niche
+      (an ASIC miner such as "Antminer S19"). Read the actual returned JSON.
+      For each failure, find the ROOT CAUSE and fix it in the app:
+        - Selector drift: every Facebook selector lives in Services/FacebookMarketplaceSelectors.cs
+          as a CANDIDATE LIST tried in order. Fix by editing/adding candidates there, NOT by putting
+          selectors into FacebookMarketplaceService.cs, which must stay selector-free.
+        - The location dialog (zip + radius) is the most fragile part: it drives a real dialog
+          because Facebook keys results off the account's saved location, not off a URL parameter.
+          If the dialog cannot be driven, the payload comes back locationSet=false and the service
+          already reports that distinctly - keep that distinction, do not paper over it.
+        - Distinguish clearly and keep the distinction in the reported error: (a) genuinely no local
+          supply, (b) selector drift, (c) session expired / bounced to login, (d) Facebook layout
+          change. A zero-result search that is really a broken selector must NEVER be reported as
+          "no listings found".
+      Then confirm the parsed output is actually usable: FacebookMarketplaceParser must produce a
+      real title, a numeric price and a location for the majority of returned cards. A card list
+      that parses to blank titles or zero prices is a FAIL even though the search "worked".
+      Add unit tests in "ING eBay AutoLister.Tests" over CAPTURED representative card shapes (the
+      lines[] arrays as returned, with no cookies or personal data in them) covering: price with
+      thousands separator, free/no-price listing, missing location, and a title containing a price.
+      Finish by writing a short section in WORK_COMPLETED.md: what was searched, what came back,
+      every root cause fixed, and anything still genuinely broken with the reason.
+
+  # ── 2. Does Terapeak have the same landing-URL bug Facebook had? ────────────────────────────
+  - session: "terapeak-landing-url-check"
+    priority: 15
+    max_attempts: 3
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    prompt: |
+      GUARDRAILS - FULL AUTONOMY. NEVER ask the user anything, NEVER wait, NEVER stop to confirm.
+      Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch
+      auto/queue-features-20260726. Work ONLY in this repo.
+      You may load terapeak-session.json if one exists; NEVER print, log or commit any cookie or
+      value, and never commit the session file. Typing the user's eBay password is NEEDS-HUMAN -
+      never fake it, never weaken a check to get a pass.
+      BEFORE finishing run BOTH:
+        dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug
+        dotnet test  "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"
+      Fail -> git checkout -- . ; git clean -fd ; STOP. Green -> git add -A && git commit.
+      Bump ?v= in wwwroot/index.html if app.js changed. Never git push.
+
+      TASK: Facebook's login was broken for one specific reason - the login window was pointed at a
+      page that only exists for an ALREADY logged-in user, so a cookie-less browser redirect-looped
+      forever and never showed a login form. Terapeak uses the same saved-session mechanism and has
+      never successfully connected on this machine (no terapeak-session.json has ever existed).
+      Check whether it has the same class of bug, and fix it if so.
+      Method - measure, do not assume:
+        1. Find the URL(s) Services/TerapeakService.cs opens for its login window.
+        2. With Playwright and the REAL installed Chrome (channel: 'chrome'), open each in a FRESH
+           cookie-less context and record: the final URL, the number of redirects, whether the
+           navigation threw, and whether a login form is actually present
+           (input[name='pass'] or eBay's equivalent field).
+        3. A URL that redirect-loops, throws, or lands somewhere with no login form is the bug.
+           Replace it with eBay's real sign-in entry point and verify the same way - the fix is
+           correct only when a cookie-less hit returns a usable login form with few or no redirects.
+        4. Apply the same hardening already applied to Facebook: a navigation failure must be
+           REPORTED, never swallowed. Swallowing it produced a blank window the user stared at for
+           minutes before it reported "CANCELLED" and blamed them for closing it.
+      Also check the two related bugs found in the Facebook service and fix them in Terapeak if
+      present:
+        - Raw script outcome tokens (e.g. "CANCELLED") leaking into the UI as the error message
+          instead of a human sentence.
+        - A non-atomic "check the flag, then set it" guard on the login-in-progress state, which
+          lets simultaneous clicks each launch a browser window. Use Interlocked.CompareExchange.
+      Do NOT attempt to complete an actual eBay sign-in - that is NEEDS-HUMAN. The deliverable is
+      that the login window reliably PRESENTS a working sign-in form and that every failure before
+      that point produces a specific, actionable message.
+      Add unit tests for the outcome-token to human-message mapping and for the login-in-progress
+      guard rejecting a second concurrent start.
+      Finish with a short WORK_COMPLETED.md section: the measured redirect behaviour of each URL
+      tried, what was changed, and whether Terapeak is now blocked only on a human sign-in.
