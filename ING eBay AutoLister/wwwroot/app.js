@@ -1236,9 +1236,6 @@
     // The metro override only means anything to Craigslist.
     $('cl-site-row')?.classList.toggle('hidden', !picked.includes('craigslist'));
     if (picked.includes('craigslist')) loadCraigslistSites();
-    // Sales tax only changes a clearance or auction row's numbers, so the field only appears when
-    // one can appear.
-    $('retail-tax-row')?.classList.toggle('hidden', !picked.some(chargesSalesTax));
     // "Leave it blank" is only true advice while a source that means something by a blank search is
     // ticked — on every other one an empty query is the whole classifieds section.
     $('fb-blank-query-hint')?.classList.toggle('hidden', !picked.some(allowsBlankQuery));
@@ -1316,7 +1313,9 @@
       picker.querySelector('.local-sources-retry')?.addEventListener('click', loadLocalSources);
       return;
     }
-    localSources = data;
+    // eBay is filtered out on purpose: it has its own scanner panel above this one, and listing
+    // it in both places is how the panel got confusing enough to need splitting.
+    localSources = data.filter(s => s.id !== EBAY_SOURCE_ID);
 
     // A remembered choice wins; on a first run the default is everything that can answer right
     // now, which on a fresh install is Craigslist alone.
@@ -1453,16 +1452,17 @@
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
     on('fb-arb-fast-only', 'change', renderArbitrageRows);
     on('fb-arb-warranty-only', 'change', renderArbitrageRows);
+    on('ebay-scan-btn', 'click', runEbayScan);
+    on('fb-picks-btn', 'click', () => loadFacebookPicks(true));
+    restoreEbayScanFilters();
+    // Enter in the eBay box scans, rather than doing nothing on a one-field form.
+    on('ebay-scan-query', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runEbayScan(); } });
     // The seller's zip and radius don't change between searches — remembering them is the
     // difference between a two-field search and a one-field one.
     const zip = localStorage.getItem('fbZip');
     const radius = localStorage.getItem('fbRadius');
     if (zip && $('fb-zip-input')) $('fb-zip-input').value = zip;
     if (radius && $('fb-radius-select')) $('fb-radius-select').value = radius;
-    // Same reason: a seller's sales-tax rate doesn't change between scans, and the default in the
-    // markup is a national average rather than their number.
-    const salesTax = localStorage.getItem('retailSalesTax');
-    if (salesTax !== null && $('retail-tax-input')) $('retail-tax-input').value = salesTax;
   }
 
   // The form values every local search shares, plus the selected sources. Craigslist's metro
@@ -1473,22 +1473,17 @@
     const radius = $('fb-radius-select')?.value || '40';
     const sources = selectedSourceIds();
     const site = $('cl-site-select')?.value || '';
-    const salesTax = $('retail-tax-input')?.value ?? '';
     const category = selectedCategoryId();
 
     localStorage.setItem('fbZip', zip);
     localStorage.setItem('fbRadius', radius);
-    if (salesTax !== '') localStorage.setItem('retailSalesTax', salesTax);
 
     const qs = `q=${encodeURIComponent(query)}&zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}` +
       `&sources=${encodeURIComponent(sources.join(','))}` +
       // Sent on every scan. Not a filter — it picks the craigslist board, the valuation provider and
       // the fee model server-side. See ResaleCategoryCatalog.
       `&category=${encodeURIComponent(category)}` +
-      (site ? `&craigslistSite=${encodeURIComponent(site)}` : '') +
-      // Sent on every scan; the server ignores it for every non-retail row. Clamped server-side —
-      // see RetailBuyCosts.Sanitize.
-      (salesTax !== '' ? `&salesTax=${encodeURIComponent(salesTax)}` : '');
+      (site ? `&craigslistSite=${encodeURIComponent(site)}` : '');
 
     return { query, zip, radius, sources, category, qs };
   }
@@ -1869,6 +1864,133 @@
     const rate = row.profitPerDay != null && row.profitPerDay > 0
       ? `<span class="speed-rate">${perDay(row.profitPerDay)}</span>` : '';
     return `<span class="speed-days speed-${tier.cls}" title="${esc(row.speedNote || '')}">${row.daysToCash}d</span>${rate}`;
+  }
+
+  // ── Today's picks: Marketplace's own front page ───────────────────────────
+  // The one place on this screen that shows real local supply without being asked a question
+  // first. Click-loaded, never polled — same rule as every other Facebook read here.
+  let fbPicksLoaded = false;
+
+  async function loadFacebookPicks(force) {
+    const grid = $('fb-picks-grid');
+    const btn = $('fb-picks-btn');
+    const status = $('fb-picks-status');
+    if (!grid) return;
+    if (fbPicksLoaded && !force) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    if (status) status.textContent = 'Opening your Marketplace feed — this runs a real page load, so give it a moment…';
+
+    const { data, error } = await localFetchJson('/api/facebook/picks', 150000);
+
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+
+    if (!data) {
+      if (status) status.textContent = `Couldn't load your Marketplace picks. ${error || ''}`.trim();
+      return;
+    }
+    if (data.status === 'not_connected' || data.status === 'session_expired') {
+      if (status) status.textContent = data.error || 'Connect Facebook to see your Marketplace picks.';
+      grid.innerHTML = '';
+      return;
+    }
+    if (data.status !== 'ok' || !(data.items || []).length) {
+      if (status) status.textContent = data.error || 'Facebook returned no picks just now — try Refresh in a minute.';
+      grid.innerHTML = '';
+      return;
+    }
+
+    fbPicksLoaded = true;
+    if (status) status.textContent = '';
+    const sub = $('fb-picks-sub');
+    if (sub) sub.textContent = `${data.items.length} listings Facebook is showing your account right now. Click one to open it on Marketplace.`;
+
+    grid.innerHTML = data.items.map(item => `
+      <a class="fb-pick-card" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="${esc(item.title)}">
+        ${item.imageUrl
+          ? `<img class="fb-pick-img" src="${esc(item.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+          : '<div class="fb-pick-img fb-pick-img-empty">📦</div>'}
+        <span class="fb-pick-price">${item.isFree ? 'Free' : (item.price != null ? money(item.price) : esc(item.priceText || ''))}</span>
+        <span class="fb-pick-title">${esc(item.title)}</span>
+        <span class="fb-pick-loc">${esc(item.location || '')}</span>
+      </a>`).join('');
+  }
+
+  // ── eBay scanner (its own panel, above the local one) ─────────────────────
+  // Buying and selling on the same site is a one-field search: no zip, no radius, no login. It
+  // runs the SAME scan engine as the panel below, restricted to the eBay source, and renders into
+  // the same results table — one scanner, two front doors. Nothing here duplicates renderArbitrage.
+  const EBAY_SOURCE_ID = 'ebay';
+
+  // A seller's buying rules don't change between sessions — someone who only buys used under $500
+  // is still doing that tomorrow. Restored rather than re-typed.
+  function restoreEbayScanFilters() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem('ebayScanFilters') || 'null'); } catch (_) { return; }
+    if (!saved) return;
+    const set = (id, value) => { if (value !== null && value !== undefined && value !== '' && $(id)) $(id).value = value; };
+    set('ebay-scan-type', saved.type);
+    set('ebay-scan-condition', saved.condition);
+    set('ebay-scan-min', saved.min);
+    set('ebay-scan-max', saved.max);
+    set('ebay-scan-feedback', saved.feedback);
+  }
+
+  async function runEbayScan() {
+    const query = $('ebay-scan-query')?.value.trim() || '';
+    const btn   = $('ebay-scan-btn');
+
+    if (!query) return setLocalStatus('Type what you want to look for on eBay.');
+
+    // Re-running is what the Try again button does, so it has to point at this scan and not at
+    // whatever the panel below ran last.
+    lastLocalRun = runEbayScan;
+
+    $('fb-results')?.classList.add('hidden');
+    $('fb-arb-results')?.classList.add('hidden');
+    if (btn) btn.disabled = true;
+
+    setLocalStatus(`Searching eBay for "${query}", then pricing every result against real sold data — this can take a minute…`);
+
+    const sort = $('fb-arb-sort')?.value || 'profit';
+    const num = id => {
+      const v = parseFloat($(id)?.value);
+      return isFinite(v) && v > 0 ? v : null;
+    };
+    const min = num('ebay-scan-min');
+    const max = num('ebay-scan-max');
+    const feedback = num('ebay-scan-feedback');
+    const type = $('ebay-scan-type')?.value || 'BOTH';
+    const condition = $('ebay-scan-condition')?.value || '';
+
+    // Caught here rather than at eBay, which would answer a reversed band with an empty result
+    // that looks exactly like "nothing is listed".
+    if (min !== null && max !== null && min > max)
+      return setLocalStatus('The minimum price is above the maximum — swap them and scan again.');
+
+    // The eBay scanner has its own route: condition and auction/Buy-It-Now mean nothing to a
+    // classifieds feed, so they are not parameters on the shared multi-source scan.
+    const qs = `q=${encodeURIComponent(query)}` +
+      `&listingType=${encodeURIComponent(type)}` +
+      (condition ? `&condition=${encodeURIComponent(condition)}` : '') +
+      (min !== null ? `&minPrice=${encodeURIComponent(min)}` : '') +
+      (max !== null ? `&maxPrice=${encodeURIComponent(max)}` : '') +
+      (feedback !== null ? `&minFeedback=${encodeURIComponent(feedback)}` : '') +
+      `&category=${encodeURIComponent(selectedCategoryId())}` +
+      `&sort=${encodeURIComponent(sort)}`;
+
+    // Remembered between scans: a seller who only buys used under $500 is still doing that
+    // tomorrow, and retyping it every time is the kind of friction that stops it being used.
+    localStorage.setItem('ebayScanFilters', JSON.stringify({ type, condition, min, max, feedback }));
+
+    const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
+    if (btn) btn.disabled = false;
+
+    if (!data) {
+      setLocalStatus(`The eBay scan didn't complete. ${error}`, true);
+      return;
+    }
+    renderArbitrage(data);
   }
 
   async function runLocalArbitrage() {
@@ -2593,8 +2715,6 @@
     if (price > 0) params.set('price', price);
     // The seller's own rate, shared with the scan above — a code lowers what the register rings up,
     // so the tax it saves is part of what it saves.
-    const tax = parseFloat($('retail-tax-input')?.value);
-    if (tax >= 0) params.set('salesTax', tax);
 
     const { data, error } = await localFetchJson(`/api/coupons?${params}`, 60000);
     if (btn) btn.disabled = false;
@@ -5516,10 +5636,23 @@
       .forEach(id => on(id, 'input', updateFlipPreview));
 
     $('earnings-section')?.addEventListener('click', onEarningsClick);
+    // Delegated: the awaiting-cost rows are re-rendered after every save, so a handler bound to
+    // the inputs themselves would be thrown away with them.
+    $('earnings-section')?.addEventListener('input', e => {
+      if (e.target?.classList?.contains('er-cost-pct')) applyDropshipPct(e.target);
+    });
     $('earnings-section')?.addEventListener('keydown', e => {
       if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-input')) {
         e.preventDefault();
         saveFlipCost(e.target.dataset.id, e.target.value);
+      }
+      // Enter in the percentage box saves the row it just priced, so a flat-split seller can
+      // type-tab-type down the list without reaching for the mouse.
+      if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-pct')) {
+        e.preventDefault();
+        applyDropshipPct(e.target);
+        const box = $('earnings-section').querySelector(`.er-cost-input[data-id="${e.target.dataset.id}"]`);
+        saveFlipCost(e.target.dataset.id, box?.value);
       }
       if (e.key === 'Escape' && !$('er-log-modal')?.classList.contains('hidden')) closeFlipLogger();
     });
@@ -5947,9 +6080,79 @@
               <label class="er-cost-label" for="er-cost-${f.id}">You paid ($ each)</label>
               <input id="er-cost-${f.id}" class="er-cost-input" data-id="${f.id}" type="number" min="0" step="0.01" placeholder="0.00" />
               <button class="btn btn-secondary small er-cost-save" data-id="${f.id}" type="button">Save</button>
+              <!-- Dropshipping doesn't have a per-unit cost the seller ever paid — they keep a cut
+                   of the sale and the supplier takes the rest. Typing that cut fills the box above
+                   with what the goods effectively cost, so the same Save writes the same field and
+                   nothing downstream has to learn a second kind of cost. -->
+              <label class="er-cost-label er-pct-label" for="er-pct-${f.id}">Dropshippers — % of the sale you keep</label>
+              <input id="er-pct-${f.id}" class="er-cost-pct" data-id="${f.id}"
+                     data-unitgross="${unitGross(f)}" type="number" min="0" max="100" step="0.5" placeholder="40" />
+              <span class="er-pct-hint" data-hint="${f.id}"></span>
             </div>
           </div>`).join('')}
       </div>`;
+
+    prefillDropshipPct();
+  }
+
+  // ── Dropship percentage ───────────────────────────────────────────────────
+  // A dropshipper never pays a unit cost — they keep a share of each sale and the supplier keeps
+  // the rest. So the cost of the goods IS the rest: keep 40% of a $2,100 sale and those goods
+  // effectively cost $1,260. Computing it from the sale price rather than asking for a dollar
+  // figure is the difference between a number they know and one they'd have to work out per row.
+  //
+  // It writes into the existing "you paid" box rather than being a second kind of cost, so the
+  // server, the profit maths and Inventory Health all stay exactly as they were.
+  const DROPSHIP_PCT_KEY = 'dropshipKeepPct';
+
+  function unitGross(f) {
+    const qty = Math.max(1, Number(f.quantity) || 1);
+    return (Number(f.grossRevenue) || 0) / qty;
+  }
+
+  // Percentage is OF THE SALE PRICE, before eBay's fee — that is how a dropship split is written,
+  // and quietly using the after-fee figure would understate the cost on every row.
+  function costFromKeepPct(unitGrossValue, keepPct) {
+    const pct = Math.min(100, Math.max(0, Number(keepPct)));
+    if (!isFinite(pct) || !isFinite(unitGrossValue) || unitGrossValue <= 0) return null;
+    return Math.round(unitGrossValue * (1 - pct / 100) * 100) / 100;
+  }
+
+  function applyDropshipPct(input) {
+    const id = input.dataset.id;
+    const gross = Number(input.dataset.unitgross);
+    const hint = $('earnings-section')?.querySelector(`.er-pct-hint[data-hint="${id}"]`);
+    const costBox = $('earnings-section')?.querySelector(`.er-cost-input[data-id="${id}"]`);
+    const raw = input.value.trim();
+
+    if (raw === '') {
+      if (hint) hint.textContent = '';
+      return;
+    }
+
+    const cost = costFromKeepPct(gross, raw);
+    if (cost === null) {
+      if (hint) hint.textContent = '';
+      return;
+    }
+
+    // Remembered so a seller on a flat split types it once, not once per sale.
+    localStorage.setItem(DROPSHIP_PCT_KEY, raw);
+
+    if (costBox) costBox.value = cost.toFixed(2);
+    if (hint) {
+      hint.textContent = `Keeping ${Number(raw)}% of ${moneyExact(gross)} → cost ${moneyExact(cost)} each. Press Save.`;
+    }
+  }
+
+  // Prefill every row with the remembered split, without touching the cost box — filling in 48
+  // dollar figures the seller never typed would look like the app inventing costs.
+  function prefillDropshipPct() {
+    const saved = localStorage.getItem(DROPSHIP_PCT_KEY);
+    if (!saved) return;
+    $('earnings-section')?.querySelectorAll('.er-cost-pct').forEach(el => {
+      if (!el.value) el.placeholder = saved;
+    });
   }
 
   async function saveFlipCost(id, raw) {
@@ -16654,6 +16857,7 @@
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(await res.text());
+        const updated = await res.json().catch(() => ({}));
 
         // Keep the local dashboard cache in sync too — best-effort, doesn't affect the
         // already-successful eBay update if it fails for some reason.
@@ -16666,7 +16870,16 @@
           if (editRes.ok) applyLocalEdit(payload, (await editRes.json()).savedAt);
         } catch { /* non-fatal */ }
 
-        showResult('success', '✓ Published to eBay live.');
+        // Name the fields that reached eBay. "Published to eBay live" was shown even when the
+        // call underneath carried only price and quantity, so the one thing this message must
+        // never do again is claim more than actually happened.
+        const changed = Array.isArray(updated.changed) ? updated.changed : [];
+        const warnings = Array.isArray(updated.warnings) ? updated.warnings : [];
+        let msg = changed.length
+          ? `✓ Published to eBay live — updated ${changed.join(', ')}.`
+          : '✓ Published to eBay live.';
+        if (warnings.length) msg += ` eBay noted: ${warnings.join(' ')}`;
+        showResult(warnings.length ? 'warning' : 'success', msg);
         addActivity('eBay listing updated', payload.title || activeSku);
         loadListings('Listings refreshed after eBay update');
       } catch (err) {

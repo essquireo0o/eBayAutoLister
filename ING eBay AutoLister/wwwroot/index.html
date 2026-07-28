@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=68" />
+  <link rel="stylesheet" href="style.css?v=80" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1198,14 +1198,73 @@
             </div>
           </div>
 
+          <!-- eBay on its own, above everything else, because it is the one source that needs no
+               explanation on a screen full of sources that do. Buying and selling on the same site
+               is a one-field search: no zip, no radius, no login, no sales-tax question. Folding it
+               in with the local boards buried it behind five chips and four fields that mean
+               nothing to it. Results render in the shared table below — one scanner engine, two
+               ways to start it. -->
+          <div class="opp-supplier-panel ebay-scan-panel">
+            <h3 class="opp-supplier-heading">🛒 eBay Scanner — buy underpriced on eBay, resell on eBay</h3>
+            <p class="opp-hint">Searches eBay itself for listings priced below what the same thing actually sells for — underpriced Buy It Nows and auctions nobody has bid on. Every result is priced against real eBay sold data, with the delivered cost (item + shipping) as the buy price. <strong>Nationwide, no login, nothing to set up.</strong></p>
+
+            <div class="ebay-scan-row">
+              <div class="opp-field ebay-scan-field">
+                <label for="ebay-scan-query">What to look for</label>
+                <input id="ebay-scan-query" type="text" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
+              </div>
+              <button id="ebay-scan-btn" class="btn btn-primary opp-search-submit" type="button">🛒 Scan eBay</button>
+            </div>
+
+            <!-- Filters that only mean something on eBay. They are here rather than on the local
+                 board below because a condition filter on a classifieds RSS feed, or an
+                 auction/Buy-It-Now filter on a freebie board, is a control that silently does
+                 nothing. Each one maps to a Browse API filter — see EbayScanFilters. -->
+            <div class="ebay-scan-filters">
+              <div class="opp-field">
+                <label for="ebay-scan-type">Listing type</label>
+                <select id="ebay-scan-type">
+                  <option value="BOTH" selected>Auctions &amp; Buy It Now</option>
+                  <option value="AUCTION">Auctions only — ending soonest</option>
+                  <option value="FIXED_PRICE">Buy It Now only — cheapest first</option>
+                </select>
+              </div>
+              <div class="opp-field">
+                <label for="ebay-scan-condition">Condition</label>
+                <select id="ebay-scan-condition">
+                  <option value="" selected>Any</option>
+                  <option value="NEW">New</option>
+                  <option value="USED">Used</option>
+                  <option value="REFURBISHED">Refurbished</option>
+                  <option value="FOR_PARTS">For parts / not working</option>
+                </select>
+              </div>
+              <div class="opp-field ebay-scan-narrow">
+                <label for="ebay-scan-min">Min $</label>
+                <input id="ebay-scan-min" type="number" min="0" step="1" placeholder="any" />
+              </div>
+              <div class="opp-field ebay-scan-narrow">
+                <label for="ebay-scan-max">Max $</label>
+                <input id="ebay-scan-max" type="number" min="0" step="1" placeholder="any" />
+              </div>
+              <div class="opp-field ebay-scan-narrow">
+                <label for="ebay-scan-feedback">Seller feedback at least</label>
+                <input id="ebay-scan-feedback" type="number" min="0" step="10" placeholder="any" />
+              </div>
+            </div>
+
+            <p id="ebay-scan-note" class="fb-blank-query-hint">Every result is priced against real eBay sold data and ranked by profit after fees, in the table below. The buy price is what actually leaves your wallet — item plus shipping.</p>
+          </div>
+
           <!-- Sourcing: what can be bought under resale value right now, across every place the
                seller ticks. Craigslist needs no login at all (public search + RSS, see
                CraigslistService); the retail deal feeds need none either (public RSS, see
                DealFeedService); Facebook needs a one-time login to their own account because it
-               publishes no search API. All three arrive as the same LocalSupplyListing. -->
+               publishes no search API. All arrive as the same LocalSupplyListing.
+               eBay is deliberately NOT in this picker — it has its own panel above. -->
           <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Deal Scanner — free stuff, classifieds, clearance &amp; liquidation</h3>
-            <p class="opp-hint">Search what's being given away near you, local classifieds, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off — store closings, overstock, customer returns and surplus. Every price is compared against real eBay sold prices. Buy cheap — or free — and list on eBay. <strong>Only Facebook needs a login.</strong></p>
+            <h3 class="opp-supplier-heading">📍 Local &amp; online deals — classifieds, free stuff, clearance &amp; liquidation</h3>
+            <p class="opp-hint">Everywhere <em>other than</em> eBay: what's being given away near you, local classifieds, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off. Every price is compared against real eBay sold prices. <strong>Only Facebook needs a login.</strong></p>
 
             <!-- Source picker, rendered from /api/local/sources so a new source appears here
                  without touching this markup. -->
@@ -1281,16 +1340,6 @@
                  whether this app can price it at all. A seller who picks Boats should find that out
                  here, not from a table of dashes after a two-minute scan. -->
             <div id="fb-category-note" class="fb-category-note hidden"></div>
-
-            <!-- Retail and auction buys are taxed and private-party buys aren't. Shown only while a
-                 source that charges it is ticked, because it changes nothing on a Craigslist scan.
-                 Defaulting to a middle-of-the-road US rate rather than zero: zero is a rate nobody
-                 pays, and it would overstate every taxed row on the board. See RetailBuyCosts.cs. -->
-            <div id="retail-tax-row" class="retail-tax-row hidden">
-              <label for="retail-tax-input">Your sales tax</label>
-              <input id="retail-tax-input" type="number" min="0" max="15" step="0.25" value="7.5" />
-              <span class="retail-tax-hint">% — charged on clearance and auction buys, so profit is what you'd actually keep. Set 0 if your state has none.</span>
-            </div>
 
             <!-- The liquidation marketplaces that answer an automated request with a block page.
                  Rather than ship a source chip that is red every time, the seller gets the search
@@ -1525,6 +1574,23 @@
                 <div id="opp-results-list" class="opp-results-list"></div>
               </div>
             </div>
+          </div>
+
+          <!-- Marketplace's own front page for this account. Sits here, above the insight tiles,
+               because it is the only thing on this screen that shows real local supply without
+               being asked a question first — a search only ever finds what you already thought to
+               type. Loaded on a click, like every other Facebook read in this app: nothing here
+               polls Facebook. -->
+          <div class="opp-supplier-panel fb-picks-panel" id="fb-picks-panel">
+            <div class="fb-picks-head">
+              <div>
+                <h3 class="opp-supplier-heading">🧭 Today's picks — straight from your Marketplace</h3>
+                <p class="opp-hint" id="fb-picks-sub">What Facebook is showing your account near you right now. Not a search — this is local supply you'd never have thought to look for.</p>
+              </div>
+              <button id="fb-picks-btn" class="btn btn-secondary small" type="button">Load picks</button>
+            </div>
+            <div id="fb-picks-status" class="mr-status"></div>
+            <div id="fb-picks-grid" class="fb-picks-grid"></div>
           </div>
 
           <div class="opportunity-grid">
@@ -4570,6 +4636,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=76"></script>
+  <script src="app.js?v=80"></script>
 </body>
 </html>

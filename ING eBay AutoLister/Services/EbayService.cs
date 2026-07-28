@@ -1530,6 +1530,174 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
     }
 
+    // ── Trading API: ReviseFixedPriceItem (a real edit of a live listing) ─────
+    //
+    // ReviseInventoryStatus above can only carry price and quantity. That made every other edit
+    // a seller typed into the editor — title, description, condition, brand, item specifics —
+    // vanish on the way to eBay while the call still came back Ack=Success and the UI said
+    // "Published to eBay live". ReviseFixedPriceItem is the call that can actually change those
+    // fields on an existing ItemID.
+    //
+    // Only send what the editor actually has. Two of these fields are destructive when sent
+    // empty rather than omitted:
+    //   • PictureDetails — sending it with no PictureURL strips every photo off the listing.
+    //   • SellerProfiles — sending a profile ID that is blank is rejected outright, and this
+    //     seller may not have business policies set at all.
+    // So each block below is built only when there is something real to put in it. Omitting a
+    // field in a Revise call leaves it untouched, which is exactly what an edit should do.
+    /// <summary>
+    /// Builds the ReviseFixedPriceItem body and the list of fields it carries. Pure and static so
+    /// the payload can be asserted in tests: the bug this replaced was invisible from the outside
+    /// — eBay answered Success — and was only ever findable by looking at what got sent.
+    /// </summary>
+    public static string BuildReviseFixedPriceItemXml(UpdateListingRequest req, out List<string> changed)
+    {
+        var fields = new List<string>();
+
+        string Field(string name, string? value, string xml)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+            fields.Add(name);
+            return xml;
+        }
+
+        var titleXml = Field("title", req.Title,
+            $"<Title>{Xe(SanitizeTitle(req.Title))}</Title>");
+        var subtitleXml = Field("subtitle", req.Subtitle,
+            $"<SubTitle>{Xe(req.Subtitle)}</SubTitle>");
+        var descXml = Field("description", req.Description,
+            $"<Description><![CDATA[{SanitizeDescription(req.Description)}]]></Description>");
+        var categoryXml = Field("category", req.CategoryId,
+            $"<PrimaryCategory><CategoryID>{Xe(req.CategoryId)}</CategoryID></PrimaryCategory>");
+        var condDescXml = Field("condition description", req.ConditionDescription,
+            $"<ConditionDescription>{Xe(req.ConditionDescription)}</ConditionDescription>");
+
+        var conditionXml = "";
+        if (!string.IsNullOrWhiteSpace(req.Condition))
+        {
+            fields.Add("condition");
+            conditionXml = $"<ConditionID>{ConditionId(req.Condition)}</ConditionID>";
+        }
+
+        // Price and quantity are the two that already worked; keep them, and only when sane.
+        var priceXml = "";
+        if (req.Price > 0) { fields.Add("price"); priceXml = $"<StartPrice>{req.Price:F2}</StartPrice>"; }
+        var qtyXml = "";
+        if (req.Quantity > 0) { fields.Add("quantity"); qtyXml = $"<Quantity>{req.Quantity}</Quantity>"; }
+
+        var aspectsXml = "";
+        if (req.ItemSpecifics.Count > 0)
+        {
+            fields.Add($"{req.ItemSpecifics.Count} item specific{(req.ItemSpecifics.Count == 1 ? "" : "s")}");
+            aspectsXml = "<ItemSpecifics>" + string.Join("", req.ItemSpecifics.Select(kv =>
+                $"<NameValueList><Name>{Xe(kv.Key)}</Name><Value>{Xe(kv.Value)}</Value></NameValueList>")) + "</ItemSpecifics>";
+        }
+
+        // Photos: only ever sent when we have real public URLs to send. See the note above.
+        //
+        // eBay's own image host is excluded outright, and that exclusion is load-bearing. Importing
+        // a listing brings back one URL — the 140px gallery THUMBNAIL (…/s-l140.png), not the
+        // full-size pictures. Feeding that back into a revise would replace an entire photo set
+        // with a single postage-stamp image, on a live listing, permanently. A seller editing a
+        // title would have destroyed the photographs on a listing with hundreds of sales and never
+        // been told. Nothing the app imported from eBay ever needs sending back to eBay; only
+        // pictures the seller actually supplied here do, and those are not hosted on ebayimg.com.
+        var publicImageUrls = req.ImageUrls
+            .Where(u => !string.IsNullOrWhiteSpace(u) && u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            .Where(u => !u.Contains("ebayimg.com", StringComparison.OrdinalIgnoreCase))
+            .Take(24).ToList();
+        var pictureXml = "";
+        if (publicImageUrls.Count > 0)
+        {
+            fields.Add($"{publicImageUrls.Count} photo{(publicImageUrls.Count == 1 ? "" : "s")}");
+            pictureXml = "<PictureDetails>" + string.Join("", publicImageUrls.Select(u =>
+                $"<PictureURL>{Xe(u)}</PictureURL>")) + "</PictureDetails>";
+        }
+
+        changed = fields;
+        return $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <ReviseFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+              <Item>
+                <ItemID>{Xe(req.ListingId)}</ItemID>
+                {titleXml}
+                {subtitleXml}
+                {descXml}
+                {categoryXml}
+                {priceXml}
+                {qtyXml}
+                {conditionXml}
+                {condDescXml}
+                {aspectsXml}
+                {pictureXml}
+              </Item>
+            </ReviseFixedPriceItemRequest>
+            """;
+    }
+
+    public async Task<EbayReviseResult> ReviseFixedPriceItemAsync(UpdateListingRequest req)
+    {
+        var token = await GetOrRefreshTokenAsync();
+        var c = creds.Get();
+        var xml = BuildReviseFixedPriceItemXml(req, out var changed);
+
+        var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromMinutes(2);
+        var request = new HttpRequestMessage(HttpMethod.Post, TradingEndpoint)
+        {
+            Content = new StringContent(xml, Encoding.UTF8, "text/xml")
+        };
+        request.Headers.Add("X-EBAY-API-CALL-NAME",           "ReviseFixedPriceItem");
+        request.Headers.Add("X-EBAY-API-SITEID",              "0");
+        request.Headers.Add("X-EBAY-API-COMPATIBILITY-LEVEL", "967");
+        request.Headers.Add("X-EBAY-API-APP-NAME",            c.EbayClientId);
+        request.Headers.Add("X-EBAY-API-DEV-NAME",            c.EbayDevId);
+        request.Headers.Add("X-EBAY-API-CERT-NAME",           c.EbayClientSecret);
+        request.Headers.Add("X-EBAY-API-IAF-TOKEN",           token);
+
+        var response     = await client.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        log.Add(response.IsSuccessStatusCode ? "Info" : "Warning",
+            $"ReviseFixedPriceItem HTTP {(int)response.StatusCode}",
+            responseBody[..Math.Min(800, responseBody.Length)]);
+
+        if (!response.IsSuccessStatusCode)
+            throw new Exception($"ReviseFixedPriceItem failed (HTTP {(int)response.StatusCode}): {responseBody}");
+
+        var xdoc = XDocument.Parse(responseBody);
+        var ack  = xdoc.Descendants(EbayNs + "Ack").FirstOrDefault()?.Value ?? "";
+
+        if (ack is "Failure")
+        {
+            // eBay refuses individual fields for real reasons — a category that can no longer be
+            // changed, a condition the category does not allow, a title over the limit. Carry its
+            // own words back rather than a generic failure, because the seller can act on those.
+            var errors = xdoc.Descendants(EbayNs + "Errors")
+                .Select(e => e.Element(EbayNs + "LongMessage")?.Value
+                          ?? e.Element(EbayNs + "ShortMessage")?.Value ?? "")
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct()
+                .ToList();
+            throw new Exception($"eBay refused the revision: {(errors.Count > 0 ? string.Join(" ", errors) : responseBody)}");
+        }
+
+        // Ack=Warning means it went through but eBay dropped or adjusted something. That is not a
+        // success worth reporting silently — it is the exact case that hid this bug for so long.
+        var warnings = xdoc.Descendants(EbayNs + "Errors")
+            .Where(e => (e.Element(EbayNs + "SeverityCode")?.Value ?? "") == "Warning")
+            .Select(e => e.Element(EbayNs + "LongMessage")?.Value
+                      ?? e.Element(EbayNs + "ShortMessage")?.Value ?? "")
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct()
+            .ToList();
+
+        log.Add("Info", "eBay listing revised (Trading API)",
+            $"Item {req.ListingId}: {string.Join(", ", changed)}");
+
+        return new EbayReviseResult(req.ListingId, changed, warnings);
+    }
+
     // ── Fulfillment API: the orders that already happened ─────────────────────
     // Everything else in this class looks at listings — what is for sale. This reads what SOLD, and
     // it is the only source in the app for what eBay actually charged: the Order resource carries
@@ -2030,17 +2198,19 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         return new SellerHubDraftResult(draftId, sellerHubUrl);
     }
 
-    public async Task UpdateListingAsync(UpdateListingRequest req)
+    public async Task<EbayReviseResult> UpdateListingAsync(UpdateListingRequest req)
     {
         // No Inventory API offerId means this listing wasn't created through that API (imported
         // via GetMyeBaySelling instead — see the ReviseInventoryStatusAsync comment above for
-        // why) — the offer/{offerId} PUT below has nothing to target, so fall back to the
-        // Trading API price/quantity revision, which only needs the ItemID.
+        // why), so the offer/{offerId} PUT below has nothing to target and the edit has to go
+        // through the Trading API against the ItemID.
+        //
+        // This used to call ReviseInventoryStatusAsync, which carries price and quantity and
+        // nothing else. Every other edit — title, description, condition, specifics — was dropped
+        // here, silently, while eBay returned Success and the seller was told it published. Most
+        // of a seller's catalogue is imported, so for most listings the editor did nothing.
         if (string.IsNullOrWhiteSpace(req.OfferId) && !string.IsNullOrWhiteSpace(req.ListingId))
-        {
-            await ReviseInventoryStatusAsync(req.ListingId, req.Price, req.Quantity);
-            return;
-        }
+            return await ReviseFixedPriceItemAsync(req);
 
         var token = !string.IsNullOrWhiteSpace(req.EbayToken) ? req.EbayToken : await GetOrRefreshTokenAsync();
         var client = httpClientFactory.CreateClient();
@@ -2082,6 +2252,8 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
 
         if (!response.IsSuccessStatusCode)
             throw new Exception($"Update offer failed: {await response.Content.ReadAsStringAsync()}");
+
+        return new EbayReviseResult(req.ListingId, ["the whole offer"], []);
     }
 
     // ── Paging helper ─────────────────────────────────────────────────────────
@@ -3057,6 +3229,14 @@ public sealed class EbayPermissionException(string message) : Exception(message)
 
 public sealed record PublishListingResult(string OfferId, string ListingId, string Sku);
 public sealed record SellerHubDraftResult(string DraftId, string SellerHubUrl);
+
+/// <summary>What a revision of a live listing actually changed at eBay.</summary>
+/// <param name="Changed">
+/// The fields that were sent. The seller is told this verbatim, because "saved" on its own is
+/// what let a price-and-quantity-only revision pass for a full edit for so long.
+/// </param>
+/// <param name="Warnings">eBay's own warnings — it accepted the revision but altered something.</param>
+public sealed record EbayReviseResult(string ListingId, IReadOnlyList<string> Changed, IReadOnlyList<string> Warnings);
 
 public sealed record PolicyInfo(string Id, string Name);
 public sealed record CategorySuggestion(string Id, string Name, string Breadcrumb);

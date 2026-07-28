@@ -201,6 +201,14 @@
   --s9: 56px;
   --s10: 72px;
 
+  /* ── Shell ────────────────────────────────────────────────────────────
+     The sidebar width lives here rather than being typed into each rule
+     that has to sit beside it. The full-page overlays (.opportunity-overlay,
+     .new-listing-overlay) are position:fixed, so they only stay clear of the
+     nav by measuring against the same number the shell grid uses. Two copies
+     of "280px" is how the nav ends up buried again. */
+  --sidebar-w: 280px;
+
   /* ── Radius ───────────────────────────────────────────────────────────
      Corner radius is a strong identity signal and the app had been mixing
      nine of them. These are the nine rungs everything now rounds to. */
@@ -440,7 +448,7 @@ button { cursor: pointer; }
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -2316,9 +2324,12 @@ textarea {
 
 /* ── New AI Listing modal ──────────────────────────────────── */
 
+/* Starts where the sidebar ends. This is a page, not a dialog — there is no
+   scrim and nothing behind it to dismiss, so covering the nav only meant the
+   seller had to close it to go anywhere. See --sidebar-w. */
 .new-listing-overlay {
   position: fixed;
-  inset: 0;
+  inset: 0 0 0 var(--sidebar-w);
   z-index: 900;
   display: flex;
 }
@@ -4244,10 +4255,15 @@ textarea {
   pointer-events: none;
 }
 
-/* ── Opportunity Finder (full-page overlay, like New Listing) ───────────── */
+/* ── Opportunity Finder (full-page overlay, like New Listing) ─────────────
+   Eighteen of the app's twenty-four views render through this one class, so
+   `inset: 0` here is what put an opaque panel over the sidebar on nearly every
+   screen. It is a page, not a dialog: it has no scrim, nothing behind it is
+   dismissable, and the nav underneath stayed alive but unreachable. Leaving the
+   sidebar column clear is the whole fix — see --sidebar-w. */
 .opportunity-overlay {
   position: fixed;
-  inset: 0;
+  inset: 0 0 0 var(--sidebar-w);
   z-index: 900;
   display: flex;
   flex-direction: column;
@@ -4316,6 +4332,15 @@ textarea {
 /* Every overlay page shares one content column so the three of them line up
    with each other and with the dashboard. */
 .opportunity-overlay-body > * { max-width: 1320px; margin-inline: auto; }
+
+/* Below the shell breakpoint the sidebar stops being a column and becomes a
+   nav strip stacked above the content (see the max-width:1120px block near
+   .app-shell), so there is no column to stay clear of — the overlays take the
+   full width again. This has to sit after both overlay rules to win. */
+@media (max-width: 1120px) {
+  .opportunity-overlay,
+  .new-listing-overlay { left: 0; }
+}
 
 .opp-terapeak-banner {
   display: flex;
@@ -12062,6 +12087,14 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  /* background-clip:text paints the gradient only where the element's own
+     background box is. h1 carries --lh-tight (1.08), so that box stops just
+     below the baseline and the descenders of the two "g"s in Listing/Engine
+     fell outside it — the gradient never reached them and the tails rendered
+     as nothing. Pad the box down past the descenders and take the same amount
+     back off the layout, so the lockup is whole without moving anything. */
+  padding-bottom: .26em;
+  margin-bottom: -.26em;
 }
 
 /* The trademark is a mark, not a word — set at the size a mark is set. */
@@ -12141,7 +12174,12 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 
 /* ── Quick actions ─────────────────────────────────────────────────────
    Lifted over the hero's bottom edge, which is what makes them read as the
-   point of the masthead rather than as the next band down. */
+   point of the masthead rather than as the next band down.
+
+   This overlap is deliberate and wanted — it was taken out once and put back
+   on request, so it is not a layout bug to be tidied away. The --s9 lift and
+   the hero's matching bottom padding are one unit: change either and the
+   cards either float off the panel or crash into the status chips. */
 .dash-quick {
   position: relative;
   z-index: 2;
@@ -12982,7 +13020,12 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 
 /* ── The watch editor ──────────────────────────────────────────────── */
 .rad-form {
-  margin: var(--s5) 0;
+  /* margin-block, not `margin: x 0`. The overlay centres its direct children
+     with `margin-inline: auto` (.opportunity-overlay-body > *); the shorthand
+     would reset that to 0 and this panel would sit hard against the left of
+     the column while the panels above and below it stayed centred — which is
+     invisible until the window is wider than 1320 + the column padding. */
+  margin-block: var(--s5);
   padding: var(--s5);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -13038,7 +13081,9 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: var(--s4);
-  margin: var(--s5) 0;
+  /* margin-block for the same reason as .rad-form above — the inline shorthand
+     would knock this grid out of the column's centre line. */
+  margin-block: var(--s5);
 }
 
 .rad-watch {
@@ -13460,3 +13505,105 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 :root[data-theme="dark"] .snap-ev-confident { background: rgba(26, 138, 96, .12); color: var(--success-600); }
 :root[data-theme="dark"] .snap-ev-low       { background: rgba(180, 119, 26, .12); color: var(--warning-600); }
 :root[data-theme="dark"] .snap-ev-none      { background: rgba(207, 75, 66, .12);  color: var(--danger-600); }
+
+/* ── eBay scanner panel ─────────────────────────────────────────────────────
+   Its own panel above the local board because it is the one source that needs
+   no zip, no radius, no login and no explanation — folding it in with the
+   local sources buried a one-field search behind five chips and four fields
+   that mean nothing to it. */
+.ebay-scan-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+.ebay-scan-field {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+/* ── Dropship split on the awaiting-cost rows ───────────────────────────────
+   A dropshipper has no unit cost to type: they keep a share of the sale and
+   the supplier keeps the rest. The percentage sits under the dollar box and
+   fills it, so Save still writes the one cost field everything else reads. */
+.er-pct-label {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  opacity: .85;
+}
+.er-cost-pct {
+  width: 100%;
+  max-width: 120px;
+}
+.er-pct-hint {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: #9fb3ac;
+  min-height: 1em;
+}
+
+/* Filters that only apply to eBay. A wrapping grid rather than another flex row: five controls
+   on one line squeezes each to unusable width on a laptop. */
+.ebay-scan-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 12px;
+  margin-top: 10px;
+}
+.ebay-scan-narrow { max-width: 170px; }
+
+/* ── Today's picks: Marketplace's own front page ────────────────────────────
+   A picture grid rather than the ranked table, because these rows are not a
+   priced answer to a question — they are what is for sale near you right now,
+   and the photo is the whole reason one is worth a second look. */
+.fb-picks-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.fb-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.fb-pick-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 10px;
+  overflow: hidden;
+  padding-bottom: 8px;
+  background: rgba(0, 0, 0, .18);
+  transition: border-color .15s ease, transform .15s ease;
+}
+.fb-pick-card:hover { border-color: rgba(232, 201, 122, .5); transform: translateY(-2px); }
+.fb-pick-img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+  background: rgba(0, 0, 0, .3);
+}
+.fb-pick-img-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+.fb-pick-price { font-weight: 700; padding: 6px 9px 0; }
+.fb-pick-title {
+  padding: 0 9px;
+  font-size: 13px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fb-pick-loc { padding: 0 9px; font-size: 12px; color: #9fb3ac; }

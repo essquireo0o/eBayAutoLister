@@ -3,14 +3,16 @@ using ING_eBay_AutoLister.Services;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
 // ── Crash logging ────────────────────────────────────────────────────────────
-// Writes crash.log next to the exe before the process dies so the cause is
-// visible even when there is no console window to read.
+// Writes crash.log into the fixed data home before the process dies so the cause
+// is visible even when there is no console window to read — and so the log is in
+// the same place every build, rather than beside whichever exe happened to run
+// (which may sit in a read-only Program Files folder).
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
     try
     {
-        var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        File.AppendAllText(Path.Combine(dir, "crash.log"),
+        Directory.CreateDirectory(AppPaths.DataHome);
+        File.AppendAllText(Path.Combine(AppPaths.DataHome, "crash.log"),
             $"{DateTime.Now:u}: {e.ExceptionObject}\n---\n");
     }
     catch { }
@@ -21,13 +23,13 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 // Interactive launches (double-click, startup shortcut) get the full tray UI.
 bool isWindowsService = WindowsServiceHelpers.IsWindowsService();
 
-// ── Dev port override ─────────────────────────────────────────────────────────
-// Set AUTOLISTER_DEV_PORT to run a second, independent instance side-by-side
-// with the installed Windows service (e.g. while iterating on source without
-// touching the service's port 9332).
-var port    = Environment.GetEnvironmentVariable("AUTOLISTER_DEV_PORT") ?? "9332";
-var baseUrl = $"http://localhost:{port}";
-var isDevPort = port != "9332";
+// ── The port ──────────────────────────────────────────────────────────────────
+// Fixed, always, with no environment override: the eBay OAuth relay redirects to
+// localhost:9332 and nowhere else, so an instance on any other port is one whose
+// eBay sign-in cannot complete. If 9332 is taken, this app focuses the copy that
+// has it or stops and says so — see AppInstance. It never moves.
+var port    = AppPaths.Port;
+var baseUrl = AppPaths.BaseUrl;
 
 // ── Elevated helper: add inglist.com → 127.0.0.1 to hosts ──────────
 // The installer re-launches with this flag as admin. After adding the entry the
@@ -52,15 +54,52 @@ if (args.Contains("--open-browser"))
     return;
 }
 
+// ── Who owns port 9332? ───────────────────────────────────────────────────────
+// Asked before anything binds, and answered the same way in both modes: the app
+// gets the port, or it doesn't run. There is no third outcome where it comes up
+// on a different URL — that URL is where eBay sends the seller back to.
+async Task<PortOwner> DetectPortOwnerAsync()
+{
+    using var probeHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+    return await AppInstance.DetectAsync(
+        AppInstance.IsPortListening(port),
+        async path =>
+        {
+            try
+            {
+                var res = await probeHttp.GetAsync(baseUrl + path);
+                return res.IsSuccessStatusCode ? await res.Content.ReadAsStringAsync() : null;
+            }
+            catch { return null; }
+        });
+}
+
 // ── Single-instance / already-running guard ───────────────────────────────────
-// Service mode: SCM guarantees a single instance — skip the mutex entirely.
+// Service mode: SCM guarantees a single instance — skip the mutex entirely, but
+// still refuse to start if something else already holds the port (a service that
+// crash-loops on a bind failure is worse than one that stops and logs why).
 // Interactive mode:
 //   1. Acquire mutex so only one tray instance runs at a time.
-//   2. If the Windows service is already serving on 9332, show a tray icon
-//      without starting a second web server (opens browser immediately).
-//   3. Otherwise start the server ourselves, then show the tray icon.
+//   2. If a copy of this app is already serving on 9332, focus it — open the
+//      browser at it and show a tray icon, without starting a second server.
+//   3. If something that is not this app holds 9332, say so and exit cleanly.
+//   4. Otherwise start the server ourselves, then show the tray icon.
 System.Threading.Mutex? _mutex = null;
-if (!isWindowsService)
+if (isWindowsService)
+{
+    if (await DetectPortOwnerAsync() != PortOwner.Free)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataHome);
+            File.AppendAllText(Path.Combine(AppPaths.DataHome, "crash.log"),
+                $"{DateTime.Now:u}: port {port} already in use — service not started\n---\n");
+        }
+        catch { }
+        return;
+    }
+}
+else
 {
     _mutex = new System.Threading.Mutex(true, $"ING-AutoLister-{port}", out var isFirstInstance);
     if (!isFirstInstance)
@@ -72,21 +111,22 @@ if (!isWindowsService)
         return;
     }
 
-    // Check whether the Windows service is already hosting the web server.
-    // Skipped when running on a dev override port — that's a deliberate
-    // side-by-side instance, not a duplicate of the service.
-    bool serverAlive = false;
-    if (!isDevPort)
+    var portOwner = await DetectPortOwnerAsync();
+
+    if (portOwner == PortOwner.Foreign)
     {
-        try
-        {
-            using var pingHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-            serverAlive = (await pingHttp.GetAsync($"{baseUrl}/api/setup/status")).IsSuccessStatusCode;
-        }
-        catch { }
+        // Somebody else's server is on 9332. Moving to a free port would "work" right up until the
+        // seller tries to connect eBay, so this stops instead and names the problem.
+        System.Windows.Forms.MessageBox.Show(
+            AppInstance.ForeignPortMessage(port),
+            "ING AutoLister is not able to start",
+            System.Windows.Forms.MessageBoxButtons.OK,
+            System.Windows.Forms.MessageBoxIcon.Warning);
+        _mutex.Dispose();
+        return;
     }
 
-    if (serverAlive)
+    if (portOwner == PortOwner.ThisApp)
     {
         // Service is running — show tray icon as a UI helper (don't start another server)
         OpenBrowser();
@@ -115,32 +155,22 @@ if (!isWindowsService)
 }
 
 // ── Data directory ───────────────────────────────────────────────────────────
-// For portable / perUser installs the exe lives in a writable folder, so data
-// stays next to the exe (original behaviour).  For perMachine / Program Files
-// installs the exe directory is read-only for regular users, so user data goes
-// to %LOCALAPPDATA%\ING AutoLister instead.
-var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? Directory.GetCurrentDirectory();
-var pf     = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-var pf86   = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-var isSystemInstall = !string.IsNullOrEmpty(pf) &&
-    (exeDir.StartsWith(pf,   StringComparison.OrdinalIgnoreCase) ||
-     exeDir.StartsWith(pf86, StringComparison.OrdinalIgnoreCase));
-var dataDir = isWindowsService
-    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ING AutoLister")
-    : isSystemInstall
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ING AutoLister")
-        : exeDir;
+// One fixed home, whatever folder this exe was launched from. It used to be the
+// exe's own directory for anything outside Program Files, which made bin\Debug,
+// a copied build and an installed app three separate sets of credentials — the
+// reason a different build looked like it had "lost" the API key and every
+// marketplace connection. See AppPaths.
+var exeDir  = Path.GetDirectoryName(Environment.ProcessPath) ?? Directory.GetCurrentDirectory();
+var dataDir = AppPaths.DataHome;
 Directory.CreateDirectory(dataDir);
 
-// On the first run after a system install, seed the pre-configured
-// credentials.json from the Program Files template into the user's data folder.
-if (isSystemInstall)
-{
-    var credsDest = Path.Combine(dataDir, "credentials.json");
-    var credsSrc  = Path.Combine(exeDir,  "credentials.json");
-    if (!File.Exists(credsDest) && File.Exists(credsSrc))
-        File.Copy(credsSrc, credsDest);
-}
+// Pull anything the old per-build locations still hold into the fixed home. Copies only what the
+// home does not already have, so it is a no-op from the second run onwards and can never overwrite
+// the live data with a stale build's copy. The exe directory covers both the old portable/dev
+// layout and the Program Files template that installs ship a pre-configured credentials.json in;
+// the service home covers a seller moving from the installed background service to running it
+// themselves.
+var migrated = AppPaths.Migrate(dataDir, [exeDir, AppPaths.Resolve(isWindowsService: true)]);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -201,6 +231,12 @@ builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<Fr
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<DealFeedService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<LiquidationSourceService>());
 builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<FacebookMarketplaceService>());
+// eBay itself, as a place to BUY. It was the one marketplace missing from the "where can I buy
+// this" picker even though every price on that screen is measured against eBay sold data — an
+// underpriced Buy It Now or a no-bid auction is an ordinary eBay-to-eBay flip. Nationwide rather
+// than local, and it says so: see EbaySupplySource.IsLocationBased.
+builder.Services.AddSingleton<EbaySupplySource>();
+builder.Services.AddSingleton<ILocalSupplySource>(sp => sp.GetRequiredService<EbaySupplySource>());
 builder.Services.AddSingleton<LocalSupplySources>();
 // The buy side of the retail rows above: the public promo codes and cashback offers published for
 // whichever stores the board is buying from, so the cost basis can be cut before the profit is
@@ -325,6 +361,14 @@ builder.Services.AddSingleton<PromotedListingAdvisor>();
 // eBay can never supply, so a cost typed once in Inventory Health counts the profit here too.
 builder.Services.AddSingleton<EarningsStore>();
 builder.Services.AddSingleton<EarningsCalculator>();
+// One import implementation, shared by the button and the automatic refresh — see
+// EarningsImportRunner for why a second copy would be the thing that silently drifts.
+builder.Services.AddSingleton<EarningsImportRunner>();
+// Imports sold orders as soon as eBay is connected, then refreshes every few hours. Unlike the
+// Facebook session this is a plain Sell API call with a token the app already refreshes, so there
+// is no browser in the path and nothing that can be blocked. See EarningsAutoImport.
+builder.Services.AddSingleton<EarningsAutoImport>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<EarningsAutoImport>());
 // The Deal Pipeline — the thread that joins all of the above. Every other money service answers
 // one question about one moment; this one carries a single flip from the sourcing forecast that
 // justified the buy, through the cash that left the bank, to the sale in EarningsStore that
@@ -390,7 +434,7 @@ app.UseCors();
     app.UseStaticFiles(new StaticFileOptions { FileProvider = embedded });
 }
 
-// Serve generated-photos from a writable folder next to the exe
+// Serve generated-photos from the fixed data home
 {
     var photosDir = Path.Combine(app.Environment.ContentRootPath, "generated-photos");
     Directory.CreateDirectory(photosDir);
@@ -413,6 +457,18 @@ app.UseCors();
 }
 
 // Stripe keys are configured via the Settings page and stored in credentials.json
+
+// Where everything lives, said once at startup. Worth a line in the log on every run: when a
+// seller reports that a setting "disappeared", the first thing worth knowing is which folder the
+// build they are looking at is reading.
+app.Services.GetRequiredService<ActionLog>()
+    .Add("Info", "Data folder", $"All saved data is in {dataDir}");
+if (migrated.Count > 0)
+{
+    app.Services.GetRequiredService<ActionLog>()
+        .Add("Info", "Saved data moved to the fixed folder",
+             $"Brought forward from an earlier build's folder: {string.Join(", ", migrated)}");
+}
 
 // Record install date on first run
 app.Services.GetRequiredService<CredentialsStore>().EnsureInstallDate();
@@ -499,9 +555,12 @@ _ = Task.Run(async () =>
                 catch { /* non-fatal — will retry next cycle */ }
             }
 
-            // 2. Generated-photos cleanup — keep newest 300, delete the rest
+            // 2. Generated-photos cleanup — keep newest 300, delete the rest.
+            // ContentRootPath, not WebRootPath: the photos are served out of the data home, and
+            // WebRootPath points at a wwwroot subfolder that does not exist there — so this loop
+            // was quietly cleaning nothing and the folder grew without limit.
             var photosDir = Path.Combine(
-                app.Services.GetRequiredService<IWebHostEnvironment>().WebRootPath,
+                app.Services.GetRequiredService<IWebHostEnvironment>().ContentRootPath,
                 "generated-photos");
             if (Directory.Exists(photosDir))
             {
@@ -589,6 +648,23 @@ app.MapPost("/api/stripe/checkout/annual", async (StripeService stripe, HttpCont
 });
 
 // ── Setup / credentials ───────────────────────────────────────────
+// ── Instance identity ─────────────────────────────────────────────
+// How a second launch tells "ING AutoLister is already running on 9332" apart from "something else
+// took 9332". A listening socket alone cannot say which, and the difference decides whether the new
+// process focuses the running app or stops with an explanation — so this answers with a marker, no
+// auth and no setup required, on a fresh install and a configured one alike. See AppInstance.
+// Also the honest answer to "which folder is this build reading?", which is the first question when
+// a saved key looks missing.
+app.MapGet(AppInstance.IdentityPath, (IWebHostEnvironment env) => Results.Ok(new
+{
+    app      = AppInstance.IdentityMarker,
+    port     = AppPaths.Port,
+    url      = AppPaths.BaseUrl,
+    pid      = Environment.ProcessId,
+    dataHome = env.ContentRootPath,
+    version  = typeof(Program).Assembly.GetName().Version?.ToString() ?? "",
+}));
+
 app.MapGet("/api/setup/status", (CredentialsStore store) => Results.Ok(store.GetStatus()));
 app.MapGet("/api/setup/fields", (CredentialsStore store) => Results.Ok(store.GetPublicFields()));
 
@@ -1775,6 +1851,12 @@ app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terape
 // logged-in browser session for a site with no public search API. Search is only ever
 // reached by an explicit click — nothing here is scheduled or triggered by another feature.
 
+// Marketplace's own front page for this account — "Today's picks". Not a search: it is whatever
+// Facebook decided to show the seller near them, which is where local supply they'd never have
+// thought to type turns up. One page load, and only when asked for.
+app.MapGet("/api/facebook/picks", async (FacebookMarketplaceService facebook, CancellationToken ct) =>
+    Results.Ok(await facebook.BrowsePicksAsync(ct)));
+
 app.MapPost("/api/facebook/connect", (FacebookMarketplaceService facebook) =>
 {
     var (started, message) = facebook.StartLogin();
@@ -1952,6 +2034,72 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
 // fees. Deliberately a separate endpoint from the plain searches rather than a flag on them —
 // this one costs a comp lookup per distinct product and can spend Terapeak scrapes, so it only
 // ever runs when someone clicks the button that says so.
+// ── eBay scanner ──────────────────────────────────────────────────────────────
+// eBay as a place to BUY, with the filters that only mean something on eBay: condition, auction
+// vs Buy It Now, a price band, a seller-quality floor. It runs the SAME pipeline as the local
+// board — same grouping, same sold-comp lookup, same ProfitCalculator, same ranking — and returns
+// the same shape, so the browser renders it with the existing table and nothing was forked.
+//
+// It exists as its own route rather than as more parameters on /api/local/arbitrage because these
+// filters are meaningless to every other source: a condition filter on a Craigslist RSS feed or a
+// buying-option filter on a freebie board is a control that silently does nothing.
+app.MapGet("/api/ebay/scan", async (
+    string q, string? condition, string? listingType, decimal? minPrice, decimal? maxPrice,
+    int? minFeedback, string? sort, int? maxItems, int? terapeakBudget, string? category,
+    EbaySupplySource ebaySource, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log, CancellationToken ct) =>
+{
+    // Whitelisted rather than passed through: these reach eBay's own filter syntax, and an
+    // unrecognised value there is an error on the whole search rather than an ignored parameter.
+    var wantedCondition = condition?.ToUpperInvariant() switch
+    {
+        "NEW" or "USED" or "REFURBISHED" or "FOR_PARTS" => condition!.ToUpperInvariant(),
+        _ => null,
+    };
+    var wantedType = listingType?.ToUpperInvariant() switch
+    {
+        "AUCTION" => "AUCTION",
+        "FIXED_PRICE" => "FIXED_PRICE",
+        _ => "BOTH",
+    };
+
+    var filters = new EbayScanFilters(
+        wantedCondition, wantedType,
+        minPrice is > 0 ? minPrice : null,
+        maxPrice is > 0 ? maxPrice : null,
+        Math.Clamp(minFeedback ?? 0, 0, 100000));
+
+    try
+    {
+        var result = await FindLocalArbitrageAsync(
+            q ?? "", "", 40,
+            Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
+            [ebaySource.WithFilters(filters)], craigslistSite: null,
+            // eBay charges sales tax, but it is already inside the delivered price the source
+            // reports — adding a rate on top would double-count it.
+            retailSalesTaxPercent: 0m,
+            marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
+            profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
+            couponService,
+            ResaleCategoryCatalog.Resolve(category));
+
+        return Results.Ok(result);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "eBay scan failed", ex.Message);
+        return Results.Ok(FailedArbitrage(q ?? "", "", 40,
+            $"The eBay scan couldn't be completed: {ex.Message}"));
+    }
+});
+
 app.MapGet("/api/local/arbitrage", async (
     string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
     string? sources, string? craigslistSite, decimal? salesTax, bool? coupons, string? category,
@@ -3015,78 +3163,25 @@ app.MapGet("/api/earnings", (
 // the same window updates rows rather than doubling the seller's profit, which matters because the
 // natural way to use this button is to press it again.
 app.MapPost("/api/earnings/import", async (
-    int? days, EbayService ebay, EarningsStore store, CostBasisStore costBasis,
+    int? days, EarningsImportRunner runner, EarningsStore store, CostBasisStore costBasis,
     EarningsCalculator calculator, FeeProfile feeProfile, ActionLog log, CancellationToken ct) =>
 {
-    var window = Math.Clamp(days ?? 90, 1, 730);
-    var import = new EarningsImportResult { DaysRequested = window };
-
-    List<EbayOrderSummary> orders;
+    // Same gate the automatic refresh takes, so a hand-pressed import and a scheduled one can
+    // never be writing the same rows at once. The manual one waits its turn rather than bailing:
+    // somebody is watching this one.
+    await EarningsAutoImport.ImportGate.WaitAsync(ct);
+    EarningsImportResult import;
     try
     {
-        orders = await ebay.GetOrdersAsync(window, maxOrders: 1000, ct);
+        import = await runner.RunAsync(days ?? 90, ct);
     }
-    catch (EbayPermissionException ex)
+    finally
     {
-        return Results.Ok(new { import = new EarningsImportResult { Status = "reconnect", Message = ex.Message, DaysRequested = window } });
-    }
-    catch (InvalidOperationException ex)
-    {
-        // No token at all — "connect eBay first", not an error.
-        return Results.Ok(new { import = new EarningsImportResult { Status = "not_connected", Message = ex.Message, DaysRequested = window } });
-    }
-    catch (Exception ex)
-    {
-        log.Add("Warning", "Earnings import failed", ex.Message);
-        return Results.Ok(new { import = new EarningsImportResult { Status = "error", Message = ex.Message, DaysRequested = window } });
+        EarningsAutoImport.ImportGate.Release();
     }
 
-    import.OrdersRead = orders.Count;
-    var knownCosts = costBasis.GetAll();
-    // Read once, not once per line: a 1,000-order import would otherwise re-read the whole flips
-    // table for every line item in it.
-    var existingByKey = store.GetAll()
-        .Where(f => !string.IsNullOrWhiteSpace(f.OrderId) && !string.IsNullOrWhiteSpace(f.LineItemId))
-        .ToDictionary(f => (f.OrderId, f.LineItemId));
-
-    foreach (var order in orders)
-    {
-        if (!EarningsImporter.IsCountable(order))
-        {
-            import.LinesSkipped += Math.Max(1, order.LineItems.Count);
-            continue;
-        }
-
-        if (order.TotalMarketplaceFee.HasValue) import.FeesReportedByEbay = true;
-
-        foreach (var flip in EarningsImporter.MapOrder(order))
-        {
-            // The seller's own figures survive a re-import. Someone who typed a shipping cost or a
-            // cost basis against an imported sale must not have it wiped by pressing Import again —
-            // that turns the button into a way to lose work. eBay stays authoritative for
-            // everything eBay knows (price, fee, refunds, title); the seller owns their costs.
-            if (existingByKey.TryGetValue((flip.OrderId, flip.LineItemId), out var existing))
-            {
-                flip.Id = existing.Id;
-                flip.ShippingCost = existing.ShippingCost;
-                flip.OtherCosts = existing.OtherCosts;
-                flip.UnitCost = existing.UnitCost;
-                flip.Note = existing.Note;
-            }
-
-            try
-            {
-                if (store.Upsert(flip)) import.LinesAdded++; else import.LinesUpdated++;
-                import.LinesImported++;
-                if (CostBasisStore.Find(knownCosts, flip.ListingId, flip.Sku) is not null) import.MatchedToCostBasis++;
-            }
-            catch (InvalidOperationException ex)
-            {
-                import.LinesSkipped++;
-                log.Add("Warning", "An eBay order line couldn't be recorded", $"{flip.OrderId}/{flip.LineItemId}: {ex.Message}");
-            }
-        }
-    }
+    if (!string.Equals(import.Status, "ok", StringComparison.OrdinalIgnoreCase))
+        return Results.Ok(new { import });
 
     log.Add("Info", $"Earnings import: {import.LinesImported} sold line(s) from {import.OrdersRead} order(s)",
         $"{import.LinesAdded} new, {import.LinesUpdated} updated, {import.MatchedToCostBasis} already have a cost basis");
@@ -3095,6 +3190,19 @@ app.MapPost("/api/earnings/import", async (
     earnings.Summary.LastImportUtc = DateTimeOffset.UtcNow;
     return Results.Ok(new { import, earnings });
 });
+
+// What the automatic importer has done lately, so the earnings screen can say "updated 20 minutes
+// ago" instead of leaving the seller wondering whether it is running at all.
+app.MapGet("/api/earnings/auto-status", (EarningsAutoImport auto, CredentialsStore credentials) =>
+    Results.Ok(new
+    {
+        ebayConnected  = !string.IsNullOrWhiteSpace(credentials.GetRefreshToken()),
+        lastRunUtc     = auto.LastRunUtc,
+        lastSuccessUtc = auto.LastSuccessUtc,
+        lastStatus     = auto.LastStatus,
+        lastMessage    = auto.LastMessage,
+        linesImported  = auto.LastLinesImported,
+    }));
 
 // Logging a flip the app never listed — a garage-sale find sold on Facebook, a local cash deal.
 // The seller's earnings are their earnings; restricting the tracker to eBay would make the total
@@ -7401,9 +7509,11 @@ app.MapPost("/api/listing/update", async (UpdateListingRequest req, EbayService 
     // reached the browser as a 500 HTML page, on an action the seller had just explicitly confirmed.
     return await Guarded(FailureDomain.Ebay, "Revise live eBay listing", log, async () =>
     {
-        await ebay.UpdateListingAsync(req);
+        var revised = await ebay.UpdateListingAsync(req);
         log.Add("Info", "eBay listing revised", string.IsNullOrWhiteSpace(req.Sku) ? req.OfferId : req.Sku);
-        return new { ok = true };
+        // Hand back what actually reached eBay. A bare ok:true was true even when the call carried
+        // price and quantity and dropped every other edit on the floor.
+        return new { ok = true, changed = revised.Changed, warnings = revised.Warnings, listingId = revised.ListingId };
     });
 });
 
@@ -7679,22 +7789,44 @@ app.MapPost("/api/sniper/bid", async (SniperBidRequest req, EbayService ebay, Ac
     }
 });
 
+// ── Bind the one port ────────────────────────────────────────────────────────
+// Started explicitly rather than through RunAsync(url) so a failed bind is caught here. The
+// already-running check above is a snapshot, and something can still take 9332 in the moment
+// between that check and this line — the answer is the same either way: say so and stop, never
+// fall back to a port the eBay OAuth relay does not redirect to.
+app.Urls.Clear();
+app.Urls.Add(baseUrl);
+try
+{
+    await app.StartAsync();
+}
+catch (Exception ex)
+{
+    app.Services.GetRequiredService<ActionLog>()
+        .Add("Error", $"Could not start on port {port}", ex.Message);
+    if (!isWindowsService)
+    {
+        System.Windows.Forms.MessageBox.Show(
+            AppInstance.ForeignPortMessage(port),
+            "ING AutoLister is not able to start",
+            System.Windows.Forms.MessageBoxButtons.OK,
+            System.Windows.Forms.MessageBoxIcon.Warning);
+    }
+    _mutex?.Dispose();
+    return;
+}
+
 // ── Service mode: headless web server, lifecycle managed by Windows SCM ──────
 if (isWindowsService)
 {
-    await app.RunAsync(baseUrl);
+    await app.WaitForShutdownAsync();
     return;
 }
 
 // ── Interactive mode: background web server + system tray icon ───────────────
-var webTask = app.RunAsync(baseUrl);
-
-// Open the browser automatically once Kestrel has bound the port
-_ = Task.Run(async () =>
-{
-    await Task.Delay(1200);
-    OpenBrowser();
-});
+// The port is already bound by the time this runs, so the browser can be opened straight away —
+// no guess-a-delay wait for a bind that either succeeded above or ended the process.
+OpenBrowser();
 
 // NOTE: the app is reached at http://localhost:9332 — no hosts-file/local-DNS
 // entry is written. Modifying C:\Windows\System32\drivers\etc\hosts is a classic
