@@ -35,6 +35,15 @@ public class LocalSupplyListing
     // what a sourcing search is looking for.
     public decimal? OriginalPrice { get; set; }
 
+    // Set when the tile carried a Sold or Pending badge. Two things follow from it, and they pull
+    // in opposite directions, which is why it is a flag rather than a filter at the parser:
+    //   • it is not supply — nobody can buy it — so it must not be ranked as a deal, and
+    //   • it is the only demand signal Marketplace gives away, so it is worth keeping.
+    // What it is NOT is a sold price. Facebook publishes no sale price; the figure on a sold tile
+    // is the last ASK. Anything storing this has to say so — see FacebookSoldStore.
+    public bool IsSold { get; set; }
+    public string SoldStateText { get; set; } = "";
+
     public string Location { get; set; } = "";
     // Facebook prints a distance on the tile; Craigslist filters by distance server-side but
     // never reports one, so this is legitimately null for Craigslist rows. Always null for a
@@ -131,6 +140,13 @@ public class LocalSupplySearchResult
 
     public List<LocalSupplyListing> Items { get; set; } = [];
     public int Count => Items.Count;
+
+    // Sold/pending tiles seen on the same pass, kept apart from Items on purpose: they are not
+    // supply and must never be priced, ranked or offered as something to go and buy. They are
+    // carried out so the caller can record them (FacebookSoldStore) without a second scrape.
+    // The price on one of these is the last ASK, not a sale price — Facebook publishes no sale
+    // prices at all. Nothing that feeds a comp or an estimate may read this list.
+    public List<LocalSupplyListing> SoldItems { get; set; } = [];
 
     // Ask-price spread across the local results — what the item is going for near the seller
     // right now, which is the number to compare against an eBay sold comp.
