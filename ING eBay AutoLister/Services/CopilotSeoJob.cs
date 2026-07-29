@@ -98,12 +98,7 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
                     // top of the model's answer rather than trusting it to have counted to 80.
                     improved.Title = ListingCopilot.TidyTitle(improved.Title);
 
-                    // THE PHOTOS DO NOT MOVE. ClaudeService already carries the originals through,
-                    // and the prompt tells the model to leave them alone — but the seller's rule is
-                    // absolute and a model cannot be the last thing standing between it and the
-                    // draft. Whatever came back, the draft gets the live listing's own photos, in
-                    // the live listing's own order.
-                    improved.ImageUrls = [.. current.ImageUrls ?? []];
+                    KeepSellerTerms(current, improved);
 
                     if (string.IsNullOrWhiteSpace(improved.Title))
                     {
@@ -133,6 +128,11 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
                             "Already as good as the rewrite would make it — no draft made."));
                         continue;
                     }
+
+                    // What actually changed, across the whole listing. The panel promises the seller
+                    // the full list of changes, and a title diff on its own hides the description
+                    // and the item specifics — which is most of what they paid for.
+                    var changes = CopilotSeoDiff.Describe(current, improved);
 
                     var draftReq = System.Text.Json.JsonSerializer.Deserialize<PostListingRequest>(
                         System.Text.Json.JsonSerializer.Serialize(improved))!;
@@ -171,7 +171,7 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
                     }
 
                     run.Drafted++;
-                    run.Add(new CopilotSeoResult(id, true, before, improved.Title, url, where, draftFile));
+                    run.Add(new CopilotSeoResult(id, true, before, improved.Title, url, where, draftFile, changes));
                 }
                 catch (Exception ex)
                 {
@@ -206,10 +206,61 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
     }
 
     /// <summary>
+    /// Puts the live listing's own photos and its own commercial terms back on the rewrite, whatever
+    /// the model returned.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE PHOTOS DO NOT MOVE. The prompt never shows the model a photo list and
+    /// <see cref="ClaudeService.ImproveSeoAsync"/> carries the originals through — but the seller's
+    /// rule on this is absolute, and a model is not allowed to be the last thing standing between it
+    /// and the draft. Whatever came back, the draft gets the live listing's photos, all of them, in
+    /// the live listing's own order.
+    /// </para>
+    /// <para>
+    /// The same applies to money and logistics. Price, quantity, offer settings, packaging, handling
+    /// time and location are not search fields and were never part of what the seller asked for.
+    /// Silently moving a price is the single worst thing this feature could do, and "the model
+    /// usually leaves it alone" is not a guarantee — this is.
+    /// </para>
+    /// <para>
+    /// Business policies need no line here: they are not on <see cref="ListingData"/> at all, so a
+    /// rewrite has nothing to say about them and the draft falls back to the account's saved
+    /// policies exactly as any other draft would.
+    /// </para>
+    /// </remarks>
+    public static void KeepSellerTerms(ListingData current, ListingData improved)
+    {
+        improved.ImageUrls = [.. current.ImageUrls ?? []];
+
+        improved.Price                    = current.Price;
+        improved.Quantity                 = current.Quantity;
+        improved.BestOfferEnabled         = current.BestOfferEnabled;
+        improved.AutoAcceptPrice          = current.AutoAcceptPrice;
+        improved.AutoDeclinePrice         = current.AutoDeclinePrice;
+        improved.QuantityLimitPerBuyer    = current.QuantityLimitPerBuyer;
+
+        improved.PackageType              = current.PackageType;
+        improved.WeightLbs                = current.WeightLbs;
+        improved.WeightOz                 = current.WeightOz;
+        improved.PackageLengthIn          = current.PackageLengthIn;
+        improved.PackageWidthIn           = current.PackageWidthIn;
+        improved.PackageHeightIn          = current.PackageHeightIn;
+        improved.HandlingTimeBusinessDays = current.HandlingTimeBusinessDays;
+
+        improved.ItemLocationPostalCode   = current.ItemLocationPostalCode;
+        improved.ItemLocationCountry      = current.ItemLocationCountry;
+
+        improved.PrivateListing           = current.PrivateListing;
+        improved.CharityDonationPercentage = current.CharityDonationPercentage;
+        improved.CharityId                = current.CharityId;
+    }
+
+    /// <summary>
     /// Did the rewrite actually change the listing? Compared across everything the pass is asked to
     /// improve, not just the title.
     /// </summary>
-    private static bool ContentChanged(ListingData before, ListingData after)
+    public static bool ContentChanged(ListingData before, ListingData after)
     {
         static string N(string? s) => (s ?? "").Trim();
 
@@ -275,6 +326,11 @@ public sealed class CopilotSeoRun
 /// what lets the UI open the rewrite the seller just paid for — a run that reports drafts nobody
 /// can reach is indistinguishable from one that did nothing.
 /// </param>
+/// <param name="Changes">
+/// What changed across the whole listing, not just the title. <see cref="Before"/> and
+/// <see cref="After"/> are the title diff and always will be; this is the description and the item
+/// specifics the seller would otherwise have no idea had been rewritten.
+/// </param>
 public sealed record CopilotSeoResult(
     string ListingId, bool Ok, string Before, string After, string? SellerHubUrl, string? Note,
-    string? DraftFile = null);
+    string? DraftFile = null, CopilotSeoChanges? Changes = null);

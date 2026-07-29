@@ -13953,6 +13953,38 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .copilot-apply-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* What the rewrite did to the rest of the listing. One line per listing until it is opened: a
+   rewrite fills twenty item specifics, and eighty of those expanded at once is a page nobody
+   reads — but a seller who is never shown them has no idea the description changed either. */
+.copilot-changes { width: 100%; margin-top: 4px; }
+.copilot-changes > summary {
+  cursor: pointer;
+  font-size: var(--fs-2xs, .72rem);
+  color: var(--text-muted, #606e74);
+  padding: 2px 0;
+}
+.copilot-changes > summary:hover { color: var(--text, inherit); }
+.copilot-changes ul {
+  list-style: none;
+  margin: 4px 0 2px;
+  padding: 6px 0 2px 10px;
+  border-left: 2px solid var(--border, rgba(128,128,128,.22));
+  max-height: 220px;
+  overflow-y: auto;
+}
+.copilot-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: var(--fs-2xs, .72rem);
+}
+.copilot-chg-field { flex: none; min-width: 110px; font-weight: 600; }
+.copilot-chg-tag { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px; }
+.copilot-chg-filled  { background: rgba(47,156,59,.15); color: var(--accent, #2f9c3b); }
+.copilot-chg-removed { background: rgba(245,158,11,.15); color: #f59e0b; }
+
 /* Money on a Today's Picks card. The grid answers "what is near me"; these answer
    "is it a buy", which is the only reason to look at the grid. */
 .fb-pick-money { display: block; margin-top: 4px; line-height: 1.35; }

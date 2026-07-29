@@ -742,31 +742,88 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
 
     // ── SEO improvement pass ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Rewrites every part of a listing a buyer can search on, and leaves the commercial terms alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// What decides whether a listing is ever seen is text: the title, the subtitle, the description
+    /// and the item specifics. The item specifics matter most and are the ones sellers leave
+    /// half-empty — eBay builds its left-hand filters out of them, so a blank <em>Model</em> or
+    /// <em>Compatible Brand</em> drops the listing out of every refined search that would have found
+    /// it. The pass is told to FILL the missing ones, not only polish the ones already there.
+    /// </para>
+    /// <para>
+    /// Against that pull: a wrong item specific is worse than a blank one. It brings buyers who
+    /// wanted something else, and an item-not-as-described return costs the seller the item, the
+    /// postage and a defect on the account. So the prompt forbids inventing anything the listing
+    /// does not already support and says plainly that leaving a field out is the right answer when
+    /// the listing cannot establish it.
+    /// </para>
+    /// <para>
+    /// Price, quantity, packaging and location are put back from the request afterwards rather than
+    /// trusted from the answer — they are not SEO, and silently moving a price is the worst thing a
+    /// rewrite could do. The photos are not sent at all: a list the model never sees is a list it
+    /// cannot rewrite, and the seller's own URLs go back on unconditionally below.
+    /// </para>
+    /// </remarks>
     public async Task<ListingData> ImproveSeoAsync(ImproveSeoRequest req)
     {
         var prompt = $"""
             You are an expert eBay seller and SEO copywriter.
-            Below is a draft listing. Improve it for maximum search ranking, buyer trust, and conversion.
+            Below is a seller's listing. Rewrite every part of it that a buyer searches on.
 
-            CURRENT DRAFT:
+            CURRENT LISTING:
             Title: {req.Title}
             Subtitle: {req.Subtitle}
             Category: {req.Category}
             Condition: {req.Condition}
+            Condition description: {req.ConditionDescription}
             Brand: {req.Brand}
-            Price: {req.Price}
+            MPN: {req.Mpn}
+            UPC: {req.Upc}
+            EAN: {req.Ean}
+            ISBN: {req.Isbn}
+            Price: {req.Price} (FIXED — not yours to change)
             Current description (may be poor quality — rewrite it completely):
             {req.Description}
 
             Current item specifics:
             {System.Text.Json.JsonSerializer.Serialize(req.ItemSpecifics)}
 
-            YOUR TASKS:
-            1. Rewrite the title — max 80 characters, keyword-first, no fluff, count the characters
-            2. Rewrite the subtitle — max 55 characters, trust/benefit focused, empty string if not worth it
-            3. Rewrite the description using the premium HTML template — this must look like a real eBay listing
-            4. Fill any missing item specifics; correct any that look wrong
-            5. Keep all other fields (price, condition, category, shipping) as-is unless clearly wrong
+            REWRITE ALL OF THESE:
+            1. Title — max 80 characters, keyword-first, no fluff, count the characters
+            2. Subtitle — max 55 characters, trust/benefit focused, empty string if not worth it
+            3. Description — the full HTML template below; this must look like a real eBay listing
+            4. ItemSpecifics — return every specific above, corrected where it is wrong, PLUS every
+               one that is MISSING and that the listing above establishes. This is the field that
+               decides which buyer filters the listing shows up in, and it is the one most sellers
+               leave half-empty, so filling it is the single most valuable thing in this pass.
+               Include the ones the category expects: Brand, Model, MPN, Type, Colour, Material,
+               Size, Country/Region of Manufacture, and whatever else this product's category filters
+               on. Keep every value to 4 words or fewer.
+            5. ConditionDescription — what a buyer would notice in person, from what the listing
+               already says about its condition. Empty string if the item is new or the listing says
+               nothing about wear.
+            6. Brand and Mpn — fill them in if the listing above states them anywhere, including in
+               the title or the old description.
+
+            NEVER INVENT. Every word you write must be supported by the listing above:
+            - no measurements, capacities, speeds, wattages or compatibility you were not given
+            - no model numbers, part numbers or years you were not given
+            - no "rare", "hard to find", "last one", "discontinued" or any other scarcity claim
+            - no condition claim more flattering than what the listing already says
+            - if a specific cannot be established from the listing, LEAVE IT OUT rather than guess.
+              A missing item specific only costs a search filter. A wrong one gets the seller an
+              item-not-as-described return, the item back, and a defect on their account.
+
+            DO NOT CHANGE — echo these back exactly as they were given:
+            - Price, Quantity, BestOffer settings
+            - PackageType, weight, dimensions, HandlingTimeBusinessDays
+            - ItemLocationPostalCode, ItemLocationCountry
+            - ImageUrls — return an empty array. The seller's own photos are attached afterwards and
+              are not yours to change. The schema below describes reading photo URLs out of an
+              uploaded image; that task is not this one, and does not apply here.
 
             {HtmlTemplateInstructions}
 
@@ -795,7 +852,9 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
             response => DeserializeListing(TextOf(response, "{}")),
             "AI SEO rewrite");
 
-        // Preserve fields that the improve pass shouldn't override
+        // Preserve fields that the improve pass shouldn't override. Anything the seller has already
+        // decided wins; the model's value is only used where the seller has left a blank, which is
+        // what makes this same call useful on a half-written draft in the editor.
         improved.Price                    = req.Price > 0 ? req.Price : improved.Price;
         improved.Quantity                 = req.Quantity > 0 ? req.Quantity : improved.Quantity;
         improved.WeightLbs                = req.WeightLbs > 0 ? req.WeightLbs : improved.WeightLbs;
@@ -805,7 +864,12 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         improved.PackageHeightIn          = req.PackageHeightIn > 0 ? req.PackageHeightIn : improved.PackageHeightIn;
         improved.HandlingTimeBusinessDays = req.HandlingTimeBusinessDays > 0 ? req.HandlingTimeBusinessDays : improved.HandlingTimeBusinessDays;
         improved.ItemLocationPostalCode   = !string.IsNullOrWhiteSpace(req.ItemLocationPostalCode) ? req.ItemLocationPostalCode : improved.ItemLocationPostalCode;
-        improved.ImageUrls                = req.ImageUrls.Count > 0 ? req.ImageUrls : improved.ImageUrls;
+
+        // The photos come from the request, always — not "unless the model returned some". A model
+        // that answered with a URL it made up would otherwise replace what the buyer sees with a
+        // photo of something else, and the old fallback let exactly that through whenever the
+        // request happened to arrive with no photos on it.
+        improved.ImageUrls                = [.. req.ImageUrls ?? []];
 
         return improved;
     }

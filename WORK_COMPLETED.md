@@ -6448,3 +6448,119 @@ from the second-to-last host label, which makes `someshop.co.uk` a site called *
   rather than breaking anything.
 - `queue_forever.py` was untracked before this session and is unrelated; it was **left
   untracked**.
+
+---
+
+## The whole listing, not the title — the Listing Copilot's SEO pass finished off
+
+**Branch:** `auto/queue-features-20260726` · **Baseline:** `2ae06f5`
+
+The seller asked for a bubble that rewrites their listings for SEO: pick the listings, then do
+nothing, and Claude fills out the whole listing without touching the photos. The card, the
+picker and the background job were already there from `4c47006`. Five things were not.
+
+### 1. The rewrite pass only half-knew what it was rewriting
+
+`ClaudeService.ImproveSeoAsync` was never shown the listing's condition description, MPN, UPC,
+EAN or ISBN — it was asked to rewrite fields it could not see. Its instruction on item
+specifics was one line (*"fill any missing item specifics"*) sitting under a schema written for
+a completely different job: photo analysis, which tells the model to invent a price and to read
+image URLs out of a screenshot.
+
+The prompt now puts every seller-controlled text field in front of the model, names item
+specifics as the most valuable thing in the pass and says why (eBay builds its left-hand
+filters out of them, so a blank *Model* drops the listing out of every refined search), and
+carries an explicit **NEVER INVENT** block: no measurement, capacity, speed, wattage,
+compatibility, part number or year that the listing does not already state, no scarcity
+language, and no condition claim more flattering than the listing's own.
+
+> *"A missing item specific only costs a search filter. A wrong one gets the seller an
+> item-not-as-described return, the item back, and a defect on their account."*
+
+That asymmetry is the whole argument, so it is written into the prompt in those words rather
+than left as a style note.
+
+### 2. The photos could still be replaced by a hallucination
+
+`improved.ImageUrls = req.ImageUrls.Count > 0 ? req.ImageUrls : improved.ImageUrls` kept the
+seller's photos **except** when the request arrived carrying none — and then it took the
+model's list, which for this schema means URLs the model was explicitly asked to invent. Now
+unconditional. The model is also no longer shown a photo list at all and is told to return an
+empty array: a list it never sees is a list it cannot rewrite.
+
+Belt and braces on top, in `CopilotSeoJob.KeepSellerTerms`: the draft gets the live listing's
+own photos, all of them, in the live listing's own order, whatever came back.
+
+### 3. Money and postage were guarded by "the model usually leaves it alone"
+
+Price and quantity were preserved *if non-zero*; `PackageType`, `ItemLocationCountry`, best-offer
+settings, per-buyer limits, private-listing and charity fields were not preserved at all. For a
+listing being composed in the editor, fill-if-blank is right — that is where the AI's weight and
+price estimates are useful — so that behaviour stays on the shared call. For a **live** listing
+the rule is absolute, and `KeepSellerTerms` now copies all nineteen commercial and logistics
+fields back from what eBay returned. Business policies need no line: they are not on
+`ListingData`, so a rewrite has nothing to say about them and the draft falls back to the
+account's saved policies like any other.
+
+### 4. The preview showed a title diff and hid everything else
+
+The panel's own promise at the top is *"shows you the full list of changes first"*. The SEO
+card showed a struck-through old title, a new title and a reason — while the description was
+being replaced outright and twenty item specifics filled in behind it.
+
+New `Services/CopilotSeoDiff.cs` describes the change across the whole listing and hands back a
+one-line headline (*"New title, description rewritten, 11 item specifics filled in. Photos
+unchanged."*) plus field-by-field detail in a `<details>` that opens on demand. Three kinds,
+because they read very differently to a seller: `filled` (the point of the feature), `changed`,
+and `removed` — a specific that disappears is a buyer filter the listing falls out of, and it
+is the one outcome most worth catching before publishing.
+
+Sizes, not bodies, for the description: the status endpoint returns up to sixty results on
+every 2.5-second poll, and sixty copies of a 7 KB HTML description is half a megabyte each
+time. Detail lines are capped at 24 per listing for the same reason.
+
+### 5. Stop existed on the server and nothing could reach it
+
+`/api/copilot/improve-seo/cancel` has been there since the job was written, with no button
+anywhere. A seller who started an eighty-listing sweep by mistake could only close the tab and
+let it keep spending. The button appears only while a run is live and says exactly what it
+does — **"Stop after this listing"** — because the listing in progress is already paid for, so
+it is finished rather than thrown away, and every draft made so far is kept.
+
+### Also
+
+- The scan's own preview now says in plain words that titles are all a free scan can see, and
+  that the rewrite replaces the description and fills the item specifics on every listing
+  picked. That gap in wording is how the card came to look like a title fixer in the first place.
+- `Rewrite all my listings` / `Rewrite every listing (89)` — two different labels on the same
+  button depending on which code path last touched it. Unified.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build … -c Debug` | **succeeded**, 0 errors |
+| `dotnet test` | **2195 passed**, 0 failed |
+| `node --check wwwroot/app.js` | clean |
+| Served HTML/JS/CSS from a restarted `AutoListerB1.exe` on `:9332` | new card text, picker, Stop button, `app.js?v=88`, `copilotChangeSummary`, `.copilot-chg-filled` all present; `"Rewrite every title for search"` gone |
+
+New tests in `CopilotSeoCardAssetTests`: the photos survive a model that returns a different,
+longer, shorter, reordered or empty list (`[Theory]`, five cases); all nineteen money and
+postage fields survive a model that changed every one of them; a draft carries no business
+policy of its own; filling previously-empty specifics counts as changed **and** is reported;
+the summary carries the description and specifics rather than raw HTML; a dropped specific is
+reported; the picker, its count and both start buttons are on the card; the prompt still
+forbids invention.
+
+### Known limits
+
+- **The prompt is unproven against the live model this session.** No Anthropic call was made:
+  every assertion here is on what the prompt says and on what the code does with the answer.
+  The anti-fabrication instruction is an instruction, not a guarantee — which is exactly why
+  the photos and the commercial terms are enforced in code afterwards rather than asked for.
+- **A filled item specific is still the model's reading of the seller's own listing.** The
+  prompt forbids going beyond it and the preview names every value written, but the review step
+  before publishing is doing real work and the drafts-only design is not decoration.
+- **Category and condition are still the model's to change.** They are search fields and this
+  writes drafts, so it is deliberate — but it is a wider blast radius than the card's
+  "price, quantity, shipping or policies" sentence spells out.
