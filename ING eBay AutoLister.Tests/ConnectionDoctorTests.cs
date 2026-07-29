@@ -63,7 +63,9 @@ public class ConnectionDoctorTests
         Assert.Contains("3 day(s) ago", check.Detail);
     }
 
-    // eBay answering "no" is a revoked grant; a re-login fixes it and nothing else will.
+    // eBay looking at the request and saying no. Note this is not the revoked-grant case — that one
+    // arrives as ReauthRequiredAt below, and is the only thing that discards a refresh token. A
+    // plain 4xx here is most often the Client Secret no longer matching the grant.
     [Theory]
     [InlineData(400)]
     [InlineData(401)]
@@ -74,6 +76,56 @@ public class ConnectionDoctorTests
 
         Assert.Equal(ConnectionState.AuthRejected, check.State);
         Assert.Contains($"HTTP {status}", check.Reason);
+        // The stored connection was kept, so the advice has to say so — a seller told to reconnect
+        // when the secret is what's wrong reconnects into the same refusal.
+        Assert.Contains("Client ID and Client Secret", check.NextAction);
+    }
+
+    // eBay revoking the grant outranks everything: the tokens are already gone, so every check
+    // below it would otherwise report the "never connected" that revoking one necessarily produces.
+    [Fact]
+    public void Ebay_grant_revoked_by_ebay_reports_the_recorded_reason()
+    {
+        var check = ConnectionDoctor.ClassifyEbay(Ebay(hasRefresh: false, refreshAttempted: false) with
+        {
+            ReauthRequiredAt = Now.AddHours(-2),
+            ReauthReason = "eBay revoked this connection (invalid_grant) — the sign-in was cancelled at eBay.",
+        });
+
+        Assert.Equal(ConnectionState.AuthRejected, check.State);
+        Assert.Contains("invalid_grant", check.Reason);
+        Assert.Contains("Connect eBay Account", check.NextAction);
+    }
+
+    // A sign-in that was attempted and died at the relay is not the same as one never attempted,
+    // and the seller who just watched it fail is owed the specific reason rather than "no token".
+    [Fact]
+    public void Ebay_sign_in_that_failed_is_reported_with_its_own_reason()
+    {
+        var check = ConnectionDoctor.ClassifyEbay(Ebay(hasRefresh: false, refreshAttempted: false) with
+        {
+            SignInFailureReason = "The sign-in relay on inglisting.com answered HTTP 502.",
+            SignInNextAction = "Try connecting again in a few minutes; nothing needs changing here.",
+        });
+
+        Assert.Equal(ConnectionState.NoSession, check.State);
+        Assert.Contains("502", check.Reason);
+        Assert.Contains("few minutes", check.NextAction);
+    }
+
+    // Clicking Connect cannot fix a port. Telling someone to click it anyway is a loop, which is
+    // what every branch below this one would have said.
+    [Fact]
+    public void Ebay_on_the_wrong_port_is_reported_as_the_port_not_as_a_missing_sign_in()
+    {
+        var check = ConnectionDoctor.ClassifyEbay(Ebay(hasRefresh: false, refreshAttempted: false) with
+        {
+            BindingProblem = "ING AutoLister is serving on http://localhost:5000 instead of port 9332.",
+        });
+
+        Assert.Equal(ConnectionState.NotConfigured, check.State);
+        Assert.Contains("5000", check.Reason);
+        Assert.Contains("Restart", check.NextAction);
     }
 
     // The same failed refresh, for the opposite reason. Telling someone to re-authenticate through

@@ -8,7 +8,9 @@ fetch('/api/ebay/auth-url')
   .then(r => r.json())
   .then(d => {
     if (d.url) window.location.href = d.url;
-    else document.body.innerHTML = '<p style="color:red">Error: ' + (d.error || 'Could not build OAuth URL. Check your eBay credentials in Settings.') + '</p>';
+    else document.body.innerHTML = '<p style="color:red">' +
+      (d.error || 'Could not build the eBay sign-in URL. Check your eBay credentials in Settings.') +
+      '</p><p>' + (d.nextAction || '') + '</p>';
   })
   .catch(e => { document.body.innerHTML = '<p style="color:red">Error: ' + e.message + '</p>'; });
 </script>

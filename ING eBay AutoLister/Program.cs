@@ -179,7 +179,13 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 builder.Host.UseWindowsService();
 builder.Services.AddHttpClient();
-builder.Services.AddSingleton<CredentialsStore>();
+// Named by its absolute path, not by ContentRootPath. This file holds the eBay refresh token — an
+// 18-month grant that only the seller, in a browser, can replace — so where it is written must not
+// depend on a hosting property that a future change to ContentRootPath could quietly move.
+builder.Services.AddSingleton(new CredentialsStore(Path.Combine(AppPaths.DataHome, "credentials.json")));
+// Filled in once the server has started and been asked what it actually bound. See ServerBinding:
+// the eBay relay redirects to one fixed address and nothing tells it otherwise.
+builder.Services.AddSingleton<ServerBinding>();
 builder.Services.AddSingleton<ClaudeService>();
 builder.Services.AddSingleton<EbayService>();
 builder.Services.AddSingleton<ListingDatabase>();
@@ -553,17 +559,20 @@ _ = Task.Run(async () =>
     {
         try
         {
-            // 1. Proactive eBay token refresh — top up 20 min before expiry
+            // 1. Proactive eBay token refresh — top up 20 minutes before expiry, and also whenever
+            //    the stored access token is missing or of unknown age (the state a restart leaves
+            //    behind). The loop runs every 5 minutes, so a 20-minute lead gives four attempts
+            //    before anything actually expires — enough to ride out a short outage without the
+            //    seller ever seeing a failed call.
+            //
+            //    TryProactiveRefreshAsync rather than a bare catch: this is the one place a dead
+            //    connection is noticed with nobody watching, and swallowing that is what made a
+            //    revoked grant surface hours later as an unexplained publish failure. It keeps the
+            //    refresh token on every transient failure and discards it only on eBay's explicit
+            //    invalid_grant, which it records for the ConnectionDoctor to report.
             var store = app.Services.GetRequiredService<CredentialsStore>();
-            if (store.IsAccessTokenExpiringSoon(minutes: 20) && store.HasValidRefreshToken())
-            {
-                try
-                {
-                    var ebay = app.Services.GetRequiredService<EbayService>();
-                    await ebay.ProactiveTokenRefreshAsync();
-                }
-                catch { /* non-fatal — will retry next cycle */ }
-            }
+            if (store.ShouldRefreshAccessToken(minutes: 20))
+                await app.Services.GetRequiredService<EbayService>().TryProactiveRefreshAsync();
 
             // 2. Generated-photos cleanup — keep newest 300, delete the rest.
             // ContentRootPath, not WebRootPath: the photos are served out of the data home, and
@@ -6811,59 +6820,62 @@ app.MapGet("/api/image-gen/mode", (CredentialsStore store) =>
 });
 
 // ── eBay OAuth ────────────────────────────────────────────────────
+// A sign-in URL that cannot come back is worse than no URL at all: the seller spends the whole
+// consent flow before it fails, and it fails on eBay's side where the wording blames the app and
+// offers no fix. So a URL that can't work is returned as the reason it can't. See EbayAuthUrlCheck.
 app.MapGet("/api/ebay/auth-url", (EbayService ebay) =>
-    Results.Ok(new { url = ebay.GetAuthorizationUrl() }));
-
-// Legacy direct callback (sandbox / local dev only)
-app.MapGet("/api/ebay/callback", async (string code, EbayService ebay, CredentialsStore store, HttpContext ctx) =>
 {
-    var token = await ebay.ExchangeCodeForTokenResultAsync(code);
-    store.SaveOAuthTokensFull(token.AccessToken, token.RefreshToken, token.ExpiresIn, token.RefreshTokenExpiresIn, token.TokenType);
-    ctx.Response.Redirect("/");
+    var result = ebay.CreateAuthorizationUrl();
+    return result.Problem is { } problem
+        ? Results.BadRequest(new { error = problem.Reason, code = problem.Code, nextAction = problem.NextAction })
+        : Results.Ok(new { url = result.Url });
 });
 
-// Server-relay finish: eBay → inglisting.com/api/ebay/callback (PHP) → here
-// PHP already exchanged the code; this endpoint fetches the tokens from the server pickup endpoint.
-app.MapGet("/api/ebay/finish", async (string session, string pickup, EbayService ebay, CredentialsStore store, ActionLog log, IHttpClientFactory httpFactory, HttpContext ctx) =>
+// Legacy direct callback (sandbox / local dev only): eBay redirects here with the code and this
+// end does the exchange itself, rather than through the relay.
+app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, CredentialsStore store, ActionLog log, HttpContext ctx) =>
 {
-    // Validate session matches what we generated (CSRF check)
-    if (ebay.PendingOAuthSession != session)
+    if (string.IsNullOrWhiteSpace(code))
     {
-        log.Add("Warning", "OAuth finish: state mismatch", $"Expected {ebay.PendingOAuthSession}, got {session}");
-        ctx.Response.Redirect("/?ebay_error=state_mismatch");
+        log.Add("Warning", "eBay sign-in did not complete", "no_code: eBay returned to the app without an authorization code.");
+        ctx.Response.Redirect("/?ebay_error=no_code");
         return;
     }
 
     try
     {
-        var client = httpFactory.CreateClient();
-        var pickupUrl = $"https://inglisting.com/api/ebay/pickup/?session={Uri.EscapeDataString(session)}&pickup={Uri.EscapeDataString(pickup)}";
-        var res = await client.GetAsync(pickupUrl);
-        var body = await res.Content.ReadAsStringAsync();
-
-        if (!res.IsSuccessStatusCode)
+        var token = await ebay.ExchangeCodeForTokenResultAsync(code);
+        if (string.IsNullOrWhiteSpace(token.AccessToken))
         {
-            log.Add("Warning", "OAuth pickup failed", body);
-            ctx.Response.Redirect("/?ebay_error=pickup_failed");
+            log.Add("Warning", "eBay sign-in did not complete", "exchange_empty: eBay accepted the code but issued no token.");
+            ctx.Response.Redirect("/?ebay_error=exchange_empty");
             return;
         }
 
-        var tokens = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(body)!;
-        var accessToken   = tokens.GetValueOrDefault("access_token").GetString()   ?? "";
-        var refreshToken  = tokens.GetValueOrDefault("refresh_token").GetString()  ?? "";
-        var expiresIn     = tokens.GetValueOrDefault("expires_in").TryGetInt32(out var ei) ? ei : 7200;
-        var refreshExpiry = tokens.GetValueOrDefault("refresh_token_expires_in").TryGetInt32(out var ri) ? ri : 47304000;
-        var tokenType     = tokens.GetValueOrDefault("token_type").GetString()     ?? "User Access Token";
-
-        store.SaveOAuthTokensFull(accessToken, refreshToken, expiresIn, refreshExpiry, tokenType);
-        log.Add("Info", "eBay OAuth connected via server relay", "Tokens saved successfully.");
+        store.SaveOAuthTokensFull(token.AccessToken, token.RefreshToken, token.ExpiresIn, token.RefreshTokenExpiresIn, token.TokenType);
+        log.Add("Info", "eBay connected", "Sign-in completed through the direct callback; tokens stored.");
         ctx.Response.Redirect("/?ebay_connected=1");
     }
     catch (Exception ex)
     {
-        log.Add("Error", "OAuth finish exception", ex.Message);
-        ctx.Response.Redirect("/?ebay_error=exception");
+        // Never a bare 500 here: this response is a browser tab the seller is looking at, and an
+        // unhandled exception page is the dead end this whole path exists to stop.
+        log.Add("Warning", "eBay sign-in did not complete", $"exchange_failed: {ex.Message}");
+        ctx.Response.Redirect("/?ebay_error=exchange_failed");
     }
+});
+
+// Server-relay finish: eBay → inglisting.com/api/ebay/callback (PHP) → here.
+// The PHP relay already exchanged the code; this collects the tokens from its pickup endpoint.
+// All of the judgement — session validity, how long to wait, what each relay answer means — lives
+// in EbayService.CompleteRelaySignInAsync, which records the outcome so /api/ebay/status can still
+// explain it after this redirect has been navigated away from.
+app.MapGet("/api/ebay/finish", async (string? session, string? pickup, EbayService ebay, HttpContext ctx) =>
+{
+    var status = await ebay.CompleteRelaySignInAsync(session, pickup, ctx.RequestAborted);
+    ctx.Response.Redirect(status.Stage == EbaySignInStage.Connected
+        ? $"/?ebay_connected=1&ebay_status={Uri.EscapeDataString(status.Code)}"
+        : $"/?ebay_error={Uri.EscapeDataString(status.Code)}");
 });
 
 app.MapPost("/api/ebay/token", async (EbayAuthRequest req, EbayService ebay, CredentialsStore store) =>
@@ -7121,6 +7133,48 @@ app.MapGet("/api/ebay/token-status", (CredentialsStore store) =>
         hasToken = !string.IsNullOrWhiteSpace(store.GetUserToken()),
         hasRefreshToken = !string.IsNullOrWhiteSpace(store.GetRefreshToken())
     }));
+
+// Everything known about the eBay connection, without spending a network call on it: what is
+// stored, when it expires, whether eBay has revoked it, how the last sign-in ended, and whether
+// this app is even on the address eBay's relay redirects to. Cheap enough to poll, which
+// /api/diagnostics/connections (two headless browsers) is not.
+//
+// Carries no token, no secret and no eBay response body — booleans, timestamps and this app's own
+// sentences only.
+app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, ServerBinding binding) =>
+{
+    var c = store.Get();
+    var signIn = ebay.SignInStatus;
+    return Results.Ok(new
+    {
+        hasToken           = !string.IsNullOrWhiteSpace(c.EbayUserToken),
+        hasRefreshToken    = !string.IsNullOrWhiteSpace(c.EbayRefreshToken),
+        accessTokenExpired = store.IsAccessTokenExpired(),
+        accessExpiresAt    = c.EbayTokenExpiresAt?.ToString("u"),
+        refreshExpiresAt   = c.EbayRefreshTokenExpiresAt?.ToString("u"),
+        reauthRequired     = c.EbayReauthRequiredAt is not null,
+        reauthRequiredAt   = c.EbayReauthRequiredAt?.ToString("u"),
+        reauthReason       = c.EbayReauthReason,
+        sandbox            = c.EbaySandbox,
+        signIn = new
+        {
+            stage      = signIn.Stage.ToString(),
+            code       = signIn.Code,
+            message    = signIn.Message,
+            nextAction = signIn.NextAction,
+            startedAt  = signIn.StartedAt?.ToString("u"),
+            updatedAt  = signIn.UpdatedAt?.ToString("u"),
+            detail     = signIn.Detail,
+        },
+        binding = new
+        {
+            expected = AppPaths.BaseUrl,
+            verified = binding.Verified,
+            ok       = binding.IsCorrect,
+            problem  = binding.Problem,
+        },
+    });
+});
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store) =>
 {
@@ -8187,6 +8241,48 @@ catch (Exception ex)
             System.Windows.Forms.MessageBoxButtons.OK,
             System.Windows.Forms.MessageBoxIcon.Warning);
     }
+    _mutex?.Dispose();
+    return;
+}
+
+// ── Assert what was actually bound ───────────────────────────────────────────
+// Asking Kestrel for a port is not the same as getting it. An ASPNETCORE_URLS value, a
+// launchSettings profile or a hosting change can move the binding, and a StartAsync that did not
+// throw proves only that *something* was bound. Everything then works except the one hop that
+// cannot be retried locally: eBay's relay redirects the seller's browser to
+// http://localhost:9332 no matter what this process did, so a wrong binding is a sign-in that
+// dead-ends on a blank tab, with the app itself looking perfectly healthy.
+//
+// So the addresses are read back from the server and checked, and a mismatch stops the app with a
+// message naming the fix — the same trade as the port check above, for the same reason.
+var binding = app.Services.GetRequiredService<ServerBinding>();
+binding.Record(
+    app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
+       .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()?.Addresses,
+    port);
+
+if (binding.Problem is { } bindingProblem)
+{
+    app.Services.GetRequiredService<ActionLog>()
+        .Add("Error", $"Not serving on port {port}", bindingProblem);
+    try
+    {
+        Directory.CreateDirectory(AppPaths.DataHome);
+        File.AppendAllText(Path.Combine(AppPaths.DataHome, "crash.log"),
+            $"{DateTime.Now:u}: {bindingProblem}\n---\n");
+    }
+    catch { }
+
+    if (!isWindowsService)
+    {
+        System.Windows.Forms.MessageBox.Show(
+            bindingProblem,
+            "ING AutoLister is not able to start",
+            System.Windows.Forms.MessageBoxButtons.OK,
+            System.Windows.Forms.MessageBoxIcon.Warning);
+    }
+
+    await app.StopAsync(TimeSpan.FromSeconds(3));
     _mutex?.Dispose();
     return;
 }

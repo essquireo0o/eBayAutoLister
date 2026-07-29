@@ -44,6 +44,16 @@ public sealed record ConnectionCheck(
 
 /// <param name="RefreshHttpStatus">eBay's status when eBay answered and refused; null when nothing answered.</param>
 /// <param name="SellApiStatus">Status of the authenticated Sell API GET; null when nothing answered.</param>
+/// <param name="ReauthRequiredAt">
+/// When eBay last revoked the grant outright (<c>invalid_grant</c>), from credentials.json — so the
+/// verdict survives the restart the seller tries first. Outranks everything below it: there are no
+/// tokens left to test, and nothing but a fresh sign-in changes that.
+/// </param>
+/// <param name="ReauthReason">The recorded reason for <paramref name="ReauthRequiredAt"/>.</param>
+/// <param name="SignInFailureReason">
+/// How the last sign-in attempt ended, when it ended badly. Without this a sign-in that died at the
+/// relay or in a closed browser tab is indistinguishable from never having been attempted.
+/// </param>
 public sealed record EbayConnectionFacts(
     bool HasAppCredentials,
     bool HasRefreshToken,
@@ -54,7 +64,12 @@ public sealed record EbayConnectionFacts(
     string? RefreshError,
     int? SellApiStatus,
     string? SellApiError,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    DateTimeOffset? ReauthRequiredAt = null,
+    string? ReauthReason = null,
+    string? SignInFailureReason = null,
+    string? SignInNextAction = null,
+    string? BindingProblem = null);
 
 /// <summary>
 /// Shared by Facebook and Terapeak because they are the same mechanism — a saved browser
@@ -111,7 +126,8 @@ public sealed class ConnectionDoctor(
     TerapeakService terapeak,
     FacebookMarketplaceService facebook,
     IHttpClientFactory httpFactory,
-    ActionLog log)
+    ActionLog log,
+    ServerBinding? serverBinding = null)
 {
     /// <summary>Ceiling on one headless session probe. A page load and one request, so generous already.</summary>
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(45);
@@ -140,12 +156,20 @@ public sealed class ConnectionDoctor(
         var hasApp = !string.IsNullOrWhiteSpace(c.EbayClientId) && !string.IsNullOrWhiteSpace(c.EbayClientSecret);
         var hasRefresh = !string.IsNullOrWhiteSpace(c.EbayRefreshToken);
 
+        // How the last sign-in ended, if it ended badly. Carried into the facts so a connection
+        // that was never made reports the reason it wasn't, rather than a flat "no token stored".
+        var signIn = ebay.SignInStatus;
+        var signInFailure = signIn.Stage == EbaySignInStage.Failed ? signIn.Message : null;
+        var signInAction  = signIn.Stage == EbaySignInStage.Failed ? signIn.NextAction : null;
+        var binding = serverBinding is { Verified: true } ? serverBinding.Problem : null;
+
         // Don't spend a live token refresh proving something already known from disk.
         if (!hasApp || !hasRefresh)
             return ClassifyEbay(new EbayConnectionFacts(
                 hasApp, hasRefresh, c.EbayRefreshTokenExpiresAt,
                 RefreshAttempted: false, RefreshSucceeded: false, RefreshHttpStatus: null, RefreshError: null,
-                SellApiStatus: null, SellApiError: null, Now: DateTimeOffset.UtcNow));
+                SellApiStatus: null, SellApiError: null, Now: DateTimeOffset.UtcNow,
+                c.EbayReauthRequiredAt, c.EbayReauthReason, signInFailure, signInAction, binding));
 
         var refresh = await ebay.ProbeTokenRefreshAsync();
 
@@ -156,10 +180,14 @@ public sealed class ConnectionDoctor(
         if (refresh.Succeeded)
             (sellStatus, sellError) = await ebay.ProbeSellApiAsync(ct);
 
+        // Re-read: a probe that met invalid_grant has just cleared the tokens and written down why.
+        var after = creds.Get();
+
         return ClassifyEbay(new EbayConnectionFacts(
             hasApp, hasRefresh, c.EbayRefreshTokenExpiresAt,
             refresh.Attempted, refresh.Succeeded, refresh.HttpStatus, refresh.Error,
-            sellStatus, sellError, DateTimeOffset.UtcNow));
+            sellStatus, sellError, DateTimeOffset.UtcNow,
+            after.EbayReauthRequiredAt, after.EbayReauthReason, signInFailure, signInAction, binding));
     }
 
     /// <summary>Refresh tokens last 18 months and do not renew themselves, so a seller who is not
@@ -176,10 +204,35 @@ public sealed class ConnectionDoctor(
                 "The eBay app Client ID and Client Secret haven't been entered, so no token can be issued or refreshed.",
                 "Open Settings → eBay → Advanced and paste the Client ID and Client Secret from your eBay developer account.");
 
+        // eBay saying invalid_grant is the end of the argument: the tokens are already gone, and no
+        // probe below can add anything. Checked first so the recorded reason is what gets reported,
+        // rather than the "no refresh token stored" that revoking one necessarily produces.
+        if (f.ReauthRequiredAt is { } revoked)
+            return new(name, false, ConnectionState.AuthRejected,
+                string.IsNullOrWhiteSpace(f.ReauthReason)
+                    ? "eBay revoked this connection, so the stored sign-in was discarded."
+                    : f.ReauthReason!,
+                reconnect,
+                $"Revoked {revoked:u}.");
+
+        // The relay redirects to one fixed address; if this app isn't on it, a sign-in started now
+        // completes at eBay and then lands nowhere. Worth saying before "click Connect", which is
+        // the advice every branch below would otherwise give for a problem clicking cannot fix.
+        if (f.BindingProblem is { } binding && !f.HasRefreshToken)
+            return new(name, false, ConnectionState.NotConfigured,
+                binding,
+                $"Restart ING AutoLister so it is serving on {AppPaths.BaseUrl}, then connect the eBay account.");
+
         if (!f.HasRefreshToken)
-            return new(name, false, ConnectionState.NoSession,
-                "No eBay refresh token is stored — this account has never finished the OAuth sign-in, or it was disconnected.",
-                reconnect);
+            // A sign-in that was attempted and failed has a specific cause worth more than the
+            // generic "never connected" — the seller did try, and needs to know what stopped it.
+            return f.SignInFailureReason is { Length: > 0 } failure
+                ? new(name, false, ConnectionState.NoSession, failure,
+                    string.IsNullOrWhiteSpace(f.SignInNextAction) ? reconnect : f.SignInNextAction!,
+                    "The last eBay sign-in attempt did not complete.")
+                : new(name, false, ConnectionState.NoSession,
+                    "No eBay refresh token is stored — this account has never finished the OAuth sign-in, or it was disconnected.",
+                    reconnect);
 
         if (f.RefreshTokenExpiresAt is { } expired && expired <= f.Now)
             return new(name, false, ConnectionState.SessionExpired,
@@ -188,12 +241,17 @@ public sealed class ConnectionDoctor(
                 $"Expired {(f.Now - expired).TotalDays:0} day(s) ago.");
 
         if (f.RefreshAttempted && !f.RefreshSucceeded)
-            // 4xx is eBay looking at the grant and refusing it; anything else (5xx, no answer at
+            // 4xx is eBay looking at the request and refusing it; anything else (5xx, no answer at
             // all) is eBay's end being unwell, which no amount of re-authenticating fixes.
+            //
+            // Note this is NOT the revoked-grant branch — that is the ReauthRequiredAt check above,
+            // and it is the only thing that discards a refresh token. A 4xx here is most often the
+            // Client Secret not matching the grant, which re-entering the secret fixes and a
+            // re-login does not.
             return f.RefreshHttpStatus is >= 400 and < 500
                 ? new(name, false, ConnectionState.AuthRejected,
-                    $"eBay refused the stored refresh token with HTTP {f.RefreshHttpStatus} — the grant has been revoked or the app credentials no longer match it.",
-                    reconnect,
+                    $"eBay refused to renew the stored sign-in with HTTP {f.RefreshHttpStatus}, without saying the connection itself is revoked — the app's Client ID/Secret most likely no longer match the account that granted it.",
+                    "Check the Client ID and Client Secret in Settings → eBay → Advanced, then reconnect the eBay account. The stored connection has been kept in the meantime.",
                     $"Token endpoint returned HTTP {f.RefreshHttpStatus}.")
                 : new(name, false, ConnectionState.Unreachable,
                     "The eBay token endpoint didn't give a usable answer, so the stored login couldn't be tested — this is eBay's end or the network, not your account.",

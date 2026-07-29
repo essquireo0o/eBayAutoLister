@@ -28,6 +28,15 @@ public class Credentials
     public DateTimeOffset? EbayRefreshTokenExpiresAt { get; set; }
     public string EbayTokenType { get; set; } = "";
 
+    /// When eBay last refused the stored grant outright (invalid_grant). Set only by
+    /// <see cref="CredentialsStore.MarkEbayReauthRequired"/>, and persisted so the reason survives
+    /// the restart that a seller's first instinct is to try. Null means no such refusal is known.
+    public DateTimeOffset? EbayReauthRequiredAt { get; set; }
+
+    /// The seller-facing reason the connection died. Written by this app, never copied from an eBay
+    /// response body — this string is served from a diagnostics endpoint.
+    public string EbayReauthReason { get; set; } = "";
+
     // Listing defaults — pre-fill every new listing
     public string DefaultPostalCode { get; set; } = "";
     public string DefaultCountry { get; set; } = "US";
@@ -216,21 +225,25 @@ public class CredentialsStore
     public void SaveOAuthTokens(string accessToken, string refreshToken) =>
         SaveOAuthTokensFull(accessToken, refreshToken, 0, 0, "");
 
+    /// <summary>
+    /// Stores what a sign-in or a code exchange came back with, and — when a refresh token was part
+    /// of it — retires any earlier "you must sign in again" verdict, because the seller just did.
+    /// </summary>
     public void SaveOAuthTokensFull(string accessToken, string refreshToken, int accessExpiresIn, int refreshExpiresIn, string tokenType)
     {
+        var now = DateTimeOffset.UtcNow;
+
         if (!string.IsNullOrWhiteSpace(accessToken))
         {
             _data.EbayUserToken = accessToken.Trim();
-            _data.EbayTokenExpiresAt = accessExpiresIn > 0
-                ? DateTimeOffset.UtcNow.AddSeconds(accessExpiresIn)
-                : (DateTimeOffset?)null;
+            _data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(accessExpiresIn, now);
         }
         if (!string.IsNullOrWhiteSpace(refreshToken))
         {
             _data.EbayRefreshToken = refreshToken.Trim();
-            _data.EbayRefreshTokenExpiresAt = refreshExpiresIn > 0
-                ? DateTimeOffset.UtcNow.AddSeconds(refreshExpiresIn)
-                : (DateTimeOffset?)null;
+            _data.EbayRefreshTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(refreshExpiresIn, now);
+            _data.EbayReauthRequiredAt = null;
+            _data.EbayReauthReason = "";
         }
         if (!string.IsNullOrWhiteSpace(tokenType))
             _data.EbayTokenType = tokenType;
@@ -240,9 +253,10 @@ public class CredentialsStore
     public void SaveRefreshedAccessToken(string accessToken, int expiresIn)
     {
         _data.EbayUserToken = accessToken.Trim();
-        _data.EbayTokenExpiresAt = expiresIn > 0
-            ? DateTimeOffset.UtcNow.AddSeconds(expiresIn)
-            : (DateTimeOffset?)null;
+        _data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(expiresIn, DateTimeOffset.UtcNow);
+        // A refresh that worked is proof the grant is alive, whatever an earlier failure recorded.
+        _data.EbayReauthRequiredAt = null;
+        _data.EbayReauthReason = "";
         Persist();
     }
 
@@ -253,18 +267,41 @@ public class CredentialsStore
         _data.EbayTokenExpiresAt = null;
         _data.EbayRefreshTokenExpiresAt = null;
         _data.EbayTokenType = "";
+        _data.EbayReauthRequiredAt = null;
+        _data.EbayReauthReason = "";
         Persist();
     }
+
+    /// <summary>
+    /// eBay has refused the grant itself, so the stored tokens are worthless and only a fresh
+    /// sign-in helps. The reason is kept, because otherwise the seller finds an app that has
+    /// silently disconnected itself and no account of why.
+    /// </summary>
+    /// <remarks>
+    /// The only caller is the <c>invalid_grant</c> branch of the token refresh. Every other failure
+    /// — a timeout, a 500, a refused Client Secret — leaves the refresh token exactly where it is:
+    /// see <see cref="EbayRefreshClassifier"/> for why that distinction is worth this much care.
+    /// </remarks>
+    public void MarkEbayReauthRequired(string reason)
+    {
+        _data.EbayUserToken = "";
+        _data.EbayRefreshToken = "";
+        _data.EbayTokenExpiresAt = null;
+        _data.EbayRefreshTokenExpiresAt = null;
+        _data.EbayTokenType = "";
+        _data.EbayReauthRequiredAt = DateTimeOffset.UtcNow;
+        _data.EbayReauthReason = reason;
+        Persist();
+    }
+
+    public bool IsEbayReauthRequired => _data.EbayReauthRequiredAt is not null;
 
     public string GetUserToken()    => _data.EbayUserToken;
     public string GetRefreshToken() => _data.EbayRefreshToken;
 
-    public bool IsAccessTokenExpired()
-    {
-        if (string.IsNullOrWhiteSpace(_data.EbayUserToken)) return true;
-        if (_data.EbayTokenExpiresAt == null) return false;
-        return DateTimeOffset.UtcNow >= _data.EbayTokenExpiresAt.Value.AddSeconds(-90);
-    }
+    public bool IsAccessTokenExpired() => EbayTokenExpiry.IsAccessTokenExpired(
+        _data.EbayUserToken, _data.EbayTokenExpiresAt,
+        !string.IsNullOrWhiteSpace(_data.EbayRefreshToken), DateTimeOffset.UtcNow);
 
     public void EnsureInstallDate()
     {
@@ -294,19 +331,18 @@ public class CredentialsStore
 
     public bool IsTrialExpired() => TrialDaysRemaining() == 0;
 
-    public bool IsAccessTokenExpiringSoon(int minutes = 20)
-    {
-        if (string.IsNullOrWhiteSpace(_data.EbayUserToken)) return false;
-        if (_data.EbayTokenExpiresAt == null) return false;
-        return DateTimeOffset.UtcNow >= _data.EbayTokenExpiresAt.Value.AddMinutes(-minutes);
-    }
+    /// <summary>
+    /// True when the background loop should top the access token up now. See
+    /// <see cref="EbayTokenExpiry.ShouldRefreshNow"/> — in particular for why a missing access
+    /// token or a missing expiry counts as "yes" rather than "nothing to do".
+    /// </summary>
+    public bool ShouldRefreshAccessToken(int minutes = 20) => EbayTokenExpiry.ShouldRefreshNow(
+        _data.EbayUserToken, _data.EbayTokenExpiresAt,
+        _data.EbayRefreshToken, _data.EbayRefreshTokenExpiresAt,
+        DateTimeOffset.UtcNow, TimeSpan.FromMinutes(minutes));
 
-    public bool HasValidRefreshToken()
-    {
-        if (string.IsNullOrWhiteSpace(_data.EbayRefreshToken)) return false;
-        if (_data.EbayRefreshTokenExpiresAt == null) return true; // no expiry recorded — assume valid
-        return DateTimeOffset.UtcNow < _data.EbayRefreshTokenExpiresAt.Value.AddDays(-1);
-    }
+    public bool HasValidRefreshToken() => EbayTokenExpiry.IsRefreshTokenUsable(
+        _data.EbayRefreshToken, _data.EbayRefreshTokenExpiresAt, DateTimeOffset.UtcNow);
 
     public PublicFields GetPublicFields() => new()
     {

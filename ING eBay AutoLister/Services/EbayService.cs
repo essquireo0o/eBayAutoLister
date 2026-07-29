@@ -8,7 +8,11 @@ using System.Xml.Linq;
 
 namespace ING_eBay_AutoLister.Services;
 
-public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFactory, ActionLog log)
+public class EbayService(
+    CredentialsStore creds,
+    IHttpClientFactory httpClientFactory,
+    ActionLog log,
+    ServerBinding? serverBinding = null)
 {
 
     private static readonly XNamespace EbayNs = "urn:ebay:apis:eBLBaseComponents";
@@ -37,34 +41,278 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
 
     // ── OAuth authorization URL ───────────────────────────────────────────────
 
-    // Stores the session ID for the in-flight OAuth request so /api/ebay/finish can validate it.
-    public string? PendingOAuthSession { get; private set; }
+    /// <summary>Sign-in sessions handed out by this process. See <see cref="EbayOAuthSessionLedger"/>.</summary>
+    private readonly EbayOAuthSessionLedger _sessions = new();
 
-    public string GetAuthorizationUrl()
+    private readonly object _signInSync = new();
+    private EbaySignInStatus _signIn = EbaySignInStatus.Idle;
+
+    /// <summary>
+    /// Where the current (or last) eBay sign-in got to. Ages a pending sign-in out on read, so a
+    /// seller who closed the consent tab eventually gets an answer instead of a spinner.
+    /// </summary>
+    public EbaySignInStatus SignInStatus
+    {
+        get
+        {
+            lock (_signInSync)
+            {
+                _signIn = _signIn.AgedAt(DateTimeOffset.UtcNow);
+                return _signIn;
+            }
+        }
+    }
+
+    private EbaySignInStatus SetSignIn(EbaySignInStatus status)
+    {
+        lock (_signInSync) _signIn = status;
+        return status;
+    }
+
+    /// <summary>
+    /// Builds the eBay consent URL, or explains why it cannot be built.
+    /// </summary>
+    /// <remarks>
+    /// Returns the problem rather than throwing, and rather than producing a URL anyway, because a
+    /// dead-end URL costs the seller the whole consent flow before failing — and fails on eBay's
+    /// side, where the wording blames the application and offers no fix. See
+    /// <see cref="EbayAuthUrlCheck"/> for what has to line up.
+    /// </remarks>
+    public EbayAuthUrlResult CreateAuthorizationUrl()
     {
         var c = creds.Get();
-        if (string.IsNullOrWhiteSpace(c.EbayClientId))
-            throw new InvalidOperationException("eBay Client ID is not configured. Open Settings to add it.");
-        if (c.EbaySandbox && string.IsNullOrWhiteSpace(c.EbayRuName))
-            throw new InvalidOperationException("eBay RuName is not configured. Open Settings to add it.");
+        var problem = EbayAuthUrlCheck.Check(
+            c.EbayClientId, c.EbayClientSecret, c.EbayRuName, c.EbaySandbox,
+            // Only assert the binding once it has actually been checked: during startup, and in
+            // tests, "not verified yet" is not the same as "bound to the wrong port".
+            serverBinding is { Verified: true } ? serverBinding.Problem : null);
 
-        // Random 32-hex-char session ID used as state for CSRF protection and server-side session correlation
-        PendingOAuthSession = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
+        if (problem is not null)
+        {
+            log.Add("Warning", "eBay sign-in URL not built", $"{problem.Code}: {problem.Reason}");
+            SetSignIn(new EbaySignInStatus(
+                EbaySignInStage.Failed, problem.Code, problem.Reason, problem.NextAction,
+                UpdatedAt: DateTimeOffset.UtcNow));
+            return new EbayAuthUrlResult(null, problem);
+        }
 
-        var redirectUri = GetOAuthRedirectUri(forceProduction: false);
-        var scopes = Uri.EscapeDataString(string.Join(" ",
-            "https://api.ebay.com/oauth/api_scope",
-            "https://api.ebay.com/oauth/api_scope/sell.inventory",
-            "https://api.ebay.com/oauth/api_scope/sell.account",
-            "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-            // Send Offer to Interested Buyers. Sellers connected before this was added keep working
-            // everywhere else; the offers screen tells them to reconnect (EbayPermissionException).
-            "https://api.ebay.com/oauth/api_scope/sell.negotiation"));
+        // Random 32-hex-char session ID: eBay's state parameter, the relay's correlation key, and
+        // this app's proof that the callback belongs to a sign-in it actually started.
+        var session = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
+        var now = DateTimeOffset.UtcNow;
+        _sessions.Issue(session, now);
 
-        return $"{AuthUrl}?client_id={Uri.EscapeDataString(c.EbayClientId)}" +
-               $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
-               $"&response_type=code&scope={scopes}&state={Uri.EscapeDataString(PendingOAuthSession)}";
+        SetSignIn(new EbaySignInStatus(
+            EbaySignInStage.AwaitingConsent, "awaiting_consent",
+            "Waiting for you to finish signing in and approve the permissions on eBay's page.",
+            "Complete the eBay sign-in in the browser tab that just opened.",
+            StartedAt: now, UpdatedAt: now));
+
+        log.Add("Info", "eBay sign-in started",
+            $"Environment: {(c.EbaySandbox ? "Sandbox" : "Production")}; scopes: {EbayAuthUrlCheck.Scopes.Length}; returns to {AppPaths.BaseUrl}.");
+
+        return new EbayAuthUrlResult(
+            EbayAuthUrlCheck.Build(AuthUrl, c.EbayClientId, GetOAuthRedirectUri(forceProduction: false), session),
+            null);
     }
+
+    // ── Finishing a relay sign-in ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Completes the sign-in eBay bounced back through the relay: validates the session, collects
+    /// the tokens from inglisting.com's pickup endpoint, and stores them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every ending here is bounded and named. Before this, the pickup was a single unbounded GET
+    /// whose only outcomes were "worked", "pickup_failed" and "exception": a relay that was merely
+    /// slow (the redirect routinely arrives before the relay has written the tokens down) failed
+    /// permanently, and a relay that never answered left the request — and the browser tab — hanging
+    /// on <see cref="HttpClient"/>'s 100-second default with nothing to show for it.
+    /// </para>
+    /// <para>
+    /// The returned status is stored, so <c>/api/ebay/status</c> and the ConnectionDoctor can say
+    /// what happened long after the redirect that caused it has been navigated away from.
+    /// </para>
+    /// </remarks>
+    public async Task<EbaySignInStatus> CompleteRelaySignInAsync(
+        string? session, string? pickup, CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var started = SignInStatus.StartedAt ?? now;
+
+        EbaySignInStatus Fail(string code, string message, string next, string? detail = null)
+        {
+            log.Add("Warning", "eBay sign-in did not complete", $"{code}: {message}");
+            return SetSignIn(new EbaySignInStatus(
+                EbaySignInStage.Failed, code, message, next, started, DateTimeOffset.UtcNow, detail));
+        }
+
+        switch (_sessions.Check(session, now))
+        {
+            case EbaySessionCheck.Valid:
+                break;
+
+            case EbaySessionCheck.AlreadyUsed:
+                // The same link opened twice — browser back button, a double redirect, a refresh.
+                // If it worked the first time there is nothing wrong to report.
+                if (!string.IsNullOrWhiteSpace(creds.GetRefreshToken()))
+                    return SetSignIn(new EbaySignInStatus(
+                        EbaySignInStage.Connected, "already_connected",
+                        "That eBay sign-in had already been completed — the account is connected.",
+                        "Nothing to do.", started, DateTimeOffset.UtcNow));
+
+                return Fail("state_reused",
+                    "This eBay sign-in link has already been used once, and no tokens were kept from it — a sign-in link works exactly once.",
+                    "Click Connect eBay Account to start a fresh sign-in.");
+
+            case EbaySessionCheck.Expired:
+                return Fail("state_expired",
+                    $"This eBay sign-in was started more than {EbayOAuthSessionLedger.Lifetime.TotalMinutes:0} minutes ago, so it has timed out and eBay's code is no longer good.",
+                    "Click Connect eBay Account and complete the eBay screens without leaving them open.");
+
+            default:
+                return Fail("state_mismatch",
+                    "eBay came back with a sign-in this copy of the app didn't start — most often because the app was restarted, or a second copy began the sign-in.",
+                    "Click Connect eBay Account here and complete the sign-in without restarting the app.");
+        }
+
+        if (string.IsNullOrWhiteSpace(pickup))
+            return Fail("no_pickup",
+                "eBay's relay came back without the reference needed to collect the tokens, so there is nothing to fetch.",
+                "Click Connect eBay Account to try the sign-in again.");
+
+        SetSignIn(new EbaySignInStatus(
+            EbaySignInStage.Exchanging, "exchanging",
+            "Collecting your eBay tokens from the sign-in relay.",
+            "This takes a few seconds — leave this tab open.", started, now));
+
+        var (outcome, tokens, status, detail) = await FetchRelayTokensAsync(session!, pickup!, ct);
+
+        switch (outcome)
+        {
+            case EbayPickupOutcome.Ready when tokens is not null:
+                creds.SaveOAuthTokensFull(
+                    tokens.AccessToken, tokens.RefreshToken,
+                    tokens.ExpiresIn, tokens.RefreshTokenExpiresIn, tokens.TokenType);
+                _sessions.Consume(session!, DateTimeOffset.UtcNow);
+
+                if (string.IsNullOrWhiteSpace(tokens.RefreshToken))
+                {
+                    // Usable for about two hours and then dead, with no way to renew it. Connected,
+                    // but saying so without the caveat is how "it worked yesterday" happens.
+                    log.Add("Warning", "eBay connected without a refresh token",
+                        "Access token stored; nothing to renew it with when it expires.");
+                    return SetSignIn(new EbaySignInStatus(
+                        EbaySignInStage.Connected, "no_refresh_token",
+                        "Connected, but eBay didn't issue a refresh token — this sign-in will stop working in about two hours.",
+                        "Reconnect the eBay account and accept every permission on eBay's consent screen.",
+                        started, DateTimeOffset.UtcNow));
+                }
+
+                log.Add("Info", "eBay connected", "Sign-in completed through the relay; tokens stored.");
+                return SetSignIn(new EbaySignInStatus(
+                    EbaySignInStage.Connected, "connected",
+                    "Connected — eBay issued the access and refresh tokens and they are stored.",
+                    "Nothing to do.", started, DateTimeOffset.UtcNow));
+
+            case EbayPickupOutcome.Ready:
+            case EbayPickupOutcome.Malformed:
+                return Fail("pickup_malformed",
+                    "The sign-in relay answered, but not with the token payload this app expects — it is most likely serving an error page.",
+                    "Try connecting again in a few minutes. If it keeps happening, the relay on inglisting.com needs attention.",
+                    detail);
+
+            case EbayPickupOutcome.NotReady:
+                return Fail("pickup_timeout",
+                    $"eBay's relay never handed over the tokens within {EbayRelayPickup.TotalTimeout.TotalSeconds:0} seconds — it accepted the sign-in but has nothing stored for it.",
+                    "Click Connect eBay Account to sign in again.", detail);
+
+            case EbayPickupOutcome.Rejected:
+                return Fail("pickup_rejected",
+                    $"The sign-in relay refused to hand over the tokens (HTTP {status}) — this sign-in reference is not one it will honour.",
+                    "Click Connect eBay Account to start a fresh sign-in.", detail);
+
+            case EbayPickupOutcome.Unavailable:
+                return Fail("relay_unavailable",
+                    $"The sign-in relay on inglisting.com answered HTTP {status} — that is the relay failing, not your eBay account.",
+                    "Try connecting again in a few minutes; nothing needs changing here.", detail);
+
+            default:
+                return Fail("relay_unreachable",
+                    "The sign-in relay on inglisting.com could not be reached at all, so the tokens eBay issued couldn't be collected.",
+                    "Check this machine's internet connection, then click Connect eBay Account again.", detail);
+        }
+    }
+
+    /// <summary>
+    /// Polls the relay's pickup endpoint until it has the tokens, hits
+    /// <see cref="EbayRelayPickup.TotalTimeout"/>, or gets an answer worth stopping on.
+    /// </summary>
+    private async Task<(EbayPickupOutcome Outcome, EbayRelayTokens? Tokens, int? Status, string? Detail)>
+        FetchRelayTokensAsync(string session, string pickup, CancellationToken ct)
+    {
+        var url = "https://inglisting.com/api/ebay/pickup/" +
+                  $"?session={Uri.EscapeDataString(session)}&pickup={Uri.EscapeDataString(pickup)}";
+
+        var deadline = DateTimeOffset.UtcNow + EbayRelayPickup.TotalTimeout;
+        var attempts = 0;
+        int? lastStatus = null;
+        string? lastDetail = null;
+
+        while (true)
+        {
+            attempts++;
+            int? status = null;
+            string? body = null;
+
+            try
+            {
+                var client = httpClientFactory.CreateClient();
+                client.Timeout = EbayRelayPickup.AttemptTimeout;
+                using var res = await client.GetAsync(url, ct);
+                status = (int)res.StatusCode;
+                body = await res.Content.ReadAsStringAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The browser tab went away mid-pickup. Not a verdict on anything.
+                return (EbayPickupOutcome.Unreachable, null, null, "The sign-in request was cancelled.");
+            }
+            catch (TaskCanceledException)
+            {
+                lastDetail = $"No answer within {EbayRelayPickup.AttemptTimeout.TotalSeconds:0}s.";
+            }
+            catch (HttpRequestException ex)
+            {
+                lastDetail = Shorten(ex.Message);
+            }
+
+            var outcome = EbayRelayPickup.Classify(status, body);
+            lastStatus = status ?? lastStatus;
+            if (status is not null) lastDetail = $"Relay answered HTTP {status} on attempt {attempts}.";
+
+            if (outcome == EbayPickupOutcome.Ready)
+            {
+                EbayRelayPickup.TryReadTokens(body, out var tokens);
+                return (EbayPickupOutcome.Ready, tokens, status, lastDetail);
+            }
+
+            // Only "not yet" and an unreachable relay are worth asking again — everything else is
+            // an answer, and asking a second time would only delay reporting it.
+            if (outcome is not (EbayPickupOutcome.NotReady or EbayPickupOutcome.Unreachable))
+                return (outcome, null, status, lastDetail);
+
+            if (DateTimeOffset.UtcNow + EbayRelayPickup.RetryDelay >= deadline)
+                return (outcome, null, lastStatus, $"{lastDetail} Gave up after {attempts} attempt(s).");
+
+            try { await Task.Delay(EbayRelayPickup.RetryDelay, ct); }
+            catch (OperationCanceledException) { return (outcome, null, lastStatus, lastDetail); }
+        }
+    }
+
+    private static string Shorten(string? text) =>
+        string.IsNullOrWhiteSpace(text) ? "" : text.Length <= 160 ? text : text[..160] + "…";
 
     // ── Token exchange ────────────────────────────────────────────────────────
 
@@ -154,13 +402,29 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
 
     // ── Token refresh ─────────────────────────────────────────────────────────
 
+    /// <summary>Ceiling on any single call to eBay's token endpoint.</summary>
+    private static readonly TimeSpan TokenEndpointTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Trades the stored refresh token for a fresh access token.
+    /// </summary>
+    /// <remarks>
+    /// The stored refresh token is only ever destroyed here, and only when eBay explicitly says
+    /// <c>invalid_grant</c>. Anything else — a timeout, a 5xx, a refused Client Secret, a bare 400 —
+    /// leaves it exactly where it is and throws, so the next cycle tries again. See
+    /// <see cref="EbayRefreshClassifier"/>: an 18-month grant that can only be replaced by the
+    /// seller personally re-consenting is not something to discard on the strength of a bad minute.
+    /// </remarks>
     private async Task<string> RefreshAccessTokenAsync(string refreshToken)
     {
         var c = creds.Get();
         if (string.IsNullOrWhiteSpace(c.EbayClientId) || string.IsNullOrWhiteSpace(c.EbayClientSecret))
-            throw new InvalidOperationException("eBay ClientId/ClientSecret not configured — cannot refresh token.");
+            throw new EbayTokenRefreshException(null,
+                "The eBay Client ID and Client Secret are needed to renew the sign-in, and one of them isn't set — the stored connection can't be renewed without them.",
+                invalidGrant: false);
 
         var client = httpClientFactory.CreateClient();
+        client.Timeout = TokenEndpointTimeout;
         var basicCreds = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{c.EbayClientId}:{c.EbayClientSecret}"));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", basicCreds);
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -170,18 +434,52 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
             new("refresh_token", refreshToken)
         ]);
 
-        var response = await client.PostAsync(TokenUrl, body);
-        var responseBody = await response.Content.ReadAsStringAsync();
+        HttpResponseMessage response;
+        string responseBody;
+        try
+        {
+            response = await client.PostAsync(TokenUrl, body);
+            responseBody = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Nothing answered. This says nothing whatever about the grant, so the refresh token
+            // stays put and this reads as the outage it is.
+            log.Add("Warning", "Token refresh could not reach eBay", Shorten(ex.Message));
+            throw new EbayTokenRefreshException(null,
+                "eBay's token service couldn't be reached, so the sign-in couldn't be renewed. The stored connection has been left alone.",
+                invalidGrant: false);
+        }
 
         if (!response.IsSuccessStatusCode)
         {
-            log.Add("Warning", $"Token refresh HTTP {(int)response.StatusCode}", responseBody);
-            // Typed (message unchanged, so the existing catch-and-log sites read the same) because
-            // ConnectionDoctor has to tell "eBay refused this token" apart from "eBay was not
-            // reachable" — one needs a re-login, the other needs nothing but a retry, and a plain
-            // Exception makes them indistinguishable without parsing the message.
-            throw new EbayTokenRefreshException((int)response.StatusCode,
-                $"eBay token refresh failed (HTTP {(int)response.StatusCode}): {responseBody}");
+            var status = (int)response.StatusCode;
+            var failure = EbayRefreshClassifier.Classify(status, responseBody);
+            log.Add("Warning", $"Token refresh HTTP {status}",
+                failure == EbayRefreshFailure.InvalidGrant
+                    ? "eBay reported invalid_grant — the stored eBay connection has been revoked or has expired."
+                    : "eBay refused the renewal without revoking the grant; the stored refresh token has been kept.");
+
+            if (failure == EbayRefreshFailure.InvalidGrant)
+            {
+                const string reason =
+                    "eBay revoked this connection (invalid_grant) — the sign-in was cancelled at eBay, " +
+                    "the password changed, or the 18-month grant ran out. Nothing but a fresh sign-in restores it.";
+                creds.MarkEbayReauthRequired(reason);
+                SetSignIn(new EbaySignInStatus(
+                    EbaySignInStage.Failed, "invalid_grant", reason,
+                    "Open Settings → eBay and click Connect eBay Account to sign in again.",
+                    UpdatedAt: DateTimeOffset.UtcNow));
+
+                throw new EbayTokenRefreshException(status, reason, invalidGrant: true);
+            }
+
+            // Typed because ConnectionDoctor has to tell "eBay refused this token" apart from "eBay
+            // was not reachable" — one needs a re-login, the other needs nothing but a retry, and a
+            // plain Exception makes them indistinguishable without parsing the message.
+            throw new EbayTokenRefreshException(status,
+                $"eBay refused to renew the sign-in (HTTP {status}) without saying the connection is revoked, so the stored connection has been kept and will be retried.",
+                invalidGrant: false);
         }
 
         using var doc = JsonDocument.Parse(responseBody);
@@ -189,9 +487,14 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         var expiresIn   = doc.RootElement.TryGetProperty("expires_in",   out var exp) ? exp.GetInt32()      : 0;
         var tokenType   = doc.RootElement.TryGetProperty("token_type",   out var tt)  ? tt.GetString() ?? "" : "";
 
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new EbayTokenRefreshException((int)response.StatusCode,
+                "eBay accepted the renewal but returned no access token, so there is nothing to use. The stored connection has been kept.",
+                invalidGrant: false);
+
         creds.SaveRefreshedAccessToken(accessToken, expiresIn);
         log.Add("Info", "Access token refreshed",
-            $"Saved: {!string.IsNullOrWhiteSpace(accessToken)}; Expires at: {(expiresIn > 0 ? DateTimeOffset.UtcNow.AddSeconds(expiresIn).ToString("u") : "unknown")}; Type: {tokenType}");
+            $"Saved: true; Expires at: {(expiresIn > 0 ? DateTimeOffset.UtcNow.AddSeconds(expiresIn).ToString("u") : "unknown")}; Type: {tokenType}");
 
         return accessToken;
     }
@@ -688,6 +991,32 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         await RefreshAccessTokenAsync(refreshToken);
     }
 
+    /// <summary>
+    /// The background top-up. Reports what happened instead of throwing, because its caller is a
+    /// loop with nobody watching it — and a <c>catch { }</c> there is precisely how a connection
+    /// that had been dead for a week could still be described as "not connected" and no more.
+    /// </summary>
+    public async Task<EbayRefreshProbeResult> TryProactiveRefreshAsync()
+    {
+        try
+        {
+            await ProactiveTokenRefreshAsync();
+            return new EbayRefreshProbeResult(true, true, null, null);
+        }
+        catch (EbayTokenRefreshException ex)
+        {
+            log.Add(ex.InvalidGrant ? "Error" : "Warning",
+                ex.InvalidGrant ? "eBay connection revoked" : "Scheduled eBay token refresh failed",
+                ex.Message);
+            return new EbayRefreshProbeResult(true, false, ex.StatusCode, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Scheduled eBay token refresh failed", Shorten(ex.Message));
+            return new EbayRefreshProbeResult(true, false, null, Shorten(ex.Message));
+        }
+    }
+
     // ── Diagnostics probes ────────────────────────────────────────────────────
     // Both of these exist for ConnectionDoctor, and both answer rather than throw: a health check
     // that throws is exactly the silent failure it was written to replace. Neither returns a token
@@ -710,11 +1039,11 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
         catch (EbayTokenRefreshException ex)
         {
-            return new EbayRefreshProbeResult(true, false, ex.StatusCode, $"eBay answered HTTP {ex.StatusCode}.");
+            return new EbayRefreshProbeResult(true, false, ex.StatusCode, ex.Message);
         }
         catch (Exception ex)
         {
-            return new EbayRefreshProbeResult(true, false, null, ex.Message);
+            return new EbayRefreshProbeResult(true, false, null, Shorten(ex.Message));
         }
     }
 
@@ -745,25 +1074,38 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         }
     }
 
+    /// <summary>
+    /// The access token to call eBay with, renewed first if it is spent.
+    /// </summary>
+    /// <remarks>
+    /// A missing access token is not the same as a missing connection: after a restart the access
+    /// token may well be gone or hours stale while the 18-month refresh token sits in
+    /// credentials.json, ready. This used to give up at "No eBay user token" without looking, which
+    /// is a connected account reporting itself disconnected until the seller signed in again for
+    /// no reason.
+    /// </remarks>
     private async Task<string> GetOrRefreshTokenAsync()
     {
         var token = creds.GetUserToken();
-        if (string.IsNullOrWhiteSpace(token))
-            throw new InvalidOperationException("No eBay user token. Connect your eBay account first.");
+        var refreshToken = creds.GetRefreshToken();
 
-        if (creds.IsAccessTokenExpired())
+        if (string.IsNullOrWhiteSpace(token) && string.IsNullOrWhiteSpace(refreshToken))
+            throw new InvalidOperationException(creds.Get().EbayReauthRequiredAt is not null
+                ? creds.Get().EbayReauthReason
+                : "This app isn't connected to eBay yet. Open Settings → eBay and click Connect eBay Account.");
+
+        if (!creds.IsAccessTokenExpired()) return token;
+
+        if (string.IsNullOrWhiteSpace(refreshToken))
         {
-            var refreshToken = creds.GetRefreshToken();
-            if (string.IsNullOrWhiteSpace(refreshToken))
-            {
-                log.Add("Warning", "Access token expired, no refresh token", "Re-authenticate via OAuth.");
-                throw new InvalidOperationException("eBay access token has expired. Re-authenticate via OAuth.");
-            }
-            log.Add("Info", "Access token expired — refreshing", "Using stored refresh token");
-            token = await RefreshAccessTokenAsync(refreshToken);
+            log.Add("Warning", "Access token expired, no refresh token", "A fresh eBay sign-in is the only way back.");
+            throw new InvalidOperationException(
+                "The stored eBay access token has expired and there is no refresh token to renew it with. " +
+                "Open Settings → eBay and click Connect eBay Account to sign in again.");
         }
 
-        return token;
+        log.Add("Info", "Access token expired — refreshing", "Using stored refresh token");
+        return await RefreshAccessTokenAsync(refreshToken);
     }
 
     // ── Import listings (Trading API + Inventory API merged) ─────────────────
@@ -3418,11 +3760,29 @@ public sealed record EbayTokenExchangeResult(
     string TokenType,
     string RedirectUri);
 
-/// <summary>eBay answered the token endpoint and refused. Carries the status so a refusal
-/// (4xx — the grant is dead, re-login) can be told from an outage (5xx — try later).</summary>
-public sealed class EbayTokenRefreshException(int statusCode, string message) : Exception(message)
+/// <summary>The stored sign-in could not be renewed.</summary>
+/// <param name="statusCode">
+/// eBay's own status when eBay answered, and null when nothing did — the difference between a
+/// refusal to act on and an outage to wait out.
+/// </param>
+/// <param name="invalidGrant">
+/// True only when eBay explicitly revoked the grant, which is the one case where the stored refresh
+/// token has been thrown away and a fresh sign-in is genuinely required. Everything else left it
+/// in place: see <see cref="EbayRefreshClassifier"/>.
+/// </param>
+public sealed class EbayTokenRefreshException(int? statusCode, string message, bool invalidGrant = false)
+    : Exception(message)
 {
-    public int StatusCode { get; } = statusCode;
+    public int? StatusCode { get; } = statusCode;
+    public bool InvalidGrant { get; } = invalidGrant;
+}
+
+/// <summary>
+/// Either a consent URL or the reason there isn't one — never both, and never neither.
+/// </summary>
+public sealed record EbayAuthUrlResult(string? Url, EbayAuthUrlProblem? Problem)
+{
+    public bool Ok => Url is not null;
 }
 
 /// <summary>Outcome of <see cref="EbayService.ProbeTokenRefreshAsync"/>. Deliberately carries no

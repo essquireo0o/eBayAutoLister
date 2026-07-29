@@ -463,9 +463,19 @@
     await checkTrialStatus();
 
     try {
-      const tokenStatus = await fetch('/api/ebay/token-status').then(r => r.json());
-      updateAuthUI(!!tokenStatus.hasToken);
-      if (tokenStatus.hasToken) {
+      // /api/ebay/status, not token-status: an eBay account that was revoked has no token either,
+      // and reporting that as a plain "not connected" is how a seller finds the app quietly signed
+      // out with no account of why. The server has recorded the reason; show it.
+      const ebayStatus = await fetch('/api/ebay/status').then(r => r.json());
+      updateAuthUI(!!ebayStatus.hasToken);
+      if (ebayStatus.reauthRequired && ebayStatus.reauthReason) {
+        addActivity('eBay connection ended', ebayStatus.reauthReason);
+        showResult('error', `${esc(ebayStatus.reauthReason)} Open Settings → eBay and click Connect eBay Account.`);
+      } else if (ebayStatus.binding && ebayStatus.binding.verified && !ebayStatus.binding.ok) {
+        addActivity('eBay sign-in cannot complete', ebayStatus.binding.problem);
+        showResult('error', esc(ebayStatus.binding.problem));
+      }
+      if (ebayStatus.hasToken) {
         await loadListings('Connected account detected');
         loadPolicies(false); // background — populate dropdowns for next modal open
       } else await loadPlaceholderListings('Sample listings loaded');
@@ -1262,10 +1272,19 @@
         showResult('error', 'Add your eBay Client ID and Client Secret in Settings first.');
         return;
       }
-      const res = await fetch('/api/ebay/auth-url');
-      if (!res.ok) throw new Error(await res.text());
-      const { url } = await res.json();
-      window.location.href = url;
+      // A refusal here is deliberate and already explained — the URL was not built because it
+      // could not have come back. Show that reason rather than the response text, which is how
+      // "eBay login failed: {}" used to be all anybody saw.
+      const res  = await fetch('/api/ebay/auth-url');
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.url) {
+        openSetup(null);
+        showResult('error', body?.error
+          ? `Can't start the eBay sign-in: ${esc(body.error)} ${esc(body.nextAction || '')}`
+          : 'Can\'t start the eBay sign-in, and the app gave no reason. Check Settings → eBay → Advanced.');
+        return;
+      }
+      window.location.href = body.url;
     } catch (err) {
       openSetup(null);
       showResult('error', `eBay login failed: ${esc(err.message)}`);
@@ -12571,11 +12590,25 @@
     if (params.get('ebay_connected') === '1') {
       history.replaceState({}, '', '/');
       updateAuthUI(true);
-      addActivity('eBay connected', 'OAuth login completed successfully.');
-      showResult('ok', '✓ Connected to eBay successfully!');
+      // The server records how the sign-in ended, including the endings that are "connected, but":
+      // an eBay grant issued without a refresh token works for two hours and then stops.
+      const signIn = await fetch('/api/ebay/status').then(r => r.json()).then(s => s.signIn).catch(() => null);
+      addActivity('eBay connected', signIn?.message || 'OAuth login completed successfully.');
+      showResult(signIn?.code === 'no_refresh_token' ? 'error' : 'ok',
+        signIn?.code === 'no_refresh_token'
+          ? `${esc(signIn.message)} ${esc(signIn.nextAction)}`
+          : '✓ Connected to eBay successfully!');
     } else if (params.get('ebay_error')) {
       history.replaceState({}, '', '/');
-      showResult('error', `eBay login failed: ${params.get('ebay_error')}`);
+      // The code in the URL is for the log; the sentence the seller needs is on the server, which
+      // is where it was decided. Falling back to the bare code beats showing nothing.
+      const code = params.get('ebay_error');
+      const signIn = await fetch('/api/ebay/status').then(r => r.json()).then(s => s.signIn).catch(() => null);
+      const detail = signIn && signIn.code === code
+        ? `${esc(signIn.message)} ${esc(signIn.nextAction)}`
+        : `The sign-in stopped at: ${esc(code)}. Open Settings → eBay and click Connect eBay Account to try again.`;
+      addActivity('eBay sign-in failed', detail);
+      showResult('error', `eBay sign-in didn't finish. ${detail}`);
     }
 
     try {
@@ -13074,9 +13107,20 @@
         msg.className = 'ok';
         addActivity('Settings saved', 'Starting eBay OAuth login.');
         setTimeout(async () => {
+          // Not "await ... .url" straight into location.href: when the URL can't be built the
+          // server answers with the reason, and navigating to `undefined` showed the seller a 404
+          // for a problem that had already been diagnosed one line earlier.
+          const body = await fetch('/api/ebay/auth-url').then(r => r.json()).catch(() => null);
+          if (!body?.url) {
+            msg.textContent = body?.error
+              ? `${body.error} ${body.nextAction || ''}`
+              : 'Saved, but the eBay sign-in URL could not be built.';
+            msg.className = 'error';
+            addActivity('eBay sign-in not started', msg.textContent);
+            return;
+          }
           $('setup-overlay')?.classList.add('hidden');
-          const { url } = await fetch('/api/ebay/auth-url').then(r => r.json());
-          window.location.href = url;
+          window.location.href = body.url;
         }, 700);
       }
     } catch (err) {
