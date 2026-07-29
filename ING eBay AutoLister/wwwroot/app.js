@@ -847,8 +847,11 @@
     radar:       { section: 'radar-section',         open: showRadarSection,
                    onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
+    // Off the sidebar at the seller's request, so it carries its own title and icon — a tab opened
+    // by URL would otherwise be labelled "snipe" wearing the Dashboard glyph.
     snipe:       { section: 'snipe-section',         open: showSnipeSection,
-                   onShow: startSnipeTicker, onHide: stopSnipeTicker },
+                   onShow: startSnipeTicker, onHide: stopSnipeTicker,
+                   title: 'Auction Sniper',  icon: '#i-opportunity' },
     budget:      { section: 'budget-section',        open: showBudgetSection },
     offers:      { section: 'offers-section',        open: showOffersSection },
     rescue:      { section: 'rescue-section',        open: showRescueSection },
@@ -3086,6 +3089,31 @@
     return `${row.source}::${row.itemId || row.url || row.title}`;
   }
 
+  // The photo is the decision on this board: nobody can judge a free pool table from the words
+  // "Pool Table". So the empty box has exactly one meaning — this post has no photograph — and a
+  // URL that 404s or is refused by the host it points at has to land on that same box rather than
+  // on the browser's broken-image glyph, which reads as the app being broken instead.
+  const ARB_NO_PHOTO = 'This listing has no photo';
+  const ARB_PHOTO_FAILED = "This listing's photo couldn't be loaded";
+
+  window.__arbThumbFailed = function (img) {
+    const box = document.createElement('span');
+    box.className = 'fb-arb-thumb fb-arb-thumb-empty';
+    box.title = ARB_PHOTO_FAILED;
+    box.setAttribute('aria-label', ARB_PHOTO_FAILED);
+    box.textContent = '📦';
+    img.replaceWith(box);
+  };
+
+  function arbThumbHtml(row) {
+    if (!row.imageUrl) {
+      return `<span class="fb-arb-thumb fb-arb-thumb-empty" title="${ARB_NO_PHOTO}" aria-label="${ARB_NO_PHOTO}">📦</span>`;
+    }
+    // referrerpolicy because several of these hosts refuse a hotlink that names where it came from.
+    return `<img class="fb-arb-thumb" src="${esc(row.imageUrl)}" alt="" loading="lazy" ` +
+           `referrerpolicy="no-referrer" onerror="__arbThumbFailed(this)" />`;
+  }
+
   function arbitrageRowHtml(row, index) {
     const verdict = ARB_VERDICTS[row.verdict] || ARB_VERDICTS.no_data;
     const meta = [
@@ -3163,7 +3191,7 @@
               draws a stray rule across one column halfway up the row. */''}
         <td class="fb-arb-deal" data-label="Deal">
           <span class="fb-arb-item">
-          ${row.imageUrl ? `<img class="fb-arb-thumb" src="${esc(row.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="fb-arb-thumb fb-arb-thumb-empty">📦</span>'}
+          ${arbThumbHtml(row)}
           <span class="fb-arb-item-text">
             <a class="fb-arb-title" href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.title)} ↗</a>
             <span class="fb-arb-meta">${meta}</span>
@@ -10810,6 +10838,12 @@
   let copilotSeoPoll = null;
   // Set from the last status read, so reopening the tab can resume polling a live run.
   let copilotSeoRunning = false;
+  // Drafts this session has already popped open by itself, so a poll that repeats — or reopening
+  // the Copilot tab — cannot open the same rewrite twice.
+  const copilotDraftsAutoOpened = new Set();
+  // A whole-account run makes eighty-odd drafts. Opening eighty-odd tabs is not "it opened for
+  // you", it is a mess to close. Past this the button below does it on request instead.
+  const AUTO_OPEN_DRAFT_LIMIT = 10;
 
   async function runCopilotSeoRewrite(ids) {
     const picked = (ids && ids.length) ? ids : [];
@@ -10953,6 +10987,20 @@
           ).join('') + '</ul>';
 
         on('copilot-seo-open-drafts', 'click', () => openCopilotDrafts(appDrafts.map(r => r.draftFile)));
+
+        // The rewrite opens itself. The seller picked the listing and pressed go; making them then
+        // find a button to see what they paid for is the step this feature kept being asked for.
+        // Only once the run is FINISHED, so tabs do not appear one at a time mid-sweep.
+        if (!s.running) {
+          const fresh = appDrafts.map(r => r.draftFile).filter(f => f && !copilotDraftsAutoOpened.has(f));
+          if (fresh.length && fresh.length <= AUTO_OPEN_DRAFT_LIMIT) {
+            fresh.forEach(f => copilotDraftsAutoOpened.add(f));
+            openCopilotDrafts(fresh);
+          } else {
+            // Too many to open unasked — but never offer the same ones again on the next poll.
+            fresh.forEach(f => copilotDraftsAutoOpened.add(f));
+          }
+        }
         out.querySelectorAll('.copilot-open-draft[data-draft]').forEach(b =>
           b.addEventListener('click', () => openCopilotDrafts([b.dataset.draft])));
       }
@@ -11020,7 +11068,14 @@
     const first = draftTabs.find(t => wanted.includes(t.filename));
     if (first) { activeDraftTabId = first.id; loadTabIntoForm(first); }
     renderDraftTabs();
+    // Show it the way every other route into this screen does — hide the other overlays, and
+    // register the workspace tab up top. Revealing the overlay on its own left the rewrite open
+    // underneath the Copilot with no tab in the bar, so there was nothing to click back to.
+    hideOverlaySections();
     $('new-listing-overlay')?.classList.remove('hidden');
+    $('new-listing-overlay')?.focus();
+    setActiveNavItem('ai');
+    markWorkspaceTabOpen('ai');
     addActivity(`Opened ${wanted.length} rewritten draft${wanted.length === 1 ? '' : 's'}`,
                 'Review the new title, description and item specifics, then publish');
   }

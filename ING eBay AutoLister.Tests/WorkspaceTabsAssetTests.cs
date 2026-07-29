@@ -33,7 +33,7 @@ public class WorkspaceTabsAssetTests
     /// title. Put a button back and the entry comes out of this list.
     /// </summary>
     private static readonly string[] HiddenByRequest =
-        ["inventory", "lots", "relist", "trends", "wheretosell"];
+        ["inventory", "lots", "relist", "trends", "wheretosell", "snipe"];
 
     [Fact]
     public void EveryWorkspaceTabCanLabelItself()

@@ -123,7 +123,11 @@
         <!-- The only sourcing screen that buys on the same marketplace it sells on. Sits directly
              under the Opportunity Finder because it answers the same question with a clock on it:
              not "what could I sell" but "what closes in forty minutes for less than it's worth". -->
-        <button class="nav-item" type="button" data-page="snipe"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Auction Sniper</button>
+        <!-- Auction Sniper (#snipe) was removed from this list at the seller's request. It is the
+             one feature that spends money on its own - /api/sniper/bid places a real maximum bid on
+             a live eBay auction - so it is off the sidebar rather than one stray click away. The
+             screen, its routes and its endpoints are untouched and it still opens on its own URL;
+             put a button back and it returns exactly as it was. -->
         <!-- The only screen that spends money instead of ranking it. Every board above answers
              "which is the best deal"; a seller with $500 has to answer "which SET", and the two
              answers are routinely different. Sits directly under the boards it allocates across. -->
@@ -4933,6 +4937,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=90"></script>
+  <script src="app.js?v=91"></script>
 </body>
 </html>
