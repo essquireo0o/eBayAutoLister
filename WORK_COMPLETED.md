@@ -6887,3 +6887,140 @@ See `docs/screenshots/backend-not-running-recovered.png`.
 - **Server-written error messages are trusted as seller-readable** and pass through `errorText`
   unchanged. That is `FailureTranslator`'s job and it already does it; this change does not
   second-guess it.
+
+---
+
+# Every deal row carries the item's real photo
+
+**Branch** `auto/queue-features-20260726` · **Reported as:** "these items have to have pictures"
+
+A seller ran the local deals board with **Free & free-after-coupon** ticked, zip **02341**, radius
+**40 miles**, blank keyword. 298 results came back, 30 were shown, and **every single row rendered
+the brown 📦 placeholder instead of a photograph**. Nobody can judge a free pool table from the
+words "Pool Table" — on this board the photo *is* the decision.
+
+## What was actually wrong
+
+Measured first, against the running build, before anything was changed.
+
+| Measurement | Result |
+|---|---|
+| Rows returned by `/api/local/arbitrage` for that exact search | 30 |
+| Rows with a non-empty `imageUrl` in the JSON | **0 of 30** |
+
+So the images were never reaching the browser — this was upstream in the data, not hotlink
+blocking or a rendering fault.
+
+The path that was supposed to supply them read the schema.org `ld_searchpage_results` block out of
+Craigslist's no-JavaScript results page and keyed the images by post title. The prior suspicion was
+that the title key was missing. **It was not — there was nothing there to key.** Captured live from
+the free-stuff board:
+
+| Craigslist free board (`/search/zip`), 40 mi of 02341 | Measured |
+|---|---|
+| Static results rows in the page | 358 |
+| `<img>` tags in the whole response | **0** |
+| Occurrences of `images.craigslist.org` | **0** |
+| `ld_searchpage_results` block present | yes |
+| Entries inside it | **0** — a 79-byte document, `itemListElement: []` |
+| RSS feed (`&format=rss`), the old thumbnail source | **blocked** — "Your request has been blocked" |
+
+The same block on the *for-sale* board carries 279 populated entries, which is why the title-keyed
+reader looked like it worked. On the free board it parsed cleanly and found an empty list, so every
+row degraded to the placeholder in silence. Re-keying by post id would have fixed nothing: the
+JSON-LD entries carry **no URL or post id field at all** (`item` keys are `@context`, `@type`,
+`description`, `image`, `name`, `offers`).
+
+## The fix
+
+The photographs exist and Craigslist will serve them — its own results grid shows them. New
+`Services/CraigslistSearchApi.cs` reads the search from the endpoint that grid calls, which returns
+the image id for every post that has one.
+
+**The cost model is unchanged.** This *replaces* the results-page GET rather than adding to it —
+one search is still one request per source. Nothing follows a post into its own page and nothing
+pages. `ParseStaticHtml` stays behind it as the fallback, so if the endpoint ever moves, behaviour
+falls back to exactly what shipped before.
+
+Rows are joined on the **post token**, which the endpoint states for 360 of 360 posts and which is
+also the last segment of the post's permalink — exact and collision-proof, where a title cannot be
+(the free board really does carry two different couches both titled "FREE couch").
+
+Because the response is positional JSON from an endpoint Craigslist does not document, everything
+that matters is read **by tag code or by shape, not by index**. The one exception, the numeric
+price, was checked against the display price on **695 live posts across both boards — 695 agreed,
+0 disagreed**. An unrecognised shape yields zero listings, which is the signal `CraigslistService`
+already acts on by falling back to the HTML page.
+
+One bug was found and fixed by measurement while writing it: the town is the geo index **after**
+the colon, not before. The two are equal often enough to look interchangeable — across 120 live
+posts the second index matched the post's own URL slug **80** times and the first matched **2**.
+
+Also changed:
+
+- **A miss is now visible.** `CraigslistService` logs photo coverage on every search, and logs it
+  at **Warning** when rows came back and *none* of them have photos — the exact silent failure
+  reported here. Live: `11 local listing(s) — 7 of 11 with photos.`
+- **A broken URL falls back cleanly.** The thumbnail carries an `onerror` handler that swaps in the
+  same "no photo" box, so a 404 or a refused hotlink never shows the browser's broken-image glyph,
+  which reads as the app being broken rather than the post being bare.
+- **The 📦 box now means one thing** — *this listing has no photo* — and says so on hover.
+
+## Result — same search, same build, measured
+
+| Free & free-after-coupon · 02341 · 40 mi · blank query | Before | After |
+|---|---|---|
+| Rows shown | 30 | 30 |
+| **Rows with a real photograph** | **0** | **23** |
+| Rows with no photo | 30 | 7 |
+
+All 7 remaining blanks were checked against Craigslist itself and **genuinely have no photograph** —
+the endpoint reports no image for them, and fetching one of the posts directly ("Box Fan") confirms
+zero image URLs on its page. Those are the only rows the 📦 box is now allowed to describe.
+
+## Every other source in the table was audited too
+
+The rule is for the table, not for one source.
+
+| Source | Rows with a photo | Verdict |
+|---|---|---|
+| Free & free-after-coupon | 0 → **23 of 30** | **fixed** |
+| Craigslist (for-sale board) | **29 of 30** | already correct — the 1 blank has no photo on its post page |
+| Retail deal feeds | **19 of 21** | already correct — the 2 blanks are the exact 2 Slickdeals items carrying no image in the feed |
+| Facebook Marketplace | **8 of 8** | already correct |
+| Liquidation & closeouts | **162 of 163 lots** carry `thumbnailLocation` | already correct — the parser reads that field. Could not be scanned live: HiBid was rate-limiting this IP throughout, before and after the change |
+| eBay | reads the Browse API's `image.imageUrl` | already correct |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build … -c Debug` | **succeeded**, 0 errors |
+| `dotnet test` | **2424 passed**, 0 failed — 27 of them new here, no pre-existing test changed or removed |
+| `node --check wwwroot/app.js` | clean |
+| Rebuilt app, real search | see above — 0 → 23 photos |
+
+`wwwroot` is an `EmbeddedResource`, so this was verified by rebuilding and driving the running
+`AutoListerB1.exe` on `:9332`, not by reading the source file. The server confirmed it was serving
+the new asset (`app.js` containing `arbThumbHtml` and `__arbThumbFailed`; `index.html` asking for
+`app.js?v=92`) before the search was re-run.
+
+New tests, all against **real captured fixtures**:
+
+- `CraigslistSearchApiTests` — the free-board response verbatim, including **two different couches
+  with the same title that must each get their own photo**, and a genuinely photo-less post that
+  must not inherit somebody else's.
+- `DealRowPhotoTests` — one photo assertion per source (Craigslist, deal feeds, liquidation,
+  Facebook); the free-board results page kept as evidence that it carries no photograph at all; the
+  photo surviving parser → `LocalSupplyListing` → `LocalArbitrageAnalyzer` → `row.imageUrl`; and the
+  board rendering an `<img>`, falling back on error, and labelling the empty box.
+
+## Known limits
+
+- **Some free posts genuinely have no photograph.** 7 of these 30 do not, and no amount of parsing
+  invents one. They show the 📦 box, which now says so.
+- **The search endpoint is undocumented.** Mitigated three ways: read by tag rather than by
+  position, the HTML page kept as the fallback, and photo coverage logged on every search so the
+  next silent failure announces itself instead of showing 30 empty boxes.
+- **Liquidation could not be measured live.** HiBid rate-limited this IP for the whole session,
+  before and after the change alike. It was audited from a captured search page instead.

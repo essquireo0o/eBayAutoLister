@@ -10,21 +10,27 @@ namespace ING_eBay_AutoLister.Services;
 /// session, no Playwright, no cookies. A search is one plain HTTPS GET, which is why this whole
 /// service is a hundred lines against FacebookMarketplaceService's four hundred.
 ///
-/// What it reads, and why in that order — both were checked against the live site:
-///   • The search page's <b>static results list</b> is the primary source. Craigslist renders its
+/// What it reads, and why in that order — all three were checked against the live site:
+///   • <b>Craigslist's own search endpoint</b> (see <see cref="CraigslistSearchApi"/>) is the
+///     primary source: the request craigslist.org itself makes to fill its results grid. One GET,
+///     360 posts, honours <c>postal</c> + <c>search_distance</c>, and — the reason it is first —
+///     it is the only one of the three that still carries photographs.
+///   • The search page's <b>static results list</b> is the fallback. Craigslist renders its
 ///     results twice: a JavaScript grid, and an <c>ol.cl-static-search-results</c> list emitted
-///     server-side and hidden by CSS for clients that do run JavaScript. That list is complete
-///     (~95 posts for a normal query), needs no browser, and honours <c>postal</c> +
-///     <c>search_distance</c>.
-///   • The <b>RSS feed</b> (<c>&amp;format=rss</c>) is tried only if that returns nothing.
-///     Craigslist now answers 403 to the feed on its current search stack regardless of user
-///     agent, so it can't be the primary path any more — but it's one cheap request on an
+///     server-side and hidden by CSS for clients that do run JavaScript. That list is complete and
+///     needs no browser, but it contains no pictures at all — measured on the free-stuff board,
+///     0 image URLs across 358 results — which is why it is no longer first.
+///   • The <b>RSS feed</b> (<c>&amp;format=rss</c>) is tried only if both return nothing.
+///     Craigslist now answers a block page to the feed on its current search stack regardless of
+///     user agent, so it can't be a real path any more — but it's one cheap request on an
 ///     otherwise-empty search, and it still works on some boards.
 ///
 /// Posture, matching the rest of the local-sourcing code:
 ///   • User-driven only. Nothing here is scheduled or runs as a side effect of another feature.
-///   • One search is one request (two if the first found nothing) for the seller's own query. No
-///     crawling, no paging, no following into post pages, nothing stored.
+///   • One search is one request (more only if the one before it found nothing) for the seller's
+///     own query. No crawling, no paging, no following into post pages, nothing stored. A row's
+///     thumbnail comes out of the search response that was already downloaded — never a request
+///     per row, which at 360 rows is not a thumbnail, it is a crawl.
 ///   • Craigslist's own <c>postal</c> + <c>search_distance</c> parameters do the radius filtering
 ///     server-side, so a search asks for exactly what it needs rather than filtering a wider pull.
 ///   • A 403, a rate-limit or a block page is reported as what it is, once. Retrying past it is
@@ -135,13 +141,34 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
 
         var listings = new List<LocalSupplyListing>();
 
-        var searchUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, rss: false, category: category);
-        var (html, transportError, retryable) = await GetAsync(http, searchUrl, budget.Token, ct);
-        if (html is not null) listings.AddRange(CraigslistParser.ParseStaticHtml(html, freeBoard));
+        // The endpoint craigslist's own results grid uses. First because it is the only path that
+        // still carries photographs, and a sourcing row without a picture is a row a seller cannot
+        // judge — nobody can tell a free pool table from a free pool table by reading "Pool Table".
+        var apiUrl = CraigslistSearchApi.BuildUrl(query, zip, radius, category);
+        var (payload, apiError, apiRetryable) = await GetAsync(http, apiUrl, budget.Token, ct);
+        if (payload is not null) listings.AddRange(CraigslistSearchApi.Parse(payload, freeBoard));
+
+        // Only when that came back with nothing — craigslist moved the endpoint, or changed the
+        // shape it answers in. The page below is the same search by another route, so this costs a
+        // second request on a search that would otherwise have shown the seller an empty board.
+        var transportError = apiError;
+        var retryable = apiRetryable;
+
+        if (listings.Count == 0)
+        {
+            var searchUrl = CraigslistParser.BuildSearchUrl(site.Id, query, zip, radius, rss: false, category: category);
+            var (html, htmlError, htmlRetryable) = await GetAsync(http, searchUrl, budget.Token, ct);
+            if (html is not null) listings.AddRange(CraigslistParser.ParseStaticHtml(html, freeBoard));
+
+            // Whichever of the two actually failed is what the seller hears about; a page that
+            // answered fine and simply had no results in it is not an error.
+            transportError = html is not null ? null : htmlError ?? apiError;
+            retryable = html is not null ? false : htmlRetryable || apiRetryable;
+        }
 
         // A failed request is not an empty market, and the feed is served by the same host that
-        // just refused us — so the fallback is only worth trying when the page itself came back
-        // fine and simply had no results in it (or markup that moved).
+        // just refused us — so the fallback is only worth trying when a page came back fine and
+        // simply had no results in it (or markup that moved).
         if (transportError is not null)
             return Fail(query, zip, radius, transportError, site, retryable);
 
@@ -162,8 +189,19 @@ public sealed class CraigslistService(IHttpClientFactory httpFactory, ActionLog 
                            "pick a different site above if that's the wrong metro.";
         }
 
-        log.Add("Info", "Craigslist search",
-            $"\"{query}\" within {radius} mi of {zip} on {site.Id}.craigslist.org — {result.Count} local listing(s).");
+        // Photo coverage is reported on every search, not just when it goes wrong, because the way
+        // this failed last time was silence: rows arrived, the board rendered, and every picture was
+        // the empty box. A count that says "0 of 30 with photos" names that immediately; the board
+        // itself can only show the same placeholder it shows for a post that genuinely has none.
+        var withPhotos = CraigslistSearchApi.WithPhotos(result.Items);
+        var photoNote = result.Count == 0
+            ? ""
+            : withPhotos == 0
+                ? " — NONE of them have photos, which means the search response carried no images"
+                : $" — {withPhotos} of {result.Count} with photos";
+
+        log.Add(result.Count > 0 && withPhotos == 0 ? "Warning" : "Info", "Craigslist search",
+            $"\"{query}\" within {radius} mi of {zip} on {site.Id}.craigslist.org — {result.Count} local listing(s){photoNote}.");
 
         return result;
     }
