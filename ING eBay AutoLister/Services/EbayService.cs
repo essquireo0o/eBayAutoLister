@@ -368,13 +368,35 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         // to narrow results without a separate eBay Taxonomy API integration.
         var q = string.IsNullOrWhiteSpace(category) ? QuotePhrase(query) : $"{QuotePhrase(query)} {QuotePhrase(category)}";
 
-        var url = "https://api.ebay.com/buy/browse/v1/item_summary/search" +
-                   $"?q={Uri.EscapeDataString(q)}&filter={Uri.EscapeDataString(string.Join(",", filters))}&sort={sort}&limit={limit}";
+        string Url(string keywords) => "https://api.ebay.com/buy/browse/v1/item_summary/search" +
+                   $"?q={Uri.EscapeDataString(keywords)}&filter={Uri.EscapeDataString(string.Join(",", filters))}&sort={sort}&limit={limit}";
 
-        var response = await client.GetAsync(url);
+        var response = await client.GetAsync(Url(q));
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
             throw new Exception($"eBay listing search failed (HTTP {(int)response.StatusCode}): {body}");
+
+        // QuotePhrase turns any multi-word search into an EXACT-PHRASE match, and eBay answers a
+        // phrase that appears in no title with a flat zero. Measured on the live Browse API:
+        //
+        //     miners cryptocurrency    ->  903 results
+        //     "miners cryptocurrency"  ->    0 results
+        //
+        // Word order inside listing titles is not the seller's to predict — "cryptocurrency miners"
+        // and "miners cryptocurrency" are one search to a person and two to eBay. So when the
+        // quoted form finds nothing, fall back to the plain words, which eBay ANDs together. The
+        // quoted form is still tried first: where the phrase does exist it is the tighter answer.
+        if (!body.Contains("\"itemSummaries\"", StringComparison.Ordinal) && q.Contains('"'))
+        {
+            var retry = await client.GetAsync(Url(q.Replace("\"", "")));
+            var retryBody = await retry.Content.ReadAsStringAsync();
+            if (retry.IsSuccessStatusCode && retryBody.Contains("\"itemSummaries\"", StringComparison.Ordinal))
+            {
+                log.Add("Info", "eBay search widened",
+                    $"Nothing matched the exact phrase \"{query}\" — searched the words separately instead.");
+                body = retryBody;
+            }
+        }
 
         var items = new List<EbayOpportunityItem>();
         using var doc = JsonDocument.Parse(body);
