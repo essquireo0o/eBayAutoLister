@@ -31,7 +31,7 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
         var penalties = new List<string>();
         double score = 0;
 
-        var partNumberHit = ExactMatch(target.PartNumber, candidateProduct.PartNumber);
+        var partNumberHit = PartNumberMatch(target.PartNumber, candidateProduct.PartNumber);
         if (partNumberHit) score += ExactIdentifierPoints;
 
         var modelHit = !partNumberHit && ExactMatch(target.Model, candidateProduct.Model);
@@ -110,7 +110,13 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
         if (exclusionReason is null && HasDigit(target.Model) && HasDigit(candidateProduct.Model) &&
             ConflictingValue(target.Model, candidateProduct.Model))
             exclusionReason = "Model number conflict";
-        if (exclusionReason is null && ConflictingValue(target.PartNumber, candidateProduct.PartNumber))
+        // Strict here too, and for the same reason: under the tolerant comparison two part numbers
+        // sharing a prefix were not merely scored as a match, they were not even recognised as a
+        // conflict, so nothing downstream got the chance to exclude the comp.
+        if (exclusionReason is null
+            && !string.IsNullOrWhiteSpace(target.PartNumber)
+            && !string.IsNullOrWhiteSpace(candidateProduct.PartNumber)
+            && !PartNumberMatch(target.PartNumber, candidateProduct.PartNumber))
             exclusionReason = "Part number conflict";
 
         // Bundle mismatch — target is a single item, candidate is explicitly a lot/bundle listing
@@ -169,6 +175,44 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
     /// </summary>
     private static bool BrokenTier(IEnumerable<string> negativeKeywords) =>
         negativeKeywords.Any(k => k is "parts" or "broken" or "for repair");
+
+    /// <summary>
+    /// Part numbers compare whole, not by overlap. Punctuation and case are ignored so
+    /// "A06B-6130-H002" and "A06B6130H002" are the same part; anything else is a different part.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ExactMatch"/> deliberately tolerates 60% token overlap with prefix matching,
+    /// which is right for a model ("S19" should match "S19j") and catastrophic for a part number,
+    /// where the suffix IS the product. Measured on the live board:
+    ///
+    ///   target    A06B-6130-K200   a connector plug listed at $36
+    ///   candidate A06B-6130-H002   a servo amplifier that sold for $550-$1,256
+    ///
+    /// Tokenised those are [a06b, 6130, k200] and [a06b, 6130, h002] - two of three segments agree,
+    /// the 60% bar is met, and the plug scored the top 35-point exact-identifier tier against thirty
+    /// amplifier comps. The board then reported it as the day's best deal: $421 net, 1187% ROI,
+    /// flagged Goldmine. Every number downstream was arithmetically correct and the row was fiction.
+    ///
+    /// A wrong comp is worse than no comp: no comp shows as "no sold data" and gets checked by hand,
+    /// while a wrong one gets bought.
+    /// </remarks>
+    public static bool PartNumberMatch(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+
+        static string Key(string s)
+        {
+            Span<char> buf = stackalloc char[s.Length];
+            var n = 0;
+            foreach (var c in s)
+                if (char.IsLetterOrDigit(c)) buf[n++] = char.ToUpperInvariant(c);
+            return new string(buf[..n]);
+        }
+
+        var ka = Key(a);
+        var kb = Key(b);
+        return ka.Length > 0 && ka == kb;
+    }
 
     private static bool ExactMatch(string? a, string? b)
     {
