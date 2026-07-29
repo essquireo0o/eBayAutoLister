@@ -418,6 +418,7 @@
     bindNewListingModal();
     bindImageGenSetup();
     bindPgImggen();
+    bindConnectionDoctor();
     bindOpportunitySearch();
     bindSupplierAnalyzer();
     bindFacebookMarketplace();
@@ -1056,6 +1057,9 @@
     $('settings-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setActiveNavItem('settings');
     markWorkspaceTabOpen('settings');
+    // Paints the panel, never runs the check: the doctor costs two Chrome
+    // launches, so arriving at Settings must not start one.
+    renderConnectionsPanel();
     await refreshRequiredState();
     await loadSettingsStatus();
     await loadTerapeakStatus();
@@ -1243,6 +1247,257 @@
   async function facebookDisconnect() {
     await fetch('/api/facebook/disconnect', { method: 'POST' }).catch(() => {});
     await loadFacebookStatus();
+  }
+
+  // The topbar's "Log into eBay" and the connection doctor's "Connect eBay" have
+  // to start the same flow, including the part where missing developer keys send
+  // you to the setup modal instead of to a broken auth URL — two copies of that
+  // is how one of them ends up sending people somewhere useless.
+  async function startEbayConnect() {
+    try {
+      const status = await fetch('/api/setup/status').then(r => r.json());
+      const hasEbayCreds = status.hasEbayClientId && status.hasEbayClientSecret;
+      if (!hasEbayCreds) {
+        openSetup(status);
+        showResult('error', 'Add your eBay Client ID and Client Secret in Settings first.');
+        return;
+      }
+      const res = await fetch('/api/ebay/auth-url');
+      if (!res.ok) throw new Error(await res.text());
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch (err) {
+      openSetup(null);
+      showResult('error', `eBay login failed: ${esc(err.message)}`);
+    }
+  }
+
+  // ── Connection doctor ────────────────────────────────────────────────────
+  // The Settings panel that answers "is this actually connected, and if not,
+  // why". Everything above this line reports a connection from a saved flag — a
+  // session file on disk, a token in the credentials store — which is how a
+  // revoked eBay grant, a dead Facebook login and an unreachable comps host all
+  // went on looking identical (and, in two of the three cases, looking fine).
+  // /api/diagnostics/connections goes and asks instead; see ConnectionDoctor.
+  //
+  // Two rules this panel does not bend:
+  //   * A row reads Connected only when the doctor just said Connected. There is
+  //     no optimistic paint and no "assume ok while loading" — before a check and
+  //     during one, every row is explicitly unknown.
+  //   * Nothing runs it on the way past. Two Chrome launches and up to a minute
+  //     is a button, not a poll, so Settings opens on the idle state.
+
+  /** The last verdict and when it was taken, or null if never asked this session. */
+  let lastConnectionCheck = null;
+  let connectionCheckInFlight = false;
+
+  /**
+   * The fix behind each row, matched against the name the doctor reports rather
+   * than an id it doesn't send. Facebook/Terapeak/comps are tested before eBay
+   * because "eBay OAuth" is the loosest pattern of the four.
+   */
+  const CONNECTION_FIXES = [
+    {
+      key: 'facebook', match: /facebook/i, label: 'Connect Facebook', run: facebookConnect,
+      // NEEDS-HUMAN, said in the row rather than left to be discovered: this
+      // opens a real browser window and then waits for a person to type a
+      // password into it. A window that opened behind the app is the single
+      // most common way this looks like a hung button.
+      human: 'Sign in to Facebook in the window that opens.',
+      // Without Node/Playwright, Connect cannot work at all and the doctor's own
+      // next action is "install Node" — offering the button anyway is a dead end.
+      unavailableIn: ['NotConfigured'],
+    },
+    {
+      key: 'terapeak', match: /terapeak/i, label: 'Connect Terapeak', run: terapeakConnect,
+      human: 'Sign in to eBay in the window that opens.',
+      unavailableIn: ['NotConfigured'],
+    },
+    // There is no per-connection endpoint, so this re-runs the doctor. The comps
+    // answer it gives back is a fresh live query either way, which is what the
+    // button promises.
+    { key: 'comps', match: /comps/i, label: 'Test comps API', run: () => checkConnections() },
+    {
+      key: 'ebay', match: /ebay/i, label: 'Connect eBay', run: startEbayConnect,
+      human: 'eBay opens its own sign-in page — accept every permission it asks for.',
+    },
+  ];
+
+  /** Chip wording per doctor state. "Connected" is reachable from Ok and nowhere else. */
+  const CONNECTION_STATE_LABEL = {
+    Ok: 'Connected',
+    NotConfigured: 'Not set up',
+    NoSession: 'Not signed in',
+    SessionExpired: 'Sign-in expired',
+    AuthRejected: 'Sign-in refused',
+    Unreachable: 'Couldn\'t reach it',
+  };
+
+  /**
+   * ok = the doctor proved it. bad = a login to fix. warn = nothing wrong with
+   * the credentials (unreachable, or never set up — three of the four are
+   * optional and "not set up" must not read as a failure). unknown = we don't
+   * know, which is where a half-answer lands rather than defaulting to green.
+   */
+  function connectionTone(c) {
+    if (c.connected === true && c.state === 'Ok') return 'ok';
+    if (c.connected === true || c.state === 'Ok') return 'unknown';
+    return c.state === 'Unreachable' || c.state === 'NotConfigured' ? 'warn' : 'bad';
+  }
+
+  function connectionFixFor(name) {
+    return CONNECTION_FIXES.find(f => f.match.test(name || '')) || null;
+  }
+
+  function connectionRowHtml(c) {
+    const tone = connectionTone(c);
+    const connected = tone === 'ok';
+    const fix = connectionFixFor(c.name);
+    // "Nothing to do." is how the doctor says a connected row needs nothing.
+    // Anything else on a connected row is a warning worth acting on before it
+    // becomes an outage — an eBay refresh token a fortnight from expiring is
+    // connected today and dead listings on the day it lapses.
+    const actionable = !connected || (c.nextAction && c.nextAction !== 'Nothing to do.');
+    const canFix = !!fix && actionable && !(fix.unavailableIn || []).includes(c.state);
+
+    // Everything below is escaped, and nothing here is a credential: the doctor's
+    // Detail carries status codes, expiry dates and row counts only, never a
+    // token, cookie, key or URL with one in it.
+    return `
+      <div class="cd-row cd-row--${tone}" data-cd-row="${esc(fix ? fix.key : c.name)}">
+        <div class="cd-row-body">
+          <div class="cd-row-head">
+            <span class="cd-row-name">${esc(c.name)}</span>
+            <span class="cd-chip">${esc(CONNECTION_STATE_LABEL[c.state] || 'Unknown')}</span>
+          </div>
+          <p class="cd-reason">${esc(c.reason)}</p>
+          ${!connected && fix?.human ? `<p class="cd-human"><strong>Needs you:</strong> ${esc(fix.human)}</p>` : ''}
+          ${actionable && c.nextAction ? `<p class="cd-next">${esc(c.nextAction)}</p>` : ''}
+          ${c.detail ? `<p class="cd-detail">${esc(c.detail)}</p>` : ''}
+        </div>
+        ${canFix ? `<div class="cd-row-actions">
+          <button class="btn ${connected ? 'btn-secondary' : 'btn-primary'} small" type="button"
+                  data-cd-fix="${esc(fix.key)}">${esc(fix.label)}</button>
+        </div>` : ''}
+      </div>`;
+  }
+
+  /** The head chip. Never says anything about connections it hasn't been told about. */
+  function setConnectionsSummary(text, allGood = false) {
+    setConnectState('cd-summary', allGood, text, text);
+  }
+
+  function renderConnectionResults(rows, checkedAt) {
+    const host = $('cd-rows');
+    if (!host) return;
+    host.innerHTML = rows.map(connectionRowHtml).join('');
+    const good = rows.filter(c => connectionTone(c) === 'ok').length;
+    const clock = checkedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // The time is part of the verdict: a result from twenty minutes ago is a
+    // claim about twenty minutes ago, and this panel doesn't refresh itself.
+    setConnectionsSummary(`${good} of ${rows.length} connected · ${clock}`, good === rows.length);
+  }
+
+  /**
+   * What Settings opens on. Says plainly that nothing has been tested rather
+   * than showing four hopeful rows — the panel exists because unearned green
+   * chips were the original problem.
+   */
+  function renderConnectionsPanel() {
+    const host = $('cd-rows');
+    if (!host) return;
+    if (lastConnectionCheck) {
+      renderConnectionResults(lastConnectionCheck.rows, lastConnectionCheck.at);
+      return;
+    }
+    renderState(host, {
+      icon: 'i-plug',
+      compact: true,
+      title: 'Connections haven\'t been checked yet',
+      body: 'This tests all four for real — an eBay token refresh and an authenticated API call, both saved browser logins replayed, and a live query against the comps API — then says exactly what\'s wrong with any that are down.',
+      hint: 'Takes up to a minute, so it only runs when you ask it to.',
+      actions: [{ label: 'Check connections', id: 'check', kind: 'btn-primary' }],
+    }, { check: () => checkConnections() });
+    setConnectionsSummary('Not checked yet');
+  }
+
+  async function checkConnections() {
+    const host = $('cd-rows');
+    if (!host || connectionCheckInFlight) return;
+    connectionCheckInFlight = true;
+    $('cd-recheck')?.classList.add('is-busy');
+    // Skeletons, not the last verdict dimmed: while the check is running we do
+    // not know the answer, and the previous answer is exactly the stale claim
+    // this panel was built to stop making.
+    host.innerHTML = skeletonRowsHtml(4);
+    setConnectionsSummary('Checking…');
+
+    try {
+      const res = await fetch('/api/diagnostics/connections');
+      if (!res.ok) throw new Error(`The diagnostics endpoint answered HTTP ${res.status}.`);
+      const rows = (await res.json())?.connections;
+      if (!Array.isArray(rows) || rows.length === 0)
+        throw new Error('The diagnostics endpoint returned no connections.');
+      lastConnectionCheck = { rows, at: new Date() };
+      renderConnectionResults(rows, lastConnectionCheck.at);
+    } catch (err) {
+      // A failed check is not a failed connection — it says nothing about any of
+      // them, so nothing gets a verdict here.
+      renderState(host, {
+        variant: 'error',
+        compact: true,
+        title: 'Couldn\'t run the connection check',
+        body: 'The app is running but the diagnostics endpoint didn\'t answer, so none of the four connections were tested. Nothing below is a verdict on them.',
+        detail: err.message,
+        actions: [{ label: 'Try again', id: 'retry', kind: 'btn-primary' }],
+      }, { retry: () => checkConnections() });
+      setConnectionsSummary('Check failed');
+    } finally {
+      connectionCheckInFlight = false;
+      $('cd-recheck')?.classList.remove('is-busy');
+    }
+  }
+
+  /**
+   * A verdict was true when it was taken and stops being true the moment a fix
+   * starts. Rather than leave "sign-in expired" on screen next to the login
+   * window the seller is typing into, the row says what it is now waiting for —
+   * and still doesn't turn green until a re-check earns it.
+   */
+  function markConnectionRowWaiting(fix) {
+    const row = document.querySelector(`#cd-rows [data-cd-row="${fix.key}"]`);
+    if (!row) return;
+    const name = row.querySelector('.cd-row-name')?.textContent || fix.label;
+    row.className = 'cd-row cd-row--unknown';
+    row.innerHTML = `
+      <div class="cd-row-body">
+        <div class="cd-row-head">
+          <span class="cd-row-name">${esc(name)}</span>
+          <span class="cd-chip">Waiting for you</span>
+        </div>
+        <p class="cd-human"><strong>Needs you:</strong> ${esc(fix.human)}
+          Don't see it? Alt+Tab, or check the taskbar for the login window.</p>
+        <p class="cd-next">When you're done, click Re-check all — this panel won't call it connected until a check proves it.</p>
+      </div>`;
+    setConnectionsSummary('Re-check when you\'re done');
+  }
+
+  function bindConnectionDoctor() {
+    on('cd-recheck', 'click', () => checkConnections());
+    // Delegated: the rows are replaced on every check, so binding per button
+    // would leave the fixes wired to markup that is no longer on the page.
+    $('cd-rows')?.addEventListener('click', e => {
+      const btn = e.target.closest('[data-cd-fix]');
+      if (!btn) return;
+      const fix = CONNECTION_FIXES.find(f => f.key === btn.dataset.cdFix);
+      if (!fix) return;
+      if (fix.human) markConnectionRowWaiting(fix);
+      // Called with no event on purpose: terapeakConnect/facebookConnect fall
+      // back to their own Settings buttons, which are on this same page and are
+      // the ones that should show "connecting…" — the row above has already been
+      // replaced by then.
+      fix.run();
+    });
   }
 
   // ── Pluggable local supply sources ───────────────────────────────────────
@@ -12540,24 +12795,7 @@
       if (e.key === 'Escape') $('setup-overlay')?.classList.add('hidden');
     });
 
-    on('btn-connect', 'click', async () => {
-      try {
-        const status = await fetch('/api/setup/status').then(r => r.json());
-        const hasEbayCreds = status.hasEbayClientId && status.hasEbayClientSecret;
-        if (!hasEbayCreds) {
-          openSetup(status);
-          showResult('error', 'Add your eBay Client ID and Client Secret in Settings first.');
-          return;
-        }
-        const res = await fetch('/api/ebay/auth-url');
-        if (!res.ok) throw new Error(await res.text());
-        const { url } = await res.json();
-        window.location.href = url;
-      } catch (err) {
-        openSetup(null);
-        showResult('error', `eBay login failed: ${esc(err.message)}`);
-      }
-    });
+    on('btn-connect', 'click', startEbayConnect);
 
     on('btn-disconnect', 'click', async () => {
       ebayToken = '';

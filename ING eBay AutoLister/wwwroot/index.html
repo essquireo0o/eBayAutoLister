@@ -3939,10 +3939,44 @@
         <div class="panel-header">
           <div>
             <p class="eyebrow dark">Settings</p>
-            <h2>Local System Status</h2>
+            <h2>Connections &amp; Local System Status</h2>
           </div>
           <button id="btn-open-credentials" class="btn btn-secondary" type="button">API Credentials</button>
         </div>
+
+        <!-- ── Connections ────────────────────────────────────────────────────
+             The connection doctor, on screen. Every other connection readout in
+             this app — the strips below, the banners, the checklist — reports a
+             saved flag: a session file on disk, a token in the credentials
+             store. That is exactly how a revoked eBay grant and a dead Facebook
+             login went on claiming to be fine while every lookup came back
+             empty. These rows come from /api/diagnostics/connections, which
+             goes and asks instead: a live token refresh plus an authenticated
+             Sell API call, both saved browser sessions replayed headlessly, and
+             a real query against the comps API.
+
+             So it is a button and not a status light. It costs two Chrome
+             launches and the better part of a minute, nothing here runs on the
+             way past, and — the rule the whole panel exists for — a row reads
+             Connected only when the doctor just said Connected. Never
+             optimistic, never "assume ok while it loads". -->
+        <div class="setup-section settings-card connect-card" id="pg-connections-card">
+          <div class="connect-card-head">
+            <h3>Connections</h3>
+            <div class="cd-head-actions">
+              <span id="cd-summary" class="connect-state">Not checked yet</span>
+              <button id="cd-recheck" class="btn btn-secondary small" type="button">Re-check all</button>
+            </div>
+          </div>
+          <p class="settings-card-copy">
+            Tests each connection for real, right now, and says exactly what's wrong with any that are
+            down — a dead sign-in, a refused key and a host that didn't answer all need different fixes.
+            Allow up to a minute: it opens a browser for the saved Facebook and Terapeak logins.
+          </p>
+          <div id="cd-rows" class="cd-rows" aria-live="polite"></div>
+        </div>
+
+        <p class="settings-eyebrow">Local system status</p>
         <div id="settings-status" class="settings-list"></div>
 
         <!-- ── Required setup ─────────────────────────────────────────────────
@@ -4878,6 +4912,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=86"></script>
+  <script src="app.js?v=87"></script>
 </body>
 </html>

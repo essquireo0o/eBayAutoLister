@@ -3880,6 +3880,7 @@ textarea {
   color: var(--success);
 }
 
+.settings-eyebrow,
 .settings-optional-eyebrow {
   margin: 26px 0 -4px;
   color: var(--muted);
@@ -3908,6 +3909,134 @@ textarea {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
+}
+
+/* ── Connections: the connection doctor ─────────────────────────────
+   One row per connection, in the same card frame and the same chip as the
+   connect strips above — it answers the same question, it just answers it
+   with a live test rather than a saved flag. The tones are the app's
+   semantic families and nothing else, and green is spent on exactly one
+   thing: the doctor said Connected. */
+.cd-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+
+.cd-rows {
+  display: grid;
+  gap: var(--s2);
+}
+
+.cd-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  /* The tone lives on one edge rather than in the fill. Four rows of solid
+     red is a screen nobody reads twice, and three of these connections are
+     optional — "not set up" must not look like a fire. */
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+
+.cd-row--ok      { border-left-color: var(--success); background: var(--success-tint); }
+.cd-row--warn    { border-left-color: var(--warning); background: var(--warning-tint); }
+.cd-row--bad     { border-left-color: var(--danger);  background: var(--danger-tint); }
+.cd-row--unknown { border-left-color: var(--line-strong); background: var(--soft); }
+
+.cd-row-body {
+  display: grid;
+  gap: var(--s1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cd-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.cd-row-name {
+  font-family: var(--font-display);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-snug);
+  color: var(--ink);
+}
+
+/* The verdict, in the same pill as .connect-state on the strips above, tinted
+   by the row's tone so the word and the colour can never disagree. */
+.cd-chip {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--soft-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+.cd-row--ok   .cd-chip { border-color: var(--success-line); background: var(--success-soft); color: var(--success); }
+.cd-row--warn .cd-chip { border-color: var(--warning-line); background: var(--warning-soft); color: var(--warning); }
+.cd-row--bad  .cd-chip { border-color: var(--danger-line);  background: var(--danger-soft);  color: var(--danger); }
+
+/* Why it is broken — the sentence that used to not exist anywhere. */
+.cd-reason {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+/* The line that says a person has to do something themselves. It gets a
+   callout of its own because "click Connect, then go and type your password
+   into the window that opens" is the instruction people miss, and a login
+   window waiting behind the app looks identical to a hung button. */
+.cd-human {
+  margin-top: var(--s1);
+  padding: 6px 10px;
+  border: 1px solid var(--warning-line);
+  border-radius: var(--r-xs);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+.cd-human strong { font-weight: var(--fw-heavy); }
+
+.cd-next {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: var(--lh-normal);
+}
+
+/* Corroboration: status codes, expiry dates, row counts. Monospaced because
+   it is machine output, muted because it is for the one time in ten that the
+   sentence above it isn't enough. Never a token, cookie or key — see the
+   Detail contract on ConnectionCheck. */
+.cd-detail {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.cd-row-actions { flex-shrink: 0; }
+
+/* Narrow: the fix button goes under the reason rather than squeezing it into
+   a column two words wide. */
+@media (max-width: 720px) {
+  .cd-row { flex-direction: column; align-items: stretch; }
 }
 
 /* Arriving from the dashboard or the setup modal: say which card was meant. */
