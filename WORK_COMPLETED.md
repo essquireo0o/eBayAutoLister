@@ -6564,3 +6564,132 @@ forbids invention.
 - **Category and condition are still the model's to change.** They are search fields and this
   writes drafts, so it is deliberate — but it is a wider blast radius than the card's
   "price, quantity, shipping or policies" sentence spells out.
+
+---
+
+## The deals board fits the window — nine columns, no scrollbar (autonomous session, 2026-07-29)
+
+**Branch:** `auto/queue-features-20260726` · **What the seller said, twice, scribbling over the
+scrollbar in a screenshot:** *"this window sucks - I do not want the scroll bar - make it bigger -
+has to be cosmetic"*
+
+The Opportunity Finder's deals board carried **fourteen** columns: `# · Deal · Source · You pay ·
+Resell on eBay · Fees · Net profit · Days to cash · ROI · Margin · Max to pay · Offer them ·
+Evidence · Track`. Fourteen fit no window, so four things had been bolted on to cope, each making
+the next one necessary:
+
+| Where | What it did |
+|---|---|
+| `.fb-arb-table-wrap { overflow-x: auto }` | the horizontal scrollbar under the table — the one drawn over in the screenshot |
+| `.fb-arb-table { min-width: 1040px }` | forced the overflow in the first place; its own comment admitted it was raised to stop the Evidence cell wrapping |
+| `.opportunity-overlay-body > * { max-width: 1320px }` | capped the results at 1320px on a monitor with room to spare — why it felt small |
+| `.fb-arb-table-wrap { max-height: min(76vh, 900px) }` | a box scrolling vertically inside a page that was already scrolling |
+
+The right-hand columns arrived cut off mid-word — the **"What to say"** button rendered as
+*"What…"*, the negotiation cell as *"LOI"*. Every number in that table exists to answer *is this
+worth buying*, and a number nobody can see answers nothing.
+
+### 1. Nine columns, being the buying decision and nothing else
+
+`# · Deal · Source · You pay · Net profit · Days to cash · Max to pay · Offer them · Track` —
+what it is, where it is, what it costs, what it nets, how long the money is gone, the ceiling,
+and the two things you can do about it.
+
+**Nothing was deleted.** The five that left are the supporting half of the same question and now
+open under the row that raised it, from a **"› Resale, fees, ROI & evidence"** disclosure on the
+row itself (`arbitrageRowDetailHtml`): the resale price every profit figure was computed from,
+the fees taken back out of it, ROI, margin, and the evidence prose — which was never a column's
+shape anyway, and had been wrapping four words deep in a 220px cell.
+
+Two things were deliberately kept out of the fold:
+
+- **ROI rides under Net profit** (`138% ROI`, the way `$/day` rides under the wait). The board is
+  ranked by ROI by default; a ranking key nobody can see is a ranking nobody can check.
+- **The estimate warning stays on the row.** `ESTIMATE — TOO FEW COMPS (2)` is the difference
+  between a lead and a fact, and it must not need a click.
+
+### 2. Room
+
+`#fb-arb-results` breaks out of the overlay's shared 1320px prose column and takes the width the
+window actually has — measured against the overlay body itself with a container query
+(`min(100cqw, 2200px)`), so it lands exactly on the body's content edges at any window size and
+stops short of becoming a runway past that. The rest of the overlay's layout is untouched; this
+is the results block, not every panel.
+
+On a 1920px window the board is now **1574px** wide against the old 1320px cap.
+
+### 3. No scroll, in either axis
+
+The wrapper is `overflow: clip` — not `auto`, not `hidden`. It never scrolls, it still rounds the
+corners off the header rail, and unlike `hidden` it is **not a scroll container**, so the sticky
+header keeps tracking the page the way it did when the box scrolled itself. `max-height` is gone:
+the page scrolls, the results do not.
+
+Column widths are **shares (%) rather than pixels**, so a wider window widens the whole board
+instead of pouring every spare pixel into one enormous Deal column with a hole in it, and long
+titles reflow rather than being cut to fit a fixed track.
+
+### 4. Narrow windows stack; they never scroll sideways
+
+A container query on the board itself (`@container dealboard (max-width: 1080px)`) — not a
+viewport media query, because between the sidebar, the overlay padding and the cap, the viewport
+is the wrong measure of whether the columns fit. Below that width each row becomes a card: the
+header rail's labels come back above each figure from the cell's own `data-label`, the money band
+drops (a band down a column means nothing once there are no columns) and the buy-side stack
+left-aligns.
+
+### 5. Cosmetics, which is what was actually asked for
+
+- Row padding up to 14px, thumbnails 46 → 52px, and the verdict badge, the estimate chip and the
+  disclosure share one line so the cut didn't cost a row of height.
+- The buy-side cell is a right-aligned stack, so the **"What to say"** button shares the edge the
+  figures beside it use instead of drifting a space to the left of everything above it.
+- **A stray rule across the Deal column, fixed on the way past:** `.fb-arb-item` was `display:
+  flex` *on the cell*. A cell that is itself a flex container stops stretching to the row's
+  height, so its bottom border drew a line halfway up the row whenever another cell was taller.
+  The flex moved to a span inside the cell.
+- Every row state survives and still reads: goldmine gold edge, hover, zebra, `dt-money` band and
+  emphasis, Thin / Worth it / Pass badges — in **both** themes, since everything new is written
+  in existing tokens.
+- Zebra and the top-three rank colour moved from `nth-child` to `.is-alt` / `.is-top3` set by the
+  renderer: a deal is two rows now (the row and its detail), so every second *element* is a
+  detail panel rather than every second *deal*.
+
+The budget basket shares `.fb-arb-table` and is a modal table that should still scroll — it keeps
+its own `min-width` and its own zebra rather than being dragged along.
+
+**No figure, calculation, sort or filter changed.** Layout and presentation only.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build … -c Debug` | **succeeded**, 0 errors |
+| `dotnet test` | **2316 passed**, 0 failed |
+| `node --check wwwroot/app.js` | clean |
+| Rebuilt `AutoListerB1.exe` on `:9332`, 30-row board, screenshotted and read | see below |
+
+Measured in the running app on a **30-row** board at 1920px, 1440px and 1000px windows, light and
+dark: horizontal overflow **0px**, vertical overflow **0px**, `overflow: clip/clip`,
+`max-height: none`, document horizontal scroll **0px**, cells whose content exceeds their box:
+**none**, buttons clipped at the frame or rendered under 20px wide: **none**. At 1000px the rows
+stack into cards with no sideways scroll. The row detail opens with the resale price, the fees,
+ROI, margin and the evidence line all present.
+
+New `DealBoardLayoutTests` (12 tests) locks what nothing in C# could otherwise fail on: the exact
+column set and that none of the five folded ones returns as a column; that every figure taken out
+of a column is still rendered in the row detail; that the `colspan`s match the column count; that
+nothing winning the cascade for the board sets `overflow: auto` or a `min-width` (read in source
+order, because the wrapper still shares a class with the budget basket); that `max-height` stays
+`none`; that the 1320px cap is broken out of; that every cell carries a `data-label` to stack
+under; and that the paired-row states and the disclosure's ARIA wiring are both present.
+
+### Known limits
+
+- **`overflow: clip` and container queries are Chromium-era CSS.** This is a WebView2 app, so
+  that is the only engine it has to satisfy — but the board is not styled for an old browser.
+- **The board is capped at 2200px.** An ultrawide monitor will show margins past that. Past that
+  width a table stops being scannable and becomes a runway; the cap is a judgement, not a
+  constraint.
+- **The verification scan was a mocked 30-row response**, routed into the real page against the
+  real embedded assets. It exercises the layout, not the scrapers.

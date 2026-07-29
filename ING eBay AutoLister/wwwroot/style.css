@@ -12316,24 +12316,26 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 
   .fb-arb-board > tbody > tr.fb-arb-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 2px 20px;
-    padding: 14px 16px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    align-items: start;
+    gap: 12px 22px;
+    padding: 16px;
     border-bottom: 1px solid var(--dt-rule);
   }
 
-  /* The header rail's labels come back as the label half of each pair. */
+  /* Each cell becomes the same labelled figure the row detail uses: the
+     column heading above the number rather than beside it. Left-aligned,
+     because a card has no shared right edge for figures to line up on. */
   .fb-arb-board > tbody > tr.fb-arb-row > td {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 3px 0;
+    display: block;
+    padding: 0;
     border: 0;
+    text-align: left;
   }
   .fb-arb-board > tbody > tr.fb-arb-row > td::before {
     content: attr(data-label);
-    flex: 0 0 auto;
+    display: block;
+    margin-bottom: 3px;
     font-size: var(--fs-3xs);
     font-weight: var(--fw-bold);
     text-transform: uppercase;
@@ -12341,21 +12343,27 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
     color: var(--faint);
     white-space: nowrap;
   }
+  .fb-arb-board > tbody > tr > td.fb-arb-offer .fb-arb-offer-stack { align-items: flex-start; }
 
   .fb-arb-board > tbody > tr > td.fb-arb-deal {
-    display: block;
     grid-column: 1 / -1;
-    margin-bottom: 6px;
+    margin-bottom: 2px;
   }
   .fb-arb-board > tbody > tr > td.fb-arb-deal::before { content: none; }
 
   .fb-arb-board > tbody > tr > td.fb-arb-th-rank {
     grid-column: 1 / -1;
-    justify-content: flex-start;
-    gap: 2px;
     text-align: left;
+    color: var(--faint);
   }
-  .fb-arb-board > tbody > tr > td.fb-arb-th-rank::before { content: "#"; letter-spacing: 0; }
+  .fb-arb-board > tbody > tr > td.fb-arb-th-rank::before {
+    content: "#";
+    display: inline;
+    margin: 0;
+    color: inherit;
+    font-size: inherit;
+    letter-spacing: 0;
+  }
 
   /* A band down a column means nothing once there are no columns; the size
      and weight that make it the answer stay. */

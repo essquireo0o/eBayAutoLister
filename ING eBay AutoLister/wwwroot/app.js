@@ -2990,9 +2990,9 @@
     return `
       <tr class="${state}">
         <td class="fb-arb-th-rank" data-label="Rank">${index + 1}</td>
-        ${/* The flex lives on a span inside the cell, never on the cell itself: a display:flex
-              <td> stops stretching to the row's height, and its bottom border then draws a stray
-              rule across one column halfway up the row. */''}
+        ${/* The flex lives on a span inside the cell, never on the cell itself: a cell that is
+              itself display:flex stops stretching to the row's height, and its bottom border then
+              draws a stray rule across one column halfway up the row. */''}
         <td class="fb-arb-deal" data-label="Deal">
           <span class="fb-arb-item">
           ${row.imageUrl ? `<img class="fb-arb-thumb" src="${esc(row.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="fb-arb-thumb fb-arb-thumb-empty">📦</span>'}
