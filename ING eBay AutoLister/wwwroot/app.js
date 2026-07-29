@@ -15085,6 +15085,9 @@
       const el = $(id);
       if (!el) return;
       el.value = liveValue;
+      // The description is three tabs, not one box — refill it through the tabs so the readable
+      // view shows what eBay just sent back rather than the empty box it replaced.
+      if (id === 'f-description') descSetHtml('f', liveValue);
       filled.push(label);
     };
 
@@ -15595,31 +15598,8 @@
     on('nl-btn-retry', 'click', nlAnalyze);
     on('nl-btn-improve-seo', 'click', nlImproveSeo);
 
-    // Description edit/preview tabs
-    document.querySelectorAll('.desc-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        const leaving = document.querySelector('.desc-tab.active')?.dataset.descTab;
-        const arriving = tab.dataset.descTab;
-        // Sync before switching away from text editor — merge the edited words back into
-        // the EXISTING HTML structure (headings, bullets, inline styles) instead of
-        // rebuilding fresh <p> tags, so editing text never destroys the SEO template.
-        if (leaving === 'text') {
-          const plain = $('nl-desc-text')?.value || '';
-          const original = $('nl-description')?.value || '';
-          if ($('nl-description')) $('nl-description').value = nlMergeTextIntoHtml(original, plain);
-        }
-        document.querySelectorAll('.desc-tab').forEach(t => t.classList.toggle('active', t === tab));
-        $('nl-desc-edit-wrap')?.classList.toggle('hidden', arriving !== 'edit');
-        $('nl-desc-text-wrap')?.classList.toggle('hidden', arriving !== 'text');
-        $('nl-desc-preview-wrap')?.classList.toggle('hidden', arriving !== 'preview');
-        if (arriving === 'text') {
-          if ($('nl-desc-text')) $('nl-desc-text').value = nlHtmlToText($('nl-description')?.value || '');
-        }
-        if (arriving === 'preview') nlSyncDescPreview();
-      });
-    });
-    on('nl-description', 'input', () => { nlSyncDescPreview(); nlUpdateDescCount(); $('nl-description').classList.remove('field-flagged'); $('nl-desc-preview')?.classList.remove('field-flagged'); });
-    on('nl-desc-text', 'input', () => { nlUpdateDescCount(); $('nl-desc-text').classList.remove('field-flagged'); });
+    // Description edit/preview tabs — same three tabs as the listing edit drawer, same code.
+    initDescTabs('nl');
     on('nl-close', 'click', closeNewListingModal);
     on('nl-btn-cancel', 'click', closeNewListingModal);
     on('nl-btn-save-local', 'click', saveDraftLocal);
@@ -15790,16 +15770,10 @@
     if ($('nl-specifics-list')) $('nl-specifics-list').innerHTML = '';
     nlResetReadiness();
     nlClearAllPhotoSlots();
-    // Reset description to the text tab (default)
-    document.querySelectorAll('.desc-tab').forEach(t => t.classList.toggle('active', t.dataset.descTab === 'text'));
-    $('nl-desc-edit-wrap')?.classList.add('hidden');
-    $('nl-desc-text-wrap')?.classList.remove('hidden');
-    $('nl-desc-preview-wrap')?.classList.add('hidden');
-    if ($('nl-desc-text')) $('nl-desc-text').value = '';
-    if ($('nl-desc-preview')) $('nl-desc-preview').innerHTML = '';
+    // Empty description, back on the text tab (the default)
+    descSetHtml('nl', '');
     nlUpdateCharCount('nl-title', 'nl-title-count', 80);
     nlUpdateCharCount('nl-subtitle', 'nl-subtitle-count', 55);
-    nlUpdateDescCount();
     if ($('nl-cat-selected')) $('nl-cat-selected').hidden = true;
   }
 
@@ -16741,8 +16715,7 @@
     set('nl-upc', d.upc || '');
     set('nl-ean', d.ean || '');
     set('nl-isbn', d.isbn || '');
-    set('nl-description', d.description || '');
-    if ($('nl-desc-text')) $('nl-desc-text').value = nlHtmlToText(d.description || ''); // keep the (now-default) text tab in sync
+    descSetHtml('nl', d.description || '');   // all three tabs, landing on the readable one
     set('nl-price', d.price || '');
     set('nl-quantity', d.quantity || 1);
     set('nl-qty-limit', d.quantityLimitPerBuyer || '');
@@ -16791,6 +16764,7 @@
   }
 
   function buildNlPayload() {
+    descCommitText('nl');   // words typed on the text tab, before the HTML field is read
     return {
       title: $('nl-title')?.value || '',
       subtitle: $('nl-subtitle')?.value || '',
@@ -16942,7 +16916,7 @@
     // While the plain-text tab is open, the HTML field is only synced on a tab switch, so the
     // payload's description lags behind what the seller is actually typing. The server strips
     // markup for this check anyway, so the live text is the truer input.
-    const textTabActive = document.querySelector('.desc-tab[data-desc-tab="text"]')?.classList.contains('active');
+    const textTabActive = descActiveTab('nl') === 'text';
     if (textTabActive) {
       const plain = $('nl-desc-text')?.value || '';
       if (plain.trim()) payload.description = plain;
@@ -17720,28 +17694,173 @@
     el.innerHTML = esc(text).replace(/\n/g, '<br>');
   }
 
-  function nlUpdateDescCount() {
-    const activeTab = document.querySelector('.desc-tab.active')?.dataset.descTab;
-    const len = activeTab === 'text'
-      ? nlTextToHtml($('nl-desc-text')?.value || '').length
-      : ($('nl-description')?.value || '').length;
-    const counter = $('nl-desc-count');
-    if (!counter) return;
-    counter.textContent = len.toLocaleString() + ' / 4,000';
-    counter.style.color = len > 4000 ? 'var(--danger)' : len > 3600 ? 'var(--warning)' : '';
+  // ── Description Edit Text / Edit HTML / Preview tabs ──────────────────────────────────────
+  // One implementation, two screens: the New Listing form (id prefix "nl") and the listing edit
+  // drawer (prefix "f"). Their ids differ only by that prefix, so everything below is written
+  // against the prefix rather than against nl-*. The drawer had no tabs at all and showed the
+  // seller a wall of markup; a second copy of this logic would only have drifted from the first.
+  //
+  //   <prefix>-description        the HTML textarea — always the source of truth for saving
+  //   <prefix>-desc-text          the plain-text textarea
+  //   <prefix>-desc-preview       the rendered view
+  //   <prefix>-desc-{edit,text,preview}-wrap, <prefix>-desc-count
+
+  // eBay's own cap is far higher; this matches the ceiling the SEO rewrite prompt is given in
+  // ClaudeService. The old 4,000 predated that template, which lands at 6-7k of real HTML, so
+  // the counter flagged every AI-written description as over budget.
+  const DESC_MAX_CHARS = 9000;
+
+  // Prefixes whose plain-text tab the seller has actually typed into. Folding the text back into
+  // the HTML flattens the inline markup inside each block, so it is done only when there is a
+  // real edit to fold in — never on a tab the seller merely looked at.
+  const descTextDirty = new Set();
+
+  function descIds(prefix) {
+    return {
+      html:     `${prefix}-description`,
+      text:     `${prefix}-desc-text`,
+      preview:  `${prefix}-desc-preview`,
+      count:    `${prefix}-desc-count`,
+      editWrap: `${prefix}-desc-edit-wrap`,
+      textWrap: `${prefix}-desc-text-wrap`,
+      prevWrap: `${prefix}-desc-preview-wrap`,
+    };
   }
 
-  function nlSyncDescPreview() {
-    const preview = $('nl-desc-preview');
-    if (!preview) return;
-    const html = $('nl-description')?.value || '';
-    preview.innerHTML = html;
+  function descTabBar(prefix) {
+    return document.querySelector(`.desc-tab-bar[data-desc-prefix="${prefix}"]`);
   }
+
+  function descActiveTab(prefix) {
+    return descTabBar(prefix)?.querySelector('.desc-tab.active')?.dataset.descTab;
+  }
+
+  function initDescTabs(prefix) {
+    const bar = descTabBar(prefix);
+    if (!bar) return;
+    const ids = descIds(prefix);
+    bar.querySelectorAll('.desc-tab').forEach(tab => {
+      tab.addEventListener('click', () => descShowTab(prefix, tab.dataset.descTab));
+    });
+    on(ids.html, 'input', () => {
+      descSyncPreview(prefix);
+      descUpdateCount(prefix);
+      $(ids.html)?.classList.remove('field-flagged');
+      $(ids.preview)?.classList.remove('field-flagged');
+    });
+    on(ids.text, 'input', () => {
+      descTextDirty.add(prefix);
+      descUpdateCount(prefix);
+      $(ids.text)?.classList.remove('field-flagged');
+    });
+    descUpdateCount(prefix);
+  }
+
+  function descShowTab(prefix, arriving) {
+    const bar = descTabBar(prefix);
+    if (!bar) return;
+    const ids = descIds(prefix);
+    descCommitText(prefix);   // banked before the text tab stops being what the seller sees
+    bar.querySelectorAll('.desc-tab').forEach(t => t.classList.toggle('active', t.dataset.descTab === arriving));
+    $(ids.editWrap)?.classList.toggle('hidden', arriving !== 'edit');
+    $(ids.textWrap)?.classList.toggle('hidden', arriving !== 'text');
+    $(ids.prevWrap)?.classList.toggle('hidden', arriving !== 'preview');
+    if (arriving === 'text' && $(ids.text)) $(ids.text).value = nlHtmlToText($(ids.html)?.value || '');
+    if (arriving === 'preview') descSyncPreview(prefix);
+    descUpdateCount(prefix);
+  }
+
+  // Writes any pending plain-text edits into the HTML field, which is the only thing ever saved.
+  // Called on a tab switch and again when the payload is built, so a seller who types in Edit Text
+  // and hits Save without touching the tabs keeps their words.
+  function descCommitText(prefix) {
+    if (!descTextDirty.has(prefix)) return;
+    const ids = descIds(prefix);
+    const html = $(ids.html);
+    if (!html) return;
+    html.value = nlMergeTextIntoHtml(html.value, $(ids.text)?.value || '');
+    descTextDirty.delete(prefix);
+  }
+
+  // Loads a description into all three tabs and returns the field to the readable default.
+  // Opening a listing should read like a listing, not like its source.
+  function descSetHtml(prefix, html) {
+    const ids = descIds(prefix);
+    const value = html || '';
+    if ($(ids.html)) $(ids.html).value = value;
+    if ($(ids.text)) $(ids.text).value = nlHtmlToText(value);
+    descTextDirty.delete(prefix);   // freshly loaded, not edited
+    descTabBar(prefix)?.querySelectorAll('.desc-tab')
+      .forEach(t => t.classList.toggle('active', t.dataset.descTab === 'text'));
+    $(ids.editWrap)?.classList.add('hidden');
+    $(ids.textWrap)?.classList.remove('hidden');
+    $(ids.prevWrap)?.classList.add('hidden');
+    descSyncPreview(prefix);
+    descUpdateCount(prefix);
+  }
+
+  function descUpdateCount(prefix) {
+    const ids = descIds(prefix);
+    const counter = $(ids.count);
+    if (!counter) return;
+    const len = descActiveTab(prefix) === 'text'
+      ? nlTextToHtml($(ids.text)?.value || '').length
+      : ($(ids.html)?.value || '').length;
+    counter.textContent = len.toLocaleString() + ' / ' + DESC_MAX_CHARS.toLocaleString();
+    counter.style.color = len > DESC_MAX_CHARS ? 'var(--danger)'
+      : len > DESC_MAX_CHARS * 0.9 ? 'var(--warning)' : '';
+  }
+
+  function descSyncPreview(prefix) {
+    const preview = $(descIds(prefix).preview);
+    if (!preview) return;
+    preview.innerHTML = descSanitizeHtml($(descIds(prefix).html)?.value || '');
+  }
+
+  // Every read of a description's structure goes through here. The markup is not the seller's —
+  // Claude wrote it, or eBay sent it back, or it was pasted in from another listing — so it is
+  // parsed inside a <template>, whose contents belong to an inert document with no browsing
+  // context: nothing runs and nothing is fetched. The wrapper is created by that same inert
+  // document so the nodes never leave it. `div.innerHTML = html` on the live document looks
+  // equivalent and is not — an <img src=x onerror=…> in there fires the moment the load fails.
+  function descParse(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html || '';
+    const holder = tpl.content.ownerDocument.createElement('div');
+    holder.append(tpl.content);
+    return holder;
+  }
+
+  // What Preview is allowed to put on the page. Only the preview is filtered — the textarea keeps
+  // the HTML verbatim, so nothing is lost from what eventually gets sent to eBay.
+  function descSanitizeHtml(html) {
+    const holder = descParse(html);
+    holder.querySelectorAll('script, iframe, object, embed, form, link, meta, base, style')
+      .forEach(el => el.remove());
+    holder.querySelectorAll('*').forEach(el => {
+      [...el.attributes].forEach(({ name, value }) => {
+        const attr = name.toLowerCase();
+        // "java\tscript:" is the same URL to a browser as "javascript:", so collapse first.
+        const url = value.replace(/[\s\u0000-\u001F]/g, '').toLowerCase();
+        if (attr.startsWith('on') || attr === 'srcdoc'
+            || url.startsWith('javascript:') || url.startsWith('data:text/html')) {
+          el.removeAttribute(name);
+        }
+      });
+    });
+    return holder.innerHTML;
+  }
+
+  // Named wrappers for the New Listing form's own call sites.
+  function nlUpdateDescCount() { descUpdateCount('nl'); }
+  function nlSyncDescPreview()  { descSyncPreview('nl'); }
 
   function nlHtmlToText(html) {
     if (!html.trim()) return '';
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
+    const tmp = descParse(html);
+    // A <script> or <style> body is markup, not words. Left in, its source shows up in the
+    // seller's text box as if they had typed it, and is written back as a paragraph.
+    tmp.querySelectorAll('script, style').forEach(el => el.remove());
     // Insert newlines at block boundaries before extracting text
     tmp.querySelectorAll('br').forEach(el => el.replaceWith('\n'));
     tmp.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li').forEach(el => {
@@ -17773,8 +17892,7 @@
   function nlMergeTextIntoHtml(originalHtml, editedText) {
     if (!originalHtml.trim()) return nlTextToHtml(editedText);
 
-    const tmp = document.createElement('div');
-    tmp.innerHTML = originalHtml;
+    const tmp = descParse(originalHtml);
     const blocks = nlDescBlocks(tmp);
     if (blocks.length === 0) return nlTextToHtml(editedText);
 
@@ -18604,6 +18722,7 @@
       $('duration-wrap').style.display = e.target.value === 'AUCTION' ? '' : 'none';
     });
     if ($('duration-wrap')) $('duration-wrap').style.display = 'none';
+    initDescTabs('f');   // same description tabs as the New Listing form
     on('btn-add-specific', 'click', () => addSpecificRow('', ''));
     on('btn-add-photo-url', 'click', () => addPhotoRow(''));
   }
@@ -18621,7 +18740,7 @@
     set('f-upc', d.upc || '');
     set('f-ean', d.ean || '');
     set('f-isbn', d.isbn || '');
-    set('f-description', d.description || '');
+    descSetHtml('f', d.description || '');   // all three tabs, landing on the readable one
     set('f-price', d.price || '');
     set('f-quantity', d.quantity || 1);
     set('f-qty-limit', d.quantityLimitPerBuyer || '');
@@ -18757,6 +18876,7 @@
   }
 
   function buildPayload() {
+    descCommitText('f');   // words typed on the text tab, before the HTML field is read
     return {
       title: $('f-title').value,
       subtitle: $('f-subtitle').value,
