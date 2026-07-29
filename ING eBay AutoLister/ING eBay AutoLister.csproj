@@ -9,6 +9,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- The number the running app compares against the latest GitHub release to decide whether to
+         tell the seller an update exists. Without it the assembly reports 1.0.0, every release looks
+         newer, and the banner cries wolf on a fresh install forever.
+         BUMP THIS IN THE SAME COMMIT AS THE RELEASE TAG. -->
+    <Version>2.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

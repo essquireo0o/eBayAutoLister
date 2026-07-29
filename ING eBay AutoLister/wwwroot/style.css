@@ -5795,7 +5795,6 @@ textarea {
 .fb-arb-shown { margin-left: auto; }
 
 .fb-arb-table-wrap {
-  overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--card);
@@ -5805,10 +5804,12 @@ textarea {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-xs);
-  /* Raised with the Track column: below this the Evidence cell squeezes into four wrapped lines
-     rather than the wrapper scrolling, which is the behaviour the overflow is there to provide. */
-  min-width: 1040px;
 }
+
+/* The budget basket is the one table still built for a modal's width rather than the window's:
+   eight fixed columns in a narrow box, where scrolling the box is the right answer. The deals
+   board's rules are the opposite and live in their own section — see .fb-arb-board. */
+.bud-table { min-width: 860px; }
 .fb-arb-table th {
   text-align: left;
   font-size: var(--fs-2xs);
@@ -5853,6 +5854,9 @@ textarea {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* A 60-character unbroken model number is a real listing title, and without
+     this it sets the column's floor and pushes the table past its frame. */
+  overflow-wrap: anywhere;
 }
 .fb-arb-title:hover { text-decoration: underline; }
 .fb-arb-meta, .fb-arb-note { font-size: var(--fs-2xs); color: var(--muted); }
@@ -11990,8 +11994,12 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .er-table tbody tr,
 .opp-comp-table tbody tr { transition: background-color var(--dur-1) var(--ease); }
 
+/* The deals board stripes on a class, not on nth-child: each of its deals is two rows now (the
+   row and its folded-away detail), so every second ELEMENT is a detail panel rather than every
+   second deal. renderArbitrageRows() sets .is-alt. Every other table still counts rows. */
 .listings-table tbody tr:nth-child(even),
-.fb-arb-table tbody tr:nth-child(even),
+.bud-table tbody tr:nth-child(even),
+.fb-arb-table tbody tr.is-alt,
 .inv-table tbody tr:nth-child(even),
 .ship-table tbody tr:nth-child(even),
 .er-table tbody tr:nth-child(even) { background-color: var(--dt-zebra); }
@@ -12079,7 +12087,10 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
-.fb-arb-table tbody tr:nth-child(-n+3) > td.fb-arb-th-rank {
+/* .is-top3 for the same reason .is-alt exists: with a detail row between deals, "the first three
+   rows" and "the first three deals" stopped being the same thing. */
+.fb-arb-table tbody tr.is-top3 > td.fb-arb-th-rank,
+.bud-table tbody tr:nth-child(-n+3) > td.fb-arb-th-rank {
   color: var(--gold-ink);
   font-weight: var(--fw-heavy);
 }
@@ -12120,6 +12131,247 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
    scroll; a browser without it simply keeps today's unbounded table. */
 .inv-results:has(> table),
 .fb-arb-table-wrap { max-height: min(76vh, 900px); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The deals board
+   The screen a seller stares at while deciding where their money goes, and
+   the one they said "this window sucks" about. It carried fourteen columns,
+   which fitted no window: the wrapper grew a horizontal scrollbar under the
+   table, the table grew a 1040px floor to force it, the results block was
+   capped at 1320px on a monitor with room to spare, and the box scrolled
+   vertically inside a page that was already scrolling. The right-hand
+   columns arrived cut off mid-word — a "What to say" button rendered as
+   "What…" — and a number nobody can see answers nothing.
+
+   Three rules here, in the order they matter:
+     1. no scrollbar in either axis, ever — the page scrolls, the board does
+        not;
+     2. the board gets the width the window actually has;
+     3. eight columns, being the buying decision and nothing else. The rest
+        folds under the row that owns it.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Room. The overlay's shared 1320px column is right for prose and forms and
+   wrong for a ranking. Measured off the overlay body — the board's own
+   panel is capped, so the block breaks out of it with a negative margin and
+   lands exactly on the body's content edges. The cap is generous rather than
+   absent: past this a table stops being scannable and becomes a runway. */
+#opportunity-section > .opportunity-overlay-body { container-type: inline-size; }
+
+#fb-arb-results {
+  --board-w: min(100cqw, 2200px);
+  width: var(--board-w);
+  max-width: none;
+  margin-inline: calc((100% - var(--board-w)) / 2);
+}
+
+/* The frame. `clip` rather than `auto` or `hidden`: it never scrolls, it
+   still rounds the corners off the header rail, and — unlike `hidden` — it
+   is not a scroll container, so the sticky header keeps tracking the page
+   the way it did when the box scrolled itself. */
+.fb-arb-table-wrap.fb-arb-board-wrap {
+  overflow: clip;
+  max-height: none;
+  background-image: none;
+  /* The board answers to its own width, not the window's: between the
+     sidebar, the overlay padding and this cap, viewport breakpoints are the
+     wrong measure of whether nine columns fit. */
+  container-type: inline-size;
+  container-name: dealboard;
+}
+
+/* Column widths as shares, not pixels, so a wider window widens the whole
+   board instead of pouring every spare pixel into one enormous Deal column
+   with a hole in it. Hints to an auto layout rather than a fixed one: a long
+   title reflows, and nothing is ever cut off to keep a track. */
+.fb-arb-board { width: 100%; }
+.fb-arb-board .fb-arb-th-rank   { width: 3%;  }
+.fb-arb-board .fb-arb-th-deal   { width: 28%; }
+.fb-arb-board .fb-arb-th-source { width: 8%;  }
+.fb-arb-board .fb-arb-th-pay    { width: 10%; }
+.fb-arb-board .fb-arb-th-net    { width: 11%; }
+.fb-arb-board .fb-arb-th-days   { width: 9%;  }
+.fb-arb-board .fb-arb-th-max    { width: 9%;  }
+.fb-arb-board .fb-arb-th-offer  { width: 12%; }
+.fb-arb-board .fb-arb-th-track  { width: 10%; }
+
+/* The buy-side cell stacks four things — the number, what it saves, the
+   verdict on saying it, and the draft. Right-aligned as a column so they
+   share the edge the figures beside them use, rather than the button
+   drifting a space to the left of everything above it. On a span inside the
+   cell, not on the cell: a flex <td> stops stretching to the row height. */
+.fb-arb-offer-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.fb-arb-offer-stack .btn { margin-top: 2px; }
+
+/* Room to breathe now that there is room to spare. */
+.fb-arb-board thead th   { padding: 11px var(--dt-pad-x) 10px; }
+.fb-arb-board tbody td   { padding: 14px var(--dt-pad-x); }
+.fb-arb-board .fb-arb-item  { min-width: 220px; gap: 12px; }
+.fb-arb-board .fb-arb-thumb { width: 52px; height: 52px; flex: 0 0 52px; }
+.fb-arb-board .fb-arb-source { white-space: nowrap; }
+
+/* The verdict, the estimate warning and the way into the detail on one line:
+   three short things that would otherwise take three lines each, on every
+   row of thirty. Wraps rather than pushing the title column wider. */
+.fb-arb-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 3px 0 1px;
+}
+.fb-arb-badges > .fb-verdict { margin-top: 0; }
+
+/* ROI kept its place without keeping a column: the board is ranked by it,
+   and a ranking key nobody can see is a ranking nobody can check. It sits
+   under the net profit it comes from, the way $/day sits under the wait. */
+.fb-arb-roi-line {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-semibold);
+  color: var(--muted);
+  letter-spacing: .01em;
+}
+
+/* ── The fold ─────────────────────────────────────────────────────────
+   One click, on the row that raised the question. */
+.fb-arb-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--brand-ink-2);
+  font-family: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.fb-arb-more:hover { text-decoration: underline; }
+.fb-arb-more-chev {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  transition: transform var(--dur-1) var(--ease);
+}
+.fb-arb-more.is-open .fb-arb-more-chev { transform: rotate(90deg); }
+
+.fb-arb-detail-row { display: none; }
+.fb-arb-detail-row.is-open { display: table-row; }
+/* A panel, not a row: it takes neither the stripe nor the hover, because it
+   is part of the deal above it rather than another line to compare. */
+.fb-arb-table tbody tr.fb-arb-detail-row,
+.fb-arb-table tbody tr.fb-arb-detail-row:hover { background-color: var(--soft); }
+
+.fb-arb-board tbody td.fb-arb-detail {
+  padding: 14px 18px 16px;
+  border-bottom: 1px solid var(--dt-rule);
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+
+.fb-arb-detail-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px 28px;
+  max-width: 820px;
+}
+.fb-arb-fig { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.fb-arb-fig-label {
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--faint);
+}
+.fb-arb-fig-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "calt" 0;
+}
+.fb-arb-fig-evidence { margin-top: 14px; }
+/* Prose, which is why it was never a column: it wraps to a readable measure
+   here instead of stacking four words deep in a 220px cell. */
+.fb-arb-detail .fb-arb-evidence {
+  max-width: 96ch;
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+}
+
+/* ── Narrow ───────────────────────────────────────────────────────────
+   Below the width eight columns need, the row stacks. Never a sideways
+   scroll: that is the thing this whole section exists to remove. */
+@container dealboard (max-width: 1080px) {
+  .fb-arb-board,
+  .fb-arb-board > tbody { display: block; }
+  .fb-arb-board > thead { display: none; }
+
+  .fb-arb-board > tbody > tr.fb-arb-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 2px 20px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--dt-rule);
+  }
+
+  /* The header rail's labels come back as the label half of each pair. */
+  .fb-arb-board > tbody > tr.fb-arb-row > td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 3px 0;
+    border: 0;
+  }
+  .fb-arb-board > tbody > tr.fb-arb-row > td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: var(--fs-3xs);
+    font-weight: var(--fw-bold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--faint);
+    white-space: nowrap;
+  }
+
+  .fb-arb-board > tbody > tr > td.fb-arb-deal {
+    display: block;
+    grid-column: 1 / -1;
+    margin-bottom: 6px;
+  }
+  .fb-arb-board > tbody > tr > td.fb-arb-deal::before { content: none; }
+
+  .fb-arb-board > tbody > tr > td.fb-arb-th-rank {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    gap: 2px;
+    text-align: left;
+  }
+  .fb-arb-board > tbody > tr > td.fb-arb-th-rank::before { content: "#"; letter-spacing: 0; }
+
+  /* A band down a column means nothing once there are no columns; the size
+     and weight that make it the answer stay. */
+  .fb-arb-board > tbody > tr > td.dt-money {
+    background-image: none;
+    box-shadow: none;
+  }
+
+  .fb-arb-board > tbody > tr > td.fb-arb-empty { display: block; }
+  .fb-arb-board > tbody > tr.fb-arb-detail-row.is-open { display: block; }
+  .fb-arb-board > tbody > tr.fb-arb-detail-row > td { display: block; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-arb-more-chev { transition: none; }
+}
 
 /* ── Status chips inside a table ──────────────────────────────────────
    Five components had invented five pill shapes at four sizes. One shape,
@@ -13995,3 +14247,17 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   display: block; font-size: 11px; color: var(--text-muted, #606e74);
 }
 .fb-pick-nodata { display: block; font-size: 11px; color: var(--text-muted, #606e74); font-style: italic; }
+
+/* Update banner. Deliberately calm: an update is worth knowing about, not worth alarming
+   someone mid-listing. Sits with the recovery banner at the top of the dashboard. */
+.update-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 12px 16px; margin: 0 0 14px;
+  border-radius: 10px;
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(128,128,128,.28));
+  border-left: 4px solid #0f766e;
+  font-size: var(--fs-sm, .9rem);
+}
+.update-banner a { font-weight: 700; text-decoration: underline; }
+.update-banner .btn { margin-left: auto; }

@@ -230,6 +230,12 @@
         -->
         <div id="recovery-banner" class="recovery-banner hidden" role="status" aria-live="polite"></div>
 
+        <!-- Shown only when a newer release genuinely exists. The app installs from an .msi and
+             never phones home otherwise, so without this a seller runs whatever build they first
+             installed, forever. Dismissible per version: saying "not now" to 2.3.0 must not also
+             silence 2.4.0. -->
+        <div id="update-banner" class="update-banner hidden" role="status" aria-live="polite"></div>
+
         <!-- Setup checklist — hidden once both required steps complete.
              Two required steps and nothing else: the optional extras are named
              underneath as extras, so a brand-new seller can tell in one read what
@@ -1504,28 +1510,34 @@
                      same question as how to spend a fixed amount of cash across all of them. -->
                 <button id="fb-arb-budget-btn" class="btn btn-secondary small" type="button">💵 Spend a budget on these…</button>
               </div>
-              <div class="fb-arb-table-wrap">
-                <table class="fb-arb-table">
+              <!-- Fourteen columns did not fit any window, so the board grew a horizontal
+                   scrollbar and cut its own buttons in half at the right edge. These eight are
+                   the buying decision and nothing else: what it is, where it is, what it costs,
+                   what it nets, how long the money is gone, the ceiling, and the two things you
+                   can do about it. Every other figure — the resale price, the fees, ROI, margin
+                   and the evidence behind the price — is one click away on the row itself
+                   (arbitrageRowDetailHtml), not deleted. Adding a ninth column here brings the
+                   scrollbar back, which is what DealBoardLayoutTests is for. -->
+              <div class="fb-arb-table-wrap fb-arb-board-wrap">
+                <table class="fb-arb-table fb-arb-board">
                   <thead>
                     <tr>
                       <th class="fb-arb-th-rank">#</th>
-                      <th>Deal</th>
-                      <th>Source</th>
+                      <th class="fb-arb-th-deal">Deal</th>
+                      <th class="fb-arb-th-source">Source</th>
                       <!-- "You pay", not "Buy local": a retail row's figure includes the sales tax
                            every profit number beside it was computed from, and an auction row's
                            includes the buyer's premium as well. -->
-                      <th class="num">You pay</th>
-                      <th class="num">Resell on eBay</th>
-                      <th class="num">Fees</th>
-                      <th class="num dt-money">Net profit</th>
-                      <th class="num">Days to cash</th>
-                      <th class="num dt-money">ROI</th>
-                      <th class="num">Margin</th>
+                      <th class="num fb-arb-th-pay">You pay</th>
+                      <!-- The one figure the whole board exists to answer, so it keeps the money
+                           band — with the ROI it is ranked by riding underneath it rather than
+                           taking a column of its own. -->
+                      <th class="num dt-money fb-arb-th-net">Net profit</th>
+                      <th class="num fb-arb-th-days">Days to cash</th>
                       <!-- On an auction row this is the highest BID worth making, with the buyer's
                            premium and the tax already taken out of it. -->
-                      <th class="num">Max to pay</th>
-                      <th class="num">Offer them</th>
-                      <th>Evidence</th>
+                      <th class="num fb-arb-th-max">Max to pay</th>
+                      <th class="num fb-arb-th-offer">Offer them</th>
                       <!-- The way out of research and into the pipeline: track the row with the
                            forecast it was just given, frozen, so the buy can be graded later. -->
                       <th class="fb-arb-th-track">Track</th>

@@ -406,6 +406,10 @@
   }
 
   async function init() {
+    // Not awaited: whether a newer version exists is never worth delaying the dashboard for, and
+    // the check answers "no" on every failure anyway.
+    checkForUpdate();
+
     initTheme();              // the theme is already ON the page from the head script; this wires the switch to it
     initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
     initOverlayMotion();      // before anything can open a modal, so the first close animates too
@@ -2182,6 +2186,44 @@
     return `<span class="speed-days speed-${tier.cls}" title="${esc(row.speedNote || '')}">${row.daysToCash}d</span>${rate}`;
   }
 
+  // ── Update banner ─────────────────────────────────────────────────────────
+  /**
+   * Tells the seller a newer version exists, once, quietly, at the top of the dashboard.
+   *
+   * Never blocks anything and never reports its own failure: the endpoint answers "no update" for
+   * every problem it hits, so this either shows a banner or does nothing at all. A listing tool that
+   * interrupted someone to complain it could not reach GitHub would be worse than one that never
+   * checked.
+   */
+  async function checkForUpdate() {
+    const el = $('update-banner');
+    if (!el) return;
+
+    try {
+      const res = await fetch('/api/update/check');
+      if (!res.ok) return;
+      const u = await res.json();
+      if (!u.updateAvailable || !u.latest) return;
+
+      // Dismissal is per version: "not now" on 2.3.0 must not hide 2.4.0 six weeks later.
+      if (localStorage.getItem('updateDismissed') === u.latest) return;
+
+      el.innerHTML =
+        `<strong>Version ${esc(u.latest)} is out.</strong> ` +
+        `You're running ${esc(u.current)}. ` +
+        `<a href="${esc(u.downloadUrl)}" target="_blank" rel="noopener noreferrer">Get the update</a>` +
+        `<button type="button" id="update-dismiss" class="btn btn-ghost small">Not now</button>`;
+      el.classList.remove('hidden');
+
+      on('update-dismiss', 'click', () => {
+        localStorage.setItem('updateDismissed', u.latest);
+        el.classList.add('hidden');
+      });
+    } catch {
+      // Offline, or the app is mid-restart. Neither is worth a word on screen.
+    }
+  }
+
   // ── Today's picks: Marketplace's own front page ───────────────────────────
   // The one place on this screen that shows real local supply without being asked a question
   // first. Click-loaded, never polled — same rule as every other Facebook read here.
@@ -2778,7 +2820,7 @@
 
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
-      : `<tr><td colspan="14" class="fb-arb-empty">${
+      : `<tr><td colspan="9" class="fb-arb-empty">${
           category && arbitrageData.items.length
             ? 'Nothing in that category once the other filters were applied. Set the category back to all to see the rest of what this scan found.'
             : warrantyOnly && arbitrageData.items.length
@@ -2798,6 +2840,19 @@
       btn.addEventListener('click', () => openNegotiation(btn.dataset.key)));
     body.querySelectorAll('.fb-arb-track-btn').forEach(btn =>
       btn.addEventListener('click', () => trackArbitrageRow(btn.dataset.key, btn)));
+    body.querySelectorAll('.fb-arb-more').forEach(btn =>
+      btn.addEventListener('click', () => toggleArbitrageDetail(btn)));
+  }
+
+  // Opens the supporting figures under one row. Closed by default and closed again on the next
+  // render: the board is a ranking first, and thirty rows unfolded at once is the wall of numbers
+  // this table was just cut down from.
+  function toggleArbitrageDetail(btn) {
+    const detail = document.getElementById(btn.getAttribute('aria-controls'));
+    if (!detail) return;
+    const open = detail.classList.toggle('is-open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('is-open', open);
   }
 
   // Research is only worth what gets acted on. This is the one step between a ranked table the
@@ -2894,12 +2949,13 @@
     // Only ever applied to a figure that exists — a dash has nothing to hedge, and hedging it
     // would put a warning on the one row that already says plainly it couldn't be priced.
     const guessed = row.evidenceTier === 'low' && row.ebayExpectedSale != null;
-    const est = guessed ? ` class="num fb-arb-estimate" title="${esc(row.evidenceNote)}"` : ' class="num"';
-    // ROI shares the hedging above but not the column: it is one of the two figures the board
-    // exists to answer, so it carries the money band Margin beside it does not.
-    const estRoi = guessed
-      ? ` class="num dt-money fb-arb-estimate" title="${esc(row.evidenceNote)}"`
-      : ' class="num dt-money"';
+
+    // ROI lost its column but not its place: the board is ranked by it, and a ranking key nobody
+    // can see is a ranking nobody can check. It rides under the net profit it is derived from,
+    // the way $/day rides under the wait.
+    const roiLine = roi === '—' ? ''
+      : `<span class="fb-arb-roi-line${guessed ? ' fb-arb-estimate' : ''}"${
+          guessed ? ` title="${esc(row.evidenceNote)}"` : ''}>${roi} ROI</span>`;
 
     const evidence = row.ebayExpectedSale == null
       // A refused valuation is not "no sold history" — it is "the sold history was for the wrong
@@ -2920,35 +2976,90 @@
           row.liquidityLevel ? esc(row.liquidityLevel) : '',
         ].filter(Boolean).join(' · ');
 
-    // The comp lookup runs on the fullest title in the product group, which may not be this
-    // row's own wording — say so rather than implying the match was against this exact tile.
-    const pricedAs = row.pricedAs && row.pricedAs !== row.title
-      ? ` title="Priced as: ${esc(row.pricedAs)}"` : '';
+    // The row and its detail are two <tr>s, so the stripe can no longer come from nth-child —
+    // every second element would be a detail panel. Parity and the top-three rank colour are set
+    // here instead, on the row that is actually a deal (see .fb-arb-row.is-alt in style.css).
+    const detailId = `fb-arb-detail-${index}`;
+    const state = [
+      'fb-arb-row',
+      `fb-arb-row-${verdict.cls}`,
+      index % 2 ? 'is-alt' : '',
+      index < 3 ? 'is-top3' : '',
+    ].filter(Boolean).join(' ');
 
     return `
-      <tr class="fb-arb-row fb-arb-row-${verdict.cls}">
-        <td class="fb-arb-th-rank">${index + 1}</td>
-        <td class="fb-arb-item">
+      <tr class="${state}">
+        <td class="fb-arb-th-rank" data-label="Rank">${index + 1}</td>
+        ${/* The flex lives on a span inside the cell, never on the cell itself: a display:flex
+              <td> stops stretching to the row's height, and its bottom border then draws a stray
+              rule across one column halfway up the row. */''}
+        <td class="fb-arb-deal" data-label="Deal">
+          <span class="fb-arb-item">
           ${row.imageUrl ? `<img class="fb-arb-thumb" src="${esc(row.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '<span class="fb-arb-thumb fb-arb-thumb-empty">📦</span>'}
           <span class="fb-arb-item-text">
             <a class="fb-arb-title" href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.title)} ↗</a>
             <span class="fb-arb-meta">${meta}</span>
-            <span class="fb-verdict fb-verdict-${verdict.cls}">${verdict.label}</span>
+            <span class="fb-arb-badges">
+              <span class="fb-verdict fb-verdict-${verdict.cls}">${verdict.label}</span>
+              ${/* The one warning that must not need a click: a price this thin is the difference
+                    between a lead and a fact, and it used to sit in a column that is now folded away. */
+                guessed ? estimateFlag(row) : ''}
+              <button class="fb-arb-more" type="button" aria-expanded="false" aria-controls="${detailId}">
+                <span class="fb-arb-more-chev" aria-hidden="true">›</span>Resale, fees, ROI &amp; evidence
+              </button>
+            </span>
             <span class="fb-arb-note">${esc(row.verdictNote)}</span>
           </span>
+          </span>
         </td>
-        <td><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
-        <td class="num">${buyCostCell(row)}</td>
-        <td class="num${guessed ? ' fb-arb-estimate' : ''}"${pricedAs}>${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : manualResaleCell(row)}${warrantyResaleLine(row)}${estimateFlag(row)}</td>
-        <td class="num fb-arb-cost">${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}${categoryCostLine(row)}</td>
-        <td class="num dt-money fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}</td>
-        <td class="num fb-arb-speed">${daysToCashCell(row)}</td>
-        <td${estRoi}>${roi}</td>
-        <td${est}>${row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—'}</td>
-        <td class="num">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
-        <td class="num fb-arb-offer">${offerCell(row)}</td>
-        <td class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</td>
-        <td class="fb-arb-track">${trackCell(row)}</td>
+        <td class="fb-arb-source" data-label="Source"><span class="local-badge local-badge-${esc(row.source)}">${esc(row.sourceLabel || row.source)}</span></td>
+        <td class="num" data-label="You pay">${buyCostCell(row)}</td>
+        <td class="num dt-money fb-arb-profit ${row.netProfit > 0 ? 'good' : row.netProfit != null ? 'bad' : ''}" data-label="Net profit">${row.netProfit != null ? money(row.netProfit) : '—'}${couponProfitLine(row)}${roiLine}</td>
+        <td class="num fb-arb-speed" data-label="Days to cash">${daysToCashCell(row)}</td>
+        <td class="num" data-label="Max to pay">${row.maxBuyPrice != null ? money(row.maxBuyPrice) : '—'}</td>
+        <td class="num fb-arb-offer" data-label="Offer them"><span class="fb-arb-offer-stack">${offerCell(row)}</span></td>
+        <td class="fb-arb-track" data-label="Track">${trackCell(row)}</td>
+      </tr>
+      ${arbitrageRowDetailHtml(row, detailId, guessed, evidence)}`;
+  }
+
+  // The supporting half of a row, folded away until it is asked for. Nothing here is new and
+  // nothing was dropped: these are the five columns the board used to carry behind a horizontal
+  // scrollbar — the resale price every profit figure was computed from, the fees taken back out of
+  // it, the two percentage views of the same spread, and the evidence the price rests on. They are
+  // the answer to "why is that the number", which is a question asked of one row at a time, not of
+  // thirty at once. Kept in the same DOM row so it opens under the deal it explains.
+  function arbitrageRowDetailHtml(row, detailId, guessed, evidence) {
+    // The comp lookup runs on the fullest title in the product group, which may not be this
+    // row's own wording — say so rather than implying the match was against this exact tile.
+    const pricedAs = row.pricedAs && row.pricedAs !== row.title
+      ? ` title="Priced as: ${esc(row.pricedAs)}"` : '';
+    // The hedge follows the figure, not the column: a resale price, an ROI and a margin off two
+    // loose comps are all one guess wearing three faces.
+    const hedge = guessed ? ` class="fb-arb-fig-value fb-arb-estimate" title="${esc(row.evidenceNote)}"` : ' class="fb-arb-fig-value"';
+
+    const fig = (label, value, attrs = ' class="fb-arb-fig-value"') =>
+      `<div class="fb-arb-fig"><span class="fb-arb-fig-label">${label}</span><span${attrs}>${value}</span></div>`;
+
+    return `
+      <tr class="fb-arb-detail-row" id="${detailId}">
+        <td class="fb-arb-detail" colspan="9">
+          <div class="fb-arb-detail-figs"${pricedAs}>
+            ${fig('Resell on eBay',
+                  `${row.ebayExpectedSale != null ? money(row.ebayExpectedSale) : manualResaleCell(row)}${warrantyResaleLine(row)}`,
+                  hedge)}
+            ${fig('eBay fees &amp; shipping',
+                  `${row.estimatedFees != null ? `-${money(row.estimatedFees)}` : '—'}${categoryCostLine(row)}`,
+                  ' class="fb-arb-fig-value fb-arb-cost"')}
+            ${fig('ROI', row.roiPercent != null ? `${Math.round(row.roiPercent)}%`
+                    : row.netProfit > 0 && row.localAsk === 0 ? '∞' : '—', hedge)}
+            ${fig('Margin', row.marginPercent != null ? `${Math.round(row.marginPercent)}%` : '—', hedge)}
+          </div>
+          <div class="fb-arb-fig fb-arb-fig-evidence">
+            <span class="fb-arb-fig-label">Evidence</span>
+            <span class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</span>
+          </div>
+        </td>
       </tr>`;
   }
 
@@ -3037,13 +3148,14 @@
   }
 
   // The label beside a dimmed figure. Without it a greyed-out percentage reads as a rendering
-  // fault; with it, it reads as the warning it is.
+  // fault; with it, it reads as the warning it is. Returns the chip alone — the caller decides
+  // whether it goes on its own line under a figure or into the stack beside the title.
   function estimateFlag(row) {
     if (row.evidenceTier !== 'low' || row.ebayExpectedSale == null) return '';
     const why = row.identityVerified === false
       ? 'no comp matches this model'
       : `too few comps (${(row.pricedCompCount || 0) + (row.terapeakCompCount || 0)})`;
-    return `<br /><span class="fb-arb-estimate-flag" title="${esc(row.evidenceNote)}">estimate — ${why}</span>`;
+    return `<span class="fb-arb-estimate-flag" title="${esc(row.evidenceNote)}">estimate — ${why}</span>`;
   }
 
   // The way out of a research table and into the pipeline. Offered on every row that could be

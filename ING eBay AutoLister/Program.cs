@@ -209,6 +209,10 @@ builder.Services.AddSingleton<FacebookSoldStore>();
 // Singleton because the run outlives the request that started it: a whole-account rewrite takes
 // minutes, and the browser polls it rather than holding the connection open.
 builder.Services.AddSingleton<CopilotSeoJob>();
+
+// Singleton so the six-hour cache is shared: one install asks GitHub four times a day, not once
+// per page load. See UpdateChecker for why that limit matters.
+builder.Services.AddSingleton<UpdateChecker>();
 // Local sourcing — Facebook Marketplace has no public search API, so this uses the same
 // saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
@@ -6917,6 +6921,11 @@ app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest r
         return Results.BadRequest(ex.Message);
     }
 });
+
+// Is there a newer version than the one running? Answers from cache, and answers "no" on every
+// failure — a version check is never worth interrupting someone's listing session over.
+app.MapGet("/api/update/check", async (UpdateChecker updates, bool? force, CancellationToken ct) =>
+    Results.Ok(await updates.CheckAsync(force ?? false, ct)));
 
 app.MapGet("/api/ebay/policies", async (EbayService ebay, ActionLog log) =>
 {
