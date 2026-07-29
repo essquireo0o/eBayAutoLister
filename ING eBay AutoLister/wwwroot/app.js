@@ -2374,7 +2374,7 @@
 
     setLocalStatus(`Searching eBay for "${query}", then pricing every result against real sold data — this can take a minute…`);
 
-    const sort = $('fb-arb-sort')?.value || 'profit';
+    const sort = $('fb-arb-sort')?.value || 'roi';
     const num = id => {
       const v = parseFloat($(id)?.value);
       return isFinite(v) && v > 0 ? v : null;
@@ -2499,7 +2499,7 @@
 
     // The scan comes back already ordered the way the seller last chose to look at it. Changing
     // the sort afterwards is still purely client-side — it must never re-run a multi-minute scan.
-    const sort = $('fb-arb-sort')?.value || 'profit';
+    const sort = $('fb-arb-sort')?.value || 'roi';
     const { data, error } = await localFetchJson(
       `/api/local/arbitrage?${qs}&sort=${encodeURIComponent(sort)}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
     buttons.forEach(b => { b.disabled = false; });
@@ -2685,7 +2685,7 @@
     const body = $('fb-arb-body');
     if (!body || !arbitrageData) return;
 
-    const sort = $('fb-arb-sort')?.value || 'profit';
+    const sort = $('fb-arb-sort')?.value || 'roi';
     const hideLosers = !!$('fb-arb-hide-losers')?.checked;
     const provenOnly = !!$('fb-arb-proven-only')?.checked;
     const fastOnly = !!$('fb-arb-fast-only')?.checked;
@@ -10439,6 +10439,7 @@
         if (e.target.closest('button, input, label, a')) return;
         openCopilotSeoPicker();
       });
+    on('copilot-seo-stop', 'click', stopCopilotSeoRewrite);
     on('copilot-seo-all', 'change', () => {
       const on_ = $('copilot-seo-all')?.checked;
       $('copilot-seo-list')?.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = on_; });
@@ -10536,6 +10537,22 @@
     }
   }
 
+  // Stop means stop, and says what it really does. The listing in the middle of being rewritten has
+  // already been paid for, so it is finished rather than abandoned, and every draft made so far
+  // stays. A button that claimed to halt instantly would be lying about both.
+  async function stopCopilotSeoRewrite() {
+    const btn = $('copilot-seo-stop');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Stopping…'; }
+    try {
+      await fetch('/api/copilot/improve-seo/cancel', { method: 'POST' });
+      refreshCopilotSeoStatus();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Stop after this listing'; }
+      const err = $('copilot-error');
+      if (err) { err.classList.remove('hidden'); err.textContent = 'Could not stop the run: ' + e.message; }
+    }
+  }
+
   function pollCopilotSeo() {
     if (copilotSeoPoll) clearInterval(copilotSeoPoll);
     copilotSeoPoll = setInterval(refreshCopilotSeoStatus, 2500);
@@ -10554,7 +10571,21 @@
 
       if (btn) {
         btn.disabled = s.running;
-        btn.textContent = s.running ? '⏳ Rewriting…' : 'Rewrite all my listings';
+        btn.textContent = s.running
+          ? '⏳ Rewriting…'
+          : 'Rewrite every listing' + (copilotScan?.scannedListings ? ' (' + copilotScan.scannedListings + ')' : '');
+      }
+      // Picking listings mid-run would set up a second start the server refuses anyway; the one
+      // control that stays live is Stop.
+      const selBtn = $('copilot-seo-apply-selected');
+      if (selBtn && s.running) selBtn.disabled = true;
+      else if (selBtn) syncCopilotSeoSelection();
+
+      const stopBtn = $('copilot-seo-stop');
+      if (stopBtn) {
+        stopBtn.classList.toggle('hidden', !s.running);
+        if (!s.running) { stopBtn.disabled = false; stopBtn.textContent = 'Stop after this listing'; }
+        else if (!stopBtn.disabled) stopBtn.textContent = 'Stop after this listing';
       }
 
       if (!s.running && copilotSeoPoll) { clearInterval(copilotSeoPoll); copilotSeoPoll = null; }
@@ -10597,6 +10628,7 @@
                 '<span class="copilot-arrow">→</span>' +
                 '<span class="copilot-now">' + esc(r.after || '') + '</span>' +
                 (r.note ? '<span class="copilot-issue">' + esc(r.note) + '</span>' : '') +
+                copilotChangeSummary(r.changes) +
                 // Straight to the rewrite this row is describing, rather than making the seller
                 // work out which of N drafts it became.
                 (r.draftFile
@@ -10616,6 +10648,37 @@
           b.addEventListener('click', () => openCopilotDrafts([b.dataset.draft])));
       }
     } catch { /* a dropped poll is not worth interrupting a run that is still going */ }
+  }
+
+  // The whole change, not just the title. The panel promises the seller the full list of changes,
+  // and the title diff above hides the two things that took the most work: the description was
+  // replaced and the item specifics were filled in. Collapsed by default — eighty listings with
+  // twenty filled specifics each is a wall of text nobody reads, so each row states what happened in
+  // one line and opens on demand.
+  function copilotChangeSummary(changes) {
+    const lines = (changes && changes.lines) || [];
+    if (!changes || !lines.length) return '';
+
+    const row = (c) =>
+      '<li><span class="copilot-chg-field">' + esc(c.field) + '</span>' +
+      (c.kind === 'filled'
+        ? '<span class="copilot-now">' + esc(c.after) + '</span>' +
+          '<span class="copilot-chg-tag copilot-chg-filled">filled in</span>'
+        : c.kind === 'removed'
+          ? '<span class="copilot-was">' + esc(c.before) + '</span>' +
+            '<span class="copilot-chg-tag copilot-chg-removed">removed</span>'
+          : '<span class="copilot-was">' + esc(c.before) + '</span>' +
+            '<span class="copilot-arrow">→</span>' +
+            '<span class="copilot-now">' + esc(c.after) + '</span>') +
+      '</li>';
+
+    return '<details class="copilot-changes">' +
+      '<summary>' + esc(changes.headline || 'What changed') + '</summary>' +
+      '<ul>' + lines.map(row).join('') +
+      (changes.moreCount > 0
+        ? '<li class="copilot-more">…and ' + changes.moreCount + ' more — all of it is in the draft</li>'
+        : '') +
+      '</ul></details>';
   }
 
   // Open rewritten drafts as tabs in the listing editor — the same tabs the seller already knows
@@ -10740,7 +10803,13 @@
           '<span class="copilot-issue">' + esc(
             l.issues.filter(i => i.code.indexOf('title_') === 0).map(i => i.summary).join(' · ')) +
           '</span></li>').join('') + '</ul>' +
-        (seo.length > 25 ? '<p class="copilot-more">…and ' + (seo.length - 25) + ' more</p>' : '')
+        (seo.length > 25 ? '<p class="copilot-more">…and ' + (seo.length - 25) + ' more</p>' : '') +
+        // Titles are the only part this free scan can judge — eBay's bulk listing call returns no
+        // description and no item specifics. Saying so stops the list above reading as the whole
+        // job, which is how the card came to look like a title fixer in the first place.
+        '<p class="copilot-more">Titles are all this scan can see. The rewrite also replaces the ' +
+        'description and fills in the item specifics on every listing you pick — each one lists ' +
+        'exactly what it changed once it has run.</p>'
       : '<p class="copilot-clean">Every title already uses its keyword budget well. The rewrite still '
         + 'has work to do on the description and item specifics, which this scan cannot judge from '
         + 'eBay\'s bulk listing call.</p>';

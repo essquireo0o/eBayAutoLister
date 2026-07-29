@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=82" />
+  <link rel="stylesheet" href="style.css?v=83" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1449,10 +1449,15 @@
               <div class="fb-arb-controls">
                 <label for="fb-arb-sort">Sort by</label>
                 <select id="fb-arb-sort">
-                  <option value="profit" selected>Net profit</option>
+                  <!-- ROI first, by default. Net profit puts the one $900 board above ten $150
+                       flips, and the $900 board is usually the one resting on a single loose comp.
+                       Return on what you tie up is the question a reseller is actually asking, and
+                       the $100 bar below already keeps the trivial wins off the board — so ranking
+                       by ROI cannot surface a 900% return on four dollars. -->
+                  <option value="roi" selected>ROI %</option>
+                  <option value="profit">Net profit</option>
                   <option value="perday">Fastest profit ($ per day)</option>
                   <option value="fastest">Days to cash</option>
-                  <option value="roi">ROI %</option>
                   <option value="margin">Margin %</option>
                   <option value="distance">Distance</option>
                   <option value="ask">Local price</option>
@@ -2472,6 +2477,10 @@
                   <button class="btn btn-secondary copilot-apply" id="copilot-seo-pick" type="button">Choose listings…</button>
                   <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Rewrite every listing</button>
                   <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply-selected" type="button" disabled>Rewrite selected</button>
+                  <!-- Only while a run is going, and it says exactly what it does: the listing being
+                       rewritten right now is paid for either way, so it is finished rather than
+                       thrown away, and every draft already made is kept. -->
+                  <button class="btn btn-secondary copilot-apply hidden" id="copilot-seo-stop" type="button">Stop after this listing</button>
                 </div>
               </article>
 
@@ -4912,6 +4921,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=87"></script>
+  <script src="app.js?v=88"></script>
 </body>
 </html>
