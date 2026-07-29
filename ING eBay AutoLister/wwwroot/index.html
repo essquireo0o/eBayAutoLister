@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -252,17 +252,11 @@
               <button id="step1-btn" class="btn btn-primary" type="button">Enter Key →</button>
             </div>
 
-            <!-- Step 2: eBay — the login and the policies it unlocks are one step,
-                 because policies cannot be loaded until eBay is connected. The
-                 button and copy swap between the two halves in updateSetupChecklist. -->
-            <div id="step2-row" class="setup-step">
-              <div id="step2-icon" class="setup-step-num">2</div>
-              <div class="setup-step-body">
-                <div class="setup-step-title" id="step2-title">Connect eBay and pick your business policies</div>
-                <div class="setup-step-copy" id="step2-copy">Log into eBay, then choose the shipping, payment and return policy your listings publish under.</div>
-              </div>
-              <button id="step2-btn" class="btn btn-primary" type="button">Log into eBay →</button>
-            </div>
+            <!-- The "Connect eBay and pick your business policies" step was removed from this
+                 checklist at the seller's request. The policy picker itself is untouched and still
+                 lives in Settings -> eBay Seller Policies (and per-listing in the New Listing form),
+                 so nothing about choosing policies has been deleted - it just no longer sits on the
+                 dashboard asking. Put this block back and the step returns exactly as it was. -->
 
             <!-- Steps 3 and 4: the two logins, as steps rather than as a footnote.
                  They are numbered because that is where people look for them, and
@@ -271,7 +265,7 @@
                  the same call that paints the Settings and Opportunity-Finder strips,
                  so all three copies of these controls always agree. -->
             <div id="step3-row" class="setup-step setup-step--optional">
-              <div id="step3-icon" class="setup-step-num">3</div>
+              <div id="step3-icon" class="setup-step-num">2</div>
               <div class="setup-step-body">
                 <div class="setup-step-title">Connect Terapeak sold comps <span class="setup-tag">Optional</span></div>
                 <div class="setup-step-copy" id="setup-terapeak-status">Checking Terapeak connection…</div>
@@ -281,7 +275,7 @@
             </div>
 
             <div id="step4-row" class="setup-step setup-step--optional">
-              <div id="step4-icon" class="setup-step-num">4</div>
+              <div id="step4-icon" class="setup-step-num">3</div>
               <div class="setup-step-body">
                 <div class="setup-step-title">Connect Facebook Marketplace <span class="setup-tag">Optional</span></div>
                 <div class="setup-step-copy" id="setup-facebook-status">Checking Facebook connection…</div>

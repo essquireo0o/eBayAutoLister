@@ -12332,10 +12332,8 @@
       checklist.classList.add('hidden');
     });
     on('step1-btn', 'click', () => openSetupAt('key'));
-    on('step2-btn', 'click', () => {
-      if (isConnected) openSetupAt('policies');
-      else $('btn-connect')?.click();
-    });
+    // step2-btn ("Choose policies") was removed from the checklist at the seller's request. The
+    // picker is still reachable from Settings -> eBay Seller Policies and from the New Listing form.
     on('setup-extras-btn', 'click', () => {
       navigateTo('settings');
       setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
@@ -14107,26 +14105,15 @@
     const step1Done   = keyDone      != null ? !!keyDone      : hasAnthropicKey;
     const connected   = hasEbay      != null ? !!hasEbay      : isConnected;
     const hasPolicies = policiesDone != null ? !!policiesDone : hasBusinessPolicies;
-    const step2Done   = connected && hasPolicies;
-
     // The done look lives in .setup-step.is-done, so a step can go back to pending if the key is
     // later cleared — the old inline styles were one-way and left a green tick on a step that no
     // longer applied.
     markSetupStep('step1', step1Done, 'Key saved');
-    markSetupStep('step2', step2Done, 'Ready');
 
-    setText('step2-copy', !connected
-      ? 'Log into eBay, then choose the shipping, payment and return policy your listings publish under.'
-      : hasPolicies
-        ? 'eBay is connected and your shipping, payment and return policies are set.'
-        : 'eBay is connected. Now pick the shipping, payment and return policy every listing publishes under — click Load Policies, then choose one of each.');
-
-    const step2Btn = $('step2-btn');
-    if (step2Btn && !step2Done) {
-      step2Btn.textContent = connected ? 'Choose policies →' : 'Log into eBay →';
-      step2Btn.dataset.pendingLabel = step2Btn.textContent;
-      step2Btn.disabled = false;
-    }
+    // The "Connect eBay and pick your business policies" step was removed from the checklist at the
+    // seller's request, so nothing paints it here any more. `connected` and `hasPolicies` are still
+    // read above because the hero chips and the Settings page use them.
+    void connected; void hasPolicies;
 
     refreshChecklistVisibility();
 
@@ -14156,7 +14143,7 @@
     };
 
     checklist.classList.toggle('hidden',
-      ['step1-row', 'step2-row', 'step3-row', 'step4-row'].every(settled));
+      ['step1-row', 'step3-row', 'step4-row'].every(settled));
   }
 
   /**
