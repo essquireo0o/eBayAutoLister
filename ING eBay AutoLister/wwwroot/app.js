@@ -1482,6 +1482,7 @@
     on('fb-arb-category', 'change', renderArbitrageRows);
     on('fb-arb-price', 'change', renderArbitrageRows);
     on('fb-arb-hide-losers', 'change', renderArbitrageRows);
+    on('fb-arb-proven-only', 'change', renderArbitrageRows);
     on('fb-arb-fast-only', 'change', renderArbitrageRows);
     on('fb-arb-warranty-only', 'change', renderArbitrageRows);
     on('ebay-scan-btn', 'click', runEbayScan);
@@ -1578,11 +1579,14 @@
   let lastLocalRun = null;
 
   // Always resolves to { data, error } — never throws, never rejects.
-  async function localFetchJson(url, timeoutMs) {
+  // `init` carries method/headers/body for the callers that POST. Everything else about this helper
+  // — the timeout, the abort, the "a readable body wins over the status code" rule — is what every
+  // caller wanted anyway, so they share it rather than each growing their own fetch.
+  async function localFetchJson(url, timeoutMs, init) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { ...(init || {}), signal: controller.signal });
       const text = await res.text();
 
       let data = null;
@@ -2018,7 +2022,65 @@
         <span class="fb-pick-price">${item.isFree ? 'Free' : (item.price != null ? money(item.price) : esc(item.priceText || ''))}</span>
         <span class="fb-pick-title">${esc(item.title)}</span>
         <span class="fb-pick-loc">${esc(item.location || '')}</span>
+        <span class="fb-pick-money" data-pick-money="${esc(item.itemId || '')}"></span>
       </a>`).join('');
+
+    priceFacebookPicks(data);
+  }
+
+  /**
+   * Fills each pick card with the numbers that decide whether it is a buy: what it sells for on
+   * eBay, how many sold comps that is based on, the profit after fees, and the ROI.
+   *
+   * The grid renders first and unpriced, because the browse is already a ~30 second page load and a
+   * seller staring at a blank panel for a minute assumes it is broken. The prices arrive after,
+   * into cards that are already on screen and already clickable.
+   */
+  async function priceFacebookPicks(feed) {
+    const note = $('fb-picks-status');
+    if (note) note.textContent = 'Pricing these against real eBay sold data…';
+
+    const { data } = await localFetchJson('/api/local/price-these?maxItems=40&terapeakBudget=0', 180000, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(feed)
+    });
+
+    if (!data || !(data.items || []).length) {
+      if (note) note.textContent = '';
+      return;
+    }
+
+    let priced = 0;
+    for (const row of data.items) {
+      const slot = document.querySelector(`[data-pick-money="${CSS.escape(row.itemId || '')}"]`);
+      if (!slot) continue;
+
+      const profit = row.netProfit;
+      const roi = row.roiPercent;
+      const comp = row.ebayExpectedSale ?? row.ebayResaleMedian;
+      const comps = row.soldCompCount || 0;
+
+      // No comps means no opinion. Saying "$0 profit" would be a claim; saying "no sold data" is
+      // the truth, and the seller can still open the listing and judge it themselves.
+      if (comp == null || !comps) {
+        slot.innerHTML = '<span class="fb-pick-nodata">no sold data</span>';
+        continue;
+      }
+
+      const good = profit != null && profit > 0;
+      slot.innerHTML =
+        `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}">` +
+          `${good ? '+' : ''}${money(profit)}${roi != null ? ` · ${Math.round(roi)}%` : ''}</span>` +
+        `<span class="fb-pick-comp">sells ~${money(comp)} · ${comps} sold</span>`;
+      priced++;
+    }
+
+    if (note) {
+      note.textContent = priced
+        ? `${priced} of ${feed.items.length} priced against real eBay sold data. Profit is after fees and shipping.`
+        : 'None of these could be priced — no matching eBay sold history.';
+    }
   }
 
   // ── eBay scanner (its own panel, above the local one) ─────────────────────
@@ -2339,12 +2401,38 @@
 
   // Re-sorting and filtering are pure client-side views over the response already in hand —
   // changing the sort must never re-run the scan.
+  // The least net profit that makes a flip worth the work at all - LocalArbitrageAnalyzer.SolidProfit.
+  // Spelled here too because the board filters on it before the server's verdict is ever read.
+  const WORTH_DOING_NET = 100;
+
+  // Why the board is empty, counted rather than guessed. Naming the bar that cut is the difference
+  // between "this tool is broken" and "there was nothing here worth buying" - and the second one is
+  // the answer that saves the seller money.
+  function emptyUnderTheBarMessage() {
+    const all = (arbitrageData && arbitrageData.items) || [];
+    const priced = all.filter(r => r.netProfit != null);
+    const clearsBar = priced.filter(r => r.netProfit >= WORTH_DOING_NET);
+    const proven = clearsBar.filter(r => r.evidenceTier === 'confident');
+
+    if (!clearsBar.length) {
+      return `${all.length} deal${all.length === 1 ? '' : 's'} priced, and not one nets $${WORTH_DOING_NET} `
+           + `after fees. That is the answer: there is nothing here worth the drive, the listing and the packing. `
+           + `Untick "Only deals that clear $${WORTH_DOING_NET}" to see the small stuff anyway.`;
+    }
+    return `${clearsBar.length} deal${clearsBar.length === 1 ? '' : 's'} clear $${WORTH_DOING_NET}, but `
+         + `${proven.length === 0 ? 'none of them are' : 'only ' + proven.length + ' of them are'} `
+         + `priced off sold comps that actually match the item - the rest rest on one loose comp or on `
+         + `another product's price. Untick "Only prices backed by real sold comps" to see them, knowing `
+         + `the resale figures on those rows are guesses.`;
+  }
+
   function renderArbitrageRows() {
     const body = $('fb-arb-body');
     if (!body || !arbitrageData) return;
 
     const sort = $('fb-arb-sort')?.value || 'profit';
     const hideLosers = !!$('fb-arb-hide-losers')?.checked;
+    const provenOnly = !!$('fb-arb-proven-only')?.checked;
     const fastOnly = !!$('fb-arb-fast-only')?.checked;
     const warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
     const category = $('fb-arb-category')?.value || '';
@@ -2423,7 +2511,12 @@
             ? 'Nothing in this search said it still carries a warranty. Untick the filter to see everything it did find — most classifieds listings never mention cover either way, so this is as often silence as it is a no.'
             : fastOnly && arbitrageData.items.some(r => r.netProfit > 0)
               ? 'Nothing here turns your money around inside three weeks. Untick the filter to see the slower flips this search did find.'
-              : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
+              // An empty board under these two filters is an ANSWER, not a malfunction, and it has
+              // to say which bar did the cutting — otherwise it reads as the tool being broken,
+              // which is exactly how a board full of unchecked $800 fantasies got trusted instead.
+              : (hideLosers || provenOnly) && arbitrageData.items.length
+                ? emptyUnderTheBarMessage()
+                : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
 
     // Re-bound after every render: the table body is replaced wholesale by the sort and filter
     // controls, so listeners attached to the previous rows are gone with them.

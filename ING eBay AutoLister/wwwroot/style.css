@@ -13770,6 +13770,18 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .copilot-more { font-size: var(--fs-xs, .78rem); color: var(--text-muted, #606e74); margin: 6px 0 0; }
 .copilot-apply { align-self: flex-start; }
 .copilot-apply[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* The way back to a rewrite the seller just paid for. On its own row under the title diff, so a
+   long title cannot push it off the edge of the card. */
+.copilot-open-draft {
+  width: 100%;
+  margin-top: 2px;
+  align-self: flex-start;
+  font-size: var(--fs-2xs, .72rem);
+  text-align: left;
+}
+a.copilot-open-draft { color: var(--accent, #2f9c3b); text-decoration: none; }
+a.copilot-open-draft:hover { text-decoration: underline; }
 .copilot-foot { margin-top: 16px; }
 
 /* Progress for the whole-account rewrite. A run takes minutes; a page with no visible
@@ -13811,3 +13823,14 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   background: rgba(245,158,11,.15); color: #f59e0b;
 }
 .copilot-apply-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Money on a Today's Picks card. The grid answers "what is near me"; these answer
+   "is it a buy", which is the only reason to look at the grid. */
+.fb-pick-money { display: block; margin-top: 4px; line-height: 1.35; }
+.fb-pick-profit { display: block; font-weight: 800; font-size: var(--fs-sm, .9rem); }
+.fb-pick-profit.is-good { color: #16a34a; }
+.fb-pick-profit.is-bad  { color: var(--text-muted, #606e74); }
+.fb-pick-comp {
+  display: block; font-size: 11px; color: var(--text-muted, #606e74);
+}
+.fb-pick-nodata { display: block; font-size: 11px; color: var(--text-muted, #606e74); font-style: italic; }

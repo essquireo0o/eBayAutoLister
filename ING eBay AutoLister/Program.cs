@@ -1864,6 +1864,47 @@ app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terape
 app.MapGet("/api/facebook/picks", async (FacebookMarketplaceService facebook, CancellationToken ct) =>
     Results.Ok(await facebook.BrowsePicksAsync(ct)));
 
+// Today's Picks, priced.
+//
+// The unpriced feed answers "what is near me" and stops there — a photo, an ask and a town. The
+// question a reseller actually has is "is $600 a buy", and answering it meant leaving the app. This
+// runs the same feed down the same pipeline the scan boards use, so every card can carry what it
+// sells for, how many sold, the profit after fees and the ROI.
+app.MapPost("/api/local/price-these", async (
+    LocalSupplySearchResult picks, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log,
+    int? maxItems, int? terapeakBudget, CancellationToken ct) =>
+{
+    try
+    {
+        // The listings come from the caller because the browser already has them: Today's Picks is a
+        // ~30 second real page load against Marketplace, and fetching it a second time purely to
+        // attach prices would double that wait and double the traffic against the seller's own
+        // logged-in account for no new information.
+        if (picks?.Items is null || picks.Items.Count == 0)
+            return Results.Ok(new LocalArbitrageResult { Status = picks?.Status ?? "ok", Query = "", Error = picks?.Error });
+
+        var result = await FindLocalArbitrageAsync(
+            "", "", 40,
+            Math.Clamp(maxItems ?? 25, 1, 60), Math.Clamp(terapeakBudget ?? 3, 0, 10), sort: null,
+            [new PrefetchedSupplySource(picks)], craigslistSite: null,
+            retailSalesTaxPercent: 0m,
+            marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
+            profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
+            couponService, category: null);
+
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Pricing supplied listings failed", ex.Message);
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 // Marketplace with its own filters applied. Facebook cannot be embedded — every Marketplace URL
 // is served X-Frame-Options: DENY, so no browser will render their page inside this one — but all
 // of their filters are query-string parameters, so the same controls reach the same results here.
