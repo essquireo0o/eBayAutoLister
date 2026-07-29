@@ -36,6 +36,19 @@ public static class AppPaths
     /// <summary>Folder name used under whichever profile root applies.</summary>
     public const string FolderName = "ING AutoLister";
 
+    /// <summary>The saved Facebook Marketplace browser session.</summary>
+    /// <remarks>
+    /// Named here rather than composed from <c>ContentRootPath</c> at the service, for the same
+    /// reason <c>credentials.json</c> is: this file is a login the seller completed by hand in a
+    /// real browser, and only they can replace it. Where it is read from must not depend on a
+    /// hosting property a future change could quietly move — a build that looked one folder over
+    /// would report "not connected" for a session that is sitting right there.
+    /// </remarks>
+    public const string FacebookSessionFileName = "facebook-session.json";
+
+    /// <summary>Absolute path to <see cref="FacebookSessionFileName"/> under <see cref="DataHome"/>.</summary>
+    public static string FacebookSessionPath => Path.Combine(DataHome, FacebookSessionFileName);
+
     private static readonly Lazy<string> _dataHome =
         new(() => Resolve(Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService()));
 
@@ -66,7 +79,7 @@ public static class AppPaths
     [
         "credentials.json",         // Anthropic key, eBay tokens, Stripe, comps API
         "terapeak-session.json",    // saved eBay/Terapeak browser session
-        "facebook-session.json",    // saved Facebook Marketplace browser session
+        FacebookSessionFileName,    // saved Facebook Marketplace browser session
     ];
 
     /// <summary>Folders that carry persisted state. App_Data holds the DB and work-recovery.</summary>

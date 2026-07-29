@@ -266,10 +266,13 @@
 
   // Which button resolves this failure, if one can.
   const FIX_ACTIONS = {
-    'ai-key':        { label: 'Open Settings',   run: () => handleNav('settings') },
-    'connect-ebay':  { label: 'Log into eBay',   run: () => startEbayLogin() },
-    'ebay-policies': { label: 'Open Settings',   run: () => handleNav('settings') },
-    'open-logs':     { label: 'Open Logs',       run: () => handleNav('logs') },
+    'ai-key':           { label: 'Open Settings',   run: () => handleNav('settings') },
+    'connect-ebay':     { label: 'Log into eBay',   run: () => startEbayLogin() },
+    'ebay-policies':    { label: 'Open Settings',   run: () => handleNav('settings') },
+    'open-logs':        { label: 'Open Logs',       run: () => handleNav('logs') },
+    // A dead Facebook session is only ever fixed by the person, in a browser — so it gets the
+    // button that opens one rather than a Retry that would fail the same way every time.
+    'connect-facebook': { label: 'Reconnect Facebook', run: () => facebookConnect() },
   };
 
   // The eBay sign-in button lives in more than one place depending on which screen is open, so the
@@ -1351,9 +1354,15 @@
       connectBtn?.classList.add('hidden');
       disconnectBtn?.classList.remove('hidden');
     } else {
+      // A session that died is not the same as one that was never made: the seller already did
+      // this once, and "Not connected" reads to them as the app having forgotten it. The server
+      // says which it is — see FacebookSessionFile.
       statusEl.textContent = data.lastError
         ? `Facebook connect failed: ${data.lastError}`
+        : data.reason && data.state && data.state !== 'Missing'
+        ? `${data.reason} Click ${data.needsReconnect ? 'Reconnect' : 'Connect'} to sign in again.`
         : 'Not connected — click Connect to log into your own Facebook account once.';
+      if (connectBtn && data.needsReconnect) connectBtn.textContent = 'Reconnect Facebook';
       connectBtn?.classList.remove('hidden');
       if (connectBtn) connectBtn.disabled = false;
       disconnectBtn?.classList.add('hidden');
@@ -2151,9 +2160,12 @@
         : s.retryable ? 'blocked — retry'
         : 'unavailable';
       // Connect is offered only for the source whose connect flow this page actually has. A future
-      // session-based source gets its own button here, not Facebook's.
+      // session-based source gets its own button here, not Facebook's. The word changes with the
+      // state: someone whose session just expired has connected before, and "Connect" reads to them
+      // as the app having forgotten it rather than as the one thing left to do.
+      const connectLabel = s.status === 'session_expired' ? 'Reconnect' : 'Connect';
       const action = (s.status === 'not_connected' || s.status === 'session_expired') && s.id === 'facebook'
-        ? '<button type="button" class="btn btn-secondary small local-chip-btn local-chip-connect">Connect</button>'
+        ? `<button type="button" class="btn btn-secondary small local-chip-btn local-chip-connect">${connectLabel}</button>`
         : (!ok && s.retryable)
         ? '<button type="button" class="btn btn-secondary small local-chip-btn local-chip-retry">Retry</button>'
         : '';

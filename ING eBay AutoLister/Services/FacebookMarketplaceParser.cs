@@ -178,4 +178,98 @@ public static class FacebookMarketplaceParser
     /// </summary>
     public static List<LocalSupplyListing> FilterByRelevance(List<LocalSupplyListing> items, string query) =>
         LocalSupplyResults.FilterByRelevance(items, query);
+
+    // ── Bounced to a login page ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Reads <paramref name="url"/> and <paramref name="html"/> and says whether Facebook served a
+    /// wall instead of Marketplace.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the difference between "there is nothing for sale near you" and "your login is dead",
+    /// and until it existed both looked identical: a scrape replayed a session Facebook no longer
+    /// accepted, found no <c>/marketplace/item/</c> tiles on the login page it was handed, and
+    /// reported zero results. The seller re-ran it, got zero again, and concluded the feature did not
+    /// work. Nothing anywhere said "reconnect".
+    /// </para>
+    /// <para>
+    /// Both halves are needed. The URL alone misses the case where Facebook serves the login form on
+    /// the Marketplace URL without redirecting; the HTML alone misses a redirect to a checkpoint that
+    /// renders behind a loading shell. Either one is enough to answer yes.
+    /// </para>
+    /// <para>
+    /// Deliberately strict about which strings count. A logged-in Marketplace page carries menus and
+    /// footers full of ordinary words, so nothing here matches on a phrase like "log in" on its own —
+    /// only on markers that belong to the wall itself: the password field, the login form's id, and
+    /// Facebook's own interstitial wording. A false positive here throws away a working session.
+    /// </para>
+    /// </remarks>
+    public static FacebookLoginWall DetectLoginWall(string? url, string? html)
+    {
+        var u = url ?? "";
+        var h = html ?? "";
+
+        // Most specific first: a two-factor page is served under /checkpoint/ and carries a password
+        // field of its own, so checking either of the broader cases first would mislabel it.
+        if (MentionsAny(u, "two_step_verification", "two_factor")
+            || MentionsAny(h, "two-factor authentication", "two_step_verification",
+                           "enter the 6-digit code", "login approval", "approvals_code",
+                           "check your text messages", "authentication app"))
+            return FacebookLoginWall.TwoFactor;
+
+        if (MentionsAny(u, "/checkpoint", "/recover", "/confirm")
+            || MentionsAny(h, "we need to confirm", "confirm your identity",
+                           "your account has been temporarily", "help us confirm",
+                           "we've detected unusual activity", "checkpoint/block"))
+            return FacebookLoginWall.Checkpoint;
+
+        if (MentionsAny(u, "/login", "login.php")
+            || MentionsAny(h, "name=\"pass\"", "name='pass'", "id=\"login_form\"", "id=\"loginform\"",
+                           "you must log in to continue", "log into facebook",
+                           "action=\"/login", "action=\"https://www.facebook.com/login"))
+            return FacebookLoginWall.Login;
+
+        return FacebookLoginWall.None;
+    }
+
+    /// <summary>
+    /// The sentence a seller gets for a wall. All three end in the same action — reconnect — but
+    /// they are not the same event, and a checkpoint that says "expired" sends someone through a
+    /// login that Facebook is going to interrupt again for a reason nothing told them about.
+    /// </summary>
+    public static string DescribeLoginWall(FacebookLoginWall wall) => wall switch
+    {
+        FacebookLoginWall.TwoFactor =>
+            "Facebook asked for a two-factor code instead of showing Marketplace, which a saved session "
+            + "can't answer. Reconnect and complete the code in the login window.",
+        FacebookLoginWall.Checkpoint =>
+            "Facebook put a security checkpoint in front of the account instead of showing Marketplace. "
+            + "Reconnect and clear the checkpoint in the login window — searches stay blocked until you do.",
+        FacebookLoginWall.Login =>
+            "Facebook asked the saved session to log in again instead of showing Marketplace, so the "
+            + "session has expired. Reconnect to search Marketplace again.",
+        _ => "",
+    };
+
+    private static bool MentionsAny(string text, params string[] needles)
+    {
+        if (text.Length == 0) return false;
+        foreach (var needle in needles)
+            if (text.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+}
+
+/// <summary>
+/// What Facebook put in front of a replayed session instead of Marketplace. All three mean the same
+/// thing to the search — no results, do not report an empty local market — but they mean different
+/// things to the seller, so they are kept apart rather than collapsed into "logged out".
+/// </summary>
+public enum FacebookLoginWall
+{
+    None,
+    Login,
+    Checkpoint,
+    TwoFactor,
 }

@@ -87,6 +87,7 @@ public static class FailureTranslator
         FailureKind.UpstreamServerError => true,
         FailureKind.AiUnreadableReply => true,
         FailureKind.StorageBusy => true,
+        FailureKind.BrowserBusy => true,
         _ => false,
     };
 
@@ -94,6 +95,12 @@ public static class FailureTranslator
 
     private static FailureInfo Classify(Exception? ex, string message, FailureDomain domain)
     {
+        // Browser first, and before the type-driven cases: the scrapes report their own failures as
+        // labelled strings on an ordinary exception, and a launch that could not find Chrome must not
+        // be read as whatever the message happens to also contain.
+        if (domain == FailureDomain.Browser)
+            return ClassifyBrowser(ex, message);
+
         // Type-driven cases first: these are unambiguous regardless of wording, and a cancelled
         // request is the one failure whose message is routinely useless ("A task was canceled.").
         if (ex is OperationCanceledException or TimeoutException)
@@ -435,6 +442,108 @@ public static class FailureTranslator
             if (text.Length > 0) return Truncate(text, 300);
         }
         return "";
+    }
+
+    // ── Browser scrapes (saved-session sites) ───────────────────────────────
+
+    /// <summary>
+    /// Labels the scrape scripts emit for the failures that happen before a page ever loads. The
+    /// raw text underneath them differs by Playwright version and by Windows locale, so the script
+    /// names what it saw and this side matches the name — with the raw phrasings kept below as a
+    /// fallback for anything that reaches here unlabelled.
+    /// </summary>
+    public const string PlaywrightMissingLabel = "PLAYWRIGHT_MISSING";
+    public const string ChromeMissingLabel     = "CHROME_MISSING";
+    public const string ChromeBusyLabel        = "CHROME_BUSY";
+    public const string SessionExpiredLabel    = "SESSION_EXPIRED";
+    public const string BrowserLaunchFailedLabel = "BROWSER_LAUNCH_FAILED";
+
+    /// <summary>
+    /// True when a scrape reported that the browser never started, as opposed to loading a page and
+    /// finding nothing on it. The distinction is the whole point: "no Chrome on this machine" and
+    /// "nothing for sale near you" are the same empty result set and completely different problems.
+    /// </summary>
+    public static bool IsBrowserLaunchFailure(string? message) =>
+        MentionsAny(message ?? "", PlaywrightMissingLabel, ChromeMissingLabel, ChromeBusyLabel,
+                    BrowserLaunchFailedLabel);
+
+    private static FailureInfo ClassifyBrowser(Exception? ex, string message)
+    {
+        if (ex is OperationCanceledException or TimeoutException)
+            return Timeout(FailureDomain.Browser);
+
+        // The Playwright package, not the browser. Different fix entirely: one is an npm install,
+        // the other is downloading Chrome. Reported as the same "browser problem" before this, which
+        // sent people to google.com/chrome to fix a missing node module.
+        if (MentionsAny(message, PlaywrightMissingLabel, "cannot find module", "module not found",
+                        "playwright is not installed"))
+            return new FailureInfo
+            {
+                Kind = FailureKind.ToolMissing,
+                Headline = "The browser automation package isn't installed",
+                WhatHappened = "Reading Marketplace drives a real browser through Playwright, and that package "
+                             + "isn't on this machine.",
+                WhatToDo = "Install Node.js, then run \"npm install -g playwright\" in a terminal and restart "
+                         + "the app. Everything else in the app keeps working without it.",
+                Retryable = false,
+                FixAction = "open-logs",
+            };
+
+        if (MentionsAny(message, ChromeMissingLabel, "chromium distribution", "is not found at",
+                        "browsertype.launch: executable doesn't exist", "channel \"chrome\"", "channel 'chrome'"))
+            return new FailureInfo
+            {
+                Kind = FailureKind.ToolMissing,
+                Headline = "Google Chrome isn't installed on this machine",
+                WhatHappened = "The Marketplace scrape uses your real installed Chrome on purpose — Facebook "
+                             + "challenges a test browser far more aggressively — and no Chrome was found.",
+                WhatToDo = "Install Google Chrome, then try again. Nothing else in the app needs it.",
+                Retryable = false,
+                FixAction = "open-logs",
+            };
+
+        // Chrome is there and refused to start a second copy against the same profile. This is the
+        // one browser failure that fixes itself, so it is the one that gets a Retry button.
+        if (MentionsAny(message, ChromeBusyLabel, "processsingleton", "singletonlock",
+                        "user data directory is already in use", "profile appears to be in use",
+                        "target page, context or browser has been closed", "already running"))
+            return new FailureInfo
+            {
+                Kind = FailureKind.BrowserBusy,
+                Headline = "Chrome is already running and wouldn't start a second copy",
+                WhatHappened = "Chrome refused to open with the profile this app needs, because a Chrome window "
+                             + "is already using it.",
+                WhatToDo = "Close your Chrome windows — all of them, including any left in the system tray — "
+                         + "then try again. Nothing was lost.",
+                Retryable = true,
+            };
+
+        if (MentionsAny(message, SessionExpiredLabel, "bounced to", "asked to sign in", "checkpoint",
+                        "two-factor", "log in again"))
+            return new FailureInfo
+            {
+                Kind = FailureKind.SessionExpired,
+                Headline = "The saved Facebook session isn't accepted any more",
+                WhatHappened = "Facebook served a login page instead of Marketplace, so the saved sign-in has "
+                             + "expired or been challenged.",
+                WhatToDo = "Click Reconnect and sign into your own Facebook account again — sessions expire on "
+                         + "a password change or a security check, and only you can clear one.",
+                Retryable = false,
+                FixAction = "connect-facebook",
+            };
+
+        if (MentionsAny(message, "watchdog", "timed out", "timeout", "exceeded"))
+            return Timeout(FailureDomain.Browser);
+
+        return Unknown(FailureDomain.Browser) with
+        {
+            Headline = "The browser search couldn't run",
+            WhatHappened = "The headless browser this search needs didn't get as far as loading the page.",
+            WhatToDo = "Try again. If it keeps happening, open Logs and send the detail below — nothing on your "
+                     + "listings was touched.",
+            Retryable = true,
+            FixAction = "open-logs",
+        };
     }
 
     // ── Photos ──────────────────────────────────────────────────────────────

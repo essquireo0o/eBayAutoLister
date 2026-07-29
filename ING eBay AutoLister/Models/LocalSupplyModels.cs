@@ -161,6 +161,12 @@ public class LocalSupplySearchResult
     // a Retry button on the source's chip only when this is true — offering one for a failure that
     // will repeat identically is worse than offering none.
     public bool Retryable { get; set; }
+
+    // The button that resolves this, when one can: "connect-facebook", or empty for none. Matched
+    // against FIX_ACTIONS in app.js. Retryable answers "is another attempt worth it"; this answers
+    // "what does the person have to go and do", and a dead session needs the second question —
+    // no number of retries replaces a login only they can complete.
+    public string FixAction { get; set; } = "";
 }
 
 // What one source contributed to a multi-source search: everything except the listings
@@ -175,11 +181,13 @@ public class LocalSupplySourceOutcome
     public string ScopeLabel { get; set; } = "";
     public string? Error { get; set; }
     public bool Retryable { get; set; }
+    public string FixAction { get; set; } = "";
 
     public static LocalSupplySourceOutcome From(LocalSupplySearchResult r) => new()
     {
         Id = r.SourceId, Label = r.SourceLabel, Status = r.Status, Count = r.Count,
         SearchUrl = r.SearchUrl, ScopeLabel = r.ScopeLabel, Error = r.Error, Retryable = r.Retryable,
+        FixAction = r.FixAction,
     };
 }
 

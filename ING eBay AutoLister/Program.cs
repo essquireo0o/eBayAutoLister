@@ -235,7 +235,14 @@ builder.Services.AddSingleton<UpdateChecker>();
 // saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
 // else. See FacebookMarketplaceService.
-builder.Services.AddSingleton<FacebookMarketplaceService>();
+//
+// Handed its session path outright, for the same reason credentials.json is: that file is a login
+// the seller completed by hand, and a build that looked one folder over would tell them to connect
+// an account that is already connected. AppPaths is the only thing allowed to answer "where".
+builder.Services.AddSingleton(sp => new FacebookMarketplaceService(
+    AppPaths.FacebookSessionPath,
+    sp.GetRequiredService<ActionLog>(),
+    sp.GetRequiredService<FacebookSoldStore>()));
 // Craigslist is the same job with none of that machinery: public search, no login, an RSS feed
 // and craigslist's own postal+distance filter. See CraigslistService.
 builder.Services.AddSingleton<CraigslistService>();
@@ -2007,8 +2014,22 @@ app.MapPost("/api/facebook/connect", (FacebookMarketplaceService facebook) =>
     return Results.Ok(new { started, message });
 });
 
+// The state, not just the boolean. "Not connected" and "the login you completed has since died" are
+// different sentences with different buttons, and the Settings card saying the first while a search
+// says the second is how this looked broken in two places at once. See FacebookSessionFile.
 app.MapGet("/api/facebook/status", (FacebookMarketplaceService facebook) =>
-    Results.Ok(new { connected = facebook.IsConnected, loginInProgress = facebook.IsLoginInProgress, lastError = facebook.LastLoginError }));
+{
+    var session = facebook.Session;
+    return Results.Ok(new
+    {
+        connected = facebook.IsConnected,
+        state = session.State.ToString(),
+        reason = session.Reason,
+        needsReconnect = session.NeedsReconnect,
+        loginInProgress = facebook.IsLoginInProgress,
+        lastError = facebook.LastLoginError,
+    });
+});
 
 app.MapPost("/api/facebook/disconnect", (FacebookMarketplaceService facebook) =>
 {

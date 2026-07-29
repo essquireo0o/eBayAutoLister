@@ -294,7 +294,25 @@ public sealed class ConnectionDoctor(
 
     // ── Facebook + Terapeak: saved browser sessions ───────────────────────────
 
-    public async Task<ConnectionCheck> CheckFacebookAsync(CancellationToken ct = default) =>
+    /// <summary>
+    /// Tests the saved Facebook session for real, and is the way back from a wrong verdict.
+    /// </summary>
+    /// <remarks>
+    /// A scrape that gets served a login page marks the session expired, and that marker is
+    /// deliberately terminal — every later search reports "reconnect" without spending a browser
+    /// launch to re-learn it. That is right when Facebook really did end the session and wrong on
+    /// the day it didn't, so this button clears the marker when a live replay comes back signed in.
+    /// It is the only thing that does, because it is the only check that actually asks Facebook.
+    /// </remarks>
+    public async Task<ConnectionCheck> CheckFacebookAsync(CancellationToken ct = default)
+    {
+        var check = await CheckFacebookSessionAsync(ct);
+        if (check.State == ConnectionState.Ok)
+            FacebookSessionFile.ClearExpiredMarker(facebook.SessionPath);
+        return check;
+    }
+
+    private async Task<ConnectionCheck> CheckFacebookSessionAsync(CancellationToken ct) =>
         ClassifyBrowserSession(await ProbeBrowserSessionAsync(
             name: "Facebook session",
             connectAction: "Open Settings → Facebook and click Connect — it opens a browser window for a one-time login to your own account.",

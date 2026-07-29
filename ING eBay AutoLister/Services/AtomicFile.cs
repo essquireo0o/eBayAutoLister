@@ -98,15 +98,38 @@ public static class AtomicFile
     /// as <see cref="WriteAllText"/>, expressed for Node — a session file truncated by a crash
     /// mid-write means the seller silently has to log into Facebook or eBay again.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The temp name carries the process id, which is not cosmetic. Two login windows open at once —
+    /// a double-click on Connect, or the app restarted while a login was still running — both wrote
+    /// to the same <c>.tmp</c>, and the second write landing inside the first one's rename produced
+    /// exactly the truncated session file this class exists to prevent. A per-process temp means the
+    /// worst two concurrent saves can do is have one complete session replace another.
+    /// </para>
+    /// <para>
+    /// The write is also flushed to the device before the rename. <c>writeFileSync</c> returns once
+    /// the bytes are in the OS cache; a machine that loses power in that window comes back to a
+    /// correctly-named file full of zeros, which is the same lost login by a slower route.
+    /// </para>
+    /// </remarks>
     /// <param name="jsPath">Already-escaped path, as produced by <see cref="NodeRuntime.JsPath"/>.</param>
     /// <param name="jsValueExpression">JavaScript expression producing the string to write.</param>
     public static string NodeWriteJs(string jsPath, string jsValueExpression) =>
         $$"""
           (() => {
             const fs = require('fs');
+            const path = require('path');
             const target = '{{jsPath}}';
-            const tmp = target + '.tmp';
-            fs.writeFileSync(tmp, {{jsValueExpression}});
+            const tmp = target + '.' + process.pid + '.tmp';
+            try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (_) {}
+            const fd = fs.openSync(tmp, 'w');
+            try {
+              fs.writeFileSync(fd, {{jsValueExpression}});
+              // All the way to the device, not just to the OS cache.
+              try { fs.fsyncSync(fd); } catch (_) {}
+            } finally {
+              try { fs.closeSync(fd); } catch (_) {}
+            }
             // Keep the previous session as .bak, then swap. rename() is atomic within a volume, so
             // the real path is never a half-written file.
             try { if (fs.existsSync(target)) fs.copyFileSync(target, target + '.bak'); } catch (_) {}

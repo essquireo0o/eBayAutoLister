@@ -27,9 +27,34 @@ namespace ING_eBay_AutoLister.Services;
 /// CraigslistService is the same interface with no login and a plain HTTPS GET behind it. The
 /// arbitrage pipeline treats both identically.
 /// </summary>
-public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, FacebookSoldStore? soldStore = null) : ILocalSupplySource
+public class FacebookMarketplaceService : ILocalSupplySource
 {
-    private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "facebook-session.json");
+    private readonly string _sessionPath;
+    private readonly ActionLog log;
+    private readonly FacebookSoldStore? soldStore;
+
+    /// <summary>
+    /// Where the session lives, and it is named through <see cref="AppPaths"/> rather than composed
+    /// from <c>ContentRootPath</c>.
+    /// </summary>
+    /// <remarks>
+    /// Those two resolve to the same folder today — <c>ContentRootPath</c> is set to
+    /// <see cref="AppPaths.DataHome"/> at startup — but only by arrangement, and a hosting property
+    /// is exactly the kind of thing that gets changed for an unrelated reason. When it moved before,
+    /// bin\Debug, a copied build and the installed app each looked in their own folder, and a seller
+    /// who ran a different build was told to connect Facebook again for a session that was sitting
+    /// on disk the whole time. Saying the path outright removes that possibility.
+    /// </remarks>
+    public FacebookMarketplaceService(ActionLog log, FacebookSoldStore? soldStore = null)
+        : this(AppPaths.FacebookSessionPath, log, soldStore) { }
+
+    /// <summary>Explicit-path constructor, for tests and for anything that keeps its session elsewhere.</summary>
+    public FacebookMarketplaceService(string sessionPath, ActionLog log, FacebookSoldStore? soldStore = null)
+    {
+        _sessionPath  = sessionPath;
+        this.log      = log;
+        this.soldStore = soldStore;
+    }
 
     // Interlocked, not a volatile bool: "check the flag, then set it" is two steps, and the
     // connect button is bound in several places at once (Settings card, sourcing banner, the
@@ -37,7 +62,14 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     // each launch a browser — which is how one click could put five login windows on screen.
     private int _loginInProgress;
 
-    public bool IsConnected => File.Exists(_sessionPath);
+    /// <summary>
+    /// What the saved session on disk actually is — five states, not <c>File.Exists</c>. A zero-byte
+    /// or truncated file used to count as connected, which turned "your login is broken" into a
+    /// Marketplace search that quietly found nothing. See <see cref="FacebookSessionFile"/>.
+    /// </summary>
+    public FacebookSessionStatus Session => FacebookSessionFile.Inspect(_sessionPath);
+
+    public bool IsConnected => Session.CanSearch;
 
     /// <summary>Where the saved storageState lives. Exposed so ConnectionDoctor can load it into a
     /// headless context and actually test it, rather than settling for "the file is there".</summary>
@@ -50,10 +82,26 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     public string Id => FacebookMarketplaceParser.SourceId;
     public string Label => FacebookMarketplaceParser.SourceLabel;
     public bool RequiresConnection => true;
-    public bool IsAvailable => IsConnected;
-    public string AvailabilityNote => IsConnected
-        ? "Connected — searches run in a headless browser, so give them a minute."
-        : "Needs a one-time login to your own Facebook account (Settings).";
+
+    /// <summary>
+    /// True for a live session AND for an expired one — which is not the same thing as
+    /// <see cref="IsConnected"/>, deliberately.
+    /// </summary>
+    /// <remarks>
+    /// LocalSupplyGuard answers an unavailable source with <c>not_connected</c> before the search
+    /// runs, which is right for a machine that has never been connected and wrong for one whose
+    /// login has died: those are different sentences and different buttons. Saying "available" here
+    /// lets <see cref="SearchAsync"/> give the expired session its own answer — instantly, without
+    /// launching a browser, because the verdict was reached by reading a file.
+    /// </remarks>
+    public bool IsAvailable => Session.State is FacebookSessionState.Valid or FacebookSessionState.Expired;
+
+    public string AvailabilityNote => Session.State switch
+    {
+        FacebookSessionState.Valid => "Connected — searches run in a headless browser, so give them a minute.",
+        FacebookSessionState.Expired => "The saved login has expired — reconnect in Settings.",
+        _ => "Needs a one-time login to your own Facebook account (Settings).",
+    };
 
     // ── One-time interactive login ─────────────────────────────────
 
@@ -69,23 +117,23 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         return (true, "A browser window just opened — log into Facebook there. If you don't see it, Alt+Tab or check the taskbar for it. It closes itself once you're in.");
     }
 
+    /// <summary>Ceiling on the whole login process. Above the script's own six-minute wait, so the
+    /// script is always what ends it and the outcome is a named token rather than a killed process.</summary>
+    public static TimeSpan LoginProcessTimeout => TimeSpan.FromMinutes(7);
+
     private async Task RunLoginProcessAsync()
     {
-        var script = LoginScript
-            .Replace("%%PW%%", NodeRuntime.JsPath(NodeRuntime.PlaywrightDir))
-            .Replace("%%SESSION%%", NodeRuntime.JsPath(_sessionPath))
-            .Replace("%%RAISE%%", NodeRuntime.RaiseToFrontJs)
-            .Replace("%%LANDING%%", FacebookMarketplaceSelectors.LoginLandingUrl)
-            .Replace("%%FALLBACK%%", FacebookMarketplaceSelectors.LoginFallbackUrl)
-            // Temp-file-then-rename rather than a straight write: a crash mid-save used to leave a
-            // truncated session file, which reads as "not connected" and costs the seller the login
-            // they just completed.
-            .Replace("%%SAVESESSION%%",
-                AtomicFile.NodeWriteJs(NodeRuntime.JsPath(_sessionPath), "JSON.stringify(state)"));
+        var script = BuildLoginScript(NodeRuntime.PlaywrightDir, _sessionPath);
 
         try
         {
-            var run = await NodeRuntime.RunAsync(script, TimeSpan.FromMinutes(7), "fbmarket_login",
+            // The session's own folder, made before node is asked to write into it: on a machine
+            // where the data home had never been created, the save threw at the last instant of a
+            // completed login and reported it as a cancelled one.
+            var directory = Path.GetDirectoryName(_sessionPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            var run = await NodeRuntime.RunAsync(script, LoginProcessTimeout, "fbmarket_login",
                 beforeStart: () =>
                 {
                     LoginWindowFocus.Grant();
@@ -94,13 +142,18 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
 
             if (run.TimedOut)
             {
-                LastLoginError = "No login completed within 7 minutes.";
+                LastLoginError = $"No login completed within {LoginProcessTimeout.TotalMinutes:0} minutes.";
                 log.Add("Warning", "Facebook login timed out", LastLoginError);
                 return;
             }
 
             if (run.StdOut == "SAVED")
+            {
+                // A fresh session starts clean: leaving the marker behind would have the very next
+                // search report the login that just succeeded as expired.
+                FacebookSessionFile.ClearExpiredMarker(_sessionPath);
                 log.Add("Info", "Facebook Marketplace connected", "Session saved — local Marketplace search is now available.");
+            }
             else
             {
                 // The script's outcome tokens are for this method, not for a human — surfacing
@@ -111,6 +164,10 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
                     var s when s.StartsWith("NAVFAIL:") =>
                         $"Facebook's login page wouldn't load ({s["NAVFAIL:".Length..].Trim()}). "
                         + "This is Facebook's end, not your account — try again in a minute.",
+                    // No Chrome, no Playwright, or a Chrome already holding the profile. Three
+                    // machine problems with three different fixes, and none of them is "you closed
+                    // the window", which is what all three used to be reported as.
+                    var s when FailureTranslator.IsBrowserLaunchFailure(s) => DescribeBrowserFailure(s),
                     var s when !string.IsNullOrWhiteSpace(s) => s,
                     _ => string.IsNullOrWhiteSpace(run.StdErr)
                         ? "Login window was closed before signing in."
@@ -132,9 +189,19 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         }
     }
 
+    /// <summary>One sentence for a browser that would not start, from the label the script emitted.</summary>
+    private static string DescribeBrowserFailure(string raw)
+    {
+        var failure = FailureTranslator.Translate(new InvalidOperationException(raw), FailureDomain.Browser);
+        return $"{failure.Headline}. {failure.WhatToDo}";
+    }
+
     public void Disconnect()
     {
-        try { File.Delete(_sessionPath); } catch { }
+        // The backup and the expired marker go too. Leaving the .bak behind means the next
+        // inspection recovers from it and reports the account the seller just disconnected as
+        // connected — see FacebookSessionFile.Delete.
+        FacebookSessionFile.Delete(_sessionPath);
         log.Add("Info", "Facebook Marketplace disconnected", "Saved session removed.");
     }
 
@@ -150,27 +217,24 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     {
         var snappedRadius = FacebookMarketplaceParser.NearestSupportedRadius(radiusMiles);
 
-        // Said in words, not just in a status: this is the one local-sourcing failure the seller
-        // fixes in a single click, and "not_connected" with an empty message renders as a bare
-        // chip that explains nothing.
-        if (!IsConnected)
-            return Fail("not_connected", query, zip, snappedRadius,
-                "Connect Facebook first — it needs a one-time login to your own account. Craigslist needs no login.");
+        // Read the file before spending a browser launch on it. Every state below is decided in
+        // microseconds, and each one used to end up as either "connect Facebook" (wrong for a login
+        // that has died) or a scrape that replayed nothing and reported no local supply.
+        if (GateOnSession(query, zip, snappedRadius) is { } blocked) return blocked;
 
         if (string.IsNullOrWhiteSpace(query))
             return Fail("error", query, zip, snappedRadius, "Enter something to search for.");
 
-        var script = SearchScript
-            .Replace("%%PW%%", NodeRuntime.JsPath(NodeRuntime.PlaywrightDir))
-            .Replace("%%SESSION%%", NodeRuntime.JsPath(_sessionPath))
-            .Replace("%%CFG%%", FacebookMarketplaceSelectors.ToJson(query, snappedRadius, zip ?? ""));
+        var script = BuildSearchScript(
+            NodeRuntime.PlaywrightDir, _sessionPath,
+            FacebookMarketplaceSelectors.ToJson(query, snappedRadius, zip ?? ""));
 
         NodeRunResult run;
         try
         {
             // Setting the location drives a real dialog and Facebook's grid loads lazily, so
             // this is a slower scrape than Terapeak's single page read.
-            run = await NodeRuntime.RunAsync(script, TimeSpan.FromSeconds(120), "fbmarket_search");
+            run = await NodeRuntime.RunAsync(script, SearchProcessTimeout, "fbmarket_search", ct: ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -190,7 +254,40 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
             return Fail("error", query, zip, snappedRadius,
                 string.IsNullOrWhiteSpace(run.StdErr) ? "No output from the Marketplace search." : run.StdErr);
 
-        return InterpretPayload(run.StdOut, query, zip, snappedRadius);
+        return InterpretPayload(run.StdOut, query, zip ?? "", snappedRadius);
+    }
+
+    /// <summary>
+    /// Answers a search from the session file alone when the file already settles it, and returns
+    /// null when there is a session worth launching a browser for.
+    /// </summary>
+    /// <remarks>
+    /// The split that matters is Connect versus Reconnect. A machine that never had a session needs
+    /// setting up; one whose session died needs a person to sign in again, and being told to
+    /// "connect Facebook" reads as the app having lost something. An unreadable file is its own
+    /// third case: nothing the seller did caused it, and it is not something a retry fixes.
+    /// </remarks>
+    private LocalSupplySearchResult? GateOnSession(string query, string? zip, int snappedRadius)
+    {
+        var session = Session;
+        return session.State switch
+        {
+            FacebookSessionState.Valid => null,
+
+            FacebookSessionState.Expired => Fail("session_expired", query, zip, snappedRadius,
+                $"{session.Reason} Reconnect to search Marketplace again.", fixAction: ConnectFixAction),
+
+            // Said in words, not just in a status: this is the one local-sourcing failure the seller
+            // fixes in a single click, and "not_connected" with an empty message renders as a bare
+            // chip that explains nothing.
+            FacebookSessionState.Missing => Fail("not_connected", query, zip, snappedRadius,
+                "Connect Facebook first — it needs a one-time login to your own account. Craigslist needs no login.",
+                fixAction: ConnectFixAction),
+
+            // Empty and Malformed: the login was made and the file did not survive being written.
+            _ => Fail("not_connected", query, zip, snappedRadius,
+                $"{session.Reason} Reconnect to save a fresh one.", fixAction: ConnectFixAction),
+        };
     }
 
     /// <summary>
@@ -216,15 +313,40 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         if (payload is null)
             return Fail("error", query, zip, snappedRadius, "Empty search output.");
 
-        if (payload.LoggedOut)
+        // A browser that never started is a machine problem, not an empty local market. Reported
+        // through FailureTranslator so no Chrome, no Playwright and a Chrome already holding the
+        // profile each get their own sentence and their own answer on whether a retry is worth it.
+        if (FailureTranslator.IsBrowserLaunchFailure(payload.Error))
+        {
+            var failure = FailureTranslator.Translate(
+                new InvalidOperationException(payload.Error), FailureDomain.Browser);
+            log.Add("Warning", "Facebook Marketplace browser failed to start", failure.Headline);
+            return Fail("error", query, zip, snappedRadius,
+                $"{failure.Headline}. {failure.WhatToDo}", retryable: failure.Retryable,
+                fixAction: failure.FixAction);
+        }
+
+        // The case this whole file exists for: Facebook handed the replayed session a login,
+        // checkpoint or two-factor page. There are no /marketplace/item/ tiles on any of those, so
+        // without this check the scrape reports zero results — indistinguishable from a thin local
+        // market, and the seller is never told the one thing they can act on.
+        var wall = FacebookMarketplaceParser.DetectLoginWall(payload.Url, payload.PageSignature);
+        if (payload.LoggedOut || wall != FacebookLoginWall.None)
         {
             // Same rule as Terapeak: never pop a login window as a side effect. Facebook
             // expires sessions on password change, new-device checks and security challenges —
             // all of which need the person, not the app.
-            Disconnect();
+            //
+            // Marked rather than deleted: deleting made the next screen say "never connected", so
+            // the seller went looking for a setting they had already set. See FacebookSessionFile.
+            FacebookSessionFile.MarkExpired(_sessionPath,
+                wall == FacebookLoginWall.None ? "the page carried a sign-in form" : $"bounced to {wall}");
+            var reason = FacebookMarketplaceParser.DescribeLoginWall(wall);
+            if (reason.Length == 0)
+                reason = "Your saved Facebook session expired — reconnect to search Marketplace again.";
+
             log.Add("Warning", "Facebook session expired", "Reconnect in Settings to search Marketplace again.");
-            return Fail("session_expired", query, zip, snappedRadius,
-                "Your saved Facebook session expired — reconnect to search Marketplace again.");
+            return Fail("session_expired", query, zip, snappedRadius, reason, fixAction: ConnectFixAction);
         }
 
         var cards = payload.Cards ?? [];
@@ -291,20 +413,17 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     public async Task<LocalSupplySearchResult> BrowseAsync(
         FacebookMarketplaceSelectors.BrowseFilters filters, CancellationToken ct = default)
     {
-        if (!IsConnected)
-            return Fail("not_connected", filters.Query, "", filters.RadiusMiles,
-                "Connect Facebook first — this reads Marketplace as your own account.");
+        if (GateOnSession(filters.Query, "", filters.RadiusMiles) is { } blocked) return blocked;
 
-        var script = PicksScript
-            .Replace("%%PW%%", NodeRuntime.JsPath(NodeRuntime.PlaywrightDir))
-            .Replace("%%SESSION%%", NodeRuntime.JsPath(_sessionPath))
-            .Replace("%%CFG%%", FacebookMarketplaceSelectors.ToJson(filters.Query, filters.RadiusMiles, ""))
-            .Replace("%%URL%%", FacebookMarketplaceSelectors.BuildBrowseUrl(filters));
+        var script = BuildPicksScript(
+            NodeRuntime.PlaywrightDir, _sessionPath,
+            FacebookMarketplaceSelectors.ToJson(filters.Query, filters.RadiusMiles, ""),
+            FacebookMarketplaceSelectors.BuildBrowseUrl(filters));
 
         NodeRunResult run;
         try
         {
-            run = await NodeRuntime.RunAsync(script, TimeSpan.FromSeconds(90), "fbmarket_picks");
+            run = await NodeRuntime.RunAsync(script, PicksProcessTimeout, "fbmarket_picks", ct: ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -353,8 +472,12 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     private static string OptionLabel((string Value, string Label)[] options, string value) =>
         options.FirstOrDefault(o => o.Value == value).Label ?? value;
 
+    /// <summary>The button the UI puts on a Facebook failure. Recognised by FIX_ACTIONS in app.js.</summary>
+    public const string ConnectFixAction = "connect-facebook";
+
     private static LocalSupplySearchResult Fail(
-        string status, string query, string? zip, int radius, string? error = null, bool retryable = false) => new()
+        string status, string query, string? zip, int radius, string? error = null,
+        bool retryable = false, string fixAction = "") => new()
     {
         SourceId    = FacebookMarketplaceParser.SourceId,
         SourceLabel = FacebookMarketplaceParser.SourceLabel,
@@ -365,6 +488,7 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         SearchUrl   = FacebookMarketplaceSelectors.BuildSearchUrl(string.IsNullOrWhiteSpace(query) ? " " : query, radius),
         Error       = error,
         Retryable   = retryable,
+        FixAction   = fixAction,
     };
 
     private sealed class ScrapePayload
@@ -373,20 +497,184 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         public bool LocationSet { get; set; }
         public string? Url { get; set; }
         public string? Error { get; set; }
+
+        /// <summary>
+        /// The page's title, whether it carries a login form, and the first of its visible text —
+        /// built in the page and capped there, so a few hundred bytes cross the process boundary
+        /// rather than a Marketplace page's several megabytes of markup. Read only by
+        /// <see cref="FacebookMarketplaceParser.DetectLoginWall"/>, never logged and never stored.
+        /// </summary>
+        public string? PageSignature { get; set; }
+
         public List<FacebookRawCard>? Cards { get; set; }
     }
 
     // ── Node/Playwright scripts ────────────────────────────────────────────────
     // Raw string literals with %%PLACEHOLDER%% substitution, so the JavaScript below reads as
     // JavaScript — no C#-level brace doubling or backslash escaping to get wrong.
+    //
+    // Each script is built through a public method rather than substituted at its call site,
+    // because this is JavaScript embedded in C#: nothing in the build type-checks a word of it, so
+    // a typo ships and the seller sees "Facebook keeps disconnecting". FacebookScrapeScriptTests
+    // asserts the properties a working connection actually depends on.
+
+    /// <summary>
+    /// Ceiling on one search process. Sits ABOVE the script's own watchdog so the script is what
+    /// ends a stuck run — a killed process has no payload, and no payload has no reason in it.
+    /// </summary>
+    public static TimeSpan SearchProcessTimeout => TimeSpan.FromSeconds(120);
+    public static TimeSpan PicksProcessTimeout  => TimeSpan.FromSeconds(90);
+
+    /// <summary>The script's own deadline. Under the matching process timeout, by design.</summary>
+    public const int SearchWatchdogMs = 100_000;
+    public const int PicksWatchdogMs  = 70_000;
+
+    public static string BuildLoginScript(string playwrightDir, string sessionPath) =>
+        LoginScript
+            .Replace("%%PW%%", NodeRuntime.JsPath(playwrightDir))
+            .Replace("%%RAISE%%", NodeRuntime.RaiseToFrontJs)
+            .Replace("%%LAUNCHGUARD%%", LaunchGuardJs)
+            .Replace("%%LANDING%%", FacebookMarketplaceSelectors.LoginLandingUrl)
+            .Replace("%%FALLBACK%%", FacebookMarketplaceSelectors.LoginFallbackUrl)
+            // Temp-file-then-rename rather than a straight write: a crash mid-save used to leave a
+            // truncated session file, which reads as "not connected" and costs the seller the login
+            // they just completed. The temp name carries the pid, so a second login window racing
+            // this one cannot land inside its rename — see AtomicFile.NodeWriteJs.
+            .Replace("%%SAVESESSION%%",
+                AtomicFile.NodeWriteJs(NodeRuntime.JsPath(sessionPath), "JSON.stringify(state)"));
+
+    // The config JSON is substituted LAST in both scrapes below: it carries the seller's own search
+    // text, and a query that happened to contain a placeholder would otherwise be substituted into.
+    public static string BuildSearchScript(string playwrightDir, string sessionPath, string configJson) =>
+        SearchScript
+            .Replace("%%PW%%", NodeRuntime.JsPath(playwrightDir))
+            .Replace("%%SESSION%%", NodeRuntime.JsPath(sessionPath))
+            .Replace("%%LAUNCHGUARD%%", LaunchGuardJs)
+            .Replace("%%SIGNATURE%%", PageSignatureJs)
+            .Replace("%%EMIT%%", EmitJs)
+            .Replace("%%WATCHDOG%%", SearchWatchdogMs.ToString())
+            .Replace("%%CFG%%", configJson);
+
+    public static string BuildPicksScript(string playwrightDir, string sessionPath, string configJson, string url) =>
+        PicksScript
+            .Replace("%%PW%%", NodeRuntime.JsPath(playwrightDir))
+            .Replace("%%SESSION%%", NodeRuntime.JsPath(sessionPath))
+            .Replace("%%LAUNCHGUARD%%", LaunchGuardJs)
+            .Replace("%%SIGNATURE%%", PageSignatureJs)
+            .Replace("%%EMIT%%", EmitJs)
+            .Replace("%%WATCHDOG%%", PicksWatchdogMs.ToString())
+            .Replace("%%URL%%", url)
+            .Replace("%%CFG%%", configJson);
+
+    /// <summary>
+    /// Everything that can fail before a page ever loads, named instead of left as raw Playwright
+    /// text. Shared by all three scripts; the labels are matched in FailureTranslator.
+    /// </summary>
+    /// <remarks>
+    /// The three that actually happen on a seller's machine have three different fixes — install
+    /// the npm package, install Chrome, close the Chrome that is already open — and all three used
+    /// to arrive as one indistinguishable "couldn't launch the browser", or worse, as a scrape that
+    /// returned zero listings. Naming them here rather than pattern-matching the raw text later
+    /// means a Playwright wording change breaks one regex in one place instead of silently
+    /// reclassifying a seller's problem as "no listings found".
+    /// </remarks>
+    private const string LaunchGuardJs = """
+          function firstLine(e) { return String((e && e.message) || e).split('\n')[0]; }
+
+          function requirePlaywright(dir) {
+            try { return require(dir).chromium; }
+            catch (e) { throw new Error('PLAYWRIGHT_MISSING: ' + firstLine(e)); }
+          }
+
+          async function launchChrome(chromium, options) {
+            try { return await chromium.launch(options); }
+            catch (e) {
+              const m = firstLine(e);
+              if (/Chromium distribution|is not found at|executable doesn't exist|playwright install/i.test(m))
+                throw new Error('CHROME_MISSING: ' + m);
+              // Chrome refusing to open a second copy against a profile another Chrome holds. Its
+              // own words for this vary by version and by Windows locale, so match on the parts
+              // that don't: the singleton lock Chrome names directly.
+              if (/ProcessSingleton|SingletonLock|already in use|already running|profile is in use|cannot create default profile/i.test(m))
+                throw new Error('CHROME_BUSY: ' + m);
+              throw new Error('BROWSER_LAUNCH_FAILED: ' + m);
+            }
+          }
+        """;
+
+    /// <summary>
+    /// Builds the few hundred bytes that answer "did Facebook serve a login wall?" — title, whether
+    /// a password box is present, and the start of the visible text.
+    /// </summary>
+    /// <remarks>
+    /// Built and capped inside the page on purpose. A rendered Marketplace page is megabytes of
+    /// obfuscated markup, and none of it needs to cross a process boundary to answer one yes/no
+    /// question. What comes back is read by FacebookMarketplaceParser.DetectLoginWall and by nothing
+    /// else: it is never logged, never stored and never returned to the browser.
+    /// </remarks>
+    /// <summary>
+    /// One payload, always — declared before the scrape starts so every way out of the script goes
+    /// through it.
+    /// </summary>
+    /// <remarks>
+    /// A hang, a crash and a clean run all have to produce a JSON object with a reason in it. When
+    /// they did not, a stuck page was killed from the C# side with nothing written, which reached
+    /// the seller as "No output from the Marketplace search" — a sentence that names no cause and
+    /// suggests no action. The watchdog is deliberately shorter than the process timeout that backs
+    /// it up, so the script is what ends a stuck run and the payload survives.
+    /// </remarks>
+    private const string EmitJs = """
+        let browser = null;
+        const out = { loggedOut: false, locationSet: false, url: '', pageSignature: '', cards: [], error: null };
+        let emitted = false;
+        function emit(exit) {
+          if (emitted) return;
+          emitted = true;
+          // The callback matters: stdout to a pipe is asynchronous, and exiting before the flush
+          // truncates the payload — which is the same "no output" failure by another route.
+          try { process.stdout.write(JSON.stringify(out), () => { if (exit) process.exit(0); }); }
+          catch (_) { if (exit) process.exit(0); }
+        }
+        const watchdog = setTimeout(() => {
+          out.error = out.error || 'WATCHDOG: Marketplace did not finish loading in time.';
+          try { if (browser) browser.close().catch(() => {}); } catch (_) {}
+          emit(true);
+        }, %%WATCHDOG%%);
+        """;
+
+    private const string PageSignatureJs = """
+          async function pageSignature(page) {
+            try {
+              return await page.evaluate(() => {
+                const parts = [];
+                parts.push('<title>' + (document.title || '') + '</title>');
+                if (document.querySelector("input[name='pass']")) parts.push('name="pass"');
+                if (document.querySelector('#login_form, form[action*="login"]')) parts.push('id="login_form"');
+                const text = document.body ? (document.body.innerText || '') : '';
+                return parts.join('\n') + '\n' + text.slice(0, 1500);
+              });
+            } catch (_) { return ''; }
+          }
+        """;
 
     private const string LoginScript = """
-        const { chromium } = require('%%PW%%');
         (async () => {
+        %%LAUNCHGUARD%%
+
           // The real installed Chrome, not Playwright's bundled build: Facebook's login flow
           // challenges the test browser fingerprint far more aggressively, and a challenge the
           // user can't clear means no session at all.
-          const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--disable-blink-features=AutomationControlled', '--start-maximized'] });
+          let browser;
+          try {
+            const chromium = requirePlaywright('%%PW%%');
+            browser = await launchChrome(chromium, { channel: 'chrome', headless: false, args: ['--disable-blink-features=AutomationControlled', '--start-maximized'] });
+          } catch (e) {
+            // A named launch failure, not a silent exit: without this the window never appeared,
+            // the app went on claiming one was open, and the seller was eventually told they had
+            // closed it.
+            process.stdout.write(firstLine(e));
+            return;
+          }
           const ctx = await browser.newContext({ viewport: null });
           await ctx.addInitScript(() => { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); });
           const page = await ctx.newPage();
@@ -462,25 +750,34 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     // page the seller's own account sees and read the tiles. Everything it produces is the same
     // payload shape as the search scrape, so InterpretPayload handles both.
     private const string PicksScript = """
-        const { chromium } = require('%%PW%%');
+        %%LAUNCHGUARD%%
+        %%SIGNATURE%%
+        %%EMIT%%
         const CFG = %%CFG%%;
 
         (async () => {
-          const out = { loggedOut: false, locationSet: true, url: '', cards: [], error: null };
-          let browser = null;
+          // No location dialog on this one — the feed is whatever Facebook shows this account near
+          // its own saved location — so nothing is left to set.
+          out.locationSet = true;
           try {
-            browser = await chromium.launch({ channel: 'chrome', headless: true });
+            const chromium = requirePlaywright('%%PW%%');
+            browser = await launchChrome(chromium, { channel: 'chrome', headless: true });
             const ctx = await browser.newContext({
               storageState: '%%SESSION%%',
               viewport: { width: 1400, height: 1200 },
               locale: 'en-US'
             });
+            // Nothing waits forever: an unbounded default is how one stuck selector turned a
+            // 30-second scrape into a process the app had to kill from outside.
+            ctx.setDefaultTimeout(15000);
+            ctx.setDefaultNavigationTimeout(35000);
             await ctx.addInitScript(() => { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); });
             const page = await ctx.newPage();
 
             await page.goto('%%URL%%', { waitUntil: 'domcontentloaded', timeout: 35000 });
             await page.waitForTimeout(4000);
             out.url = page.url();
+            out.pageSignature = await pageSignature(page);
 
             out.loggedOut = new RegExp(CFG.loggedOutUrlPattern).test(page.url());
             if (!out.loggedOut) {
@@ -518,12 +815,15 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
             out.error = String((e && e.message) || e);
           }
           try { if (browser) await browser.close(); } catch (_) {}
-          process.stdout.write(JSON.stringify(out));
+          clearTimeout(watchdog);
+          emit(false);
         })();
         """;
 
     private const string SearchScript = """
-        const { chromium } = require('%%PW%%');
+        %%LAUNCHGUARD%%
+        %%SIGNATURE%%
+        %%EMIT%%
         const CFG = %%CFG%%;
 
         // Every selector arrives as a candidate list — first one that resolves wins, the rest
@@ -601,21 +901,25 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
         }
 
         (async () => {
-          const out = { loggedOut: false, locationSet: false, url: '', cards: [], error: null };
-          let browser = null;
           try {
-            browser = await chromium.launch({ channel: 'chrome', headless: true });
+            const chromium = requirePlaywright('%%PW%%');
+            browser = await launchChrome(chromium, { channel: 'chrome', headless: true });
             const ctx = await browser.newContext({
               storageState: '%%SESSION%%',
               viewport: { width: 1400, height: 1200 },
               locale: 'en-US'
             });
+            // Nothing waits forever: an unbounded default is how one stuck selector turned a
+            // 30-second scrape into a process the app had to kill from outside.
+            ctx.setDefaultTimeout(15000);
+            ctx.setDefaultNavigationTimeout(35000);
             await ctx.addInitScript(() => { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); });
             const page = await ctx.newPage();
 
             await page.goto(CFG.searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
             await page.waitForTimeout(4000);
             out.url = page.url();
+            out.pageSignature = await pageSignature(page);
 
             out.loggedOut = new RegExp(CFG.loggedOutUrlPattern).test(page.url());
             if (!out.loggedOut) {
@@ -638,7 +942,8 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
             out.error = String((e && e.message) || e);
           }
           try { if (browser) await browser.close(); } catch (_) {}
-          process.stdout.write(JSON.stringify(out));
+          clearTimeout(watchdog);
+          emit(false);
         })();
         """;
 }

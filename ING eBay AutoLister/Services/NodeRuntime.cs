@@ -100,8 +100,15 @@ public static class NodeRuntime
     /// script file is always deleted, and a run that overruns <paramref name="timeout"/> has
     /// its whole process tree killed rather than being left holding a browser open.
     /// </summary>
+    /// <param name="ct">
+    /// Cancelling kills the process tree too, and throws. Without this a browser outlived the
+    /// request that asked for it: the caller gave up, the endpoint returned, and a headless Chrome
+    /// carried on loading Facebook in the background until its own timeout — several of them at once
+    /// on a machine where someone kept clicking Search.
+    /// </param>
     public static async Task<NodeRunResult> RunAsync(
-        string script, TimeSpan timeout, string filePrefix, Action? beforeStart = null)
+        string script, TimeSpan timeout, string filePrefix, Action? beforeStart = null,
+        CancellationToken ct = default)
     {
         var scriptFile = Path.Combine(Path.GetTempPath(), $"{filePrefix}_{Guid.NewGuid():N}.cjs");
         await File.WriteAllTextAsync(scriptFile, script);
@@ -131,11 +138,14 @@ public static class NodeRuntime
             var stdoutTask = proc.StandardOutput.ReadToEndAsync();
             var stderrTask = proc.StandardError.ReadToEndAsync();
 
-            using var cts = new CancellationTokenSource(timeout);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout);
             try { await proc.WaitForExitAsync(cts.Token); }
             catch (OperationCanceledException)
             {
+                // Kill first, decide what to report second: either way no browser is left running.
                 try { proc.Kill(entireProcessTree: true); } catch { }
+                if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
                 return new NodeRunResult("", "", TimedOut: true);
             }
 

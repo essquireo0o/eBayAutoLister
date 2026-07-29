@@ -16,6 +16,12 @@ public enum FailureDomain
     Photos,
     Research,
     Storage,
+    /// <summary>
+    /// The saved-browser-session scrapes (Facebook Marketplace, Terapeak). Its own domain because
+    /// its failures are local machine problems — no Chrome, no Playwright, a browser already holding
+    /// the profile — and none of those look like anything in the API domains above.
+    /// </summary>
+    Browser,
     App,
 }
 
@@ -32,6 +38,8 @@ public enum FailureKind
     UpstreamServerError,
     AiUnreadableReply,
     StorageBusy,
+    /// <summary>A browser is installed but wouldn't start — most often one already holding the profile.</summary>
+    BrowserBusy,
 
     // Permanent — retrying identical input changes nothing.
     AiKeyMissing,
@@ -46,6 +54,8 @@ public enum FailureKind
     BadInput,
     DiskFull,
     ToolMissing,
+    /// <summary>A saved browser session the site no longer accepts. Only a person, in a browser, replaces it.</summary>
+    SessionExpired,
     Unknown,
 }
 

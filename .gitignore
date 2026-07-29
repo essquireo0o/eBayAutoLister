@@ -1,5 +1,11 @@
 # ── Credentials & secrets — NEVER commit these ──────────────────
 credentials.json
+# Saved browser sessions. These are login cookies for the seller's own Facebook and eBay
+# accounts — committing one hands over the account. They live in %LOCALAPPDATA%\ING AutoLister
+# now (see AppPaths), but an old build could still have left a copy in the repo folder, and
+# .bak/.tmp/.expired sit beside each of them.
+facebook-session.json*
+terapeak-session.json*
 *.env
 .env*
 secrets.json
