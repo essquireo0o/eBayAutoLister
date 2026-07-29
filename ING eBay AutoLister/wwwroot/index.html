@@ -2424,7 +2424,21 @@
                   for. Results are saved as drafts for you to publish.
                 </p>
                 <div class="copilot-result" id="copilot-seo-result"></div>
-                <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Create drafts</button>
+
+                <!-- Pick individually, or take the lot. Your original photos are carried over
+                     untouched either way — the rewrite never sees them. -->
+                <div id="copilot-seo-picker" class="copilot-picker hidden">
+                  <label class="copilot-pick-all">
+                    <input type="checkbox" id="copilot-seo-all"> Select all
+                    <span id="copilot-seo-selcount" class="copilot-count">0 selected</span>
+                  </label>
+                  <div id="copilot-seo-list" class="copilot-picklist"></div>
+                </div>
+
+                <div class="copilot-apply-row">
+                  <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Rewrite all listings</button>
+                  <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply-selected" type="button" disabled>Rewrite selected</button>
+                </div>
               </article>
 
             </div>

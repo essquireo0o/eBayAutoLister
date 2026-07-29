@@ -13786,3 +13786,26 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   background: linear-gradient(90deg, #0f766e, #14b8a6);
   transition: width .4s ease;
 }
+
+/* Listing picker: rewrite one at a time, or take the lot. */
+.copilot-picker { margin: 4px 0 12px; }
+.copilot-pick-all {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-xs, .78rem); font-weight: 600;
+  padding-bottom: 8px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.1));
+}
+.copilot-picklist { max-height: 240px; overflow-y: auto; }
+.copilot-pick {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 0; font-size: var(--fs-xs, .78rem); cursor: pointer;
+}
+.copilot-pick:hover { background: var(--surface-3, rgba(255,255,255,.05)); }
+.copilot-pick-title {
+  flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.copilot-pick-flag {
+  flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(245,158,11,.15); color: #f59e0b;
+}
+.copilot-apply-row { display: flex; flex-wrap: wrap; gap: 8px; }

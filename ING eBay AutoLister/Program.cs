@@ -6999,6 +6999,18 @@ app.MapGet("/api/copilot/scan", async (EbayService ebay, ActionLog log) =>
             listings = reviewed,
             listingsNeedingWork = reviewed.Count(x => x.issues.Any(i => i.Code != "category_unknown")),
             categoryUnknown,
+
+            // Every listing, flagged or not, so the seller can tick individual ones to rewrite.
+            // The SEO pass rewrites the description and item specifics as well as the title, and a
+            // listing with a perfectly good title is exactly the one whose description most often
+            // needs the work — so the picker must not be limited to what the title audit flagged.
+            allListings = listings.Select(l => new
+            {
+                l.ListingId,
+                l.Title,
+                l.Price,
+                needsWork = ListingCopilot.AuditTitle(l.Title).Count > 0,
+            }).ToList(),
             // Said in the payload rather than left to the UI to remember: eBay's own category tree
             // belongs to eBay. A seller can move a listing between categories; they cannot rename
             // or reorder the categories themselves.

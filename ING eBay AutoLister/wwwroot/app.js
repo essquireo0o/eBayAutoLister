@@ -9998,7 +9998,50 @@
     on('copilot-scan-btn', 'click', runCopilotScan);
     on('copilot-close', 'click', closeCopilotSection);
     on('copilot-home', 'click', goHome);
-    on('copilot-seo-apply', 'click', runCopilotSeoRewrite);
+    on('copilot-seo-apply', 'click', () => runCopilotSeoRewrite([]));
+    on('copilot-seo-apply-selected', 'click', () => runCopilotSeoRewrite(selectedCopilotSeoIds()));
+    on('copilot-seo-all', 'change', () => {
+      const on_ = $('copilot-seo-all')?.checked;
+      $('copilot-seo-list')?.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = on_; });
+      syncCopilotSeoSelection();
+    });
+  }
+
+  // One at a time, or the lot. Listed in full rather than only what the title audit flagged: the
+  // pass also rewrites the description and fills item specifics, and a listing with a good title is
+  // often the one whose description needs it most.
+  function renderCopilotSeoPicker(all) {
+    const wrap = $('copilot-seo-picker');
+    const list = $('copilot-seo-list');
+    if (!wrap || !list) return;
+
+    if (!all.length) { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+
+    list.innerHTML = all.map(l =>
+      '<label class="copilot-pick"><input type="checkbox" value="' + esc(l.listingId) + '">' +
+      '<span class="copilot-pick-title">' + esc(l.title || '(no title)') + '</span>' +
+      (l.needsWork ? '<span class="copilot-pick-flag">title needs work</span>' : '') +
+      '</label>').join('');
+
+    list.querySelectorAll('input[type=checkbox]')
+        .forEach(c => c.addEventListener('change', syncCopilotSeoSelection));
+    syncCopilotSeoSelection();
+  }
+
+  function selectedCopilotSeoIds() {
+    return [...($('copilot-seo-list')?.querySelectorAll('input[type=checkbox]:checked') || [])]
+      .map(c => c.value);
+  }
+
+  function syncCopilotSeoSelection() {
+    const n = selectedCopilotSeoIds().length;
+    setText('copilot-seo-selcount', n + ' selected');
+    const btn = $('copilot-seo-apply-selected');
+    if (btn) {
+      btn.disabled = n === 0;
+      btn.textContent = n ? 'Rewrite ' + n + ' selected' : 'Rewrite selected';
+    }
   }
 
   // The AI rewrite: every live listing, rewritten for search - title, subtitle, the full HTML
@@ -10007,19 +10050,21 @@
   // the seller would have paid for every rewrite and received none of them.
   let copilotSeoPoll = null;
 
-  async function runCopilotSeoRewrite() {
-    const total = copilotScan ? copilotScan.scannedListings : 0;
+  async function runCopilotSeoRewrite(ids) {
+    const picked = (ids && ids.length) ? ids : [];
+    const count = picked.length || (copilotScan ? copilotScan.scannedListings : 0);
+
     if (!confirm(
-      'Rewrite ' + (total || 'all') + ' listing' + (total === 1 ? '' : 's') + ' with AI?\n\n' +
-      'Each gets a new title, a new HTML description and filled-in item specifics, saved as an eBay ' +
-      'draft for you to publish.\n\nNo live listing is changed. This takes a few minutes and costs ' +
-      'one Claude call per listing.')) return;
+      'Rewrite ' + (count || 'all') + ' listing' + (count === 1 ? '' : 's') + ' with AI?\n\n' +
+      'Each gets a new title, a new HTML description and filled-in item specifics, saved as a ' +
+      'draft for you to publish.\n\nYour original photos are kept exactly as they are.\n\n' +
+      'No live listing is changed. This takes a few minutes and costs one Claude call per listing.')) return;
 
     try {
       const res = await fetch('/api/copilot/improve-seo/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingIds: [] })      // empty = every live listing
+        body: JSON.stringify({ listingIds: picked })  // empty = every live listing
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not start');
@@ -10176,6 +10221,7 @@
         ? 'Rewrite all ' + data.scannedListings + ' listings'
         : 'No listings found';
     }
+    renderCopilotSeoPicker(data.allListings || []);
   }
 
   function bindPromoted() {
