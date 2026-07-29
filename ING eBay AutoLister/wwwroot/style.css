@@ -4344,7 +4344,9 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 40ch;
+  /* Wide enough for the longest thing it says — "✓ Sales updated 12 minutes ago — this keeps
+     itself current" — because a status ellipsised mid-sentence reads as a layout bug. */
+  max-width: 56ch;
 }
 .er-auto-status.is-ok      { color: var(--success-tint); }
 .er-auto-status.is-waiting { color: var(--gold-note); }
@@ -13694,8 +13696,8 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   padding: 12px 14px;
   margin: 12px 0;
   border-radius: 10px;
-  background: var(--surface-2, rgba(255,255,255,.04));
-  border: 1px solid var(--border, rgba(255,255,255,.1));
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(128,128,128,.28));
   font-size: var(--fs-sm, .9rem);
 }
 .copilot-error {
@@ -13717,8 +13719,8 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   flex-direction: column;
   padding: 16px;
   border-radius: 12px;
-  background: var(--surface-2, rgba(255,255,255,.04));
-  border: 1px solid var(--border, rgba(255,255,255,.1));
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(128,128,128,.28));
 }
 .copilot-card-head {
   display: flex;
@@ -13732,12 +13734,12 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   font-size: var(--fs-xs, .78rem);
   padding: 2px 8px;
   border-radius: 999px;
-  background: var(--surface-3, rgba(255,255,255,.08));
+  background: var(--surface-2, rgba(128,128,128,.10));
   white-space: nowrap;
 }
 .copilot-why {
   font-size: var(--fs-xs, .78rem);
-  color: var(--on-dark-2, rgba(255,255,255,.65));
+  color: var(--text-muted, #606e74);
   margin: 8px 0 10px;
   line-height: 1.5;
 }
@@ -13755,17 +13757,17 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   align-items: baseline;
   gap: 6px;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,.07));
+  border-bottom: 1px solid var(--border, rgba(128,128,128,.22));
   font-size: var(--fs-xs, .78rem);
 }
 .copilot-list li:last-child { border-bottom: 0; }
-.copilot-was  { text-decoration: line-through; opacity: .6; }
+.copilot-was  { text-decoration: line-through; color: var(--text-muted, #606e74); }
 .copilot-arrow{ opacity: .5; }
 .copilot-now  { font-weight: 600; }
 .copilot-title{ font-weight: 600; }
-.copilot-issue{ width: 100%; opacity: .65; }
-.copilot-clean{ font-size: var(--fs-xs, .78rem); opacity: .7; margin: 0; }
-.copilot-more { font-size: var(--fs-xs, .78rem); opacity: .6; margin: 6px 0 0; }
+.copilot-issue{ width: 100%; color: var(--text-muted, #606e74); }
+.copilot-clean{ font-size: var(--fs-xs, .78rem); color: var(--text-muted, #606e74); margin: 0; }
+.copilot-more { font-size: var(--fs-xs, .78rem); color: var(--text-muted, #606e74); margin: 6px 0 0; }
 .copilot-apply { align-self: flex-start; }
 .copilot-apply[disabled] { opacity: .45; cursor: not-allowed; }
 .copilot-foot { margin-top: 16px; }
@@ -13775,7 +13777,7 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .copilot-bar {
   height: 6px;
   border-radius: 999px;
-  background: var(--surface-3, rgba(255,255,255,.08));
+  background: var(--surface-2, rgba(128,128,128,.10));
   overflow: hidden;
   margin: 10px 0 12px;
 }
@@ -13793,14 +13795,14 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   display: flex; align-items: center; gap: 8px;
   font-size: var(--fs-xs, .78rem); font-weight: 600;
   padding-bottom: 8px; margin-bottom: 6px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,.1));
+  border-bottom: 1px solid var(--border, rgba(128,128,128,.28));
 }
 .copilot-picklist { max-height: 240px; overflow-y: auto; }
 .copilot-pick {
   display: flex; align-items: baseline; gap: 8px;
   padding: 5px 0; font-size: var(--fs-xs, .78rem); cursor: pointer;
 }
-.copilot-pick:hover { background: var(--surface-3, rgba(255,255,255,.05)); }
+.copilot-pick:hover { background: var(--surface-2, rgba(128,128,128,.10)); }
 .copilot-pick-title {
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
