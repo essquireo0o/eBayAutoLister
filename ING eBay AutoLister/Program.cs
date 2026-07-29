@@ -2096,7 +2096,8 @@ app.MapGet("/api/ebay/scan", async (
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, ClaudeService claude,
+    ActionLog log, CancellationToken ct) =>
 {
     // Whitelisted rather than passed through: these reach eBay's own filter syntax, and an
     // unrecognised value there is an error on the whole search rather than an ignored parameter.
@@ -2120,8 +2121,8 @@ app.MapGet("/api/ebay/scan", async (
 
     try
     {
-        var result = await FindLocalArbitrageAsync(
-            q ?? "", "", 40,
+        Task<LocalArbitrageResult> Scan(string keyword) => FindLocalArbitrageAsync(
+            keyword, "", 40,
             Math.Clamp(maxItems ?? 30, 1, 60), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
             [ebaySource.WithFilters(filters)], craigslistSite: null,
             // eBay charges sales tax, but it is already inside the delivered price the source
@@ -2131,6 +2132,41 @@ app.MapGet("/api/ebay/scan", async (
             profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
             couponService,
             ResaleCategoryCatalog.Resolve(category));
+
+        var result = await Scan(q ?? "");
+
+        // Only on an empty scan, and only ever once. eBay answers a misspelling with a bare
+        // "total: 0" — no correction, no suggestion — so a typo is indistinguishable from a dead
+        // market. Correcting a search that already returned rows would be the other failure:
+        // quietly answering a question the seller did not ask.
+        if (result.Items.Count == 0 && !string.IsNullOrWhiteSpace(q))
+        {
+            var corrected = await claude.SuggestSearchSpellingAsync(q, ct);
+            if (!string.IsNullOrWhiteSpace(corrected))
+            {
+                var retry = await Scan(corrected);
+
+                // Swap only when the corrected search actually found something to buy. Otherwise
+                // keep the seller's own search and carry the suggestion alongside it, so the screen
+                // can ask "did you mean" instead of silently answering a question nobody typed.
+                //
+                // These have to be separate cases because a scan returns zero rows for two very
+                // different reasons: eBay had nothing, or eBay had plenty and none of it could be
+                // priced against sold comps. Measured: "miners cryptocurrency" is 1,202 listings on
+                // eBay and still zero rows here. Gating the correction on priced rows meant a
+                // correct suggestion was thrown away.
+                if (retry.Items.Count > 0)
+                {
+                    retry.CorrectedFrom = q;
+                    retry.CorrectedTo = corrected;
+                    log.Add("Info", "Search spelling corrected", $"\"{q}\" -> \"{corrected}\" ({retry.Items.Count} results)");
+                    return Results.Ok(retry);
+                }
+
+                result.CorrectedTo = corrected;      // a suggestion, not a substitution
+                log.Add("Info", "Search spelling suggestion", $"\"{q}\" -> \"{corrected}\" (neither found priced rows)");
+            }
+        }
 
         return Results.Ok(result);
     }

@@ -1253,7 +1253,10 @@
             <div class="ebay-scan-row">
               <div class="opp-field ebay-scan-field">
                 <label for="ebay-scan-query">What to look for</label>
-                <input id="ebay-scan-query" type="text" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
+                <!-- spellcheck on: the browser's own red underline catches a typo before the scan
+                     is spent. If one gets through anyway, the server retries the corrected spelling
+                     and the results say so — see CorrectedFrom/CorrectedTo. -->
+                <input id="ebay-scan-query" type="text" spellcheck="true" autocorrect="on" autocapitalize="off" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
               </div>
               <button id="ebay-scan-btn" class="btn btn-primary opp-search-submit" type="button">🛒 Scan eBay</button>
             </div>
@@ -3546,7 +3549,7 @@
                to change — EarningsAutoImport re-reads a rolling 90 days every few hours, which is
                wide enough that a missed day heals itself. A control that no longer changes
                anything is worse than no control, so it is gone rather than disabled. -->
-          <div class="opp-supplier-panel">
+          <div id="er-status-panel" class="opp-supplier-panel hidden">
             <div class="inv-controls">
               <span id="er-status" class="inv-status"></span>
             </div>

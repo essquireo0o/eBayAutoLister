@@ -810,6 +810,65 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return improved;
     }
 
+    /// <summary>
+    /// Corrects a misspelled search keyword, or returns null when it is already fine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// eBay does not do this. Measured against the live Browse API: <c>miners crytpocurrency</c> and
+    /// <c>antmnier s19</c> both return <c>total: 0</c> with no <c>autoCorrections</c> field and no
+    /// suggestion of any kind — a typo just looks like "there is nothing out there". That is the
+    /// worst possible answer for a sourcing tool, because it reads as a verdict on the market rather
+    /// than a slip of the keyboard.
+    /// </para>
+    /// <para>
+    /// Deliberately a small, cheap model: this is one short line of text, and it runs only after a
+    /// search has already come back empty. Product spelling is exactly where a dictionary would fail
+    /// and a language model does well — "antmnier" is not in any dictionary, and neither is the
+    /// correct spelling.
+    /// </para>
+    /// </remarks>
+    public async Task<string?> SuggestSearchSpellingAsync(string query, CancellationToken ct = default)
+    {
+        var q = (query ?? "").Trim();
+        if (q.Length < 3 || q.Length > 120) return null;
+
+        var prompt = $"""
+            A seller searched eBay for this and got zero results. It is probably a typo.
+
+            SEARCH: {q}
+
+            Reply with ONLY the corrected search terms, nothing else - no quotes, no explanation.
+            If the spelling is already correct, reply with exactly: OK
+
+            These are product searches, so brand and model names matter more than dictionary words
+            (e.g. "antmnier s19" -> "antminer s19", "crytpocurrency" -> "cryptocurrency",
+            "dewlat" -> "dewalt"). Keep every word the seller meant; only fix spelling. Do not add
+            words, do not remove words, do not make it more specific.
+            """;
+
+        var answer = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model = "claude-haiku-4-5-20251001",
+                MaxTokens = 100,
+                Messages = [new() { Role = RoleType.User, Content = [new TextContent { Text = prompt }] }]
+            },
+            response => TextOf(response, "").Trim(),
+            "search spelling check",
+            ct);
+
+        if (string.IsNullOrWhiteSpace(answer)) return null;
+        if (answer.Equals("OK", StringComparison.OrdinalIgnoreCase)) return null;
+
+        // A model that answered with a sentence, or rewrote the search into something else, is not
+        // a spelling correction — drop it rather than send the seller somewhere they did not ask for.
+        if (answer.Length > q.Length + 25) return null;
+        if (answer.Equals(q, StringComparison.OrdinalIgnoreCase)) return null;
+
+        return answer;
+    }
+
     // ── Natural language modification of current listing ────────────────────
 
     public async Task<ListingData> ModifyListingAsync(ModifyListingRequest req)

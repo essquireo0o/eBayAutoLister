@@ -2095,6 +2095,30 @@
       setLocalStatus(`The eBay scan didn't complete. ${error}`, true);
       return;
     }
+
+    // Say so when the spelling was corrected, and leave a way back. eBay answers a typo with zero
+    // results and no hint, so without this the seller reads a slip of the keyboard as "nothing out
+    // there" — and a silent correction is its own problem: results for a search nobody typed.
+    if (data.correctedTo && data.correctedFrom) {
+      // The corrected search found things worth buying, so that is what is on screen.
+      const input = $('ebay-scan-query');
+      if (input) input.value = data.correctedTo;
+      setLocalStatus(
+        `Showing results for "${data.correctedTo}" — "${data.correctedFrom}" found nothing. ` +
+        `Put the original back in the box to search it as typed.`);
+    } else if (data.correctedTo) {
+      // Nothing was swapped: a suggestion only, offered rather than applied.
+      setLocalStatus(`No priced results. Did you mean "${data.correctedTo}"? Click to try it.`);
+      const box = $('fb-status');
+      if (box) {
+        box.style.cursor = 'pointer';
+        box.onclick = () => {
+          const input = $('ebay-scan-query');
+          if (input) { input.value = data.correctedTo; runEbayScan(); }
+        };
+      }
+    }
+
     renderArbitrage(data);
   }
 

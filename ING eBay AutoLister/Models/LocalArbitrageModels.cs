@@ -215,7 +215,28 @@ public class LocalArbitrageResult
     // the honest answer it is. See Services/ResaleValuation.cs.
     public int ManualValuationCount { get; set; }
 
+    // Listings dropped before pricing because they weren't the product — repair services, manuals,
+    // core charges. Counted and said out loud for the same reason as the line above: a seller who
+    // searches a part number and sees "8 hidden" can tell the app screened them from believing the
+    // search came back thin. See Services/NonItemListingDetector.cs.
+    public int NotTheItemCount { get; set; }
+
     public List<LocalArbitrageOpportunity> Items { get; set; } = [];
+
+    /// <summary>
+    /// What the seller typed, when the search that produced these results was a spelling correction
+    /// of it. Null when nothing was corrected.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are kept so the UI can say "showing results for X - search instead for Y", the
+    /// way a search engine does. eBay returns a bare <c>total: 0</c> for a typo with no correction
+    /// and no hint, which reads as "there is nothing out there" rather than "you slipped a key" -
+    /// a verdict on the market instead of on the spelling.
+    /// </remarks>
+    public string? CorrectedFrom { get; set; }
+
+    /// <summary>The corrected spelling actually searched. Null when nothing was corrected.</summary>
+    public string? CorrectedTo { get; set; }
     public int Count => Items.Count;
 
     // ── What the run actually did, so the numbers can be judged ──────────────
