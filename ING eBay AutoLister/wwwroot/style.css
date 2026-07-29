@@ -13995,6 +13995,14 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   justify-content: space-between;
   gap: 14px;
 }
+/* Says what the grid is sorted by. Hidden until the prices land, because until then the cards
+   really are still in Facebook's order and the line would be a lie. */
+.fb-picks-order {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.fb-picks-order[hidden] { display: none; }
 .fb-picks-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

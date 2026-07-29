@@ -2489,6 +2489,10 @@
       if (status) status.textContent = data.error || 'Connect Facebook to see your Marketplace picks.';
       grid.innerHTML = '';
       return;
+    // These cards arrive in Facebook's order and stay in it until the prices land, so the sort
+    // line has to go away for as long as it isn't true.
+    const order = $('fb-picks-order');
+    if (order) order.hidden = true;
     }
     if (data.status !== 'ok' || !(data.items || []).length) {
       if (status) status.textContent = data.error || 'Facebook returned no picks just now — try Refresh in a minute.';
@@ -2591,6 +2595,10 @@
   }
 
   async function runEbayScan() {
+    // The numbers are on the cards; now put the best one first. Only worth doing — and only
+    // honest to announce — if something could actually be ranked.
+    if (priced) reorderFacebookPicks(data.items);
+
     const query = $('ebay-scan-query')?.value.trim() || '';
     const btn   = $('ebay-scan-btn');
 
@@ -2598,6 +2606,78 @@
 
     // Re-running is what the Try again button does, so it has to point at this scan and not at
     // whatever the panel below ran last.
+  /**
+   * How two priced picks rank against each other. Pure — no DOM, no fetch — so the rule can be
+   * tested on its own rather than only by looking at a grid.
+   *
+   * Highest ROI first, because that is the question the seller is asking: of the things for sale
+   * near me today, which one returns the most on what I put in. A card with no matching sold
+   * history is not a bad deal, it is *no opinion* — so it sinks below every ranked card instead
+   * of being scored as a zero, and it stays on the grid.
+   */
+  function compareFacebookPicks(a, b) {
+    const rank = row => {
+      const comps = (row && row.soldCompCount) || 0;
+      const sale = row && (row.ebayExpectedSale ?? row.ebayResaleMedian);
+      // The same test the card itself uses to decide between numbers and "no sold data", so the
+      // cards that read as unranked are exactly the cards that sort as unranked.
+      const ranked = sale != null && comps > 0;
+      const num = v => (ranked && typeof v === 'number' && isFinite(v) ? v : null);
+      return { ranked, roi: num(row && row.roiPercent), profit: num(row && row.netProfit) };
+    };
+
+    const ra = rank(a), rb = rank(b);
+
+    if (ra.ranked !== rb.ranked) return ra.ranked ? -1 : 1;
+    if (!ra.ranked) return 0;
+
+    // ROI descending, which puts every losing deal below every winning one for free. A priced
+    // card that has no ROI figure at all ranks under every card that has one.
+    if (ra.roi !== rb.roi) {
+      if (ra.roi == null) return 1;
+      if (rb.roi == null) return -1;
+      return rb.roi - ra.roi;
+    }
+
+    // Same ROI (or neither has one): the bigger dollar profit is the better of the two.
+    const pa = ra.profit ?? -Infinity, pb = rb.profit ?? -Infinity;
+    return pa === pb ? 0 : pb - pa;
+  }
+
+  /**
+   * Re-orders the cards already on screen into best-return-first.
+   *
+   * Moving the existing nodes rather than re-rendering the grid is deliberate: the markup is
+   * unchanged, so every thumbnail that has finished loading stays loaded and the panel never
+   * blanks a second time after the seller has already waited half a minute for it.
+   */
+  function reorderFacebookPicks(pricedRows) {
+    const grid = $('fb-picks-grid');
+    if (!grid) return;
+
+    const byId = new Map();
+    for (const row of pricedRows) if (row && row.itemId) byId.set(String(row.itemId), row);
+
+    const cards = Array.from(grid.querySelectorAll('.fb-pick-card'));
+    if (cards.length < 2) return;
+
+    const ordered = cards.map((card, index) => ({
+      card, index,
+      row: byId.get(card.querySelector('[data-pick-money]')?.getAttribute('data-pick-money') || '') || null
+    }));
+
+    // Facebook's own order is the tiebreak, so equally-good picks don't shuffle on every refresh.
+    ordered.sort((x, y) => compareFacebookPicks(x.row, y.row) || x.index - y.index);
+
+    const frag = document.createDocumentFragment();
+    for (const entry of ordered) frag.appendChild(entry.card);
+    grid.appendChild(frag);
+
+    // A grid that silently rearranges itself looks arbitrary unless it says what it sorted by.
+    const order = $('fb-picks-order');
+    if (order) order.hidden = false;
+  }
+
     lastLocalRun = runEbayScan;
 
     $('fb-results')?.classList.add('hidden');
