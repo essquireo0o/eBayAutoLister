@@ -368,8 +368,12 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         // to narrow results without a separate eBay Taxonomy API integration.
         var q = string.IsNullOrWhiteSpace(category) ? QuotePhrase(query) : $"{QuotePhrase(query)} {QuotePhrase(category)}";
 
+        // Best Match is selected by sending no sort parameter at all, so the sentinel drops the
+        // whole query segment rather than passing a value the Browse API would reject.
+        var sortPart = sort == EbayScanFilters.BestMatch ? "" : $"&sort={sort}";
+
         string Url(string keywords) => "https://api.ebay.com/buy/browse/v1/item_summary/search" +
-                   $"?q={Uri.EscapeDataString(keywords)}&filter={Uri.EscapeDataString(string.Join(",", filters))}&sort={sort}&limit={limit}";
+                   $"?q={Uri.EscapeDataString(keywords)}&filter={Uri.EscapeDataString(string.Join(",", filters))}{sortPart}&limit={limit}";
 
         var response = await client.GetAsync(Url(q));
         var body = await response.Content.ReadAsStringAsync();

@@ -42,11 +42,26 @@ public record EbayScanFilters(
     public static readonly EbayScanFilters Default = new();
 
     /// <summary>
-    /// Auctions are sorted soonest-ending because the whole premise is buying before it closes;
-    /// anything else is sorted cheapest-first, because an underpriced fixed-price listing is by
-    /// definition at the bottom of that order.
+    /// Auctions are sorted soonest-ending because the whole premise is buying before it closes.
+    /// Everything else uses eBay's Best Match.
     /// </summary>
-    public string Sort => ListingType == "AUCTION" ? "endingSoonest" : "price";
+    /// <remarks>
+    /// This used to be cheapest-first, on the reasoning that an underpriced listing is at the bottom
+    /// of that order. It is, and so is everything else. eBay carries 898,905 listings for "fanuc";
+    /// asking for the 200 cheapest returns 200 repair shops advertising labour at $0.99, because a
+    /// service listing has no cost of goods and can be priced at anything. Measured on the live
+    /// Browse API, of the 50 cheapest "fanuc" listings <b>49</b> were services or manuals — the junk
+    /// screen correctly binned them and the board came back empty. Under Best Match, <b>zero</b> of
+    /// the same 50 were junk and the rows were real amplifiers and control modules at $258-$976.
+    ///
+    /// Cheapest-first is not how you find something underpriced; it is how you find whatever is
+    /// cheapest to list. Finding the underpriced ones is what the profit ranking downstream is for,
+    /// and it can only rank what the search actually returned.
+    /// </remarks>
+    public string Sort => ListingType == "AUCTION" ? "endingSoonest" : BestMatch;
+
+    /// <summary>Sentinel meaning "send no sort parameter", which is how the Browse API selects Best Match.</summary>
+    public const string BestMatch = "bestMatch";
 
     /// <summary>Plain-English summary of what was actually narrowed, for the UI to echo back.</summary>
     public string Describe()
@@ -55,8 +70,8 @@ public record EbayScanFilters(
         parts.Add(ListingType switch
         {
             "AUCTION"     => "auctions ending soonest",
-            "FIXED_PRICE" => "Buy It Now, cheapest first",
-            _             => "auctions and Buy It Now, cheapest first",
+            "FIXED_PRICE" => "Buy It Now, best match",
+            _             => "auctions and Buy It Now, best match",
         });
         if (!string.IsNullOrWhiteSpace(Condition))
             parts.Add(Condition.Replace('_', ' ').ToLowerInvariant());
@@ -71,6 +86,21 @@ public record EbayScanFilters(
 public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLog log) : ILocalSupplySource
 {
     public const string SourceId = "ebay";
+
+    /// <summary>
+    /// How many listings one search pulls back. eBay's Browse API allows 200 in a single request,
+    /// and this is one request either way — so a bigger page costs nothing in calls and everything
+    /// in whether the board can be filled.
+    /// </summary>
+    /// <remarks>
+    /// This was 50, which a cheapest-first sort turns into a hostage to whoever is flooding the
+    /// bottom of the results. Searching "fanuc" returns 49 near-identical $0.99 "Repair Evaluation"
+    /// ads from one repair shop in the first 50 rows: once <see cref="NonItemListingDetector"/>
+    /// screens those, a 50-row page leaves a single real listing to price. The junk is a property
+    /// of the cheap end of any parts search, so the page has to be deep enough to see past it.
+    /// Nothing downstream gets more expensive — the scan still caps priced rows at its own maxItems.
+    /// </remarks>
+    public const int SearchPageSize = 200;
 
     private EbayScanFilters _filters = EbayScanFilters.Default;
 
@@ -153,7 +183,7 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
             // Sort follows the listing type — see EbayScanFilters.Sort for why cheapest-first is
             // the right order for a supply search and soonest-ending is right for auctions.
             found = await ebay.SearchEndingSoonAsync(
-                query, minFeedback: _filters.MinFeedback, limit: 50, category: null,
+                query, minFeedback: _filters.MinFeedback, limit: SearchPageSize, category: null,
                 condition: _filters.Condition, minPrice: _filters.MinPrice, maxPrice: _filters.MaxPrice,
                 listingType: _filters.ListingType, sortOverride: _filters.Sort);
         }
