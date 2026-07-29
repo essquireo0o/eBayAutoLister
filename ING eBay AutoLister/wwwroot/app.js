@@ -12332,8 +12332,9 @@
       checklist.classList.add('hidden');
     });
     on('step1-btn', 'click', () => openSetupAt('key'));
-    // step2-btn ("Choose policies") was removed from the checklist at the seller's request. The
-    // picker is still reachable from Settings -> eBay Seller Policies and from the New Listing form.
+    // Step 2 is the eBay login only now — it no longer routes to the policy picker, which lives in
+    // Settings -> eBay Seller Policies and in the New Listing form.
+    on('step2-btn', 'click', () => { if (!isConnected) $('btn-connect')?.click(); });
     on('setup-extras-btn', 'click', () => {
       navigateTo('settings');
       setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
@@ -14110,10 +14111,21 @@
     // longer applied.
     markSetupStep('step1', step1Done, 'Key saved');
 
-    // The "Connect eBay and pick your business policies" step was removed from the checklist at the
-    // seller's request, so nothing paints it here any more. `connected` and `hasPolicies` are still
-    // read above because the hero chips and the Settings page use them.
-    void connected; void hasPolicies;
+    // Step 2 is the eBay connection only. Picking business policies was taken off this checklist at
+    // the seller's request, so `hasPolicies` no longer gates the step - a connected seller is done
+    // here whether or not they have chosen policies. The picker lives in Settings now.
+    markSetupStep('step2', connected, 'Connected');
+    setText('step2-copy', connected
+      ? 'eBay is connected.'
+      : 'Log into eBay so the app can read your listings and publish for you.');
+
+    const step2Btn = $('step2-btn');
+    if (step2Btn && !connected) {
+      step2Btn.textContent = 'Log into eBay →';
+      step2Btn.dataset.pendingLabel = step2Btn.textContent;
+      step2Btn.disabled = false;
+    }
+    void hasPolicies;   // still read above for the hero chips and the Settings page
 
     refreshChecklistVisibility();
 
@@ -14143,7 +14155,7 @@
     };
 
     checklist.classList.toggle('hidden',
-      ['step1-row', 'step3-row', 'step4-row'].every(settled));
+      ['step1-row', 'step2-row', 'step3-row', 'step4-row'].every(settled));
   }
 
   /**
