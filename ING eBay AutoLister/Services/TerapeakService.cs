@@ -13,6 +13,20 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 {
     private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "terapeak-session.json");
 
+    /// <summary>
+    /// The Chrome profile this app keeps for eBay. Login and scrape both open THIS directory.
+    /// </summary>
+    /// <remarks>
+    /// The cookies live here now rather than being replayed from a JSON file into a fresh browser on
+    /// every scrape. eBay treats its own session cookie arriving from a browser it has never seen as
+    /// a stolen one - new fingerprint, no history, no localStorage - and challenges or kills it. A
+    /// profile directory is the same browser coming back, which is the truth.
+    ///
+    /// Separate from the seller's own Chrome profile on purpose: this app must never touch the
+    /// browser they use themselves.
+    /// </remarks>
+    private readonly string _profileDir = Path.Combine(env.ContentRootPath, "terapeak-profile");
+
     // Interlocked, not a volatile bool: "check the flag, then set it" is two separate steps, so
     // clicks that land together all read "not running" and each launch a browser window. The same
     // bug in the Facebook service put five login windows on screen from one click.
@@ -90,7 +104,8 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 
     private async Task RunLoginProcessAsync()
     {
-        var script = BuildLoginScript(PlaywrightDir.Replace("\\", "\\\\"), _sessionPath.Replace("\\", "\\\\"));
+        Directory.CreateDirectory(_profileDir);
+        var script = BuildLoginScript(PlaywrightDir.Replace("\\", "\\\\"), _sessionPath.Replace("\\", "\\\\"), _profileDir.Replace("\\", "\\\\"));
 
         try
         {
@@ -188,15 +203,20 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     /// never sit through.
     /// </para>
     /// </remarks>
-    public static string BuildLoginScript(string playwrightDir, string sessionPath) =>
+    public static string BuildLoginScript(string playwrightDir, string sessionPath, string profileDirEscaped) =>
         $"const {{ chromium }} = require('{playwrightDir}');\n" +
         "(async () => {\n" +
         $"  const RESEARCH_URL = '{ResearchUrl}';\n" +
         // The real installed Chrome (not Playwright's bundled "Chrome for Testing" build)
         // reports a normal, self-consistent fingerprint — eBay's bot detection flags the
         // bundled test browser much more readily, especially after repeated automated hits.
-        "  const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--disable-blink-features=AutomationControlled', '--start-maximized'] });\n" +
-        "  const ctx = await browser.newContext({ viewport: null });\n" +
+        // launchPersistentContext, not launch+newContext: the profile directory keeps eBay's cookies,
+        // localStorage and this browser's identity on disk between runs. The scrape below opens the
+        // SAME directory, so eBay sees one browser that keeps coming back rather than its cookies
+        // turning up in a brand-new browser every time - which is what a stolen session looks like,
+        // and why the connection kept being challenged and dropped.
+        $"  const ctx = await chromium.launchPersistentContext('{profileDirEscaped}', {{ channel: 'chrome', headless: false, viewport: null, args: ['--disable-blink-features=AutomationControlled', '--start-maximized'] }});\n" +
+        "  const browser = ctx.browser() || { close: () => ctx.close(), isConnected: () => true };\n" +
         "  await ctx.addInitScript(() => { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); });\n" +
         // The activity beacon. A seller typing a password or a two-factor code is making progress
         // even though the URL has not moved once — without this, they are racing a clock they
@@ -323,6 +343,8 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 
         var pwPath = PlaywrightDir.Replace("\\", "\\\\");
         var sessionPathEscaped = _sessionPath.Replace("\\", "\\\\");
+        Directory.CreateDirectory(_profileDir);
+        var profileDirEscaped = _profileDir.Replace("\\", "\\\\");
         var debugShotPath = Path.Combine(env.ContentRootPath, "generated-photos", $"terapeak_debug_{Guid.NewGuid():N}.png");
         var debugShotEscaped = debugShotPath.Replace("\\", "\\\\");
         var url = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60&keywords=" + Uri.EscapeDataString(query);
@@ -330,9 +352,14 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         var script =
             $"const {{ chromium }} = require('{pwPath}');\n" +
             "(async () => {\n" +
-            "  const browser = await chromium.launch({ channel: 'chrome', headless: true });\n" +
-            $"  const ctx = await browser.newContext({{ storageState: '{sessionPathEscaped}', viewport: {{ width: 1400, height: 1000 }} }});\n" +
-            "  const page = await ctx.newPage();\n" +
+            // The SAME profile directory the login wrote to. Replaying storageState into a fresh
+            // browser handed eBay its own cookies from a browser it had never seen, every single
+            // scrape; reopening the profile is the same browser returning, which is what actually
+            // happened. storageState is still written at login as the connected-marker this service
+            // and ConnectionDoctor read, but it is no longer how the session travels.
+            $"  const ctx = await chromium.launchPersistentContext('{profileDirEscaped}', {{ channel: 'chrome', headless: true, viewport: {{ width: 1400, height: 1000 }} }});\n" +
+            "  const browser = ctx.browser() || { close: () => ctx.close() };\n" +
+            "  const page = ctx.pages()[0] || await ctx.newPage();\n" +
             "  let loggedOut = false;\n" +
             "  try {\n" +
             $"    await page.goto('{url}', {{ waitUntil: 'domcontentloaded', timeout: 25000 }});\n" +

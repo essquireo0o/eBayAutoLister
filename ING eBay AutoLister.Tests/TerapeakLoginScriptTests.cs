@@ -19,7 +19,8 @@ namespace ING_eBay_AutoLister.Tests;
 public class TerapeakLoginScriptTests
 {
     private static readonly string Js =
-        TerapeakService.BuildLoginScript("C:\\\\pw\\\\playwright", "C:\\\\app\\\\terapeak-session.json");
+        TerapeakService.BuildLoginScript("C:\\\\pw\\\\playwright", "C:\\\\app\\\\terapeak-session.json",
+                                         "C:\\\\app\\\\terapeak-profile");
 
     [Fact]
     public void TypingKeepsTheLoginAlive()
