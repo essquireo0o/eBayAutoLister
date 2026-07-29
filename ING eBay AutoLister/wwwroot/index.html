@@ -1298,8 +1298,15 @@
               </div>
             </div>
 
-            <p id="ebay-scan-note" class="fb-blank-query-hint">Every result is priced against real eBay sold data and ranked by profit after fees, in the table below. The buy price is what actually leaves your wallet — item plus shipping.</p>
+            <p id="ebay-scan-note" class="fb-blank-query-hint">Every result is priced against real eBay sold data and ranked by profit after fees, right below this box. The buy price is what actually leaves your wallet — item plus shipping.</p>
           </div>
+
+          <!-- Where an eBay scan's status and results go. The results block is ONE set of elements
+               shared by both scanners, moved into whichever panel the seller actually started the
+               search from. It used to live permanently under the local panel, so scanning eBay from
+               the box above printed its progress and its table at the bottom of a different card —
+               the seller searched in one place and the answer appeared in another. -->
+          <div id="ebay-results-slot"></div>
 
           <!-- Sourcing: what can be bought under resale value right now, across every place the
                seller ticks. Craigslist needs no login at all (public search + RSS, see
@@ -1418,6 +1425,11 @@
               <div id="coupon-check-results" class="coupon-check-results hidden"></div>
             </details>
 
+            <!-- Home position for the shared results block: under the local panel, where a local
+                 search puts it back. moveScanResultsTo() moves it between here and
+                 #ebay-results-slot so results always render under the box that was searched. -->
+            <div id="local-results-slot"></div>
+
             <div id="fb-status" class="mr-status"></div>
             <div id="local-source-status" class="local-source-status"></div>
 
@@ -1466,7 +1478,17 @@
                   <option value="1000-10000">$1,000 – $10,000</option>
                   <option value="10000-">$10,000+</option>
                 </select>
-                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only show items that profit</label>
+                <!-- The seller's own bar, on by default: "If I can't make $100 off it, forget it.
+                     I am not buying an item for $20 and selling it for $50." Anything under
+                     LocalArbitrageAnalyzer.SolidProfit does not pay for finding, listing and
+                     packing the thing, so it is not a deal — it is a row that makes the real ones
+                     harder to see. Unticking it brings the small stuff back. -->
+                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" checked /> Only deals that clear $100</label>
+                <!-- The other half of "these results are wrong": a big number priced off one loose
+                     sold comp outranked every row that was actually checkable. Estimate-only rows
+                     are hidden by default rather than dimmed, because dimming them still left them
+                     at the top of the board. -->
+                <label class="fb-arb-check"><input id="fb-arb-proven-only" type="checkbox" checked /> Only prices backed by real sold comps</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <!-- Used stock that still carries cover: lower risk to buy, and a line the seller
                      can put in their own listing. A different KIND of row rather than a
@@ -2416,16 +2438,23 @@
                 <button class="btn btn-secondary copilot-apply" id="copilot-categories-apply" type="button" disabled>Review suggestions</button>
               </article>
 
-              <article class="copilot-card" data-action="seo">
+              <!-- Named for what it does to the WHOLE listing, not just the title. The engine
+                   (CopilotSeoJob -> ClaudeService.ImproveSeoAsync) has always rewritten the
+                   description and filled item specifics as well; this card claimed to be a title
+                   fixer, so nobody knew the rest of it was there. -->
+              <article class="copilot-card copilot-card-clickable" data-action="seo">
                 <div class="copilot-card-head">
-                  <h3>✨ Rewrite every title for search</h3>
+                  <h3>✨ Rewrite whole listings for search</h3>
                   <span class="copilot-count" id="copilot-seo-count">—</span>
                 </div>
                 <p class="copilot-why">
-                  Titles are the biggest ranking lever you control, and unused characters are unused
-                  keywords. This finds titles over eBay's 80-character limit, titles leaving half the
-                  budget empty, and filler like <em>L@@K</em> or <em>FREE SHIPPING</em> that nobody searches
-                  for. Results are saved as drafts for you to publish.
+                  Every part of the listing a buyer searches on, rewritten by Claude in one pass: the
+                  <strong>title</strong> (eBay's 80 characters used properly, no <em>L@@K</em> filler nobody
+                  searches for), the <strong>subtitle</strong>, the whole <strong>description</strong>, and
+                  the <strong>item specifics</strong> — including the ones left empty, which is where most
+                  of the missing views are. <strong>Your photos are not touched</strong>, and neither is
+                  your price, quantity, shipping or policies. Results are saved as drafts for you to
+                  publish. Pick your listings below.
                 </p>
                 <div class="copilot-result" id="copilot-seo-result"></div>
 
@@ -2440,7 +2469,8 @@
                 </div>
 
                 <div class="copilot-apply-row">
-                  <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Rewrite all listings</button>
+                  <button class="btn btn-secondary copilot-apply" id="copilot-seo-pick" type="button">Choose listings…</button>
+                  <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply" type="button" disabled>Rewrite every listing</button>
                   <button class="btn btn-secondary copilot-apply" id="copilot-seo-apply-selected" type="button" disabled>Rewrite selected</button>
                 </div>
               </article>
@@ -4848,6 +4878,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=82"></script>
+  <script src="app.js?v=85"></script>
 </body>
 </html>

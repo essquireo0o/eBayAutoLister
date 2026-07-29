@@ -2088,6 +2088,11 @@
     // tomorrow, and retyping it every time is the kind of friction that stops it being used.
     localStorage.setItem('ebayScanFilters', JSON.stringify({ type, condition, min, max, feedback }));
 
+    // Put the results under the box that was searched, BEFORE the request goes out, so even the
+    // "searching..." line appears where the seller is looking rather than at the foot of the other
+    // card. One block, moved — not a second copy to keep in sync.
+    moveScanResultsTo('ebay-results-slot');
+
     const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
     if (btn) btn.disabled = false;
 
@@ -2122,8 +2127,41 @@
     renderArbitrage(data);
   }
 
+  /**
+   * Moves the one shared results block (status line, plain results, arbitrage table) under whichever
+   * scanner was actually used.
+   *
+   * The eBay Scanner and the local board share a single rendering path — the same table, the same
+   * summary, the same status line — and that block used to sit permanently under the local panel.
+   * So searching eBay from the box at the top printed "Searching eBay for ..." and then the whole
+   * results table at the bottom of the Local &amp; online deals card, a different box entirely. The
+   * seller asked in one place and was answered in another.
+   *
+   * Moving the existing nodes rather than duplicating them keeps one render path: a second copy
+   * would drift, and every fix would have to be made twice.
+   */
+  function moveScanResultsTo(slotId) {
+    let block = $('scan-results-block');
+
+    if (!block) {
+      const first = $('fb-status');
+      if (!first || !first.parentNode) return;
+      block = document.createElement('div');
+      block.id = 'scan-results-block';
+      first.parentNode.insertBefore(block, first);
+      // Order matters: this is the order they render down the page.
+      ['fb-status', 'local-source-status', 'fb-results', 'fb-arb-results']
+        .map($).filter(Boolean).forEach(el => block.appendChild(el));
+    }
+
+    const slot = $(slotId);
+    if (slot && block.parentNode !== slot) slot.appendChild(block);
+  }
+
   async function runLocalArbitrage() {
     const { query, zip, radius, sources, category, qs } = localSearchParams();
+    // Local search answers under the local box, for the same reason.
+    moveScanResultsTo('local-results-slot');
     const buttons = ['fb-search-btn', 'fb-arb-btn'].map($).filter(Boolean);
 
     lastLocalRun = runLocalArbitrage;
@@ -2328,7 +2366,15 @@
       rows = rows.filter(r => { const paid = paidFor(r); return paid >= min && paid <= max; });
     }
 
-    if (hideLosers) rows = rows.filter(r => r.netProfit > 0);
+    // The $100 bar, not a "> 0" bar. A row that nets $14 on a 280% return is not a deal: it does
+    // not pay for finding it, listing it and packing it, and it pushes the rows that would down
+    // the board. Same figure the server grades verdicts on (LocalArbitrageAnalyzer.SolidProfit),
+    // so the filter and the badge cannot disagree about what "worth doing" means.
+    if (hideLosers) rows = rows.filter(r => r.netProfit != null && r.netProfit >= WORTH_DOING_NET);
+    // A price nobody could check is not a price. These rows kept arriving at the top of the board
+    // with the biggest numbers on them precisely BECAUSE they were unchecked — one unusual sold
+    // comp sets a resale figure no real sale supports.
+    if (provenOnly) rows = rows.filter(r => r.evidenceTier === 'confident');
     // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
     if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
     // Cover that is still running, whoever it protects. A seller's own guarantee is worth nothing
@@ -10016,6 +10062,12 @@
     setActiveNavItem('copilot');
     markWorkspaceTabOpen('copilot');
     if (!copilotBound) { bindCopilot(); copilotBound = true; }
+    // Put the last run back on screen. The server remembers it; the panel did not, so closing the
+    // tab after a rewrite took away the only link to the drafts it had just made. If a run is
+    // still going, this picks the polling back up where it left off.
+    refreshCopilotSeoStatus().then(() => {
+      if (copilotSeoRunning && !copilotSeoPoll) pollCopilotSeo();
+    });
   }
 
   function closeCopilotSection() {
@@ -10028,11 +10080,42 @@
     on('copilot-home', 'click', goHome);
     on('copilot-seo-apply', 'click', () => runCopilotSeoRewrite([]));
     on('copilot-seo-apply-selected', 'click', () => runCopilotSeoRewrite(selectedCopilotSeoIds()));
+    on('copilot-seo-pick', 'click', openCopilotSeoPicker);
+    // Clicking the card itself picks listings too. The seller's first move is "I want to rewrite
+    // my listings", not "I want to audit my account" — making them find the scan button first was
+    // an extra step between them and the thing the card advertises.
+    document.querySelector('.copilot-card[data-action="seo"]')
+      ?.addEventListener('click', (e) => {
+        // Anything already interactive keeps its own behaviour: the two Rewrite buttons, the
+        // checkboxes in the picker, the collapse toggle.
+        if (e.target.closest('button, input, label, a')) return;
+        openCopilotSeoPicker();
+      });
     on('copilot-seo-all', 'change', () => {
       const on_ = $('copilot-seo-all')?.checked;
       $('copilot-seo-list')?.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = on_; });
       syncCopilotSeoSelection();
     });
+  }
+
+  // Open the picker from one click on the card, scanning first if that hasn't happened yet.
+  // The scan is read-only and free (it is what the panel's own footnote promises), so running it
+  // on demand costs the seller nothing and saves them a step they should never have had to find.
+  async function openCopilotSeoPicker() {
+    const wrap = $('copilot-seo-picker');
+    if (!copilotScan) {
+      const err = $('copilot-error');
+      if (err) {
+        err.classList.remove('hidden');
+        err.textContent = 'Reading your listings from eBay…';
+      }
+      await runCopilotScan();
+      // runCopilotScan writes its own message into #copilot-error when it fails; leave that alone.
+      if (!copilotScan) return;
+      if (err && err.textContent === 'Reading your listings from eBay…') err.classList.add('hidden');
+    }
+    wrap?.classList.remove('hidden');
+    wrap?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   // One at a time, or the lot. Listed in full rather than only what the title audit flagged: the
@@ -10077,6 +10160,8 @@
   // a whole account runs for minutes: holding a fetch open that long loses the completed work, and
   // the seller would have paid for every rewrite and received none of them.
   let copilotSeoPoll = null;
+  // Set from the last status read, so reopening the tab can resume polling a live run.
+  let copilotSeoRunning = false;
 
   async function runCopilotSeoRewrite(ids) {
     const picked = (ids && ids.length) ? ids : [];
@@ -10116,6 +10201,7 @@
     try {
       const res = await fetch('/api/copilot/improve-seo/status');
       const s = await res.json();
+      copilotSeoRunning = !!s.running;
       if (!s.everRun) return;
 
       if (btn) {
@@ -10126,13 +10212,33 @@
       if (!s.running && copilotSeoPoll) { clearInterval(copilotSeoPoll); copilotSeoPoll = null; }
 
       const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+
+      // Where the drafts actually went, rather than where they were expected to go. eBay's draft
+      // API is a Limited Release most accounts are not approved for, and when it answers 404 the
+      // rewrite lands in the app's own drafts instead. Telling that seller to "publish from eBay
+      // Seller Hub" sends them to look for something that was never put there.
+      const appDrafts = (s.results || []).filter(r => r.ok && r.draftFile);
+      const hubDrafts = (s.results || []).filter(r => r.ok && r.sellerHubUrl);
+      const whereText = appDrafts.length && !hubDrafts.length
+        ? ' Open them below — they are saved as drafts in this app, ready to review and publish.'
+        : hubDrafts.length && !appDrafts.length
+          ? ' Publish them from eBay Seller Hub — nothing live was changed.'
+          : appDrafts.length
+            ? ' Some are in eBay Seller Hub, the rest are drafts in this app — open those below.'
+            : ' Nothing live was changed.';
+
       const head = s.running
         ? '<p class="copilot-clean"><strong>' + s.done + ' of ' + s.total + '</strong> (' + pct + '%) — ' +
           esc(s.stage) + '. ' + s.drafted + ' drafted, ' + s.skipped + ' already good' +
           (s.failed ? ', ' + s.failed + ' failed' : '') + '.</p>'
         : '<p class="copilot-clean"><strong>' + s.drafted + '</strong> draft' + (s.drafted === 1 ? '' : 's') +
           ' created, ' + s.skipped + ' already good' + (s.failed ? ', <strong>' + s.failed + '</strong> failed' : '') +
-          '. Publish them from eBay Seller Hub — nothing live was changed.</p>';
+          '.' + whereText + '</p>' +
+          (appDrafts.length
+            ? '<p class="copilot-clean"><button type="button" class="btn btn-primary small" id="copilot-seo-open-drafts">' +
+              '📄 Open ' + (appDrafts.length === 1 ? 'the draft' : 'all ' + appDrafts.length + ' drafts') +
+              '</button></p>'
+            : '');
 
       if (out) {
         out.innerHTML = head +
@@ -10142,12 +10248,60 @@
               ? '<li><span class="copilot-was">' + esc(r.before || '') + '</span>' +
                 '<span class="copilot-arrow">→</span>' +
                 '<span class="copilot-now">' + esc(r.after || '') + '</span>' +
-                (r.note ? '<span class="copilot-issue">' + esc(r.note) + '</span>' : '') + '</li>'
+                (r.note ? '<span class="copilot-issue">' + esc(r.note) + '</span>' : '') +
+                // Straight to the rewrite this row is describing, rather than making the seller
+                // work out which of N drafts it became.
+                (r.draftFile
+                  ? '<button type="button" class="btn btn-secondary small copilot-open-draft" ' +
+                    'data-draft="' + esc(r.draftFile) + '">Open this draft</button>'
+                  : '') +
+                (r.sellerHubUrl
+                  ? '<a class="copilot-open-draft" href="' + esc(r.sellerHubUrl) + '" target="_blank" ' +
+                    'rel="noopener">Open in Seller Hub ↗</a>'
+                  : '') + '</li>'
               : '<li><span class="copilot-title">' + esc(r.listingId) + '</span>' +
                 '<span class="copilot-issue">' + esc(r.note || 'failed') + '</span></li>'
           ).join('') + '</ul>';
+
+        on('copilot-seo-open-drafts', 'click', () => openCopilotDrafts(appDrafts.map(r => r.draftFile)));
+        out.querySelectorAll('.copilot-open-draft[data-draft]').forEach(b =>
+          b.addEventListener('click', () => openCopilotDrafts([b.dataset.draft])));
       }
     } catch { /* a dropped poll is not worth interrupting a run that is still going */ }
+  }
+
+  // Open rewritten drafts as tabs in the listing editor — the same tabs the seller already knows
+  // from saved drafts, so a rewrite lands somewhere familiar instead of somewhere new.
+  async function openCopilotDrafts(filenames) {
+    const wanted = (filenames || []).filter(Boolean);
+    if (!wanted.length) return;
+
+    let opened = 0;
+    for (const filename of wanted) {
+      if (draftTabs.some(t => t.filename === filename)) continue;   // already open
+      try {
+        const res = await fetch('/api/local-drafts/load/' + encodeURIComponent(filename));
+        if (!res.ok) continue;
+        const draft = await res.json();
+        const tab = newDraftTab(draft.title, draft.filename, draft.data,
+                                draft.imageBase64, draft.mimeType, draft.visualDescription);
+        tab.saved = true;
+        opened++;
+      } catch { /* a draft that will not load is reported below, not thrown */ }
+    }
+
+    if (!opened && !draftTabs.some(t => wanted.includes(t.filename))) {
+      toast('Those drafts could not be opened. They are still on disk — try Load all drafts.',
+            { kind: 'warning', title: 'Could not open the drafts' });
+      return;
+    }
+
+    const first = draftTabs.find(t => wanted.includes(t.filename));
+    if (first) { activeDraftTabId = first.id; loadTabIntoForm(first); }
+    renderDraftTabs();
+    $('new-listing-overlay')?.classList.remove('hidden');
+    addActivity(`Opened ${wanted.length} rewritten draft${wanted.length === 1 ? '' : 's'}`,
+                'Review the new title, description and item specifics, then publish');
   }
 
   async function runCopilotScan() {
@@ -10224,7 +10378,11 @@
 
     const seo = (data.listings || []).filter(l =>
       (l.issues || []).some(i => i.code.indexOf('title_') === 0));
-    setText('copilot-seo-count', seo.length ? seo.length + ' listings' : 'all good');
+    // The count is every listing that CAN be rewritten, not just the ones whose titles the scan
+    // flagged. The rewrite covers description and item specifics too, so "all good" on titles is
+    // not "nothing to do here" — and a count of 8 next to a button offering 89 read as a bug.
+    setText('copilot-seo-count',
+      data.scannedListings ? data.scannedListings + ' listings' : '—');
     $('copilot-seo-result').innerHTML = seo.length
       ? '<ul class="copilot-list">' + seo.slice(0, 25).map(l =>
           '<li><span class="copilot-was">' + esc(l.title || '') + '</span>' +
@@ -10235,7 +10393,9 @@
             l.issues.filter(i => i.code.indexOf('title_') === 0).map(i => i.summary).join(' · ')) +
           '</span></li>').join('') + '</ul>' +
         (seo.length > 25 ? '<p class="copilot-more">…and ' + (seo.length - 25) + ' more</p>' : '')
-      : '<p class="copilot-clean">Every title uses its keyword budget well.</p>';
+      : '<p class="copilot-clean">Every title already uses its keyword budget well. The rewrite still '
+        + 'has work to do on the description and item specifics, which this scan cannot judge from '
+        + 'eBay\'s bulk listing call.</p>';
 
     // Only the AI rewrite has a working apply path today, so only its button comes alive. The
     // other two stay disabled rather than looking clickable and doing nothing.
@@ -10246,7 +10406,7 @@
     if (seoBtn) {
       seoBtn.disabled = !data.scannedListings;
       seoBtn.textContent = data.scannedListings
-        ? 'Rewrite all ' + data.scannedListings + ' listings'
+        ? 'Rewrite every listing (' + data.scannedListings + ')'
         : 'No listings found';
     }
     renderCopilotSeoPicker(data.allListings || []);
