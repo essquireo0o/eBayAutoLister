@@ -5812,6 +5812,10 @@
   function setEarningsStatus(text) {
     const el = $('er-status');
     if (el) el.textContent = text || '';
+    // The panel that holds it used to carry the import window picker as well. With that gone it is
+    // an empty white box on a screen whose whole job is to look like money, so it only takes up
+    // room when it has something to say.
+    $('er-status-panel')?.classList.toggle('hidden', !text);
   }
 
   function showEarningsNotice(text, tone) {
@@ -14154,8 +14158,11 @@
       return row.classList.contains('is-done');
     };
 
-    checklist.classList.toggle('hidden',
-      ['step1-row', 'step2-row', 'step3-row', 'step4-row'].every(settled));
+    // Explicit dismissal only. This used to hide itself the moment every row was ticked, which
+    // meant finishing the last step made the whole panel vanish - the seller had not asked for
+    // that and read it as the app losing a section. The X above is how it goes away now.
+    void settled;
+    checklist.classList.remove('hidden');
   }
 
   /**
@@ -14165,9 +14172,10 @@
    * on the page rather than kept in a second variable that can drift from it.
    */
   function renderDashStatus() {
-    setDashChip('dash-chip-ebay', isConnected && hasBusinessPolicies,
-      'eBay connected · policies set',
-      isConnected ? 'eBay connected · policies needed' : 'eBay not connected');
+    // Connection only. This chip used to read "eBay connected · policies needed" and stay amber
+    // until policies were chosen — the same nag the seller asked to be rid of, in a second place.
+    setDashChip('dash-chip-ebay', isConnected,
+      'eBay connected', 'eBay not connected');
     setDashChip('dash-chip-ai', hasAnthropicKey,
       'Claude key saved', 'Claude key needed');
   }
