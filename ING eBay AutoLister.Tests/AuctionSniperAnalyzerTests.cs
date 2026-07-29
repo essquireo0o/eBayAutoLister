@@ -39,24 +39,41 @@ public class AuctionSniperAnalyzerTests
 
     // ── The ceiling ───────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The ceiling is the stricter of the two bars, and on an item this size that is the CASH bar.
+    /// $200 sells for $173.10 after fees, so the most you can bid and still clear
+    /// <see cref="LocalArbitrageAnalyzer.SolidProfit"/> in the hand is $73.10 — a bid of $133.15
+    /// would return 30% and put $39.95 in your pocket, which is not a flip worth doing.
+    /// </summary>
     [Fact]
     public void MaxBidFor_IsTheBidThatStillLeavesAProfitWorthHaving()
     {
-        // $200 sells for $173.10 after fees, so a $133.15 bid returns exactly 30% — the same
-        // "worth doing" bar Local Deals judges a drive by.
         var maxBid = AuctionSniperAnalyzer.MaxBidFor(breakEvenAllIn: 173.10m, shippingCost: 0m);
 
-        Assert.Equal(133.15m, maxBid);
-        Assert.Equal(39.95m, Math.Round(173.10m - maxBid, 2));
-        Assert.InRange(Math.Round((173.10m - maxBid) / maxBid * 100m, 1), 30m, 30.1m);
+        Assert.Equal(73.10m, maxBid);
+        Assert.Equal(LocalArbitrageAnalyzer.SolidProfit, Math.Round(173.10m - maxBid, 2));
+    }
+
+    /// <summary>
+    /// On a big enough item the percentage binds instead: $2,000 resells at $1,731 after fees, and
+    /// 30% of a bid that size is worth far more than $100, so the ROI bar is the one that stops you.
+    /// </summary>
+    [Fact]
+    public void MaxBidFor_OnALargeItem_IsBoundByThePercentage_NotTheCashBar()
+    {
+        var maxBid = AuctionSniperAnalyzer.MaxBidFor(breakEvenAllIn: 1731.00m, shippingCost: 0m);
+
+        Assert.Equal(1331.53m, maxBid);   // 1731.00 / 1.30, truncated
+        Assert.InRange(Math.Round((1731.00m - maxBid) / maxBid * 100m, 1), 30m, 30.1m);
+        Assert.True(1731.00m - maxBid > LocalArbitrageAnalyzer.SolidProfit);
     }
 
     [Fact]
     public void MaxBidFor_TruncatesRatherThanRoundsUp()
     {
-        // 173.10 / 1.30 = 133.1538…, and a ceiling that rounds up gives away the margin it exists
-        // to protect. It must never round to 133.16.
-        Assert.Equal(133.15m, AuctionSniperAnalyzer.MaxBidFor(173.10m, 0m));
+        // 1731.00 / 1.30 = 1331.5384…, and a ceiling that rounds up gives away the margin it exists
+        // to protect. It must never round to 1331.54.
+        Assert.Equal(1331.53m, AuctionSniperAnalyzer.MaxBidFor(1731.00m, 0m));
     }
 
     [Fact]
@@ -70,15 +87,27 @@ public class AuctionSniperAnalyzerTests
         Assert.Equal(free - 10m, paid);
     }
 
+    /// <summary>
+    /// A cheap item has no bid worth making. On a $50 break-even, 30% would allow $38.46 and leave
+    /// $11.54 — and there is no bid at all, down to and including free, that clears
+    /// <see cref="LocalArbitrageAnalyzer.SolidProfit"/> in cash. The honest ceiling is zero: this
+    /// is not an auction to win cheaply, it is an auction to leave alone.
+    /// </summary>
     [Fact]
-    public void MaxBidFor_CheapItem_IsBoundByTheCashBar_NotThePercentage()
+    public void MaxBidFor_CheapItem_HasNoBidWorthMaking()
     {
-        // On a $50 break-even, 30% would allow $38.46 and leave $11.54 — under the $25 that makes a
-        // flip worth doing at all. The stricter of the two binds.
-        var maxBid = AuctionSniperAnalyzer.MaxBidFor(50m, 0m);
+        Assert.Equal(0m, AuctionSniperAnalyzer.MaxBidFor(50m, 0m));
+        Assert.Equal(0m, AuctionSniperAnalyzer.MaxBidFor(LocalArbitrageAnalyzer.SolidProfit, 0m));
+    }
 
-        Assert.Equal(25m, maxBid);
-        Assert.Equal(LocalArbitrageAnalyzer.SolidProfit, 50m - maxBid);
+    /// <summary>The first break-even at which a bid becomes worth placing at all.</summary>
+    [Fact]
+    public void MaxBidFor_JustAboveTheCashBar_IsTheFirstRealCeiling()
+    {
+        var maxBid = AuctionSniperAnalyzer.MaxBidFor(LocalArbitrageAnalyzer.SolidProfit + 10m, 0m);
+
+        Assert.Equal(10m, maxBid);
+        Assert.Equal(LocalArbitrageAnalyzer.SolidProfit, (LocalArbitrageAnalyzer.SolidProfit + 10m) - maxBid);
     }
 
     [Fact]
@@ -130,8 +159,8 @@ public class AuctionSniperAnalyzerTests
     {
         var row = Sniper.Build(Item(60m, Now.AddMinutes(30)), Pricing(), Fees, Now);
 
-        Assert.Equal(133.15m, row.MaxBid);
-        Assert.Equal(73.15m, row.BidHeadroom);
+        Assert.Equal(73.10m, row.MaxBid);
+        Assert.Equal(13.10m, row.BidHeadroom);
     }
 
     [Fact]
@@ -141,7 +170,7 @@ public class AuctionSniperAnalyzerTests
 
         // Still profitable at $23.10, but past the point where it is worth the work — and the row
         // says so rather than hiding the overshoot at zero.
-        Assert.Equal(-16.85m, row.BidHeadroom);
+        Assert.Equal(-76.90m, row.BidHeadroom);
         Assert.Equal(23.10m, row.ProfitAtCurrentPrice);
         Assert.Equal(AuctionSniperAnalyzer.VerdictWatch, row.Verdict);
     }
@@ -160,7 +189,7 @@ public class AuctionSniperAnalyzerTests
     {
         var row = Sniper.Build(Item(60m, Now.AddMinutes(30)), Pricing(), Fees, Now);
 
-        Assert.Equal(39.95m, row.ProfitAtMaxBid);
+        Assert.Equal(100.00m, row.ProfitAtMaxBid);
         Assert.True(row.ProfitAtMaxBid < row.ProfitAtCurrentPrice,
             "Winning at the ceiling must always pay less than winning at today's price.");
     }
@@ -216,7 +245,7 @@ public class AuctionSniperAnalyzerTests
         // $12 against a $200 median is the most attractive row a naive board could print, and it is
         // not a $12 item. The ceiling still holds, because it comes from the resale side.
         Assert.Equal(AuctionSniperAnalyzer.VerdictTooEarly, row.Verdict);
-        Assert.Equal(133.15m, row.MaxBid);
+        Assert.Equal(73.10m, row.MaxBid);
         Assert.Contains("isn't real yet", row.VerdictNote);
     }
 
@@ -505,8 +534,8 @@ public class AuctionSniperAnalyzerTests
         Assert.Equal(1, summary.TooEarlyCount);
         // The too-early row's apparent $161 of profit must not reach any total — it is profit on a
         // price that hasn't happened.
-        Assert.Equal(39.95m, summary.ProfitAtCeilings);
-        Assert.Equal(133.15m, summary.CapitalToWinAll);
+        Assert.Equal(100.00m, summary.ProfitAtCeilings);
+        Assert.Equal(73.10m, summary.CapitalToWinAll);
     }
 
     [Fact]

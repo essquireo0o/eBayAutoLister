@@ -1,0 +1,103 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER ASKED FOR, IN THEIR WORDS:
+      "I want there to be a bubble that says rewrite ebay listings using seo - when you click on it you
+      can select your listings - once they are selected the user does nothing and claude fills out the
+      entire listing for seo - claude does not touch the pictures - the pictures stay the same - it just
+      rewrites all parameters of the listings."
+
+      WHAT EXISTS TODAY (do NOT rebuild it from scratch - finish it):
+      The Listing Copilot screen ("Fix The Whole Account At Once", #copilot-section in
+      ING eBay AutoLister/wwwroot/index.html around line 2358) already has three cards. The third,
+      data-action="seo" around line 2416, is headed "Rewrite every title for search" and has a listing
+      picker (#copilot-seo-picker / #copilot-seo-list / #copilot-seo-all) plus two buttons,
+      #copilot-seo-apply ("Rewrite all listings") and #copilot-seo-apply-selected ("Rewrite selected").
+      The JS is in wwwroot/app.js (bindCopilot / renderCopilotSeoPicker / runCopilotSeoRewrite /
+      refreshCopilotSeoStatus, around lines 10000-10230). The engine is
+      Services/CopilotSeoJob.cs - it already reads each listing from eBay, calls
+      ClaudeService.ImproveSeoAsync, and saves the result as a draft (eBay draft when the account is
+      approved for the item_draft API, otherwise an app draft). Nothing live is ever revised - KEEP
+      that.
+
+      THE FOUR GAPS TO CLOSE:
+
+      1. THE BUBBLE SAYS THE WRONG THING. The card is headed "Rewrite every title for search" and the
+         counter/button text talks about titles, but the pass already rewrites the whole listing.
+         Re-word the card, its explanatory paragraph, its counter and both buttons so they say what it
+         actually does: rewrite the whole listing for SEO. Match the writing voice of the other two
+         cards exactly - plain, specific, explains WHY it matters to a seller, no marketing tone, no
+         "AI-powered". Say plainly on the card that the photos are left exactly as they are.
+
+      2. CLICK THE BUBBLE -> PICK LISTINGS, IN ONE MOVE. Today the picker only appears after a full
+         account scan, and the seller has to find the right button afterwards. Make clicking the card
+         itself open the listing picker: load the account's live listings (reuse the same source the
+         scan uses - do not add a second eBay call path), show them as a checkbox list with "Select
+         all" and a running "N selected" count, and keep the existing scan flow working for anyone who
+         starts there. Selecting is the ONLY thing the seller does. One clearly-labelled start button,
+         then the run goes by itself - no per-listing prompts, no forms, no follow-up questions. Show
+         live progress (stage, done/total, per-listing outcome) from the existing
+         /api/copilot/improve-seo/status polling, and keep the Stop control honest.
+
+      3. FILL OUT THE ENTIRE LISTING, NOT JUST THE TITLE. Verify end-to-end - read
+         ClaudeService.ImproveSeoAsync and its prompt - that every text/parameter field the seller
+         controls is rewritten or filled, and fix whatever is not:
+           - Title (keep the existing 80-char TidyTitle trim - eBay rejects over-length titles)
+           - Subtitle
+           - Description (real HTML - the LooksLikeHtml guard already rejects plain text; keep it)
+           - Item specifics / aspects: FILL THE MISSING ONES, not just polish the ones already there.
+             This is the field sellers leave half-empty and it is where the views come from.
+           - Condition description, Brand, MPN and any other seller-controlled text field on the model
+         Do NOT invent facts. Everything written must be supported by the listing's own existing data -
+         no fabricated specs, measurements, compatibility claims, model numbers or scarcity language.
+         If a specific cannot be established from the listing, leave it empty rather than guess: a
+         wrong item specific gets a seller INAD returns and defects.
+         Leave price, quantity, shipping/handling, package weight and dimensions, item location and
+         business policies EXACTLY as they are - those are not SEO and silently changing a price is
+         the worst thing this feature could do.
+
+      4. SHOW THE WHOLE CHANGE, NOT JUST THE TITLE. The panel promises at the top: "Every action
+         below shows you the full list of changes first and applies nothing until you say so." The
+         SEO card's preview currently lists title diffs only - struck-through old title, new title,
+         and a reason like "Double spaces" or "Only 41 of 80 characters used". A seller looking at
+         that has no idea the description and item specifics are being rewritten too. Extend the
+         preview so each listing shows what will change across the WHOLE listing: the title diff it
+         already has, plus what happens to the description and which item specifics get filled in.
+         Keep it scannable - a per-listing summary that expands, not a wall of HTML.
+
+      5. THE PICTURES MUST NOT MOVE. This is the user's explicit, non-negotiable requirement. The
+         listing's ImageUrls must arrive in the draft identical to the live listing - same URLs, same
+         order, none added, none dropped, none re-hosted, none re-processed. Trace the whole path
+         (eBay GetItemAsync -> ImproveSeoRequest -> Claude -> PostListingRequest -> draft) and make the
+         image list pass through untouched rather than round-tripping through the model, so a model
+         that hallucinates a URL cannot change what the buyer sees. Belt and braces: before the draft
+         is written, overwrite the image list with the ORIGINAL listing's image list.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2114 tests currently pass, do not regress):
+        - the rewrite carries the original ImageUrls through unchanged, in order, even when the model
+          returns a different, longer, shorter or empty image list;
+        - price, quantity, shipping and policy fields come out of the rewrite unchanged;
+        - a rewrite that fills previously-missing item specifics still counts as changed and produces
+          a draft (ContentChanged already covers specifics - assert it);
+        - the Listing Copilot markup exposes the SEO card, its picker and its start button, and the
+          card text no longer claims to be titles-only, so this cannot silently regress.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild, then start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332) and confirm the
+          SERVED HTML carries the new card text and picker. Checking the source file alone proves
+          nothing. Stop any running AutoListerB1.exe first if the build fails on a locked file.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "copilot-seo-whole-listing"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 18
+    max_attempts: 3

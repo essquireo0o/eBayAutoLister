@@ -132,11 +132,11 @@ public class LocalArbitrageAnalyzerTests
     [Fact]
     public void Build_FreeListing_HasNoRoiButStillProfits()
     {
-        var row = Analyzer.Build(Listing(null), Pricing(expected: 200m), Fees);
+        var row = Analyzer.Build(Listing(null), Pricing(expected: 600m), Fees);
 
         Assert.Equal(0m, row.LocalAsk);
         Assert.Null(row.RoiPercent);       // no cost basis — undefined, not zero
-        Assert.Equal(173.10m, row.NetProfit);
+        Assert.Equal(520.10m, row.NetProfit);
         Assert.Equal("goldmine", row.Verdict);
     }
 
@@ -160,7 +160,7 @@ public class LocalArbitrageAnalyzerTests
     [Fact]
     public void Judge_StrongNumbersWithRealEvidence_IsGoldmine()
     {
-        var (verdict, note) = LocalArbitrageAnalyzer.Judge(180m, 300m, 60m, compCount: 9, confidenceScore: 80);
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(300m, 300m, 100m, compCount: 9, confidenceScore: 80);
         Assert.Equal("goldmine", verdict);
         Assert.Contains("9 sold comps", note);
     }
@@ -193,16 +193,55 @@ public class LocalArbitrageAnalyzerTests
     [Fact]
     public void Judge_ModestButRealMargin_IsSolid()
     {
-        var (verdict, note) = LocalArbitrageAnalyzer.Judge(60m, 40m, 150m, compCount: 9, confidenceScore: 70);
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(160m, 40m, 400m, compCount: 9, confidenceScore: 70);
         Assert.Equal("solid", verdict);
         Assert.Contains("40% ROI", note);
+    }
+
+    /// <summary>
+    /// The bar this whole tier exists for: real money, not a real percentage. $60 on a $150 buy is
+    /// a 40% return and it is still $60, which does not pay for the finding, listing and packing.
+    /// </summary>
+    [Fact]
+    public void Judge_GoodPercentageButUnderTheCashBar_IsThin()
+    {
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(60m, 40m, 150m, compCount: 9, confidenceScore: 70);
+        Assert.Equal("thin", verdict);
+        Assert.Contains($"${LocalArbitrageAnalyzer.SolidProfit:0}", note);
+    }
+
+    /// <summary>
+    /// The other half of the same principle, and the reason the cash-alone tier exists: a big buy
+    /// at a modest multiple is a good day's work. $900 on a $3,600 buy is 25% — under the goldmine
+    /// ROI bar and nowhere near "not worth doing".
+    /// </summary>
+    [Fact]
+    public void Judge_BigCashAtAModestMultiple_IsStillAGoldmine()
+    {
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(900m, 25m, 3600m, compCount: 9, confidenceScore: 80);
+        Assert.Equal("goldmine", verdict);
+        Assert.Contains("900", note);
     }
 
     [Fact]
     public void Judge_FreeItem_TreatsUndefinedRoiAsUnbounded()
     {
-        var (verdict, _) = LocalArbitrageAnalyzer.Judge(150m, roiPercent: null, localAsk: 0m, compCount: 9, confidenceScore: 80);
+        var (verdict, _) = LocalArbitrageAnalyzer.Judge(300m, roiPercent: null, localAsk: 0m, compCount: 9, confidenceScore: 80);
         Assert.Equal("goldmine", verdict);
+    }
+
+    /// <summary>
+    /// Profit is half a return; how long it takes to come back is the other half. Money that sits
+    /// for most of a year isn't buying the next deal, however good the figure on the row.
+    /// </summary>
+    [Fact]
+    public void Judge_MoneyThatSits_IsHeldBackWhateverTheProfit()
+    {
+        var (verdict, note) = LocalArbitrageAnalyzer.Judge(
+            900m, 120m, 750m, compCount: 9, confidenceScore: 80, speedTier: "dead_money");
+
+        Assert.Equal("thin", verdict);
+        Assert.Contains("sits", note);
     }
 
     // ── Confidence gating: a percentage has to be backed before it's shown as one ──────────────
@@ -328,11 +367,11 @@ public class LocalArbitrageAnalyzerTests
     public void Build_EnoughMatchingComps_StillEarnsItsBadgeAndItsPercentages()
     {
         // The gate must not swallow the good rows: real evidence, real badge, undimmed ROI.
-        var row = Analyzer.Build(Listing(50m), Pricing(expected: 200m, soldComps: 9, confidence: 80), Fees);
+        var row = Analyzer.Build(Listing(50m), Pricing(expected: 600m, soldComps: 9, confidence: 80), Fees);
 
         Assert.Equal("goldmine", row.Verdict);
         Assert.Equal(LocalArbitrageAnalyzer.EvidenceConfident, row.EvidenceTier);
-        Assert.Equal(246.2m, row.RoiPercent);
+        Assert.Equal(940.2m, row.RoiPercent);
         Assert.NotNull(row.MarginPercent);
     }
 

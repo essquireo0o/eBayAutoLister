@@ -244,7 +244,7 @@ public class LiquidationArbitrageTests
     {
         var analyzer = Analyzer();
         // Exactly the board's ordinary goldmine bar: enough for one item, not for twelve of it.
-        var evidence = Resale(300m, comps: LocalArbitrageAnalyzer.GoldmineMinComps);
+        var evidence = Resale(600m, comps: LocalArbitrageAnalyzer.GoldmineMinComps);
 
         var single = analyzer.Build(Lot(20m, Auction()), evidence, Fees, 8m);
         var lot = analyzer.Build(Lot(20m, Auction(isLot: true, units: 12, gradeId: "shelf_pull")), evidence, Fees, 8m);

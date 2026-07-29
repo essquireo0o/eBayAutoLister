@@ -98,6 +98,13 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
                     // top of the model's answer rather than trusting it to have counted to 80.
                     improved.Title = ListingCopilot.TidyTitle(improved.Title);
 
+                    // THE PHOTOS DO NOT MOVE. ClaudeService already carries the originals through,
+                    // and the prompt tells the model to leave them alone — but the seller's rule is
+                    // absolute and a model cannot be the last thing standing between it and the
+                    // draft. Whatever came back, the draft gets the live listing's own photos, in
+                    // the live listing's own order.
+                    improved.ImageUrls = [.. current.ImageUrls ?? []];
+
                     if (string.IsNullOrWhiteSpace(improved.Title))
                     {
                         run.Failed++;
@@ -132,6 +139,7 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
 
                     string? url = null;
                     string? where = null;
+                    string? draftFile = null;
 
                     if (!_ebayDraftsUnavailable)
                     {
@@ -150,17 +158,20 @@ public sealed class CopilotSeoJob(EbayService ebay, ClaudeService claude, DraftS
 
                     if (url is null)
                     {
-                        drafts.SaveDraft(new DraftFile
+                        // Keep the filename: it is the only way the seller gets back to this
+                        // rewrite. Without it the draft exists but nothing on screen can open it,
+                        // and "1 draft created" is a receipt for something they cannot find.
+                        draftFile = drafts.SaveDraft(new DraftFile
                         {
                             Title = improved.Title,
                             SavedAt = DateTimeOffset.UtcNow.ToString("o"),
                             Data = draftReq,
                         });
-                        where = "Saved as an app draft — eBay's draft API is not enabled for this account.";
+                        where = "Saved as a draft in the app — eBay's draft API is not enabled for this account.";
                     }
 
                     run.Drafted++;
-                    run.Add(new CopilotSeoResult(id, true, before, improved.Title, url, where));
+                    run.Add(new CopilotSeoResult(id, true, before, improved.Title, url, where, draftFile));
                 }
                 catch (Exception ex)
                 {
@@ -259,5 +270,11 @@ public sealed class CopilotSeoRun
 }
 
 /// <param name="Note">Why no draft was made, when the rewrite succeeded but nothing changed.</param>
+/// <param name="DraftFile">
+/// The app draft this rewrite was written to, when eBay's own draft API was not available. It is
+/// what lets the UI open the rewrite the seller just paid for — a run that reports drafts nobody
+/// can reach is indistinguishable from one that did nothing.
+/// </param>
 public sealed record CopilotSeoResult(
-    string ListingId, bool Ok, string Before, string After, string? SellerHubUrl, string? Note);
+    string ListingId, bool Ok, string Before, string After, string? SellerHubUrl, string? Note,
+    string? DraftFile = null);

@@ -46,12 +46,12 @@ public class SnapJudgeTests
     [Fact]
     public void PayUpTo_SatisfiesBothHalvesOfTheWorthDoingBar()
     {
-        // At a $173.10 break-even: the ROI bar allows 173.10 / 1.30 = $133.15, the dollar bar allows
-        // 173.10 - 25 = $148.10. The tighter of the two is the answer, because a price that clears
+        // At a $173.10 break-even: the ROI bar allows 173.10 / 1.30 = $133.15, the cash bar allows
+        // 173.10 - 100 = $73.10. The tighter of the two is the answer, because a price that clears
         // one bar and fails the other is not a price the app calls worth doing.
         var payUpTo = SnapJudge.PayUpTo(173.10m);
 
-        Assert.Equal(133.15m, payUpTo);
+        Assert.Equal(73.10m, payUpTo);
 
         var profit = 173.10m - payUpTo;
         Assert.True(profit >= LocalArbitrageAnalyzer.SolidProfit);
@@ -63,15 +63,16 @@ public class SnapJudgeTests
     {
         // Rounding up would name a price that fails the bar it was derived from — by a cent, but
         // the whole value of this figure is that it can be handed over without arithmetic.
-        var payUpTo = SnapJudge.PayUpTo(100m);
-        Assert.Equal(75m, payUpTo);
-        Assert.True((100m - payUpTo) / payUpTo * 100m >= LocalArbitrageAnalyzer.SolidRoiPercent);
+        var payUpTo = SnapJudge.PayUpTo(433.33m);
+        Assert.Equal(333.33m, payUpTo);
+        Assert.True((433.33m - payUpTo) / payUpTo * 100m >= LocalArbitrageAnalyzer.SolidRoiPercent);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-40)]
-    [InlineData(20)]   // clears the ROI bar but never the $25 one
+    [InlineData(20)]    // clears the ROI bar but never the cash one
+    [InlineData(100)]   // exactly the cash bar: paying anything at all fails it
     public void PayUpTo_IsZeroWhenNoPriceCouldClearTheBar(decimal breakEven) =>
         Assert.Equal(0m, SnapJudge.PayUpTo(breakEven));
 
@@ -88,8 +89,8 @@ public class SnapJudgeTests
         Assert.Equal(50m, snap.AskPrice);
         Assert.Equal(123.10m, snap.NetProfit);
         Assert.Equal(173.10m, snap.BuyMax);
-        Assert.Equal(133.15m, snap.PayUpTo);
-        Assert.Equal(39.95m, snap.ProfitAtPayUpTo);   // 173.10 break-even - 133.15 paid
+        Assert.Equal(73.10m, snap.PayUpTo);
+        Assert.Equal(100.00m, snap.ProfitAtPayUpTo);   // 173.10 break-even - 73.10 paid
     }
 
     [Fact]
@@ -102,7 +103,7 @@ public class SnapJudgeTests
         Assert.True(snap.NetProfit < 0m);
         // Still told what it WOULD be worth. "Pass" plus a number is a counter-offer; "pass" alone
         // is the end of the conversation.
-        Assert.Equal(133.15m, snap.PayUpTo);
+        Assert.Equal(73.10m, snap.PayUpTo);
     }
 
     [Fact]
@@ -141,8 +142,8 @@ public class SnapJudgeTests
 
         Assert.Equal(SnapCalls.BuyUnder, snap.Call);
         Assert.StartsWith("BUY UNDER", snap.CallLabel);
-        Assert.Contains("133", snap.CallLabel);
-        Assert.Equal(133.15m, snap.PayUpTo);
+        Assert.Contains("73", snap.CallLabel);
+        Assert.Equal(73.10m, snap.PayUpTo);
         Assert.Equal(173.10m, snap.BuyMax);
         Assert.Contains("Pay up to", snap.Reason);
     }

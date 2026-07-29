@@ -1,0 +1,80 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER SAID:
+      "Fix failed to fetch"
+
+      WHAT THEY SAW:
+      The Listing Copilot screen ("Fix The Whole Account At Once"), clicking "Scan My Account",
+      showed a red bar reading exactly:  Could not scan: Failed to fetch
+
+      WHAT IS ACTUALLY HAPPENING - measured, not guessed:
+      "Failed to fetch" is the browser's own words for "the request never reached a server". At the
+      time of the screenshot the app's backend was NOT running: no AutoListerB1 process, nothing
+      listening on port 9332. The page itself was still open from earlier, so the UI kept working and
+      every API call it made died at the network layer. The seller is shown a browser internal, which
+      tells them nothing and reads as "the app is broken".
+
+      THIS IS A TWO-PART FIX. Do both.
+
+      PART 1 - NEVER SHOW A RAW FETCH ERROR AGAIN.
+      wwwroot/app.js already has the right machinery and the Copilot scan simply does not use it:
+        - The "Reliability layer" at app.js line ~25: one way to call the app, one way to describe a
+          failure, one place that decides whether a Retry button is honest.
+        - `localFetchJson` at app.js line ~1580, whose comment already names this exact bug: "the
+          cases the server can't reach - the app not running, the connection dropping mid-scan ... all
+          have to end as a sentence on screen with a way forward. `fetch(...).then(r => r.json())`
+          ends every one of them as an unhandled rejection instead, which is what left this panel
+          showing a spinner and 'Failed to fetch'."
+      The Copilot scan handler (app.js around line 10177) does `catch (e) { 'Could not scan: ' +
+      e.message }` - printing the browser's string straight through.
+        - Route the Copilot scan and its sibling Copilot calls through the existing reliability layer
+          rather than writing a third error path.
+        - Then sweep the rest: there are ~137 `fetch(` call sites in app.js. Find every one whose
+          failure can reach the screen as a raw message and give it the shared treatment. Do not
+          rewrite the ones already using the layer.
+        - When the backend is unreachable, say THAT, in the seller's language - the app isn't running
+          or the connection to it dropped - with the one thing that fixes it (restart the app) and a
+          Try again that actually re-runs the request. Never the words "Failed to fetch".
+        - Distinguish the cases the seller would act on differently: app not reachable, request timed
+          out, the app answered an error, the app answered something unreadable.
+
+      PART 2 - WHY WAS THE BACKEND GONE?
+      Find out whether the app exited on its own or was closed. Look for an unhandled exception that
+      can take the process down, particularly on the Copilot scan path (Program.cs Copilot endpoints,
+      Services/ListingCopilot.cs, Services/CopilotSeoJob.cs) and anything doing background work in
+      `Task.Run` without a catch - an exception on a background task is exactly how a server dies
+      silently while its page stays open. If you find one, fix it so a failed scan is a red bar, not
+      a dead process. If the process only ever exits because the user closed it, say so plainly in
+      WORK_COMPLETED.md rather than inventing a fix.
+      Either way the UI must recover on its own: when the backend comes back, the page should
+      notice and clear the error rather than needing a manual refresh.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2122 tests currently pass, do not regress):
+        - Assert no user-facing string in app.js concatenates a raw fetch rejection into a message
+          shown on screen for the Copilot paths - the phrase "Failed to fetch" must not be reachable.
+        - Assert the Copilot scan uses the shared reliability helper rather than a bare
+          `fetch(...).then(r => r.json())`.
+        - If a crash path is found in Part 2, a test that the failing operation returns an error
+          instead of taking the process down.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild, start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332), open the Listing
+          Copilot, then STOP THE BACKEND and click "Scan My Account". Confirm with a screenshot that
+          the message names the real problem and offers a way forward. Restart the backend and
+          confirm the page recovers. Checking the source file alone proves nothing.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "failed-to-fetch"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 17
+    max_attempts: 3

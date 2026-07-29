@@ -36,16 +36,35 @@ public class WorkspaceTabsAssetTests
         ["inventory", "lots", "relist", "trends", "wheretosell"];
 
     [Fact]
-    public void EveryWorkspaceTabHasASidebarEntry()
+    public void EveryWorkspaceTabCanLabelItself()
     {
-        // Title and icon are read off the sidebar button, so a registered page with no sidebar
-        // entry gets a tab labelled with its own route key and the default icon. That is accepted
-        // for the pages hidden on purpose above, and a bug for anything else — this still catches
-        // a page registered with a typo'd or missing nav button.
-        var orphans = RegisteredPages().Except(SidebarPages()).Except(HiddenByRequest).ToList();
+        // Title and icon normally come off the sidebar button, which is why renaming a feature in
+        // the nav renames its tab with nothing to keep in sync. A page deliberately kept OUT of the
+        // sidebar has to carry its own, or it opens as a tab labelled with the raw route key
+        // ("wheretosell") wearing the Dashboard glyph. Either source is fine; neither is not.
+        var orphans = RegisteredPages()
+            .Except(SidebarPages())
+            .Except(PagesWithTheirOwnTitle())
+            .ToList();
 
         Assert.True(orphans.Count == 0,
-            $"registered pages with no sidebar entry to take a title and icon from: {string.Join(", ", orphans)}");
+            "registered pages with neither a sidebar entry nor a title of their own, so their tab " +
+            $"would be labelled with the route key: {string.Join(", ", orphans)}");
+    }
+
+    [Fact]
+    public void APageHiddenFromTheSidebarBringsItsOwnTitleAndIcon()
+    {
+        // The specific promise made when these were taken out of the nav: still reachable, and
+        // still properly labelled when reached.
+        var titled = PagesWithTheirOwnTitle().ToHashSet();
+        var unlabelled = HiddenByRequest.Where(p => !titled.Contains(p)).ToList();
+        Assert.True(unlabelled.Count == 0,
+            $"hidden pages with no title of their own: {string.Join(", ", unlabelled)}");
+
+        var iconless = HiddenByRequest.Where(p => !HasOwnIcon(p)).ToList();
+        Assert.True(iconless.Count == 0,
+            $"hidden pages whose tab would show the Dashboard glyph: {string.Join(", ", iconless)}");
     }
 
     [Fact]
@@ -135,6 +154,33 @@ public class WorkspaceTabsAssetTests
             .Select(m => m.Groups[1].Value)
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
+
+    /// <summary>Pages carrying a <c>title:</c> on their own registry entry, rather than borrowing the nav's.</summary>
+    private static List<string> PagesWithTheirOwnTitle() =>
+        RegistryEntries()
+            .Where(e => Regex.IsMatch(e.Body, @"\btitle:\s*'"))
+            .Select(e => e.Page)
+            .ToList();
+
+    private static bool HasOwnIcon(string page) =>
+        RegistryEntries().Any(e => e.Page == page && Regex.IsMatch(e.Body, @"\bicon:\s*'#"));
+
+    /// <summary>
+    /// Each top-level entry in WORKSPACE_PAGES and its body. Split on the entry key rather than on
+    /// braces, because an entry spans several lines and contains function references.
+    /// </summary>
+    private static List<(string Page, string Body)> RegistryEntries()
+    {
+        var body = RegistryBody();
+        var starts = Regex.Matches(body, @"^\s{4}(\w+):\s*\{", RegexOptions.Multiline).ToList();
+
+        return starts.Select((m, i) =>
+        {
+            var from = m.Index;
+            var to = i + 1 < starts.Count ? starts[i + 1].Index : body.Length;
+            return (m.Groups[1].Value, body[from..to]);
+        }).ToList();
+    }
 
     private static List<string> RegisteredSections() =>
         Regex.Matches(RegistryBody(), @"section:\s*'([\w-]+)'")

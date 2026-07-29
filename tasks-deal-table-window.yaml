@@ -1,0 +1,159 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER SAID, TWICE, SCRIBBLING OVER THE SCROLLBAR IN A SCREENSHOT:
+      "this window sucks - I do not want the scroll bar - make it bigger - has to be cosmetic"
+
+      THE PROBLEM, WITH THE EXACT CAUSES ALREADY LOCATED:
+      The Opportunity Finder deals table has FOURTEEN columns (#, Deal, Source, You pay, Resell on
+      eBay, Fees, Net profit, Days to cash, ROI, Margin, Max to pay, Offer them, Evidence, Track -
+      wwwroot/index.html around line 1477). They do not fit, so:
+        - wwwroot/style.css line ~5668: `.fb-arb-table-wrap { overflow-x: auto; }` puts a horizontal
+          scrollbar under the table. The user drew over it. It has to go.
+        - wwwroot/style.css line ~5675: `.fb-arb-table { min-width: 1040px; }` is what forces the
+          overflow in the first place. Its own comment admits it was raised to stop the Evidence cell
+          wrapping - that trade was the wrong way round.
+        - wwwroot/style.css line ~4364: `.opportunity-overlay-body > * { max-width: 1320px; }` caps
+          the results at 1320px even on a wide monitor, so the table is squeezed while the screen has
+          room to spare. That cap is why it feels small.
+        - The screenshot also shows an inner VERTICAL scrollbar on the results box - a box scrolling
+          inside a scrolling page. Find whatever max-height causes it and remove it.
+      The right-hand columns are cut off mid-word: the "Offer them" buttons render as "LOI" and
+      "What...", clipped at the edge. Every number in that table exists to answer "is this worth
+      buying" - a number nobody can see answers nothing.
+
+      DO THIS:
+        - NO horizontal scrollbar. Not a prettier one, not a thin one - none. Remove the `overflow-x`
+          crutch and the `min-width` that makes it necessary.
+        - NO inner vertical scroll box. The page scrolls; the results do not scroll inside a frame.
+        - MAKE IT BIGGER. Let the results block use the real width of the window instead of the
+          1320px cap - a wide screen should show a wide table. Keep the rest of the overlay's
+          layout intact; this is about the results, not every panel.
+        - Cut the column count to what a buying decision needs on screen at all times: the item, the
+          source, what it costs, what it nets, how fast, the most to pay, and the action. ROI and
+          Margin are two views of the same spread; Fees is already inside Net profit; "You pay" and
+          "Resell on eBay" are the two ends Net profit spans; Evidence is prose that belongs under the
+          row, not in a column. Move that supporting detail into the row's expandable detail area or a
+          tooltip. Do NOT delete any figure - every number stays reachable, just not all at once.
+        - IT HAS TO LOOK GOOD. This is the screen the seller stares at while deciding where their
+          money goes, and the user called out cosmetics specifically:
+            * nothing clipped, nothing truncated mid-word, no button cut in half at the edge;
+            * numbers right-aligned on a consistent decimal rhythm, the Deal title taking the slack;
+            * comfortable row height and padding - it should read as a premium table, not a spreadsheet;
+            * the existing row states all survive and still look right: goldmine gold edge, hover,
+              striping, `dt-money` emphasis (style.css ~11757-11940), Thin/Worth it/Pass badges;
+            * correct in BOTH light and dark themes;
+            * still readable on a narrow window - below the width the full table needs, fall back to a
+              stacked compact row, never to a sideways scroll.
+        - Do not change any figure, calculation, sort or filter. Layout and presentation only.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2114 tests currently pass, do not regress):
+        - Assert the table's column set matches the reduced list, so nobody can quietly add a
+          fifteenth column and bring the scrollbar back.
+        - Assert every figure removed from a column is still rendered somewhere in the row detail.
+        - Assert the stylesheet no longer sets `overflow-x: auto` or a `min-width` on the deals table
+          that would reintroduce the horizontal scrollbar.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild, then start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332), run a search that
+          returns 30 rows, and TAKE A SCREENSHOT. Look at it. Confirm with your own eyes: no
+          horizontal scrollbar, no inner vertical scrollbar, no clipped column, no half-rendered
+          button, and a table that fills the window. Checking the source file alone proves nothing.
+          Stop any running AutoListerB1.exe first if the build fails on a locked file.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "deal-table-fits-window"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 17
+    max_attempts: 3
+
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER ASKED FOR:
+      "add sniper bids and it auto bids on the item at the END of the auction"
+      - from the Opportunity Finder deals results table, the one already showing a computed
+      "Max to pay" on every eBay auction row.
+
+      WHERE IT STANDS TODAY:
+      The app has a full Undervalued Auction Sniper (Services/AuctionSniperAnalyzer.cs, section
+      `#snipe-section` in wwwroot/index.html around line 3276, panel around line 1535). Its own
+      comment states the rule it was built to: "Read-only - it searches, and nothing else. No bid is
+      ever placed by the app." It finds underpriced live auctions and computes the most worth bidding.
+      The deals table already shows that figure - on an auction row, "Max to pay" IS the highest bid
+      worth making, with buyer's premium and tax already taken out.
+      So the analysis and the number both exist. What is missing is arming the bid and firing it.
+
+      FIRST, ESTABLISH WHAT IS ACTUALLY POSSIBLE - do not assume, and do not build against an API
+      that will 404:
+      eBay has no generally-available API for placing a bid. The Buy Offer API (placeProxyBid) is
+      limited-release and almost certainly not granted to this app's keys - check what these
+      credentials can really do before designing around it. The app already drives a real logged-in
+      browser session for Facebook Marketplace and Terapeak (FacebookMarketplaceService and friends),
+      so a browser-session bid against the seller's OWN eBay account is the realistic path if the API
+      is not available. Pick whichever genuinely works, and say plainly in the UI which one is in use.
+
+      BUILD THIS - armed from the row, fired at the end of the auction:
+        - On any eBay AUCTION row in the results table, an action that arms a snipe. Not on Buy It Now
+          rows, not on local/free/liquidation rows - those cannot be bid on.
+        - Arming opens a small confirm step pre-filled with that row's computed "Max to pay", which the
+          seller can change. Nothing is armed until they confirm an explicit dollar amount.
+        - THE BID FIRES AT THE END OF THE AUCTION - a few seconds before close, so rival bidders have
+          no time to respond. Make the lead time configurable with a sane default, and account for
+          clock skew against eBay's end time rather than the local clock: firing late means losing
+          every time, and firing early is just an ordinary bid that gets outbid.
+        - It bids at most the armed maximum and then stops. It NEVER raises its own ceiling, never
+          re-bids after being outbid, and never bids on an item other than the one armed.
+        - Armed snipes are listed somewhere the seller sees them all at once - item, max, end time,
+          live countdown - with a one-click cancel that works right up to the moment it fires.
+        - Every arm, fire, win, loss, cancel and failure goes to the ActionLog with the amount, so
+          there is a record of every dollar the app committed.
+        - Armed snipes persist across an app restart. A commitment the seller believes is live must
+          actually still be live - or the UI must say plainly that it is not.
+        - Update the "no bid is ever placed by the app" comments and any UI copy repeating it, so the
+          code stops contradicting what it now does.
+
+      NON-NEGOTIABLE - this feature commits the user's real money:
+        - Nothing is ever bid without an explicit per-item confirmation naming the exact maximum.
+        - The armed maximum is a hard ceiling. No rounding up, no "one more increment".
+        - No bulk arm-everything button. No default-on behaviour anywhere.
+        - A failure to fire is reported loudly and immediately. Silently missing a snipe the seller was
+          counting on is worse than not shipping the feature.
+        - Never store or print eBay credentials; reuse the existing session handling.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2114 tests currently pass, do not regress):
+        - The bid never exceeds the armed maximum, at every rounding boundary.
+        - The fire time lands inside the intended window before auction end, including with clock skew.
+        - A cancelled snipe does not fire; a snipe whose auction already ended does not fire.
+        - Only eBay auction rows offer the action - Buy It Now, local, free and liquidation rows do not.
+        - Arming records item id, maximum and end time, and survives a restart.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild and start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332), then walk the
+          arm/cancel flow in the real UI. Do NOT place a real bid to test - exercise the firing path
+          against a test double or a dry-run switch, and state in WORK_COMPLETED.md exactly what was
+          and was not tested against live eBay.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "snipe-from-deal-table"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+    max_attempts: 3
+    depends_on: ["deal-table-fits-window"]

@@ -1,0 +1,55 @@
+tasks:
+  - prompt: |
+      In the ING eBay AutoLister app, the listing EDIT drawer shows its description as a wall of
+      raw HTML source. The seller opens a listing to edit it and sees
+      `<div style="font-family:Arial..."><h1 style="color:#111;">...` instead of readable text.
+      Fix it so the description is shown rendered and readable, with the HTML still editable.
+
+      DO NOT invent a new design. The New Listing form already solves this exact problem and the
+      edit drawer should match it, so the two screens behave the same way.
+
+      The working implementation to copy, in ING eBay AutoLister/wwwroot/index.html around line 812:
+        - a `.desc-tab-bar` with three buttons carrying `data-desc-tab`:
+            "Edit Text" (data-desc-tab="text"), "Edit HTML" (data-desc-tab="edit"),
+            "Preview" (data-desc-tab="preview")
+        - three wrappers: `nl-desc-text-wrap` (visible by default), `nl-desc-edit-wrap` (hidden),
+          `nl-desc-preview-wrap` (hidden) containing `#nl-desc-preview`
+        - a `.desc-tab-hint` with a live character count (`#nl-desc-count`)
+        - textareas `#nl-description` (HTML) and `#nl-desc-text` (plain text)
+      Find the JS in wwwroot/app.js that drives those tabs (search for `data-desc-tab`,
+      `nl-desc-preview`, `nl-desc-text`) and reuse it rather than writing a second copy. If it is
+      currently hard-wired to the `nl-` element ids, refactor it to take an id prefix so both
+      screens share one implementation - two copies of this logic will drift.
+
+      The field to upgrade is `#f-description` in wwwroot/index.html around line 4364, labelled
+      "Listing Description", inside the edit drawer. Default the drawer to the readable view
+      (Edit Text or Preview), NOT to raw HTML - that is the whole point of the change.
+
+      Requirements:
+        - Editing in any tab must save correctly; whatever the seller ends up with is what gets
+          sent to eBay. Do not lose HTML when switching tabs.
+        - The Preview must render the HTML, and must NOT execute scripts - use a sanitising render
+          consistent with how the New Listing preview does it.
+        - The character-count hint on the New Listing form still says "0 / 4000". The SEO rewrite
+          template now produces roughly 6-7k characters and its instruction limit was raised to
+          9000, so 4000 is stale. Update the limit to match, in both places, or the counter will
+          show every AI-written description as over budget.
+
+      Verify before finishing:
+        - `dotnet build` succeeds and `dotnet test` passes (2114 tests currently pass; do not
+          regress). Stop the running AutoListerB1.exe first if the build fails on a locked file.
+        - `node --check "ING eBay AutoLister/wwwroot/app.js"` parses clean.
+        - Start the app (bin/Debug/net10.0-windows/AutoListerB1.exe, it serves on
+          http://localhost:9332) and confirm the served HTML contains the new tab bar next to
+          `f-description`. The wwwroot files are EMBEDDED RESOURCES in the csproj, so you must
+          rebuild for UI changes to appear - checking the source file alone proves nothing.
+        - Add a test in "ING eBay AutoLister.Tests" asserting the edit drawer has all three
+          description tabs and that the raw-HTML textarea is not the default visible view, so this
+          cannot silently regress.
+
+      Commit the work on the current branch with a message in the repo's existing style (imperative,
+      outcome-focused, no "feat:" prefix). Do not push.
+    session: "desc-preview-edit-drawer"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 9
+    max_attempts: 3

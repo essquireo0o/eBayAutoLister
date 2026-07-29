@@ -56,13 +56,14 @@ public class NegotiationAdvisorTests
     [Fact]
     public void ToneAt_UsesTheSameBarsTheArbitrageBoardJudgesBy()
     {
-        // $100 buy on a $300 break-even: $200 net at 200% ROI — the goldmine bar, both axes.
-        Assert.Equal("great", NegotiationAdvisor.ToneAt(BreakEven, 100m));
-        // $230: $70 net at 30% ROI — clears the solid bar, not the goldmine one.
-        Assert.Equal("good", NegotiationAdvisor.ToneAt(BreakEven, 230m));
-        // $290: $10 net. Real, but not worth the drive.
-        Assert.Equal("thin", NegotiationAdvisor.ToneAt(BreakEven, 290m));
-        Assert.Equal("loss", NegotiationAdvisor.ToneAt(BreakEven, 320m));
+        // A $1,200 break-even, because the bars are stated in cash and a $300 one cannot reach
+        // them: $400 buy leaves $800 at 200% — the goldmine bar on both axes.
+        Assert.Equal("great", NegotiationAdvisor.ToneAt(1200m, 400m));
+        // $920: $280 at 30.4% — clears the worth-doing bar, nowhere near the goldmine return.
+        Assert.Equal("good", NegotiationAdvisor.ToneAt(1200m, 920m));
+        // $1,160: $40. Real, and under the cash bar that makes a flip worth the work.
+        Assert.Equal("thin", NegotiationAdvisor.ToneAt(1200m, 1160m));
+        Assert.Equal("loss", NegotiationAdvisor.ToneAt(1200m, 1280m));
     }
 
     [Fact]
@@ -108,55 +109,59 @@ public class NegotiationAdvisorTests
     [Fact]
     public void Build_AskAlreadyUnderTheGreatBuyPriceSaysTakeIt()
     {
-        // Target on a $300 break-even is $171.42, and they want $120.
+        // Target on a $1,200 break-even is $685.71, and they want $480.
         var plan = NegotiationAdvisor.Build(
-            askPrice: 120m, breakEvenBuyPrice: BreakEven, resalePrice: 400m, compCount: 8);
+            askPrice: 480m, breakEvenBuyPrice: 1200m, resalePrice: 1600m, compCount: 8);
 
         Assert.Equal("buy_now", plan.Verdict);
-        Assert.Equal(180m, plan.NetAtAsk);
+        Assert.Equal(720m, plan.NetAtAsk);
         // The ceiling on a deal this good is their own ask — there is no case for paying more.
-        Assert.Equal(120m, plan.CeilingPrice);
+        Assert.Equal(480m, plan.CeilingPrice);
     }
 
     [Fact]
     public void Build_TheAskOnAGreatDealIsMadeRiskFreeInTheSameMessage()
     {
         var plan = NegotiationAdvisor.Build(
-            askPrice: 120m, breakEvenBuyPrice: BreakEven, resalePrice: 400m, compCount: 8);
+            askPrice: 480m, breakEvenBuyPrice: 1200m, resalePrice: 1600m, compCount: 8);
 
         var message = Assert.Single(plan.Messages).Text;
         // The whole point: the discount is asked for AND the asking price is accepted in the same
-        // message, so there is no version of this where a $180 flip is lost over $20.
-        Assert.Contains("$100", message);
-        Assert.Contains("$120", message);
+        // message, so there is no version of this where a $720 flip is lost over a haggle. Both
+        // numbers are read off the plan rather than written in, so this pins the behaviour and not
+        // the courtesy-trim arithmetic.
+        Assert.NotNull(plan.OpeningOffer);
+        Assert.True(plan.OpeningOffer < plan.AskPrice, "a great buy should still be asked down once");
+        Assert.Contains($"${plan.OpeningOffer:0}", message);   // the cheeky ask
+        Assert.Contains("$480", message);                      // and their own price, taken regardless
         Assert.Contains("either way", message);
     }
 
     [Fact]
     public void Build_ProfitableAtTheAskStillOpensLower()
     {
-        // $220 ask on a $300 break-even: $80 net at 36% ROI, which clears the ceiling — so this is
-        // already worth buying, and everything talked off is pure bonus.
+        // $880 ask on a $1,200 break-even: $320 net at 36% ROI, which clears the ceiling — so this
+        // is already worth buying, and everything talked off is pure bonus.
         var plan = NegotiationAdvisor.Build(
-            askPrice: 220m, breakEvenBuyPrice: BreakEven, resalePrice: 400m, compCount: 10);
+            askPrice: 880m, breakEvenBuyPrice: 1200m, resalePrice: 1600m, compCount: 10);
 
         Assert.Equal("negotiate", plan.Verdict);
         Assert.NotNull(plan.OpeningOffer);
-        Assert.True(plan.OpeningOffer < 220m);
+        Assert.True(plan.OpeningOffer < 880m);
         // Every dollar of the gap is profit with no fee and no wait attached.
-        Assert.Equal(220m - plan.OpeningOffer!.Value, plan.Upside);
+        Assert.Equal(880m - plan.OpeningOffer!.Value, plan.Upside);
     }
 
     [Fact]
     public void Build_OpensAtTheGreatBuyPriceRatherThanAShallowerDiscountWhenThatIsCheaper()
     {
-        // 15% off a $400 ask is $340; the price that makes this a great buy is $285.71. There is no
-        // reason to open above a number that already wins, so the opener follows the target down —
-        // as far as the politeness floor allows.
+        // 15% off a $1,600 ask is $1,360; the price that makes this a great buy is $1,142.85. There
+        // is no reason to open above a number that already wins, so the opener follows the target
+        // down — as far as the politeness floor allows.
         var plan = NegotiationAdvisor.Build(
-            askPrice: 400m, breakEvenBuyPrice: 500m, resalePrice: 700m, compCount: 12);
+            askPrice: 1600m, breakEvenBuyPrice: 2000m, resalePrice: 2800m, compCount: 12);
 
-        Assert.True(plan.OpeningOffer < 340m,
+        Assert.True(plan.OpeningOffer < 1360m,
             $"opened at {plan.OpeningOffer}, which is the shallow ladder discount rather than the cheaper target");
         Assert.True(plan.OpeningOffer <= plan.TargetPrice);
     }
@@ -291,9 +296,9 @@ public class NegotiationAdvisorTests
     public void Build_ThinSoldHistoryAlsoCapsHowLowTheOpenerGoes()
     {
         var thin = NegotiationAdvisor.Build(
-            askPrice: 250m, breakEvenBuyPrice: 400m, resalePrice: 520m, compCount: 2, daysListed: 60);
+            askPrice: 1000m, breakEvenBuyPrice: 1600m, resalePrice: 2080m, compCount: 2, daysListed: 60);
         var solid = NegotiationAdvisor.Build(
-            askPrice: 250m, breakEvenBuyPrice: 400m, resalePrice: 520m, compCount: 20, daysListed: 60);
+            askPrice: 1000m, breakEvenBuyPrice: 1600m, resalePrice: 2080m, compCount: 20, daysListed: 60);
 
         // Without evidence there is no argument for a low number, only an assertion.
         Assert.True(thin.OpeningOffer > solid.OpeningOffer);
@@ -345,35 +350,35 @@ public class NegotiationAdvisorTests
     [Fact]
     public void Build_ConcedesOnceInTheMiddleRatherThanJumpingToTheCeiling()
     {
-        // $300 ask against a $300 break-even: the ceiling is $230, and a 35%-off opener ($195)
+        // $1,200 ask against a $1,200 break-even: the ceiling is $923, and a 35%-off opener ($780)
         // reaches it — so this is a deal that can be made, and gets the whole sequence.
         var plan = NegotiationAdvisor.Build(
-            askPrice: 300m, breakEvenBuyPrice: BreakEven, resalePrice: 400m, compCount: 14);
+            askPrice: 1200m, breakEvenBuyPrice: 1200m, resalePrice: 1600m, compCount: 14);
 
         Assert.Equal("must_negotiate", plan.Verdict);
         Assert.Equal(["opening", "counter", "final"], plan.Messages.Select(m => m.Id));
 
         // Going straight to your maximum teaches the other side that your numbers move when pushed,
-        // and leaves nothing to give when they push again.
-        Assert.DoesNotContain("$230", plan.Messages[1].Text);
-        Assert.Contains("$210", plan.Messages[1].Text);
+        // and leaves nothing to give when they push again. The middle offer is a real concession
+        // above the opener and still short of the ceiling.
+        Assert.DoesNotContain($"${plan.CeilingPrice:0}", plan.Messages[1].Text);
+        Assert.True(plan.OpeningOffer < plan.CeilingPrice);
     }
 
     [Fact]
     public void Build_TheLastMessageQuotesTheCeilingAndNothingAboveIt()
     {
         var plan = NegotiationAdvisor.Build(
-            askPrice: 300m, breakEvenBuyPrice: BreakEven, resalePrice: 400m, compCount: 14);
+            askPrice: 1200m, breakEvenBuyPrice: 1200m, resalePrice: 1600m, compCount: 14);
 
         var final = plan.Messages.Single(m => m.Id == "final");
-        // Said out loud as a round number, and rounded DOWN off the $230.76 ceiling — never up.
-        Assert.Contains("$230", final.Text);
-        // And the same number everywhere: a ladder showing $230.76 next to a draft saying $230 is
-        // two limits on one screen.
-        Assert.Equal(230m, plan.CeilingPrice);
-        Assert.Contains(plan.Ladder, r => r.IsCeiling && r.Price == 230m);
+        // Said out loud as a round number, and rounded DOWN off the ceiling — never up. The same
+        // number everywhere: a ladder showing one limit next to a draft saying another is two
+        // limits on one screen.
+        Assert.Contains($"${plan.CeilingPrice:0}", final.Text);
+        Assert.Contains(plan.Ladder, r => r.IsCeiling && r.Price == plan.CeilingPrice);
         // Break-even never appears as a number anyone is invited to pay.
-        Assert.DoesNotContain($"${BreakEven:0}", final.Text);
+        Assert.DoesNotContain("$1200", final.Text);
     }
 
     [Fact]

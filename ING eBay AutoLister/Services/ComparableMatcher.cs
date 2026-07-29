@@ -55,14 +55,40 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
         // ── Hard exclusions — a "match" here would actively mislead the price estimate ──────
         string? exclusionReason = null;
 
+        // "For parts", "broken", "untested", "as-is" and "for repair" are ONE condition tier for
+        // pricing: every one of them means "this might not run", and that is the only distinction
+        // the money cares about. They arrive as different canonical tokens, and comparing tokens
+        // instead of tiers rejected the only comps a dead unit can honestly be priced off — an
+        // "UNTESTED" target could match neither working comps nor for-parts ones, leaving it with
+        // no price at all.
+        var targetBroken = BrokenTier(target.NegativeKeywords);
+        var candidateBroken = BrokenTier(candidateProduct.NegativeKeywords);
+
         // Candidate carries a negative-keyword condition the target doesn't (parts/broken/empty
         // box/manual/compatible/replica) — never a valid comparable regardless of title overlap.
         var badCandidateKeywords = candidateProduct.NegativeKeywords
             .Where(k => k is "parts" or "broken" or "empty box" or "manual" or "compatible" or "replica" or "for repair")
+            .Where(k => !(targetBroken && k is "parts" or "broken" or "for repair"))
             .Except(target.NegativeKeywords)
             .ToList();
         if (badCandidateKeywords.Count > 0)
             exclusionReason = $"Candidate is {string.Join('/', badCandidateKeywords)}, target is not";
+
+        // ...and the same rule the other way round, which was missing.
+        //
+        // A dead machine is not worth what a working one is. Only the working-target case was
+        // guarded, so an "Antminer S9 | UNTESTED, READ" was priced off comps of tested, running S9s
+        // and came back as $500 resale on a $35 buy — a $397 profit that does not exist. Condition
+        // was worth 5 points out of 100 here, a nudge, when between "runs" and "might not" it is the
+        // whole price.
+        //
+        // Excluding rather than discounting: what a broken one actually fetches is a real number
+        // that real sales know, and this app does not invent numbers. If no for-parts comps exist
+        // the row loses its price and says so, which is the honest answer and the one that stops a
+        // seller paying working-unit money for scrap.
+        if (exclusionReason is null && targetBroken && !candidateBroken)
+            exclusionReason = "Target is for parts/untested, candidate is a working unit — a working "
+                            + "price is not this item's price";
 
         // Candidate is a case/cover/accessory listing but the target is the actual product.
         if (exclusionReason is null && !target.IsAccessoryListing &&
@@ -135,6 +161,14 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
     // an extra brand/category word the other doesn't, without conflating genuinely different
     // models (e.g. "S19" vs "S21" shares no token and correctly comes back false).
     private static bool HasDigit(string? s) => !string.IsNullOrEmpty(s) && s.Any(char.IsDigit);
+
+    /// <summary>
+    /// "Might not run" — the one condition distinction that moves the price. Every phrase in the
+    /// family (for parts, broken, untested, as-is, for repair) normalises into one of these three
+    /// canonical tokens, and pricing treats them alike.
+    /// </summary>
+    private static bool BrokenTier(IEnumerable<string> negativeKeywords) =>
+        negativeKeywords.Any(k => k is "parts" or "broken" or "for repair");
 
     private static bool ExactMatch(string? a, string? b)
     {

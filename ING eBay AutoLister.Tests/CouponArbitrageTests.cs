@@ -103,7 +103,7 @@ public class CouponArbitrageTests
     public void ACodeThatChangesTheAnswerSaysWhatTheAnswerBecomes()
     {
         // Thin at the shelf price; a real deal with 20% off.
-        var row = Analyzer().Build(RetailDeal(250m), Resale(330m), Fees, 0m, Codes());
+        var row = Analyzer().Build(RetailDeal(430m), Resale(600m), Fees, 0m, Codes());
 
         Assert.Equal("thin", row.Verdict);
         Assert.Equal("solid", row.Coupons!.VerdictIfItWorks);
@@ -112,7 +112,7 @@ public class CouponArbitrageTests
     [Fact]
     public void ACodeThatChangesNothingAboutTheVerdictSaysNothing()
     {
-        var row = Analyzer().Build(RetailDeal(100m), Resale(400m), Fees, 0m, Codes());
+        var row = Analyzer().Build(RetailDeal(100m), Resale(800m), Fees, 0m, Codes());
 
         Assert.Equal("goldmine", row.Verdict);
         // Already the best badge on the board — repeating it would be noise beside the money.

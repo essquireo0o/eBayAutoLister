@@ -1,0 +1,85 @@
+tasks:
+  - prompt: |
+      Give the eBay Scanner real search power. It is the centre of this product - the seller's whole
+      workflow starts by finding an underpriced listing - and it currently offers only six filters:
+      keyword, listing type, condition, min $, max $, seller feedback. eBay's Browse API supports far
+      more, and the ones missing are the ones that decide whether a scan is usable or noise.
+
+      WHERE THINGS ARE
+        - Endpoint: `app.MapGet("/api/ebay/scan", ...)` in "ING eBay AutoLister/Program.cs"
+          (params: q, condition, listingType, minPrice, maxPrice, minFeedback, sort, maxItems,
+          terapeakBudget, category)
+        - eBay call: `SearchEndingSoonAsync` in "ING eBay AutoLister/Services/EbayService.cs" - it
+          builds a `filters` list using Browse API syntax (`buyingOptions:{...}`,
+          `conditionIds:{...}`, `price:[lo..hi]`)
+        - UI: the "eBay Scanner" card in "ING eBay AutoLister/wwwroot/index.html" (search for
+          "eBay Scanner"), wired in wwwroot/app.js
+
+      CRITICAL CONSTRAINT - READ THE EXISTING COMMENT FIRST
+      Filter values are WHITELISTED, not passed through, and the comment in Program.cs explains why:
+      an unrecognised value reaches eBay's own filter syntax and errors the WHOLE search rather than
+      being ignored. Every new filter must follow that same whitelist pattern. A free-text value
+      forwarded straight into a Browse filter is a broken scan, not a flexible one.
+
+      TIER 1 - build these first, they matter most to a reseller
+        1. Exclude keywords (negative terms). "antminer -broken -parts -repair -as-is". This is the
+           single biggest source of noise in every scan. Apply it by filtering titles after the
+           results come back; do not try to express it in Browse filter syntax.
+        2. Free shipping only, and/or a max shipping cost. The app already prices on DELIVERED cost
+           (item + shipping), so shipping is already known per row - this is a result-side filter.
+        3. Minimum profit $ and minimum ROI %. Every row is already scored for profit after fees;
+           let the seller say "only show me things clearing $50 or 30%" instead of reading past
+           dozens of $3 margins.
+        4. Item location - US only vs worldwide (`itemLocationCountry:US`). Overseas listings wreck
+           delivery times and returns.
+        5. Buy It Now with Best Offer (`buyingOptions:{BEST_OFFER}`), since a best-offer listing is
+           where a flipper's margin usually comes from.
+
+      TIER 2
+        6. Exclude specific sellers, and scan one named seller only (Browse supports `excludeSellers`
+           and `sellers`). Useful for skipping the dropshippers that flood some categories.
+        7. Returns accepted only (`returnsAccepted:true`).
+        8. Auctions ending within N hours, and "no bids yet" - the classic underpriced-auction case.
+        9. Exclude lot listings, or show lots only. Detect from the title ("lot of", "bulk", "x10")
+           since Browse has no lot filter.
+       10. Minimum sell-through rate, using the SellThroughCalculator already wired into the scan
+           endpoint. An item with fat margin that never sells is not an opportunity.
+
+      TIER 3
+       11. Expose sort explicitly: ending soonest, newly listed, price + shipping lowest.
+       12. Saved filter presets - let a seller name a set of filters and recall it. Persist with the
+           app's existing store pattern (see how other settings are saved); do not invent a new file
+           format.
+       13. Scan deeper - paginate past the first page of Browse results, with the cost stated in the
+           UI, since more pages means more API calls.
+
+      RULES
+        - Every filter must work end to end: UI control -> query string -> endpoint -> eBay filter or
+          result-side filter -> visible change in the results. A control that saves a value nothing
+          acts on is worse than no control.
+        - Do not break the existing six filters. They work; leave their behaviour alone.
+        - Keep the card readable. Thirteen new inputs in a row is unusable - group the advanced ones
+          behind a collapsible "More filters" section, with the common ones visible by default.
+        - Result-side filters (exclude keywords, min profit, min ROI, free shipping, lots,
+          sell-through) must be applied AFTER pricing so the counts shown to the seller are honest.
+        - State in the UI when a filter narrows results to zero, and say which filter did it. A scan
+          that silently returns nothing reads as a broken scanner.
+
+      VERIFY BEFORE FINISHING
+        - `dotnet build` succeeds, `dotnet test` passes (2114 pass today - do not regress). Stop the
+          running AutoListerB1.exe first if the build fails on a locked file.
+        - `node --check "ING eBay AutoLister/wwwroot/app.js"` parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: you MUST rebuild and restart the
+          app for UI changes to appear. Checking the source file proves nothing.
+        - Run a REAL scan against the live account (app serves on http://localhost:9332, eBay is
+          connected) and show that each new filter changes the result count in the direction
+          expected. Do not report a filter as working because the code looks right.
+        - Add tests for the result-side filters (exclude keywords, min profit, min ROI, lot
+          detection) - they are pure functions over rows and should be covered.
+
+      Commit on the current branch in the repo's existing message style (imperative,
+      outcome-focused, no "feat:" prefix). Do not push.
+    session: "ebay-scanner-filters"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 12
+    max_attempts: 3

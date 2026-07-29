@@ -1,0 +1,75 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER SAID, POINTING AT THE GAP DIRECTLY UNDER THE eBAY SCANNER PANEL:
+      "when I search ebay this should be here"
+
+      THE PROBLEM:
+      On the Opportunity Finder, the "eBay Scanner - buy underpriced on eBay, resell on eBay" panel
+      (wwwroot/index.html around line 1249) sits at the top. Its results do NOT appear under it. They
+      render in the shared results block `#fb-arb-results` (index.html around line 1427), which lives
+      INSIDE the "Local & online deals" panel below it. So a seller types "bitcoin miners", hits
+      "Scan eBay", and the answer appears past an entire unrelated panel - source chips, Facebook
+      connect banner, zip code, radius, coupon check - none of which had anything to do with the
+      search they just ran. The user marked the empty space right below the eBay panel as where the
+      results belong.
+
+      This was a deliberate choice once - the comment above the panel says "Results render in the
+      shared table below - one scanner engine, two ways to start it" - and the engine sharing is
+      correct and should stay. Only the PLACEMENT is wrong.
+
+      DO THIS:
+        - Make the results block appear directly beneath the panel that produced it. Scan eBay ->
+          results under the eBay panel. Search Local / Find Goldmines -> results under the local
+          panel, exactly as now.
+        - ONE results block, MOVED - not a second copy. `#fb-arb-results` carries the summary line,
+          the warning, the coupon strip, the sort/category/price controls, the three checkboxes,
+          "N shown", "Spend a budget on these...", the table and the footnote. Two copies of that would
+          drift apart within a week and double every bug. Add an empty host container after the eBay
+          panel and relocate the existing node into whichever host matches the search that just ran.
+        - Moving a DOM node keeps listeners bound directly to elements inside it, but any handler
+          delegated from a PARENT outside `#fb-arb-results` will silently stop firing after the move.
+          Check every binding that reaches into the results block - sort, category, price range, the
+          checkboxes, the budget button, row clicks, Track buttons - and confirm each still works in
+          BOTH positions. This is the thing most likely to break.
+        - After a scan finishes, scroll the results into view so the seller sees the answer without
+          hunting for it.
+        - Make it unambiguous which search the rows belong to. The summary line already names the
+          source ("30 deals priced for 'bitcoin miners' ... from eBay (50)") - keep that honest when
+          the block moves, and do not leave stale rows from the previous search sitting under a panel
+          while a new scan is running.
+        - Run one search, then the other: the block moves to the panel that ran most recently and the
+          old position is left clean, not with an empty shell or a gap.
+        - Update the now-wrong source comments (index.html around lines 1243-1248) and the
+          `#ebay-scan-note` text if it no longer describes where results land.
+        - Do not change the scanner engine, the pricing, the ranking, or the table's columns. This is
+          a placement change.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2114 tests currently pass, do not regress):
+        - Assert the markup provides a results host directly after the eBay scanner panel, and that
+          `#fb-arb-results` is no longer hard-nested such that eBay results can only render inside
+          the local-deals panel.
+        - Assert the eBay panel and the local panel each have their own host, and the results block
+          exists exactly once in the document - so nobody re-solves this by duplicating the table.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild, then start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332). Run a real eBay
+          scan for "bitcoin miners" and confirm the results table renders immediately below the eBay
+          panel; then run a local search and confirm it renders below the local panel with every
+          filter and the budget button still working. Checking the source file alone proves nothing.
+          Stop any running AutoListerB1.exe first if the build fails on a locked file.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "ebay-scan-results-placement"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+    max_attempts: 3

@@ -190,7 +190,7 @@ public class FreebieMoneyTests
 
         // The branch it actually leaked from: "solid" is the only one that quotes a percentage.
         var solid = LocalArbitrageAnalyzer.Judge(
-            netProfit: 40m, roiPercent: null, localAsk: 0m, compCount: 13, confidenceScore: 80);
+            netProfit: 140m, roiPercent: null, localAsk: 0m, compCount: 13, confidenceScore: 80);
         Assert.DoesNotContain("7922816251426433759354395033", solid.Note);
         Assert.Contains("cost nothing to buy", solid.Note);
     }
@@ -210,7 +210,7 @@ public class FreebieMoneyTests
     public void A_priced_row_still_quotes_its_real_roi()
     {
         var (_, note) = LocalArbitrageAnalyzer.Judge(
-            netProfit: 40m, roiPercent: 66m, localAsk: 60m, compCount: 8, confidenceScore: 70);
+            netProfit: 140m, roiPercent: 66m, localAsk: 210m, compCount: 8, confidenceScore: 70);
 
         Assert.Contains("66% ROI", note);
     }
@@ -270,7 +270,7 @@ public class FreebieMoneyTests
     [Fact]
     public void A_free_row_is_priced_off_zero_and_keeps_all_of_the_resale()
     {
-        var row = Analyzer().Build(Listing(Free()), Resale(200m), new FeeProfile());
+        var row = Analyzer().Build(Listing(Free()), Resale(600m), new FeeProfile());
 
         Assert.NotNull(row.Freebie);
         Assert.Null(row.BuyCostAllIn);          // nothing left the wallet, so there is nothing to state

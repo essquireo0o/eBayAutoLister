@@ -110,21 +110,49 @@ public sealed class LocalArbitrageAnalyzer(
     // the container still injects the registered providers. See Services/ResaleValuation.cs.
     private readonly ResaleValuationRegistry _valuations = valuations ?? ResaleValuationRegistry.Default;
 
-    // A "goldmine" has to be earned on both axes — a big multiple AND enough sold history to
-    // believe it. Thin data gets the honest label instead of the green badge.
+    // ── What counts as money ─────────────────────────────────────────────────────────────────
     //
-    // Public because Roll the Dice quotes the same bar back at the seller ("pay under $X and this
-    // clears the goldmine threshold") — see JackpotHunter.TargetBuyPrice. One definition of a
-    // goldmine, not a second, friendlier one for the flashier feature.
+    // These bars are stated in DOLLARS first and percentages second, because that is the order in
+    // which a flip is actually worth doing. A percentage has no size: buying at $5 and selling at
+    // $19 is a 280% return and $14, and $14 does not pay for finding it, collecting it,
+    // photographing it, listing it, packing it and answering questions about it. That work costs
+    // the same hour whether the item cost $5 or $5,000, which is why the hour has to be priced in
+    // cash. Buying at $1,000 and selling at $2,000 is a smaller percentage and a real day's pay.
+    //
+    // So the ROI floors below never promote a row on their own — every tier has a dollar figure
+    // that must be cleared first, and ROI only decides how good a row that already clears it is.
+    //
+    // Public because Roll the Dice, the auction sniper and the negotiation advisor all quote these
+    // bars back at the seller ("pay under $X and this clears the goldmine threshold") — see
+    // JackpotHunter.TargetBuyPrice and AuctionSniperAnalyzer.MaxBidFor. One definition of "worth
+    // doing", not a second, friendlier one for the flashier feature.
+
+    /// <summary>The least net profit, in cash, that makes a flip worth the work at all.</summary>
+    /// <remarks>
+    /// Was $25, which is what put "$14 net, 280% ROI" rows at the top of a board and made the
+    /// ranking useless: the percentages were spectacular and the money was pocket change. Nothing
+    /// below this is ever better than "thin", however good the multiple looks.
+    /// </remarks>
+    public const decimal SolidProfit = 100m;
+    public const decimal SolidRoiPercent = 30m;
+
+    /// <summary>Net profit for a goldmine when the return is also strong.</summary>
+    public const decimal GoldmineProfit = 250m;
     public const decimal GoldmineRoiPercent = 75m;
-    public const decimal GoldmineProfit = 75m;
+
+    /// <summary>
+    /// Net profit that earns a goldmine on cash alone, whatever the percentage.
+    /// </summary>
+    /// <remarks>
+    /// A $1,000 buy that resells for $2,000 is $1,000 in the hand at 100% — but so is a $4,000 buy
+    /// that resells for $5,000, at 25%, and the ROI-and-dollars rule above would have called that
+    /// one merely "solid". At this size the multiple stops being the point: the money is the point.
+    /// The evidence bars still apply in full — a big number on thin comps is a big guess.
+    /// </remarks>
+    public const decimal GoldmineProfitOnCashAlone = 500m;
+
     public const int GoldmineMinComps = 5;
     public const int GoldmineMinConfidence = 50;
-    // The "worth the drive" bar. Public for the same reason the goldmine bar is: NegotiationAdvisor
-    // quotes it back as the ceiling to stop bidding at, and a negotiation that walked at a different
-    // number than the board judges by would be two definitions of "worth doing".
-    public const decimal SolidRoiPercent = 30m;
-    public const decimal SolidProfit = 25m;
     // Below this the sold history is too sparse to call anything, however good the arithmetic.
     // Counted in comps that ACTUALLY PRICED the item, never in comps the lookup returned — see
     // ResalePricing.EvidenceCompCount. Three is the floor at which a median means anything at all:
@@ -412,8 +440,10 @@ public sealed class LocalArbitrageAnalyzer(
 
         // Judged on the all-in cost, so a verdict never rests on a price the seller doesn't pay —
         // and on the comps that priced it, so it never rests on a resale price nothing backs.
+        // ApplyDaysToCash ran just above, so the speed tier is known here and the verdict can be
+        // held back on a row whose money would sit — see Judge's speedTier parameter.
         var (verdict, note) = Judge(profit.NetProfitPerUnit, profit.RoiPercent, buyCost,
-            compCount, resale.ConfidenceScore, resale.IdentityVerified);
+            compCount, resale.ConfidenceScore, resale.IdentityVerified, row.SpeedTier);
 
         if (freebie is not null) (verdict, note) = JudgeFreebie(verdict, note, freebie, profit.NetProfitPerUnit);
 
@@ -619,7 +649,7 @@ public sealed class LocalArbitrageAnalyzer(
 
         var compCount = resale.EvidenceCompCount;
         var (verdict, note) = Judge(quote.NetProfit, quote.RoiPercent, quote.TotalCost, compCount,
-            resale.ConfidenceScore, resale.IdentityVerified);
+            resale.ConfidenceScore, resale.IdentityVerified, row.SpeedTier);
 
         // A lot multiplies one comp by its unit count, so an error in that comp is multiplied too.
         // Its evidence bar rises with the unit count; under it, the row is a lead, never a green
@@ -764,9 +794,14 @@ public sealed class LocalArbitrageAnalyzer(
     /// is reachable from there at any comp count: the profit is arithmetic on another product's
     /// price. Defaulted so callers with no identity to check are unaffected.
     /// </param>
+    /// <param name="speedTier">
+    /// This row's <see cref="DaysToCashEstimator"/> tier, when it has already been worked out.
+    /// "dead_money" holds a verdict down to thin however good the cash is — see <see cref="Cap"/>.
+    /// Defaulted so callers without a velocity (the coupon re-judge) are unaffected.
+    /// </param>
     public static (string Verdict, string Note) Judge(
         decimal netProfit, decimal? roiPercent, decimal localAsk, int compCount, int confidenceScore,
-        bool identityVerified = true)
+        bool identityVerified = true, string? speedTier = null)
     {
         // Nothing was spent, so there is no ROI to quote — it is unbounded, not enormous. The
         // sentinel below stands in for that in the comparisons; it must never reach a sentence,
@@ -794,24 +829,69 @@ public sealed class LocalArbitrageAnalyzer(
         if (compCount < ThinCompCount)
             return ("thin", $"Profitable on {compCount} sold comp{(compCount == 1 ? "" : "s")} — too few to trust yet.");
 
-        if (roi >= GoldmineRoiPercent && netProfit >= GoldmineProfit
-            && compCount >= GoldmineMinComps && confidenceScore >= GoldmineMinConfidence)
+        var evidenceHolds = compCount >= GoldmineMinComps && confidenceScore >= GoldmineMinConfidence;
+
+        // Two ways to be a goldmine, and the cash-alone one exists because the other is a trap at
+        // size: a $4,000 buy reselling at $5,000 is $1,000 in the hand at 25%, which the
+        // ROI-and-dollars rule below would have called merely "solid".
+        if (netProfit >= GoldmineProfitOnCashAlone && evidenceHolds)
         {
-            return ("goldmine", costsNothing
+            return (Cap("goldmine", speedTier, netProfit, out var slowNote), slowNote ?? (costsNothing
                 ? $"${netProfit:0.##} net for nothing spent, backed by {compCount} sold comps."
-                : $"${netProfit:0.##} net on a ${localAsk:0.##} buy, backed by {compCount} sold comps.");
+                : $"${netProfit:0.##} net on a ${localAsk:0.##} buy — the money is the point at this size. " +
+                  $"Backed by {compCount} sold comps."));
         }
 
-        if (roi >= SolidRoiPercent && netProfit >= SolidProfit)
+        if (roi >= GoldmineRoiPercent && netProfit >= GoldmineProfit && evidenceHolds)
         {
-            return ("solid", costsNothing
+            return (Cap("goldmine", speedTier, netProfit, out var slowNote), slowNote ?? (costsNothing
+                ? $"${netProfit:0.##} net for nothing spent, backed by {compCount} sold comps."
+                : $"${netProfit:0.##} net on a ${localAsk:0.##} buy, backed by {compCount} sold comps."));
+        }
+
+        if (netProfit >= SolidProfit && roi >= SolidRoiPercent)
+        {
+            return (Cap("solid", speedTier, netProfit, out var slowNote), slowNote ?? (costsNothing
                 ? $"${netProfit:0.##} net after fees, and it cost nothing to buy."
-                : $"${netProfit:0.##} net after fees ({roi:0}% ROI).");
+                : $"${netProfit:0.##} net after fees ({roi:0}% ROI)."));
+        }
+
+        // Under the bar. Which bar it missed is the whole of the seller's next move — drop the price
+        // you'd pay, or leave it alone — so the sentence names the one that bound rather than
+        // reporting a generic "thin".
+        if (netProfit < SolidProfit)
+        {
+            return ("thin", $"${netProfit:0.##} net — under the ${SolidProfit:0} that pays for finding it, " +
+                            "listing it and packing it. The percentage doesn't change how small that is.");
         }
 
         return ("thin", confidenceScore < GoldmineMinConfidence
             ? $"${netProfit:0.##} net, but the sold data behind it is weak."
-            : $"${netProfit:0.##} net — real, but a thin margin for the drive.");
+            : $"${netProfit:0.##} net at only {roi:0}% — the cash is fine, the return on it is thin.");
+    }
+
+    /// <summary>
+    /// Holds a verdict back when the money would be tied up too long to call it a win.
+    /// </summary>
+    /// <remarks>
+    /// Profit is only half a return; the other half is how long it takes to come back. A $200 flip
+    /// that clears in a fortnight is a different business from a $200 flip that sits for eight
+    /// months, and only the first one lets the money buy the next deal. Lowers a verdict and never
+    /// raises one — a fast sale is already rewarded through profit-per-day and the annualized rate,
+    /// and this is the part those figures can't express.
+    /// <para>
+    /// Only "dead money" is caught. Slow is a judgement the seller is entitled to make for
+    /// themselves with the speed column in front of them; unsellable is not.
+    /// </para>
+    /// </remarks>
+    private static string Cap(string verdict, string? speedTier, decimal netProfit, out string? note)
+    {
+        note = null;
+        if (speedTier != "dead_money") return verdict;
+
+        note = $"${netProfit:0.##} net, but the sold history says it sits — money parked this long " +
+               "isn't buying the next deal.";
+        return "thin";
     }
 
     // One comp lookup per product, not per tile. Keyed by the caller (a normalized product

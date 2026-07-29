@@ -267,6 +267,9 @@ builder.Services.AddSingleton<IMarketplaceRepository>(sp =>
     !string.IsNullOrWhiteSpace(sp.GetRequiredService<CredentialsStore>().Get().MarketCompsApiUrl)
         ? sp.GetRequiredService<HostedMarketplaceRepository>()
         : sp.GetRequiredService<MarketplaceRepository>());
+// Answers "is each connection actually up, and if not why" with real probes — see
+// ConnectionDoctor. Served by /api/diagnostics/connections.
+builder.Services.AddSingleton<ConnectionDoctor>();
 // Structured brand/model/part-number extraction from free-text titles — see
 // ProductIdentityExtractor. Stateless; used before every local sold-history search.
 builder.Services.AddSingleton<ProductIdentityExtractor>();
@@ -1835,6 +1838,15 @@ app.MapPost("/api/terapeak/connect", (TerapeakService terapeak) =>
     var (started, message) = terapeak.StartLogin();
     return Results.Ok(new { started, message });
 });
+
+// ── Connection diagnostics ────────────────────────────────────────────────────
+// The four /status endpoints below and beside this one each answer "is a file/token present",
+// which is what made a dead session, a revoked grant and an unreachable host all look identical.
+// This one goes and asks: a live eBay token refresh plus an authenticated API call, both saved
+// browser sessions replayed headlessly, and a real query against the comps API. That costs two
+// Chrome launches and several seconds, so it is a "why is this broken" button, not a poll.
+app.MapGet("/api/diagnostics/connections", async (ConnectionDoctor doctor, CancellationToken ct) =>
+    Results.Ok(new { connections = await doctor.CheckAllAsync(ct) }));
 
 app.MapGet("/api/terapeak/status", (TerapeakService terapeak) =>
     Results.Ok(new { connected = terapeak.IsConnected, loginInProgress = terapeak.IsLoginInProgress, lastError = terapeak.LastLoginError }));

@@ -1,0 +1,93 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
+      - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo.
+
+      WHAT THE USER SAID, LOOKING AT THE RESULTS TABLE:
+      "these items have to have pictures"
+
+      THE BUG, EXACTLY AS SEEN:
+      On the "Local & online deals - classifieds, free stuff, clearance & liquidation" screen, run a
+      search with "Free & free-after-coupon" ticked, zip 02341, radius 40 miles, blank search box.
+      298 results come back, 30 are priced and shown. EVERY row in the DEAL column renders the empty
+      brown box placeholder instead of a photo of the item. Observed rows: "Pool Table"
+      (boston/cambridge/brookline), "Pottery Barn twin beds" (Natick Center), "Desk lamp" (Arlington)
+      - all Craigslist free-board posts, and all photo-less on screen.
+
+      A seller cannot judge a free pool table from the word "Pool Table". The photo IS the decision.
+      Every row in this table must carry the item's real photo.
+
+      WHERE IT LIVES:
+        - Render: wwwroot/app.js around line 2495 -
+          `row.imageUrl ? <img class="fb-arb-thumb" ...> : <span class="fb-arb-thumb fb-arb-thumb-empty">📦</span>`
+          The empty box means row.imageUrl arrived blank, so the fault is upstream in the data unless
+          the image is being blocked in the browser (check both - see below).
+        - Mapping: Services/LocalArbitrageAnalyzer.cs around line 307 (`ImageUrl = listing.ImageUrl`).
+        - Models: Models/LocalSupplyModels.cs (LocalSupplyListing.ImageUrl),
+          Models/LocalArbitrageModels.cs (row ImageUrl).
+        - Sources that fill it: CraigslistParser.cs (lines ~142 and ~236, the JSON-LD
+          `LookupThumbnail` path), DealFeedParser.cs (`ImageOf`, ~line 359),
+          LiquidationParser.cs (~181), FacebookMarketplaceParser.cs (~61), EbaySupplySource.cs (~218).
+
+      NOTE: CraigslistParser already has a thumbnail fix - it reads the schema.org JSON-LD
+      `ld_searchpage_results` block out of the same search response and keys the images BY TITLE. Its
+      own comment says this is why rows used to render the empty box. The rows above still render
+      empty, so that fix is not actually landing for these posts. Find out why before changing
+      anything - do not guess. Likely suspects, in order:
+        1. The title key does not match. The parser stores `CleanTitle(title)` while the JSON-LD
+           carries the raw title (or vice versa), so the lookup misses. Free-board titles also
+           collide heavily ("Free", "free stuff", "Desk lamp") - a title key cannot be unique.
+           A URL/post-id key is exact and collision-proof; JSON-LD entries carry the post URL. Prefer
+           keying on post id, and keep a normalised-title match only as a fallback.
+        2. The free board (/zip/ or /free/) emits a different JSON-LD shape, or none, from the
+           priced boards this was measured against.
+        3. The image is fetched but blocked in the page - hotlink refusal, mixed content, or an
+           empty/1px response. The <img> already sets referrerpolicy="no-referrer"; confirm the URL
+           actually loads from the app's origin and is not silently failing with no onerror handling.
+
+      DO THIS:
+        - Reproduce first, with the current build, and record what is really happening: how many of
+          the 30 rows have a non-empty imageUrl in the JSON coming back from the API, and for the
+          blank ones, whether the source page carried an image at all. Write down the measured
+          numbers - before and after - in WORK_COMPLETED.md. "Should work now" is not an outcome.
+        - Fix the extraction so a Craigslist/free-board row gets its real thumbnail whenever the
+          source page has one. Re-key the lookup so it cannot silently miss, and make a miss visible
+          in the ActionLog rather than degrading quietly to a brown box.
+        - Do the same audit for EVERY source that can appear in this table - Craigslist, free &
+          free-after-coupon (Slickdeals / DealNews / TechBargains feeds), retail deal feeds,
+          liquidation & closeouts, Facebook Marketplace - and fix whichever ones come back blank.
+          The user's rule is for the table, not for one source.
+        - Keep the cost model: no extra HTTP request per row, no fetching individual post pages, no
+          crawling. Read the images out of the response the search already downloaded. One search
+          stays one request per source.
+        - Add an onerror handler on the thumbnail so a URL that 404s or is hotlink-blocked falls back
+          cleanly instead of showing a broken-image glyph.
+        - The 📦 box stays only as the genuinely-no-photo case (some free posts really have none).
+          When it shows, it should read as "this post has no photo", not as a loading failure.
+
+      TESTS (in "ING eBay AutoLister.Tests" - 2114 tests currently pass, do not regress):
+        - Parser tests using REAL captured HTML/RSS fixtures for each source, asserting the thumbnail
+          is extracted - including a Craigslist free-board page and a page where two posts share the
+          same title, which must still get their own separate images.
+        - A test that the image survives the whole path into the row the UI renders
+          (parser -> LocalSupplyListing -> LocalArbitrageAnalyzer -> row.imageUrl).
+        - A test asserting the deal table renders an <img> when imageUrl is present.
+
+      VERIFY BEFORE FINISHING:
+        - dotnet build and dotnet test both green.
+        - node --check "ING eBay AutoLister/wwwroot/app.js" parses clean.
+        - The wwwroot files are EMBEDDED RESOURCES in the csproj: rebuild, then start
+          bin/Debug/net10.0-windows/AutoListerB1.exe (serves http://localhost:9332), run the same
+          search (free & free-after-coupon, 02341, 40 miles, blank query) and confirm the rows come
+          back with real photo URLs. Checking the source file alone proves nothing. Stop any running
+          AutoListerB1.exe first if the build fails on a locked file.
+
+      Commit on the current branch in the repo's existing message style (imperative, outcome-focused,
+      plain English, no "feat:" prefix). Do not push.
+    session: "deal-row-photos"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+    max_attempts: 3

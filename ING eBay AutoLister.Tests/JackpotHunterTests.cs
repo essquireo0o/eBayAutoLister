@@ -1,4 +1,4 @@
-﻿using ING_eBay_AutoLister.Models;
+using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
 
 namespace ING_eBay_AutoLister.Tests;
@@ -510,10 +510,10 @@ public class JackpotHunterTests
     [Fact]
     public void TargetBuyPrice_IsExactlyTheAskThatEarnsTheGoldmineBadge()
     {
-        var resale = Pricing(expected: 200m);
+        var resale = Pricing(expected: 800m);
         var target = JackpotHunter.TargetBuyPrice(Hunter.BreakEvenBuyPrice(resale, Fees));
 
-        Assert.Equal(98.10m, target);
+        Assert.Equal(396.34m, target);
 
         // Paying it clears both halves of the bar the rest of the app uses...
         var atTarget = Arbitrage.Build(LocalListing(target), resale, Fees);
@@ -528,7 +528,7 @@ public class JackpotHunterTests
     [Fact]
     public void TargetBuyPrice_IsZeroWhenNoPriceCanClearTheBar()
     {
-        // A $60 item can never yield $75 of profit, however cheaply it's bought.
+        // A $60 item can never yield the goldmine profit bar, however cheaply it's bought.
         Assert.Equal(0m, JackpotHunter.TargetBuyPrice(Hunter.BreakEvenBuyPrice(Pricing(expected: 60m), Fees)));
         Assert.Equal(0m, JackpotHunter.TargetBuyPrice(-5m));
     }
@@ -538,14 +538,15 @@ public class JackpotHunterTests
     [Fact]
     public void BuildPlay_LiveSupplyThatClearsTheBarIsAJackpot()
     {
-        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m), [OptionAt(50m)], Fees);
+        var resale = Pricing(expected: 800m);
+        var play = Hunter.BuildPlay(Candidate(), resale, [OptionAt(50m, resale)], Fees);
 
         Assert.Equal("jackpot", play.Tier);
-        Assert.Equal(123.10m, play.NetProfit);
+        Assert.Equal(643.60m, play.NetProfit);
         Assert.Equal(50m, play.BestBuyPrice);
-        Assert.Equal(173.10m, play.MaxBuyPrice);
-        Assert.Equal(98.10m, play.TargetBuyPrice);
-        Assert.Equal(75.00m, play.ProfitAtTarget);
+        Assert.Equal(693.60m, play.MaxBuyPrice);
+        Assert.Equal(396.34m, play.TargetBuyPrice);
+        Assert.Equal(297.26m, play.ProfitAtTarget);
         // The wait is the whole wait: 14 days to sell, then packing, transit and eBay's payout.
         Assert.Equal(14, play.DaysToSell);
         Assert.Equal(14 + DaysToCashEstimator.PipelineDays, play.DaysToCash);
@@ -569,12 +570,12 @@ public class JackpotHunterTests
     [Fact]
     public void BuildPlay_NoSupplyButBelievableEvidenceIsATargetToHuntFor()
     {
-        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m, soldComps: 8, confidence: 70), [], Fees);
+        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 800m, soldComps: 8, confidence: 70), [], Fees);
 
         Assert.Equal("target", play.Tier);
         Assert.Null(play.NetProfit);
-        Assert.Equal(98.10m, play.TargetBuyPrice);
-        Assert.Contains("98.1", play.TierNote);
+        Assert.Equal(396.34m, play.TargetBuyPrice);
+        Assert.Contains("396.3", play.TierNote);
         Assert.Contains("Nothing under", play.WhereToLook);
     }
 
@@ -660,7 +661,8 @@ public class JackpotHunterTests
     [Fact]
     public void Rank_PutsBelievableMoneyAboveBigNumbers()
     {
-        var jackpot = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m), [OptionAt(50m)], Fees);
+        var rich = Pricing(expected: 800m);
+        var jackpot = Hunter.BuildPlay(Candidate(), rich, [OptionAt(50m, rich)], Fees);
         var target = Hunter.BuildPlay(Candidate(), Pricing(expected: 300m), [], Fees);
         var watch = Hunter.BuildPlay(Candidate(), Pricing(expected: 9000m, soldComps: 2, confidence: 15), [], Fees);
         var pass = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m), [OptionAt(190m)], Fees);
@@ -684,7 +686,7 @@ public class JackpotHunterTests
     public void Rank_FastestCash_ReordersTheBoardByHowSoonTheMoneyComesBack()
     {
         var slow = Pricing(expected: 400m);
-        slow.EstimatedDaysToSell = 150;
+        slow.EstimatedDaysToSell = 60;   // slow, but not money that never comes back
         var quick = Pricing(expected: 200m);
         quick.EstimatedDaysToSell = 5;
 
@@ -718,7 +720,7 @@ public class JackpotHunterTests
     [Fact]
     public void BuildPlay_NoLiveSupply_StillRatesTheSpeedOfTheTargetBuy()
     {
-        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 200m), [], Fees);
+        var play = Hunter.BuildPlay(Candidate(), Pricing(expected: 800m), [], Fees);
 
         // Nothing is for sale, so the money being judged is what buying at the target would net.
         Assert.Null(play.NetProfit);

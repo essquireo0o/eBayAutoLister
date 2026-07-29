@@ -176,7 +176,12 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         if (!response.IsSuccessStatusCode)
         {
             log.Add("Warning", $"Token refresh HTTP {(int)response.StatusCode}", responseBody);
-            throw new Exception($"eBay token refresh failed (HTTP {(int)response.StatusCode}): {responseBody}");
+            // Typed (message unchanged, so the existing catch-and-log sites read the same) because
+            // ConnectionDoctor has to tell "eBay refused this token" apart from "eBay was not
+            // reachable" — one needs a re-login, the other needs nothing but a retry, and a plain
+            // Exception makes them indistinguishable without parsing the message.
+            throw new EbayTokenRefreshException((int)response.StatusCode,
+                $"eBay token refresh failed (HTTP {(int)response.StatusCode}): {responseBody}");
         }
 
         using var doc = JsonDocument.Parse(responseBody);
@@ -681,6 +686,63 @@ public class EbayService(CredentialsStore creds, IHttpClientFactory httpClientFa
         var refreshToken = creds.GetRefreshToken();
         if (string.IsNullOrWhiteSpace(refreshToken)) return;
         await RefreshAccessTokenAsync(refreshToken);
+    }
+
+    // ── Diagnostics probes ────────────────────────────────────────────────────
+    // Both of these exist for ConnectionDoctor, and both answer rather than throw: a health check
+    // that throws is exactly the silent failure it was written to replace. Neither returns a token
+    // or a response body, so nothing secret can leak into a diagnostics payload.
+
+    /// <summary>
+    /// Runs the real refresh path (<see cref="ProactiveTokenRefreshAsync"/>) and reports what
+    /// happened. <c>HttpStatus</c> is eBay's own status when eBay answered and refused; it is null
+    /// when the call never got an answer at all (DNS, timeout, no credentials configured).
+    /// </summary>
+    public async Task<EbayRefreshProbeResult> ProbeTokenRefreshAsync()
+    {
+        if (string.IsNullOrWhiteSpace(creds.GetRefreshToken()))
+            return new EbayRefreshProbeResult(Attempted: false, Succeeded: false, HttpStatus: null, Error: null);
+
+        try
+        {
+            await ProactiveTokenRefreshAsync();
+            return new EbayRefreshProbeResult(Attempted: true, Succeeded: true, HttpStatus: null, Error: null);
+        }
+        catch (EbayTokenRefreshException ex)
+        {
+            return new EbayRefreshProbeResult(true, false, ex.StatusCode, $"eBay answered HTTP {ex.StatusCode}.");
+        }
+        catch (Exception ex)
+        {
+            return new EbayRefreshProbeResult(true, false, null, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The cheapest authenticated Sell API call there is — <c>getPrivileges</c> returns a few
+    /// fields about the seller's own account, takes no parameters and costs no quota worth
+    /// counting. Returns the HTTP status, or null when no response arrived.
+    /// </summary>
+    public async Task<(int? Status, string? Error)> ProbeSellApiAsync(CancellationToken ct = default)
+    {
+        var token = creds.GetUserToken();
+        if (string.IsNullOrWhiteSpace(token)) return (null, "No stored eBay access token.");
+
+        try
+        {
+            var client = httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(20);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            client.DefaultRequestHeaders.Add("X-EBAY-C-MARKETPLACE-ID", "EBAY_US");
+
+            using var res = await client.GetAsync($"{BaseUrl}/sell/account/v1/privilege", ct);
+            return ((int)res.StatusCode, null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
     }
 
     private async Task<string> GetOrRefreshTokenAsync()
@@ -3355,3 +3417,14 @@ public sealed record EbayTokenExchangeResult(
     int RefreshTokenExpiresIn,
     string TokenType,
     string RedirectUri);
+
+/// <summary>eBay answered the token endpoint and refused. Carries the status so a refusal
+/// (4xx — the grant is dead, re-login) can be told from an outage (5xx — try later).</summary>
+public sealed class EbayTokenRefreshException(int statusCode, string message) : Exception(message)
+{
+    public int StatusCode { get; } = statusCode;
+}
+
+/// <summary>Outcome of <see cref="EbayService.ProbeTokenRefreshAsync"/>. Deliberately carries no
+/// token and no response body — it is rendered straight into a diagnostics payload.</summary>
+public sealed record EbayRefreshProbeResult(bool Attempted, bool Succeeded, int? HttpStatus, string? Error);

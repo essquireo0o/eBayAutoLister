@@ -38,6 +38,11 @@ public class FacebookMarketplaceService(IWebHostEnvironment env, ActionLog log, 
     private int _loginInProgress;
 
     public bool IsConnected => File.Exists(_sessionPath);
+
+    /// <summary>Where the saved storageState lives. Exposed so ConnectionDoctor can load it into a
+    /// headless context and actually test it, rather than settling for "the file is there".</summary>
+    public string SessionPath => _sessionPath;
+
     public bool IsLoginInProgress => Volatile.Read(ref _loginInProgress) == 1;
     public string? LastLoginError { get; private set; }
 

@@ -109,4 +109,56 @@ public class ComparableMatcherTests
 
         Assert.True(match.Excluded);
     }
+
+    // ── A dead machine is not worth what a working one is ────────────────────────────────────
+    // The board showed "Bitmain Antminer S9 13.5T | UNTESTED, READ" as a $35 buy with a $500
+    // resale and $397 profit. The $500 came from comps of tested, running S9s. Only the
+    // working-target direction was guarded, so every for-parts row was priced as if it ran.
+
+    [Theory]
+    [InlineData("Bitmain Antminer S9 13.5T Bitcoin Miner ASIC SHA-256 | UNTESTED, READ")]
+    [InlineData("Bitmain Antminer S9 13.5Th Miner - FOR PARTS ONLY")]
+    [InlineData("Bitmain Antminer S9 13.5Th Miner, sold as-is")]
+    [InlineData("Bitmain Antminer S9 13.5Th Miner - not working, for repair")]
+    public void Match_PartsTarget_IsNotPricedOffWorkingComps(string brokenTitle)
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize(brokenTitle);
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer S9 13.5Th Bitcoin Miner Tested Working"));
+
+        Assert.True(match.Excluded,
+            $"a working unit's sale price is not what this one is worth. conf={match.MatchConfidence} " +
+            $"reason={match.ExclusionReason ?? "(none)"}");
+        Assert.True((match.ExclusionReason ?? "").Contains("working", StringComparison.OrdinalIgnoreCase),
+            $"excluded for the wrong reason: {match.ExclusionReason}");
+    }
+
+    [Fact]
+    public void Match_PartsTarget_StillPricesOffOtherPartsComps()
+    {
+        // The point is not to refuse to price scrap. It is to price it off scrap.
+        //
+        // "Untested" and "for parts" are different words for the same condition tier, and they used
+        // to be compared as different tokens — which rejected the only comps a dead unit can be
+        // priced off, leaving it with no price from either direction.
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S9 13.5Th Miner untested");
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer S9 13.5Th Miner for parts"));
+
+        Assert.False(match.Excluded, $"parts-vs-parts should price: {match.ExclusionReason} conf={match.MatchConfidence}");
+    }
+
+    [Fact]
+    public void Match_WorkingTarget_IsStillNotPricedOffPartsComps()
+    {
+        // The original guard, which must survive the new one.
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S9 13.5Th Bitcoin Miner Tested Working");
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer S9 13.5Th Miner FOR PARTS not working"));
+
+        Assert.True(match.Excluded);
+    }
 }
