@@ -18,6 +18,24 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
     catch { }
 };
 
+// A background task that faults and is never awaited is the one way this server could die with its
+// page still open — the seller keeps clicking a UI whose backend is gone, and every request after
+// that reaches the browser as "Failed to fetch". Every fire-and-forget in this app catches its own
+// exceptions; this is the net under all of them, including any added later. Observing the exception
+// is what stops it escalating, whatever <ThrowUnobservedTaskExceptions> is set to, and the write is
+// to the same crash.log so the cause is still readable afterwards.
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    e.SetObserved();
+    try
+    {
+        Directory.CreateDirectory(AppPaths.DataHome);
+        File.AppendAllText(Path.Combine(AppPaths.DataHome, "crash.log"),
+            $"{DateTime.Now:u}: unobserved background task exception (server kept running): {e.Exception}\n---\n");
+    }
+    catch { }
+};
+
 // ── Service mode detection ────────────────────────────────────────────────────
 // When launched by the Windows SCM, run headless (no tray icon, no browser).
 // Interactive launches (double-click, startup shortcut) get the full tray UI.
@@ -547,11 +565,25 @@ _ = Task.Run(() =>
     }
 });
 
-// Background license check — non-blocking, runs after startup
+// Background license check — non-blocking, runs after startup.
+//
+// The catch is not decoration. This was the one fire-and-forget in the app whose body could throw
+// with nothing to catch it, and a faulted background task is exactly how a server dies quietly
+// while the page it was serving stays open and keeps clicking — the shape behind "Failed to fetch".
+// The app is free-beta with no gate on anything, so a license check that cannot reach the network
+// has nothing to stop; it is logged and the app carries on.
 _ = Task.Run(async () =>
 {
-    await Task.Delay(2000);
-    await app.Services.GetRequiredService<LicenseService>().CheckAsync();
+    try
+    {
+        await Task.Delay(2000);
+        await app.Services.GetRequiredService<LicenseService>().CheckAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Services.GetRequiredService<ActionLog>()
+            .Add("Warning", "License check failed", $"Nothing is gated on it — {ex.Message}");
+    }
 });
 
 // ── Background maintenance loop ───────────────────────────────────────────

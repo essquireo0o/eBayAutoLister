@@ -50,6 +50,10 @@
         body: body ? JSON.stringify(body) : undefined,
       });
 
+      // The app answered, whatever it said. Anything that was waiting for it to come back can stop
+      // waiting — including the offline banner.
+      noteBackendReachable();
+
       const text = await res.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = null; }
@@ -62,48 +66,197 @@
 
       // A body that isn't our envelope: an older endpoint, or ASP.NET's HTML error page. Both are
       // reported as an app-side fault rather than pasted at the seller as-is.
+      //
+      // An endpoint that answers `{ "error": "..." }` is still saying something the seller needs,
+      // and it is written in their language — that sentence leads, rather than being buried under a
+      // status code with the real explanation folded away in Technical detail.
+      const serverSaid = typeof data?.error === 'string' && data.error.trim() ? data.error.trim() : '';
+      const unreadable = data === null && text && !looksLikeHtml(text);
       return {
         ok: false,
         data,
         failure: {
-          kind: 'Unknown',
-          headline: 'The app returned an error',
-          whatHappened: `The request came back as HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}.`,
+          kind: unreadable ? 'Unreadable' : 'Unknown',
+          headline: serverSaid ? 'The app could not do that' : 'The app returned an error',
+          whatHappened: serverSaid
+            || `The request came back as HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}.`,
           whatToDo: 'Try again. If it keeps happening, open Logs and send the detail below.',
           retryable: true,
           fixAction: 'open-logs',
           workPreserved: true,
-          technical: looksLikeHtml(text) ? 'The app sent back an error page instead of data.' : (data?.error || text || '').slice(0, 600),
+          technical: looksLikeHtml(text)
+            ? `The app sent back an error page instead of data (HTTP ${res.status}).`
+            : (serverSaid || text || '').slice(0, 600) || `HTTP ${res.status}.`,
         },
       };
     } catch (err) {
-      const aborted = err.name === 'AbortError';
-      return {
-        ok: false,
-        data: null,
-        failure: aborted
-          ? {
-              kind: 'Timeout',
-              headline: 'That took too long and was stopped',
-              whatHappened: `No answer came back within ${Math.round(timeoutMs / 60000)} minutes, so the request was cancelled.`,
-              whatToDo: 'Try again. Everything you filled in is still here.',
-              retryable: true,
-              workPreserved: true,
-              technical: `Client timeout after ${timeoutMs} ms.`,
-            }
-          : {
-              kind: 'Network',
-              headline: 'Could not reach the app',
-              whatHappened: `The connection to ING AutoLister failed (${err.message}).`,
-              whatToDo: 'Check the app is still running, then try again. Your work is kept.',
-              retryable: true,
-              workPreserved: true,
-              technical: String(err.message || err),
-            },
-      };
+      if (err.name === 'AbortError') {
+        return {
+          ok: false,
+          data: null,
+          failure: {
+            kind: 'Timeout',
+            headline: 'That took too long and was stopped',
+            whatHappened: `No answer came back within ${describeTimeout(timeoutMs)}, so the request was cancelled.`,
+            whatToDo: 'Try again. Everything you filled in is still here.',
+            retryable: true,
+            workPreserved: true,
+            technical: `Client timeout after ${timeoutMs} ms on ${url}.`,
+          },
+        };
+      }
+      // Nothing answered at all. That is one specific thing — the app is not there — and it gets
+      // said as such rather than as whatever the browser calls it this week.
+      noteBackendUnreachable();
+      return { ok: false, data: null, failure: unreachableFailure(err, url) };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // "Five minutes" reads better than "5 minutes" and "60000 ms" reads like a bug report. A one-minute
+  // ceiling rounded to "1 minutes" was what the old wording produced.
+  function describeTimeout(ms) {
+    if (ms < 90_000) return `${Math.max(1, Math.round(ms / 1000))} seconds`;
+    const mins = Math.round(ms / 60_000);
+    return `${mins} minute${mins === 1 ? '' : 's'}`;
+  }
+
+  // ── When the app itself is not there ──────────────────────────────────────
+  //
+  // "Failed to fetch" is the browser's own words for "this request never reached a server". It is a
+  // sentence about the fetch API, shown to somebody who sells on eBay, and it is exactly what the
+  // Listing Copilot printed on the day the backend had been closed and the page was left open: the
+  // seller read a browser internal and concluded the app was broken. Nothing below ever passes that
+  // string on — not as a headline, not as evidence, not through a template literal.
+
+  // fetch only rejects with a TypeError when the request could not be made at all, so the shape is
+  // the reliable test. The wording is not: Chrome says "Failed to fetch", Firefox says "NetworkError
+  // when attempting to fetch resource.", Safari says "Load failed". Matched as a fallback only.
+  function isUnreachable(err) {
+    if (!err) return false;
+    if (err.name === 'AbortError') return false;
+    if (err.name === 'TypeError') return true;
+    return /failed to fetch|networkerror|load failed|network request failed|err_connection|connection refused/i
+      .test(String(err.message || err));
+  }
+
+  // The one sentence for the one situation, used everywhere a status line has room for a sentence
+  // and nothing more. The panels with room for a whole explanation get `unreachableFailure`.
+  const UNREACHABLE_SENTENCE =
+    'ING AutoLister is not running — this page is still open, but nothing is answering it. '
+    + 'Start the app again from the tray icon and this page will reconnect on its own.';
+
+  // Evidence a developer can act on, with none of the browser's phrasing in it: which request, and
+  // what kind of failure. Kept because sellers forward this when they ask for help.
+  function technicalDetail(err, url) {
+    if (isUnreachable(err)) {
+      return `The request to ${url || 'the app'} never reached ${location.origin} `
+           + `(${err?.name || 'NetworkError'} — no response, no status).`;
+    }
+    return String(err?.message || err || 'Unknown error.').slice(0, 600);
+  }
+
+  function unreachableFailure(err, url) {
+    return {
+      kind: 'Network',
+      headline: 'ING AutoLister is not running',
+      whatHappened:
+        'This page is still open, but nothing answered it. The app behind it has been closed or has '
+        + 'stopped, so nothing on this screen can reach your listings until it is back.',
+      whatToDo:
+        'Start ING AutoLister again — the price-tag icon in your system tray, or the desktop '
+        + 'shortcut. This page reconnects by itself the moment it does; there is no need to reload it.',
+      retryable: true,
+      workPreserved: true,
+      technical: technicalDetail(err, url),
+    };
+  }
+
+  // The one place a caught exception becomes words a seller reads. Messages the server wrote are
+  // already in their language and pass through unchanged; the two failures the browser invents its
+  // own wording for — the app not being there, and a request that was given up on — are replaced.
+  // Calling this is also what starts the app watching for the backend to come back, so every swept
+  // call site gets the recovery for free.
+  function errorText(err, fallback) {
+    if (isUnreachable(err)) { noteBackendUnreachable(); return UNREACHABLE_SENTENCE; }
+    if (err?.name === 'AbortError') return 'That took too long, so it was stopped. Try again.';
+    const message = String(err?.message || '').trim();
+    return message || fallback || 'Something went wrong.';
+  }
+
+  // ── Noticing the app come back ────────────────────────────────────────────
+  //
+  // A seller who restarts the app should not also have to work out that the page needs reloading.
+  // The moment any request fails at the network layer this starts knocking on the app's cheapest
+  // endpoint — the identity document, which needs no services and answers before setup is complete —
+  // and when it answers, the banner goes and whatever was waiting on it runs again.
+  const BACKEND_PROBE_URL = '/api/app/instance';
+  const BACKEND_PROBE_MS = 3000;
+  let backendDown = false;
+  let backendProbeTimer = null;
+  const backendWaiters = [];
+
+  function noteBackendUnreachable() {
+    if (!backendDown) { backendDown = true; showOfflineBanner(); }
+    if (!backendProbeTimer) backendProbeTimer = setInterval(probeBackend, BACKEND_PROBE_MS);
+  }
+
+  function noteBackendReachable() {
+    if (backendProbeTimer) { clearInterval(backendProbeTimer); backendProbeTimer = null; }
+    if (!backendDown) return;
+    backendDown = false;
+    hideOfflineBanner();
+    // Spliced first: a waiter that fails again re-registers itself rather than being run twice.
+    backendWaiters.splice(0).forEach(fn => { try { fn(); } catch { /* one bad waiter is not the others' problem */ } });
+  }
+
+  async function probeBackend() {
+    try {
+      const res = await fetch(BACKEND_PROBE_URL, { cache: 'no-store' });
+      if (res.ok) noteBackendReachable();
+    } catch { /* still gone — keep knocking */ }
+  }
+
+  // "Run this again once the app is back", registered by whatever failed. The seller gets the thing
+  // they clicked rather than a live page they have to drive back to it themselves.
+  function whenBackendReturns(fn) {
+    if (typeof fn !== 'function' || backendWaiters.includes(fn)) return;
+    backendWaiters.push(fn);
+  }
+
+  const OFFLINE_BANNER_TEXT =
+    '<strong>ING AutoLister is not running.</strong> This page is still open, but nothing is '
+    + 'answering it. Start the app again — the price-tag icon in your system tray — and this page '
+    + 'will reconnect on its own.';
+
+  function offlineBanner() {
+    let el = document.getElementById('app-offline-banner');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'app-offline-banner';
+    el.className = 'app-offline-banner hidden';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span class="app-offline-text"></span>';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function showOfflineBanner() {
+    const el = offlineBanner();
+    el.classList.remove('hidden', 'app-offline-back');
+    el.querySelector('.app-offline-text').innerHTML = OFFLINE_BANNER_TEXT;
+  }
+
+  function hideOfflineBanner() {
+    const el = document.getElementById('app-offline-banner');
+    if (!el) return;
+    // Said out loud rather than vanishing: a seller who has just restarted the app needs to know
+    // this page is theirs again, not wonder whether the message went away on its own.
+    el.classList.add('app-offline-back');
+    el.querySelector('.app-offline-text').innerHTML =
+      '<strong>Reconnected.</strong> ING AutoLister is answering again — carry on where you left off.';
+    setTimeout(() => el.classList.add('hidden'), 5000);
   }
 
   function looksLikeHtml(text) {
@@ -1140,7 +1293,7 @@
     } catch (err) {
       TERAPEAK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
-        if (el) el.textContent = `Unable to check Terapeak status: ${err.message}`;
+        if (el) el.textContent = `Unable to check Terapeak status: ${errorText(err)}`;
       });
     }
   }
@@ -1165,7 +1318,7 @@
     } catch (err) {
       TERAPEAK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
-        if (el) el.textContent = `Connect failed: ${err.message}`;
+        if (el) el.textContent = `Connect failed: ${errorText(err)}`;
       });
       btn.disabled = false;
     }
@@ -1227,7 +1380,7 @@
     } catch (err) {
       FACEBOOK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
-        if (el) el.textContent = `Unable to check Facebook status: ${err.message}`;
+        if (el) el.textContent = `Unable to check Facebook status: ${errorText(err)}`;
       });
       return null;
     }
@@ -1252,7 +1405,7 @@
     } catch (err) {
       FACEBOOK_BANNERS.forEach(([statusId]) => {
         const el = $(statusId);
-        if (el) el.textContent = `Connect failed: ${err.message}`;
+        if (el) el.textContent = `Connect failed: ${errorText(err)}`;
       });
       if (btn) btn.disabled = false;
     }
@@ -1291,7 +1444,7 @@
       window.location.href = body.url;
     } catch (err) {
       openSetup(null);
-      showResult('error', `eBay login failed: ${esc(err.message)}`);
+      showResult('error', `eBay login failed: ${esc(errorText(err))}`);
     }
   }
 
@@ -1471,7 +1624,7 @@
         compact: true,
         title: 'Couldn\'t run the connection check',
         body: 'The app is running but the diagnostics endpoint didn\'t answer, so none of the four connections were tested. Nothing below is a verdict on them.',
-        detail: err.message,
+        detail: errorText(err),
         actions: [{ label: 'Try again', id: 'retry', kind: 'btn-primary' }],
       }, { retry: () => checkConnections() });
       setConnectionsSummary('Check failed');
@@ -1865,6 +2018,7 @@
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, { ...(init || {}), signal: controller.signal });
+      noteBackendReachable();
       const text = await res.text();
 
       let data = null;
@@ -1885,7 +2039,9 @@
                  'Try again, or untick Facebook — Craigslist alone answers in seconds.',
         };
       }
-      return { data: null, error: `Couldn't reach the app (${err.message}). Check it's still running, then try again.` };
+      // The app not being there is its own answer, and it is not "Couldn't reach the app
+      // (Failed to fetch)" — that put the browser's word for the problem in the seller's mouth.
+      return { data: null, error: errorText(err, 'The search could not be run.') };
     } finally {
       clearTimeout(timer);
     }
@@ -2110,7 +2266,7 @@
         : '';
       out.innerHTML = `<span class="fb-comp-val">eBay sold avg ${money(avg)}${data.count ? ` from ${data.count} comps` : ''}</span> ${verdict}`;
     } catch (err) {
-      out.textContent = `Couldn't check sold prices: ${err.message}`;
+      out.textContent = `Couldn't check sold prices: ${errorText(err)}`;
     } finally {
       btn.disabled = false;
     }
@@ -2908,7 +3064,7 @@
     } catch (err) {
       btn.disabled = false;
       btn.textContent = original;
-      setLocalStatus(`Couldn't track that deal: ${err.message}`);
+      setLocalStatus(`Couldn't track that deal: ${errorText(err)}`);
     }
   }
 
@@ -4220,7 +4376,7 @@
       invScan = null;
       $('inv-summary')?.classList.add('hidden');
       $('inv-bulk-bar')?.classList.add('hidden');
-      $('inv-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('inv-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setInvStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔎 Scan My Listings'; }
@@ -4526,7 +4682,7 @@
       // recommendation — so the row is re-derived by the server rather than patched here.
       setInvStatus('Cost saved — re-scan to recalculate break-even and suggested prices.');
     } catch (err) {
-      setInvStatus(`Could not save that cost: ${err.message || err}`);
+      setInvStatus(`Could not save that cost: ${errorText(err)}`);
     }
   }
 
@@ -4575,7 +4731,7 @@
         await runInventoryScan();
       }
     } catch (err) {
-      setInvStatus(`Repricing failed: ${err.message || err}`);
+      setInvStatus(`Repricing failed: ${errorText(err)}`);
     }
   }
 
@@ -4655,7 +4811,7 @@
       woScan = null;
       $('wo-summary')?.classList.add('hidden');
       $('wo-bulk-bar')?.classList.add('hidden');
-      $('wo-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('wo-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setWoStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '👁 Find My Watchers'; }
@@ -4965,7 +5121,7 @@
         await runOfferScan();
       }
     } catch (err) {
-      setWoStatus(`Sending failed: ${err.message || err}`);
+      setWoStatus(`Sending failed: ${errorText(err)}`);
     }
   }
 
@@ -5045,7 +5201,7 @@
       $('rsc-summary')?.classList.add('hidden');
       $('rsc-bulk-bar')?.classList.add('hidden');
       $('rsc-bundles')?.classList.add('hidden');
-      $('rsc-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('rsc-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setRescueStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🛟 Rescue My Aging Stock'; }
@@ -5314,7 +5470,7 @@
         await runRescueScan();
       }
     } catch (err) {
-      setRescueStatus(`The price drop failed: ${err.message || err}`);
+      setRescueStatus(`The price drop failed: ${errorText(err)}`);
     }
   }
 
@@ -5500,7 +5656,7 @@
       $('bud-lift')?.classList.add('hidden');
       $('bud-alternatives')?.classList.add('hidden');
       $('bud-leftout')?.classList.add('hidden');
-      $('bud-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The budget couldn\'t be planned.')}</p>`;
+      $('bud-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The budget couldn\'t be planned.'))}</p>`;
       setBudgetStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '💵 Plan My Basket'; }
@@ -5795,7 +5951,7 @@
       rlScan = null;
       $('rl-summary')?.classList.add('hidden');
       $('rl-bulk-bar')?.classList.add('hidden');
-      $('rl-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('rl-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setRlStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '♻️ Find My Lost Sales'; }
@@ -6151,7 +6307,7 @@
         await runRelistScan();
       }
     } catch (err) {
-      setRlStatus(`Relisting failed: ${err.message || err}`);
+      setRlStatus(`Relisting failed: ${errorText(err)}`);
     }
   }
 
@@ -6263,7 +6419,7 @@
         await runRelistScan();
       }
     } catch (err) {
-      setRlStatus(`Sending failed: ${err.message || err}`);
+      setRlStatus(`Sending failed: ${errorText(err)}`);
     }
   }
 
@@ -6384,7 +6540,7 @@
       renderEarnings();
       renderDashboardEarnings();
     } catch (err) {
-      if (!quiet) setEarningsStatus(err.message || 'Could not read your earnings.');
+      if (!quiet) setEarningsStatus(errorText(err, 'Could not read your earnings.'));
     }
   }
 
@@ -6893,7 +7049,7 @@
         ? `Cost saved — ${moneyExact(delta)} of real profit added to your total.`
         : `Cost saved — that works out to a ${moneyExact(Math.abs(delta))} loss, and the total now says so.`) + scope);
     } catch (err) {
-      setEarningsStatus(err.message || 'That cost could not be saved.');
+      setEarningsStatus(errorText(err, 'That cost could not be saved.'));
     }
   }
 
@@ -6908,7 +7064,7 @@
       renderDashboardEarnings();
       setEarningsStatus('Removed.');
     } catch (err) {
-      setEarningsStatus(err.message || 'That sale could not be removed.');
+      setEarningsStatus(errorText(err, 'That sale could not be removed.'));
     }
   }
 
@@ -6985,7 +7141,7 @@
       closeFlipLogger();
       setEarningsStatus(`"${title}" added to your earnings.`);
     } catch (e) {
-      showFlipError(e.message || 'That flip could not be saved.');
+      showFlipError(errorText(e, 'That flip could not be saved.'));
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Save this flip'; }
     }
@@ -7131,7 +7287,7 @@
       renderDashboardPipeline();
     } catch (err) {
       renderDashboardPipeline();
-      if (!quiet) setPipelineNotice(`Couldn't load the pipeline: ${err.message}`);
+      if (!quiet) setPipelineNotice(`Couldn't load the pipeline: ${errorText(err)}`);
     }
   }
 
@@ -7473,7 +7629,7 @@
       setPipelineNotice('');
       addActivity(dealFormId ? 'Deal updated' : 'Deal tracked', title);
     } catch (e) {
-      showDealError(e.message);
+      showDealError(errorText(e));
     }
   }
 
@@ -7575,7 +7731,7 @@
       renderDashboardPipeline();
       setPipelineNotice(result.message || '');
     } catch (e) {
-      showStageError(e.message);
+      showStageError(errorText(e));
     }
   }
 
@@ -7598,7 +7754,7 @@
       // The money it just unlocked lives on the other page, so that page's copy is now stale.
       loadEarnings(true);
     } catch (e) {
-      setPipelineNotice(`Couldn't apply that cost: ${e.message}`);
+      setPipelineNotice(`Couldn't apply that cost: ${errorText(e)}`);
     }
   }
 
@@ -7612,7 +7768,7 @@
       renderPipeline();
       renderDashboardPipeline();
     } catch (e) {
-      setPipelineNotice(`Couldn't remove that deal: ${e.message}`);
+      setPipelineNotice(`Couldn't remove that deal: ${errorText(e)}`);
     }
   }
 
@@ -7773,7 +7929,7 @@
       renderShippingQuote(data);
     } catch (err) {
       $('ship-quote-results').innerHTML =
-        `<p class="opportunity-empty">${esc(err.message || 'The quote failed.')}</p>`;
+        `<p class="opportunity-empty">${esc(errorText(err, 'The quote failed.'))}</p>`;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Price this package'; }
     }
@@ -8022,7 +8178,7 @@
       shipScan = null;
       $('ship-summary')?.classList.add('hidden');
       $('ship-warning')?.classList.add('hidden');
-      $('ship-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('ship-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '📦 Find My Shipping Leaks'; }
     }
@@ -8480,7 +8636,7 @@
         if (found) toastOk(`${found} new deal${found === 1 ? '' : 's'} cleared your bar.`, { title: watch.name });
         else toast(data.note || 'Nothing new this time.', { kind: 'info', title: watch.name });
       } catch (err) {
-        toastErr(err.message || 'Unknown error.', { title: 'The scan couldn\'t be run' });
+        toastErr(errorText(err, 'Unknown error.'), { title: 'The scan couldn\'t be run' });
       } finally {
         btn.disabled = false;
         btn.textContent = original;
@@ -8804,7 +8960,7 @@
     } catch (e) {
       btn.disabled = false;
       btn.textContent = original;
-      toastErr(e.message || 'Unknown error.', { title: 'Couldn\'t track that deal' });
+      toastErr(errorText(e, 'Unknown error.'), { title: 'Couldn\'t track that deal' });
     }
   }
 
@@ -9020,7 +9176,7 @@
       $('tr-corpus')?.classList.add('hidden');
       $('tr-warning')?.classList.add('hidden');
       $('tr-more-bar')?.classList.add('hidden');
-      $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('tr-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setTrendStatus('');
       renderDashPulse();
     } finally {
@@ -9702,7 +9858,7 @@
       renderSnap();
     } catch (err) {
       snapResult = null;
-      $('snap-result').innerHTML = `<div class="snap-error">${esc(err.message || 'That didn\'t price.')}</div>`;
+      $('snap-result').innerHTML = `<div class="snap-error">${esc(errorText(err, 'That didn\'t price.'))}</div>`;
       setSnapStatus('');
     } finally {
       snapRunning = false;
@@ -9908,7 +10064,7 @@
       wtsReport = null;
       $('wts-banner')?.classList.add('hidden');
       $('wts-warnings')?.classList.add('hidden');
-      $('wts-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The comparison failed.')}</p>`;
+      $('wts-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The comparison failed.'))}</p>`;
       setWtsStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🧭 Compare Venues'; }
@@ -10138,7 +10294,7 @@
     } catch (err) {
       snipeScan = null;
       ['sn-summary', 'sn-warning', 'sn-terms-bar', 'sn-honesty'].forEach(id => $(id)?.classList.add('hidden'));
-      $('sn-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('sn-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setSnipeStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Underpriced Auctions'; }
@@ -10479,7 +10635,7 @@
     } catch (err) {
       btn.disabled = false;
       btn.textContent = original;
-      setSnipeStatus(`Couldn't track that one: ${err.message}`);
+      setSnipeStatus(`Couldn't track that one: ${errorText(err)}`);
     }
   }
 
@@ -10587,12 +10743,12 @@
       const err = $('copilot-error');
       if (err) {
         err.classList.remove('hidden');
-        err.textContent = 'Reading your listings from eBay…';
+        err.innerHTML = '<p class="failure-what">Reading your listings from eBay…</p>';
       }
-      await runCopilotScan();
-      // runCopilotScan writes its own message into #copilot-error when it fails; leave that alone.
+      await runCopilotScan({ keepNotice: true });
+      // runCopilotScan writes its own failure into #copilot-error when it fails; leave that alone.
       if (!copilotScan) return;
-      if (err && err.textContent === 'Reading your listings from eBay…') err.classList.add('hidden');
+      hideFailure(err);
     }
     wrap?.classList.remove('hidden');
     wrap?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -10653,19 +10809,20 @@
       'draft for you to publish.\n\nYour original photos are kept exactly as they are.\n\n' +
       'No live listing is changed. This takes a few minutes and costs one Claude call per listing.')) return;
 
-    try {
-      const res = await fetch('/api/copilot/improve-seo/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingIds: picked })  // empty = every live listing
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not start');
-      pollCopilotSeo();
-    } catch (e) {
-      const err = $('copilot-error');
-      if (err) { err.classList.remove('hidden'); err.textContent = 'Rewrite failed to start: ' + e.message; }
+    hideFailure('copilot-error');
+    const { ok, failure } = await callApi('/api/copilot/improve-seo/start', {
+      method: 'POST',
+      body: { listingIds: picked },  // empty = every live listing
+    });
+
+    if (!ok) {
+      showCopilotFailure(withEbayHint(failure), () => runCopilotSeoRewrite(ids));
+      // Nothing was started, so nothing was paid for — the retry is safe to arm for the moment the
+      // app comes back, but it stays a button rather than firing on its own. A rewrite costs money
+      // and the seller confirmed this one against a count that may now be stale.
+      return;
     }
+    pollCopilotSeo();
   }
 
   // Stop means stop, and says what it really does. The listing in the middle of being rewritten has
@@ -10674,14 +10831,20 @@
   async function stopCopilotSeoRewrite() {
     const btn = $('copilot-seo-stop');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Stopping…'; }
-    try {
-      await fetch('/api/copilot/improve-seo/cancel', { method: 'POST' });
-      refreshCopilotSeoStatus();
-    } catch (e) {
+
+    const { ok, failure } = await callApi('/api/copilot/improve-seo/cancel', { method: 'POST' });
+    if (!ok) {
       if (btn) { btn.disabled = false; btn.textContent = 'Stop after this listing'; }
-      const err = $('copilot-error');
-      if (err) { err.classList.remove('hidden'); err.textContent = 'Could not stop the run: ' + e.message; }
+      // The run lives in the app's own process. If the app is gone the run is gone with it, which is
+      // the outcome Stop was asking for — say that rather than leaving a button that looks broken.
+      showCopilotFailure(
+        failure.kind === 'Network'
+          ? { ...failure, whatHappened: failure.whatHappened + ' The rewrite ran inside the app, so it has stopped too — every draft it had already made is saved.' }
+          : failure,
+        stopCopilotSeoRewrite);
+      return;
     }
+    refreshCopilotSeoStatus();
   }
 
   function pollCopilotSeo() {
@@ -10695,8 +10858,11 @@
     const btn = $('copilot-seo-apply');
 
     try {
-      const res = await fetch('/api/copilot/improve-seo/status');
-      const s = await res.json();
+      // A dropped poll is not worth interrupting a run that is still going, so this one stays quiet
+      // — but it still goes through the shared layer, which is what notices the app has gone and
+      // starts watching for it to come back. The poll then heals itself on the next tick.
+      const { ok, data: s } = await callApi('/api/copilot/improve-seo/status');
+      if (!ok) return;
       copilotSeoRunning = !!s.running;
       if (!s.everRun) return;
 
@@ -10778,7 +10944,7 @@
         out.querySelectorAll('.copilot-open-draft[data-draft]').forEach(b =>
           b.addEventListener('click', () => openCopilotDrafts([b.dataset.draft])));
       }
-    } catch { /* a dropped poll is not worth interrupting a run that is still going */ }
+    } catch { /* a malformed status body must not kill the poll that is tracking a live run */ }
   }
 
   // The whole change, not just the title. The panel promises the seller the full list of changes,
@@ -10819,21 +10985,22 @@
     if (!wanted.length) return;
 
     let opened = 0;
+    let lastFailure = null;
     for (const filename of wanted) {
       if (draftTabs.some(t => t.filename === filename)) continue;   // already open
-      try {
-        const res = await fetch('/api/local-drafts/load/' + encodeURIComponent(filename));
-        if (!res.ok) continue;
-        const draft = await res.json();
-        const tab = newDraftTab(draft.title, draft.filename, draft.data,
-                                draft.imageBase64, draft.mimeType, draft.visualDescription);
-        tab.saved = true;
-        opened++;
-      } catch { /* a draft that will not load is reported below, not thrown */ }
+      const { ok, data: draft, failure } = await callApi('/api/local-drafts/load/' + encodeURIComponent(filename));
+      if (!ok) { lastFailure = failure; continue; }
+      const tab = newDraftTab(draft.title, draft.filename, draft.data,
+                              draft.imageBase64, draft.mimeType, draft.visualDescription);
+      tab.saved = true;
+      opened++;
     }
 
     if (!opened && !draftTabs.some(t => wanted.includes(t.filename))) {
-      toast('Those drafts could not be opened. They are still on disk — try Load all drafts.',
+      // The rewrite is paid for and on disk either way. Which of the two problems this is decides
+      // what the seller does next — restart the app, or go and load the drafts by hand.
+      toast(lastFailure?.kind === 'Network' ? UNREACHABLE_SENTENCE
+            : 'They are still on disk — try Load all drafts.',
             { kind: 'warning', title: 'Could not open the drafts' });
       return;
     }
@@ -10846,18 +11013,47 @@
                 'Review the new title, description and item specifics, then publish');
   }
 
-  async function runCopilotScan() {
+  // Reading a whole account is eBay's bulk listing call plus three policy calls — seconds on a small
+  // account, a while on a large one, but bounded. Past this it is not slow, it is not coming.
+  const COPILOT_SCAN_TIMEOUT_MS = 3 * 60 * 1000;
+
+  // Every Copilot failure lands in the one red panel, rendered by the shared layer: what happened,
+  // what to do about it, the button that does it, and the evidence folded away underneath. This
+  // panel is where the old handler pasted the browser's own rejection message straight at the seller,
+  // at sellers, which told them nothing and read as "the app is broken".
+  function showCopilotFailure(failure, onRetry) {
+    renderFailure('copilot-error', failure, { onRetry });
+  }
+
+  // An eBay connection the app never had is a trip to Settings, not a retry. The server says so when
+  // it can; when all it gave back was a sentence, this reads it and puts the right button underneath.
+  function withEbayHint(failure) {
+    if (!failure || failure.fixAction) return failure;
+    const said = `${failure.whatHappened || ''} ${failure.technical || ''}`;
+    if (!/token|auth|sign ?in|connect/i.test(said)) return failure;
+    return { ...failure, fixAction: 'connect-ebay', whatToDo: 'Log into eBay, then run the scan again.' };
+  }
+
+  async function runCopilotScan(options) {
     const btn = $('copilot-scan-btn');
-    const err = $('copilot-error');
     const summary = $('copilot-summary');
 
-    err?.classList.add('hidden');
+    // The picker puts its own "reading your listings" note in this panel before calling in, so a
+    // scan started from the card still says what it is doing.
+    if (!options?.keepNotice) hideFailure('copilot-error');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Reading your account…'; }
 
     try {
-      const res = await fetch('/api/copilot/scan');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Scan failed');
+      const { ok, data, failure } = await callApi('/api/copilot/scan', { timeoutMs: COPILOT_SCAN_TIMEOUT_MS });
+
+      if (!ok) {
+        copilotScan = null;
+        showCopilotFailure(withEbayHint(failure), () => runCopilotScan());
+        // When the app itself was the missing piece, the seller restarts it and the scan they asked
+        // for runs — rather than them having to find this button a second time.
+        if (failure.kind === 'Network') whenBackendReturns(() => runCopilotScan());
+        return;
+      }
 
       copilotScan = data;
       renderCopilotScan(data);
@@ -10869,12 +11065,6 @@
           '<strong>' + data.listingsNeedingWork + '</strong> need work, ' +
           '<strong>' + data.policies.total + '</strong> policies would be renamed. ' +
           '<em>Nothing has been changed.</em>';
-      }
-    } catch (e) {
-      if (err) {
-        err.classList.remove('hidden');
-        err.textContent = 'Could not scan: ' + e.message +
-          (/token|auth|connect/i.test(String(e.message)) ? ' — check eBay is connected in Settings.' : '');
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan My Account'; }
@@ -11005,7 +11195,7 @@
       adScan = null;
       $('ad-summary')?.classList.add('hidden');
       $('ad-blend-bar')?.classList.add('hidden');
-      $('ad-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The scan failed.')}</p>`;
+      $('ad-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The scan failed.'))}</p>`;
       setAdStatus('');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '📣 Check My Ad Rates'; }
@@ -11121,7 +11311,7 @@
       loadFeeProfile();
       ['nl', 'f'].forEach(p => { if ($(`${p}-th-panel`)) scheduleTakeHome(p); });
     } catch (err) {
-      setAdStatus(`Could not save the default rate: ${err.message || err}`);
+      setAdStatus(`Could not save the default rate: ${errorText(err)}`);
     } finally {
       if (btn) { btn.disabled = false; renderAdBlendBar(adScan?.summary || {}); }
     }
@@ -11382,7 +11572,7 @@
     try {
       plFolders = await fetch('/api/photos/library').then(r => r.json());
     } catch (err) {
-      if (list) list.innerHTML = `<p class="opportunity-empty">Could not load the photo library: ${esc(err.message)}</p>`;
+      if (list) list.innerHTML = `<p class="opportunity-empty">Could not load the photo library: ${esc(errorText(err))}</p>`;
       return;
     }
     // Keep the seller on the folder they were working in; fall back to the first one.
@@ -11477,7 +11667,7 @@
       addActivity('Photo library folder created', body.modelKey);
       await loadPhotoLibrary();
     } catch (err) {
-      if (msg) { msg.textContent = err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -11519,7 +11709,7 @@
         if (!res.ok) throw new Error(body.error || 'Upload failed');
         saved++;
       } catch (err) {
-        failures.push(`${label}: ${err.message}`);
+        failures.push(`${label}: ${errorText(err)}`);
       }
     }
 
@@ -11543,7 +11733,7 @@
       addActivity('Representative photo deleted', `${plSelected}/${fileName}`);
       await loadPhotoLibrary();
     } catch (err) {
-      setPlUploadMsg(`Could not delete ${fileName}: ${err.message}`, 'error');
+      setPlUploadMsg(`Could not delete ${fileName}: ${errorText(err)}`, 'error');
     }
   }
 
@@ -11865,7 +12055,7 @@
       if (!res.ok) throw new Error(data.error || 'Search failed');
       renderOpportunityResults(data);
     } catch (err) {
-      if (summary) summary.textContent = `Search failed: ${err.message}`;
+      if (summary) summary.textContent = `Search failed: ${errorText(err)}`;
       if (list) list.innerHTML = '';
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔍 Search'; }
@@ -12117,7 +12307,7 @@
     } catch (err) {
       lotScan = null;
       ['lot-verdict', 'lot-summary', 'lot-concentration'].forEach(id => $(id)?.classList.add('hidden'));
-      $('lot-results').innerHTML = `<p class="opportunity-empty">${esc(err.message || 'The analysis failed.')}</p>`;
+      $('lot-results').innerHTML = `<p class="opportunity-empty">${esc(errorText(err, 'The analysis failed.'))}</p>`;
       setLotStatus('');
     } finally {
       buttons.forEach(b => { b.disabled = false; });
@@ -12401,7 +12591,7 @@
       if (!res.ok) throw new Error(data.error || 'Analysis failed');
       renderSupplierResults(data);
     } catch (err) {
-      if (summary) summary.textContent = `Analysis failed: ${err.message}`;
+      if (summary) summary.textContent = `Analysis failed: ${errorText(err)}`;
     } finally {
       reanalyzeBtn?.classList.remove('hidden');
     }
@@ -12562,7 +12752,7 @@
       addActivity('License activated', status.message || status.tier);
       if (status.valid && keyInput) { keyInput.value = ''; keyInput.placeholder = '(saved — leave blank to keep)'; }
     } catch (err) {
-      if (msg) { msg.textContent = 'Activation failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Activation failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Activate'; }
     }
@@ -12584,7 +12774,7 @@
         if (msg) { msg.textContent = res.error || 'Could not start checkout.'; msg.className = 'sd-test-msg error'; }
       }
     } catch (err) {
-      if (msg) { msg.textContent = 'Checkout failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Checkout failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = label; }
     }
@@ -12690,7 +12880,7 @@
       addActivity('License activated', status.message || status.tier);
       if (status.valid) { if (keyInput) { keyInput.value = ''; keyInput.placeholder = '(saved — leave blank to keep)'; } }
     } catch (err) {
-      if (msg) { msg.textContent = 'Activation failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Activation failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Activate'; }
     }
@@ -12881,7 +13071,7 @@
       // Anything currently open is now quoting stale numbers.
       ['nl', 'f'].forEach(p => { if ($(`${p}-th-panel`)) scheduleTakeHome(p); });
     } catch (err) {
-      if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Save failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -12927,7 +13117,7 @@
       if (msg) { msg.textContent = 'Defaults saved.'; msg.className = 'sd-test-msg ok'; }
       addActivity('Listing defaults saved', `ZIP: ${body.defaultPostalCode || '(none)'}`);
     } catch (err) {
-      if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Save failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -12966,8 +13156,8 @@
           loadPolicies(false);
           await loadListings('eBay OAuth connected');
         } catch (err) {
-          if (msg) { msg.textContent = `OAuth exchange failed: ${err.message}`; msg.style.color = 'var(--danger)'; }
-          addActivity('OAuth exchange failed', err.message);
+          if (msg) { msg.textContent = `OAuth exchange failed: ${errorText(err)}`; msg.style.color = 'var(--danger)'; }
+          addActivity('OAuth exchange failed', errorText(err));
         }
         return;
       }
@@ -12986,7 +13176,7 @@
         addActivity('eBay connected', 'Bearer token saved successfully.');
         await loadListings('eBay token saved');
       } catch (err) {
-        if (msg) { msg.textContent = `Error: ${err.message}`; msg.style.color = 'var(--danger)'; }
+        if (msg) { msg.textContent = `Error: ${errorText(err)}`; msg.style.color = 'var(--danger)'; }
       }
     });
 
@@ -13169,9 +13359,9 @@
         setTimeout(() => $('setup-overlay')?.classList.add('hidden'), 700);
         await loadListings('eBay OAuth connected');
       } catch (err) {
-        msg.textContent = `OAuth exchange failed: ${err.message}`;
+        msg.textContent = `OAuth exchange failed: ${errorText(err)}`;
         msg.className = 'error';
-        addActivity('OAuth exchange failed', err.message);
+        addActivity('OAuth exchange failed', errorText(err));
       }
       return;
     }
@@ -13236,9 +13426,9 @@
         }, 700);
       }
     } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
+      msg.textContent = `Error: ${errorText(err)}`;
       msg.className = 'error';
-      addActivity('Settings error', err.message);
+      addActivity('Settings error', errorText(err));
     }
   }
 
@@ -13286,10 +13476,10 @@
       const nlMsg = $('nl-policy-msg');
       if (nlMsg) { nlMsg.textContent = ''; nlMsg.className = 'sd-test-msg'; }
     } catch (err) {
-      if (msg) { msg.textContent = 'Error: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Error: ' + errorText(err); msg.className = 'sd-test-msg error'; }
       const nlMsg = $('nl-policy-msg');
-      if (nlMsg) { nlMsg.textContent = 'Error: ' + err.message; nlMsg.className = 'sd-test-msg error'; }
-      if (userTriggered) addActivity('Policy load error', err.message);
+      if (nlMsg) { nlMsg.textContent = 'Error: ' + errorText(err); nlMsg.className = 'sd-test-msg error'; }
+      if (userTriggered) addActivity('Policy load error', errorText(err));
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -13372,7 +13562,7 @@
       msg.textContent = `Code detected${details.state ? `; state: ${details.state}` : ''}.`;
       msg.className = 'ok';
     } catch (err) {
-      msg.textContent = err.message;
+      msg.textContent = errorText(err);
       msg.className = 'error';
     }
   }
@@ -13393,7 +13583,7 @@
       details = parseOAuthRedirectUrl(raw);
     } catch (err) {
       if (msg) {
-        msg.textContent = err.message;
+        msg.textContent = errorText(err);
         msg.className = 'error';
       }
       return;
@@ -13430,10 +13620,10 @@
       await loadListings('Production eBay connected');
     } catch (err) {
       if (msg) {
-        msg.textContent = `OAuth exchange failed: ${err.message}`;
+        msg.textContent = `OAuth exchange failed: ${errorText(err)}`;
         msg.className = 'error';
       }
-      addActivity('Production OAuth failed', err.message);
+      addActivity('Production OAuth failed', errorText(err));
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -13524,7 +13714,7 @@
         settingRow('Safety Mode', 'Drafts and revisions require manual action')
       ].join('');
     } catch (err) {
-      el.innerHTML = settingRow('Status', `Unable to load settings: ${err.message}`);
+      el.innerHTML = settingRow('Status', `Unable to load settings: ${errorText(err)}`);
     }
   }
 
@@ -13558,7 +13748,7 @@
         compact: true,
         title: "Couldn't read the log",
         body: 'The app is running but the log endpoint did not answer.',
-        detail: err.message,
+        detail: errorText(err),
         actions: [{ label: 'Try again', id: 'retry', kind: 'btn-primary' }]
       }, { retry: () => loadLogs() });
     }
@@ -13593,7 +13783,7 @@
       updateStats();
       addActivity(activityTitle, `${cachedListings.length} listing${cachedListings.length === 1 ? '' : 's'} loaded from eBay.`);
     } catch (err) {
-      const errorDetail = err.message || 'Unknown eBay API error.';
+      const errorDetail = errorText(err, 'Unknown eBay API error.');
       if (isConnected) {
         // Connected but import failed — show the real error, never fall back to samples
         cachedListings = [];
@@ -13671,7 +13861,7 @@
       return true;
     } catch (err) {
       setListingsFeedback('Connect eBay, then import listings.');
-      addActivity('Sample listings unavailable', err.message || 'Unable to load local sample listings.');
+      addActivity('Sample listings unavailable', errorText(err, 'Unable to load local sample listings.'));
       return false;
     }
   }
@@ -13921,7 +14111,7 @@
       // the seller would read the blank space as "no fees on this sale".
       $(`${prefix}-th-body`).innerHTML =
         `<div class="th-verdict th-error"><strong class="th-headline">Take-home unavailable</strong>
-         <span class="th-note">${esc(err?.message || 'The fee calculation could not be reached.')}
+         <span class="th-note">${esc(errorText(err, 'The fee calculation could not be reached.'))}
          Your price is unchanged — but it has not been checked against your costs.</span></div>`;
     }
   }
@@ -14208,7 +14398,7 @@
       renderResearch(data);
     } catch (err) {
       results?.classList.add('hidden');
-      setResearchStatus('Research failed: ' + (err?.message || 'unknown error') +
+      setResearchStatus('Research failed: ' + (errorText(err, 'unknown error')) +
                         ' — you can still open Terapeak or eBay search above.', 'error');
     } finally {
       $('btn-mr-sold')?.removeAttribute('disabled');
@@ -14358,7 +14548,7 @@
       addActivity('Cross-listings generated', `${data.listings?.length || 0} marketplace(s)`);
     } catch (err) {
       $('xl-results')?.classList.add('hidden');
-      setCrossListStatus('Could not build the cross-listings: ' + (err?.message || 'unknown error'), 'error');
+      setCrossListStatus('Could not build the cross-listings: ' + (errorText(err, 'unknown error')), 'error');
     } finally {
       $('btn-xl-generate')?.removeAttribute('disabled');
     }
@@ -15120,7 +15310,7 @@
       toastOk(`${loaded} draft${loaded === 1 ? '' : 's'} opened — review and publish each one.`,
               { title: 'Drafts loaded' });
     } catch (e) {
-      toastErr(e.message || 'Unknown error.', {
+      toastErr(errorText(e, 'Unknown error.'), {
         title: "Couldn't open your drafts",
         action: { label: 'Try again', onClick: loadAllDraftsAsTabs },
       });
@@ -15183,7 +15373,7 @@
       if (btn) { btn.disabled = false; btn.textContent = '💾 Save Draft'; }
       // Unsaved work is the one failure the seller must not be able to click
       // past, so the retry that would rescue it rides along on the toast.
-      toastErr(err.message || 'Unknown error.', {
+      toastErr(errorText(err, 'Unknown error.'), {
         title: 'Draft not saved',
         action: { label: 'Try again', onClick: saveDraftLocal },
       });
@@ -15776,7 +15966,7 @@
       addActivity(`Bulk import complete`, `${done} of ${links.length} saved as drafts — opening all as tabs`);
       await loadAllDraftsAsTabs();
     } catch (e) {
-      toastErr(e.message || 'Unknown error.', { title: 'Bulk import failed' });
+      toastErr(errorText(e, 'Unknown error.'), { title: 'Bulk import failed' });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Import All'; }
     }
@@ -15815,7 +16005,7 @@
     } catch (e) {
       // The instruction is still in the box behind the toast, so retrying is
       // one click and nothing the seller typed is lost.
-      toastErr(e.message || 'Unknown error.', { title: "AI couldn't apply that change" });
+      toastErr(errorText(e, 'Unknown error.'), { title: "AI couldn't apply that change" });
     } finally {
       if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = 'Apply'; }
       if (input) input.classList.remove('loading');
@@ -15880,8 +16070,8 @@
     } catch (err) {
       $('nl-ai-status')?.classList.add('hidden');
       $('nl-ai-error')?.classList.remove('hidden');
-      if ($('nl-ai-error-msg')) $('nl-ai-error-msg').textContent = `URL analysis failed: ${err.message}`;
-      addActivity('URL analysis failed', err.message);
+      if ($('nl-ai-error-msg')) $('nl-ai-error-msg').textContent = `URL analysis failed: ${errorText(err)}`;
+      addActivity('URL analysis failed', errorText(err));
     } finally {
       input?.classList.remove('loading');
       if (btn) { btn.disabled = false; btn.textContent = 'Analyze'; }
@@ -15926,7 +16116,7 @@
       }, 3000);
     } catch (err) {
       btn.disabled = false;
-      if (msg) msg.textContent = `Connect failed: ${err.message}`;
+      if (msg) msg.textContent = `Connect failed: ${errorText(err)}`;
     }
   }
 
@@ -16000,7 +16190,7 @@
         </a>`).join('');
     } catch (err) {
       strip.classList.remove('loading');
-      summary.textContent = `Sold-comp lookup failed: ${err.message}`;
+      summary.textContent = `Sold-comp lookup failed: ${errorText(err)}`;
     }
   }
 
@@ -16066,9 +16256,9 @@
         headline: 'The app hit an unexpected error after quick-fill',
         whatHappened: 'The listing may be partly filled in; check the fields before publishing.',
         whatToDo: 'Try again, or fill in what is missing by hand.',
-        retryable: true, workPreserved: true, technical: String(err?.message || err),
+        retryable: true, workPreserved: true, technical: technicalDetail(err),
       }, { onRetry: () => nlQuickFillByName() });
-      addActivity('Quick-fill failed', String(err?.message || err));
+      addActivity('Quick-fill failed', technicalDetail(err));
     } finally {
       input?.classList.remove('loading');
       if (btn) { btn.disabled = false; btn.textContent = 'Auto-Fill'; }
@@ -16249,9 +16439,9 @@
         whatToDo: 'Try the analysis again, or fill in what is missing by hand.',
         retryable: true,
         workPreserved: true,
-        technical: String(err?.message || err),
+        technical: technicalDetail(err),
       }, { onRetry: () => nlAnalyze() });
-      addActivity('AI analysis failed', String(err?.message || err));
+      addActivity('AI analysis failed', technicalDetail(err));
     }
   }
 
@@ -16382,8 +16572,8 @@
       spinner?.classList.add('hidden');
       setStatus('Image generation failed — listing can still be submitted');
       errorEl?.classList.remove('hidden');
-      if (errorMsg) errorMsg.textContent = err.message;
-      addActivity('AI photo generation failed', err.message);
+      if (errorMsg) errorMsg.textContent = errorText(err);
+      addActivity('AI photo generation failed', errorText(err));
       return;
     }
 
@@ -17151,7 +17341,7 @@
       setPhotoSlotUrl(index, body.url);
       addActivity('Background removed', `Picture ${index + 1}`);
     } catch (err) {
-      toastErr(err.message || 'Unknown error.', {
+      toastErr(errorText(err, 'Unknown error.'), {
         title: `Background removal failed on picture ${index + 1}`,
         action: { label: 'Try again', onClick: () => nlRemoveBgFromSlot(index) },
       });
@@ -17201,10 +17391,10 @@
         setPhotoSlotUrl(i, body.url, true);
         results.push(body.url);
       } catch (err) {
-        addActivity(`Picture ${i + 1} eBay upload failed`, err.message);
+        addActivity(`Picture ${i + 1} eBay upload failed`, errorText(err));
         // Do NOT fall back to local URL — eBay will reject relative/localhost URLs
         // Leave this slot out of the published listing; image can be added in Seller Hub
-        if (statusEl) statusEl.textContent = `Picture ${i + 1} upload failed: ${err.message}`;
+        if (statusEl) statusEl.textContent = `Picture ${i + 1} upload failed: ${errorText(err)}`;
       }
     }
 
@@ -17482,7 +17672,7 @@
       addActivity('Background removed automatically', 'Set as Picture 1');
     } catch (err) {
       $('nl-cutout-wrap')?.classList.add('hidden');
-      addActivity('Auto BG removal failed', err.message);
+      addActivity('Auto BG removal failed', errorText(err));
     } finally {
       $('nl-cutout-spinner')?.classList.add('hidden');
     }
@@ -17505,7 +17695,7 @@
       addActivity('Background removed automatically', 'Set as Picture 1');
     } catch (err) {
       $('nl-cutout-wrap')?.classList.add('hidden');
-      addActivity('Auto BG removal failed', err.message);
+      addActivity('Auto BG removal failed', errorText(err));
     } finally {
       $('nl-cutout-spinner')?.classList.add('hidden');
     }
@@ -17524,7 +17714,7 @@
       nlAddPhotoRow(body.url, true);
       addActivity('Background removed', 'Set as Picture 1');
     } catch (err) {
-      addActivity('Background removal failed', err.message);
+      addActivity('Background removal failed', errorText(err));
     }
   }
 
@@ -17583,9 +17773,9 @@
         kind: 'Unknown', headline: 'The app hit an unexpected error during the SEO rewrite',
         whatHappened: 'Your listing has not been changed.',
         whatToDo: 'Try again, or carry on editing by hand.',
-        retryable: true, workPreserved: true, technical: String(err?.message || err),
+        retryable: true, workPreserved: true, technical: technicalDetail(err),
       }, { onRetry: () => nlImproveSeo() });
-      addActivity('SEO improvement failed', String(err?.message || err));
+      addActivity('SEO improvement failed', technicalDetail(err));
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Improve SEO + Description'; }
     }
@@ -17750,9 +17940,9 @@
                 + 'keeps happening.',
         retryable: true,
         workPreserved: true,
-        technical: String(err?.message || err),
+        technical: technicalDetail(err),
       }, { onRetry: () => nlSubmit(mode), });
-      addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed', String(err?.message || err));
+      addActivity(mode === 'publish' ? 'Publish failed' : 'Save draft failed', technicalDetail(err));
     } finally {
       publishInFlight = false;
       if (publishBtn) publishBtn.disabled = false;
@@ -17890,7 +18080,7 @@
       renderImageGenState(pgMode);
       addActivity('Image generation settings saved', pgMode === 'disabled' ? 'Disabled' : pgMode);
     } catch (err) {
-      if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Save failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -17916,7 +18106,7 @@
       ).join('');
       if (msg) { msg.textContent = models.length + ' model(s) loaded.'; msg.className = 'sd-test-msg ok'; }
     } catch (err) {
-      if (msg) { msg.textContent = 'Failed to load models: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Failed to load models: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -17946,7 +18136,7 @@
         await loadComfyModels(endpoint, 'pg-imggen-model', 'pg-imggen-msg');
       }
     } catch (err) {
-      if (msg) { msg.textContent = 'Error: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Error: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Test Connection'; }
     }
@@ -18073,7 +18263,7 @@
       if (text)   text.textContent = msg;
     } catch (err) {
       if (banner) banner.className = 'imggen-detect-banner not-detected';
-      if (text)   text.textContent = 'Detection error: ' + err.message;
+      if (text)   text.textContent = 'Detection error: ' + errorText(err);
     }
   }
 
@@ -18099,7 +18289,7 @@
         msg.className = 'sd-test-msg ' + (res.online ? 'ok' : 'error');
       }
     } catch (err) {
-      if (msg) { msg.textContent = 'Error: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Error: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Test Connection'; }
     }
@@ -18130,7 +18320,7 @@
       addActivity('Local image generation enabled', 'Backend: ' + backend + '; Endpoint: ' + endpoint);
       closeImageGenSetup();
     } catch (err) {
-      if (msg) { msg.textContent = 'Save failed: ' + err.message; msg.className = 'sd-test-msg error'; }
+      if (msg) { msg.textContent = 'Save failed: ' + errorText(err); msg.className = 'sd-test-msg error'; }
     }
   }
 
@@ -18210,8 +18400,8 @@
         addActivity('eBay listing updated', payload.title || activeSku);
         loadListings('Listings refreshed after eBay update');
       } catch (err) {
-        showResult('error', `eBay update failed: ${esc(err.message)}`);
-        addActivity('eBay update failed', err.message);
+        showResult('error', `eBay update failed: ${esc(errorText(err))}`);
+        addActivity('eBay update failed', errorText(err));
       } finally {
         btn.disabled = false;
         btn.textContent = 'Save Changes';
@@ -18251,8 +18441,8 @@
           addActivity('eBay draft created', body.offerId || pendingDraftPayload.title || 'Draft offer');
         }
       } catch (err) {
-        showResult('error', 'Draft creation failed: ' + esc(err.message));
-        addActivity('Draft creation failed', err.message);
+        showResult('error', 'Draft creation failed: ' + esc(errorText(err)));
+        addActivity('Draft creation failed', errorText(err));
       } finally {
         btn.disabled = false;
         btn.textContent = 'Create eBay Draft';
@@ -18770,6 +18960,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    noteBackendReachable();
     if (res.status === 402) {
       const b = await res.clone().json().catch(() => ({}));
       if (b.error === 'trial_expired') { throw new Error(b.message || 'Error.'); }

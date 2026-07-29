@@ -14269,3 +14269,49 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .update-banner a { font-weight: 700; text-decoration: underline; }
 .update-banner .btn { margin-left: auto; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   The app is not running
+   ─────────────────────────────────────────────────────────────────────────────
+   Pinned to the bottom of the window rather than dropped into whichever panel
+   noticed first, because this is not that panel's problem: with the backend gone,
+   nothing on any screen can do anything. Measured from the bug that produced it —
+   a seller clicking "Scan My Account" against a closed app was told "Failed to
+   fetch" by one panel and left to guess about the rest of the page.
+
+   It clears itself. The page keeps knocking on /api/app/instance, and the moment
+   the app answers this says so and goes.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.app-offline-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 9000;
+  max-width: min(680px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 18px;
+  border-radius: 12px;
+  background: var(--danger-soft, #fdeeeb);
+  border: 1px solid var(--danger-line, #f3c3b9);
+  border-left: 4px solid var(--danger, #c0392b);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+  font-size: var(--fs-sm, .9rem);
+  line-height: 1.55;
+  color: var(--text-strong, #17302f);
+}
+
+/* Reconnected: same box, opposite news. Green rather than a second red bar, so a
+   seller glancing at the corner reads the outcome without reading the words. */
+.app-offline-banner.app-offline-back {
+  background: #e8f6f0;
+  border-color: #a8ddc7;
+  border-left-color: #0f766e;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .app-offline-banner { transition: background .25s ease, border-color .25s ease; }
+}

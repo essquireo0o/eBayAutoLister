@@ -6693,3 +6693,197 @@ under; and that the paired-row states and the disclosure's ARIA wiring are both 
   constraint.
 - **The verification scan was a mocked 30-row response**, routed into the real page against the
   real embedded assets. It exercises the layout, not the scrapers.
+
+---
+
+# "Failed to fetch" — the browser's words, shown to a seller
+
+**Reported:** the Listing Copilot ("Fix The Whole Account At Once"), clicking **Scan My Account**,
+showed a red bar reading exactly `Could not scan: Failed to fetch`.
+
+## What was actually happening
+
+"Failed to fetch" is the browser's own words for *"this request never reached a server"*. It is a
+sentence about the fetch API, shown to somebody who sells on eBay. At the time of the screenshot
+the backend was not running — no `AutoListerB1` process, nothing listening on 9332 — and the page
+was still open from earlier, so the UI kept working and every call it made died at the network
+layer.
+
+The Copilot handler was:
+
+```js
+catch (e) { err.textContent = 'Could not scan: ' + e.message + …; }
+```
+
+The exception printed straight through. The app already had the machinery to do better, and this
+panel used none of it.
+
+---
+
+## Part 1 — never show a raw fetch error again
+
+### The Copilot calls now go through the shared layer
+
+`runCopilotScan`, `runCopilotSeoRewrite`, `stopCopilotSeoRewrite`, `refreshCopilotSeoStatus` and
+`openCopilotDrafts` all call `callApi` and report through `renderFailure` — the same "what
+happened / what to do / the button that does it / evidence folded away" panel the rest of the app
+uses. There is no third error path; there are now none.
+
+Two things the panel gained that it could not have had before:
+
+- **A Try again that re-runs the scan**, wired by the shared renderer rather than hand-rolled.
+- **A scan that re-runs itself when the app comes back.** A failed scan registers with
+  `whenBackendReturns`, so a seller who restarts the app gets the thing they clicked. The rewrite
+  deliberately does *not* self-restart — it costs money and was confirmed against a count that may
+  by then be stale, so it stays a button.
+
+### The four failures a seller would act on differently are told apart
+
+`callApi` already distinguished them; it now says them properly:
+
+| Situation | What the seller reads | What they do |
+|---|---|---|
+| App not reachable | *ING AutoLister is not running* | Restart the app (the page reconnects itself) |
+| Request timed out | *That took too long and was stopped* | Try again |
+| App answered an error | The server's own sentence, read out | Fix what it named |
+| App answered something unreadable | *The app returned an error* | Try again, then Logs |
+
+Two fixes went in on the way past. `callApi`'s own network branch was interpolating
+`${err.message}` — *"The connection to ING AutoLister failed (Failed to fetch)"* — so the
+reliability layer was leaking the same phrase it existed to prevent. And an endpoint that answers
+`{ "error": "..." }` now has that sentence as the headline instead of it being buried under
+`HTTP 400` with the real explanation folded away in Technical detail.
+
+### The evidence block is written, not pasted
+
+Technical detail is still shown, because sellers forward it when they ask for help — but pasting
+"Failed to fetch" into it just puts the useless phrase one click deeper. The unreachable case
+describes itself instead:
+
+```
+The request to /api/copilot/scan never reached http://localhost:9332
+(TypeError — no response, no status).
+```
+
+Which request, and what kind of failure. Nothing to decode.
+
+### The sweep — all 143 `fetch(` call sites, not just the one reported
+
+`errorText(err, fallback)` is now the one place a caught exception becomes words a seller reads.
+Server-written messages are already in their language and pass through unchanged; the two failures
+the *browser* invents its own wording for — the app not being there, and a request given up on —
+are replaced. `technicalDetail(err)` does the same for evidence blocks.
+
+**107 call sites** were rewritten. Every `err.message` / `e.message` below the reliability layer is
+gone; a test fails the build if one comes back.
+
+Detection is on the **shape**, not the words: `fetch` only rejects with a `TypeError` when the
+request could not be made at all. Chrome says "Failed to fetch", Firefox says "NetworkError when
+attempting to fetch resource.", Safari says "Load failed" — matched only as a fallback.
+
+### The page recovers on its own
+
+Calling `errorText` on an unreachable failure is also what starts the watch, so every swept call
+site gets the recovery for free. The page then knocks on `/api/app/instance` every 3s — the app's
+cheapest endpoint, no services behind it, answers before setup is complete — and when it replies,
+the offline banner turns green and says **"Reconnected"** and everything registered with
+`whenBackendReturns` runs.
+
+A bottom-pinned banner carries the state, because with the backend gone this is not the Copilot's
+problem: nothing on any screen can do anything, and telling the seller about one panel leaves them
+to guess about the rest of the page.
+
+---
+
+## Part 2 — why was the backend gone?
+
+**It did not crash. It was closed.** Measured, not assumed:
+
+| Check | Finding |
+|---|---|
+| `crash.log` in `%LOCALAPPDATA%\ING AutoLister` | **Does not exist.** `AppDomain.UnhandledException` writes it before the process dies, so no unhandled exception ever took this process down. |
+| `/api/copilot/scan` | Whole handler inside `try` / `catch (Exception ex)` then `BadRequest(new { error = ex.Message })`. It cannot throw out. |
+| `CopilotSeoJob.RunAsync` (the `Task.Run` body) | Whole body inside `try` / `catch` / `finally`. A failed rewrite sets `Stage = "Failed"` and `Error`, and the run still finishes. |
+| Maintenance loop (`Program.cs`) | `catch { /* maintenance loop must never crash */ }` around every pass. |
+| Facebook / Terapeak login, `LoginWindowFocus.PinLoopAsync` | All three `Task.Run` bodies are wrapped. |
+
+The app is a tray application whose lifetime is `System.Windows.Forms.Application.Run()`. It exits
+when someone picks **Quit** from the tray, or when the session that started it ends — which is what
+happened here. There is no crash to fix on the Copilot path, and inventing one would have been
+worse than saying so.
+
+### What was hardened anyway
+
+Two things were genuinely wrong, both of the exact shape that *would* have caused this:
+
+1. **The background license check was the one fire-and-forget in the app with no catch**
+   (`Program.cs`, `Task.Run(async () => { await Task.Delay(2000); await …CheckAsync(); })`). Nothing
+   is gated on the answer — the app is free beta — so a check that cannot reach the network is now
+   logged and ignored rather than left to fault a task nobody awaits.
+
+2. **A `TaskScheduler.UnobservedTaskException` handler**, the net under all of them including any
+   added later. It calls `SetObserved()`, so a faulted background task cannot escalate whatever
+   `<ThrowUnobservedTaskExceptions>` is set to, and it writes to the same `crash.log` the
+   process-level handler uses so the cause stays readable.
+
+---
+
+## Tests
+
+**`FetchFailureMessageTests`** (9) — the Copilot scan calls `callApi` and not
+`fetch(...).then(r => r.json())`; the exact line that produced the screenshot is gone; no
+`e.message` / `String(e)` anywhere in the scan; all four Copilot endpoints go through the shared
+caller; the retry re-runs the scan and registers `whenBackendReturns`; the three browser phrases
+appear nowhere in `app.js`; the technical block is written rather than pasted; the four failure
+kinds are distinguished; the probe target is `AppInstance.IdentityPath`; and — the sweep guard —
+**every line below the reliability layer that reads `.message` off a caught exception fails the
+test, by name**.
+
+**`BackgroundWorkSurvivalTests`** (5) — behavioural, not just source-reading: a `CopilotSeoJob`
+built with no eBay service at all (the most abrupt failure available) has to come back with
+`Finished`, `Stage == "Failed"` and an `Error` rather than letting the exception escape the
+background task; and a failed run must not poison the next one, because a seller whose first
+attempt failed will press the button again. Plus the scan endpoint's guard, the license-check
+catch, and the unobserved-exception net.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build … -c Debug` | **succeeded**, 0 errors |
+| `dotnet test` | **2331 passed**, 0 failed |
+| `node --check wwwroot/app.js` | clean |
+| Real app, real account, backend killed mid-session | see below |
+
+`wwwroot` is an `EmbeddedResource`, so this was rebuilt and driven in the running app rather than
+read off the source file. Playwright against `AutoListerB1.exe` on `:9332`: open the Listing
+Copilot, `taskkill /IM AutoListerB1.exe /F`, then click **Scan My Account**.
+
+What the seller is told, verbatim from the live page:
+
+> **ING AutoLister is not running**
+> This page is still open, but nothing answered it. The app behind it has been closed or has
+> stopped, so nothing on this screen can reach your listings until it is back.
+> **Start ING AutoLister again — the price-tag icon in your system tray, or the desktop shortcut.
+> This page reconnects by itself the moment it does; there is no need to reload it.**
+> Nothing you entered has been lost. \[Try again] \[Technical detail]
+
+`contains "Failed to fetch": false` — panel, banner and technical detail.
+See `docs/screenshots/backend-not-running-copilot-scan.png`.
+
+Then the backend was restarted and **the page was not touched**. It noticed by itself: the banner
+turned green and said "Reconnected. ING AutoLister is answering again — carry on where you left
+off.", the red panel cleared, and the scan the seller had originally clicked re-ran against their
+real account — **89 live listings read, 8 need work, 2 policies would be renamed**.
+See `docs/screenshots/backend-not-running-recovered.png`.
+
+## Known limits
+
+- **A closed app is still a closed app.** The page can only explain and wait; nothing in a browser
+  can restart a Windows tray process. What changed is that the seller is told which of those two
+  things is true and what to do about it.
+- **The recovery poll runs while the tab is open**, every 3s, and only after something has already
+  failed. It stops the moment the app answers.
+- **Server-written error messages are trusted as seller-readable** and pass through `errorText`
+  unchanged. That is `FailureTranslator`'s job and it already does it; this change does not
+  second-guess it.

@@ -1,0 +1,58 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed.
+      - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change.
+      - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" AND dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
+      - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit. NEVER git push.
+      - The wwwroot files are EMBEDDED RESOURCES in the csproj. You MUST rebuild AND restart AutoListerB1.exe for any UI change to appear. Reading the source file proves nothing.
+      - Stop AutoListerB1.exe before building or the build fails on a locked file.
+
+      WHAT THE USER SAID:
+      "top picks should show the largest roi"
+
+      WHAT THEY MEAN:
+      The "Today's picks - straight from your Marketplace" grid on the Opportunity Finder shows
+      Facebook's own ordering. Each card now carries what it sells for on eBay, how many sold comps
+      that is based on, the net profit after fees and the ROI (shipped 2026-07-29, commit 42653bd).
+      The best deal is wherever Facebook happened to put it, so the seller has to read all 25 cards
+      to find it. Order the grid by ROI, highest first, so the best return is the first card.
+
+      WHERE IT IS
+        - wwwroot/app.js: `loadFacebookPicks()` renders the grid, then calls `priceFacebookPicks(feed)`
+        - `priceFacebookPicks` POSTs the already-fetched listings to `/api/local/price-these` and
+          writes the numbers into each card's `[data-pick-money="<itemId>"]` slot
+        - Each card is an `<a class="fb-pick-card">` inside `#fb-picks-grid`
+        - The priced rows come back with: roiPercent, netProfit, ebayExpectedSale, soldCompCount, itemId
+
+      HOW TO DO IT
+        - Sort AFTER pricing, not before. The grid deliberately renders unpriced first because the
+          Marketplace browse is a ~30 second real page load and a blank panel for that long reads as
+          broken. So the cards are already on screen; reorder them once the numbers land. Reordering
+          the existing nodes (appendChild in the new order) is enough - do not re-render the grid
+          from scratch and do not re-fetch anything.
+        - Cards with no matching sold history must sink to the BOTTOM, not disappear. They are still
+          real local listings the seller may want to look at; they just cannot be ranked. Keep their
+          "no sold data" label.
+        - Rank on ROI descending. Where ROI ties or is missing but profit exists, fall back to net
+          profit descending. A card with a negative return sorts below every positive one.
+        - Do not hide anything by default. This grid is Facebook's feed, not a filtered board - the
+          seller asked for the best one FIRST, not for the rest to be removed.
+
+      ALSO (small, same change):
+        - Add a brief line under the panel heading saying the order, e.g. "Best return first" - a
+          silently re-ordered grid looks arbitrary unless it says what it is sorted by.
+
+      VERIFY BEFORE FINISHING
+        - Rebuild, restart the app (http://localhost:9332), open Opportunity Finder, and confirm with
+          a REAL run that the first card has the highest ROI on the panel and that no-sold-data cards
+          are last. Facebook must be connected for picks to load; if it is not connected, say so in
+          the commit rather than claiming you verified it.
+        - Add a test for the ordering rule itself. Extract the comparator into a pure function so it
+          can be tested without a browser: highest ROI first, negatives below positives, no-data
+          last, profit as the tiebreak.
+
+      Commit in the repo's existing message style (imperative, outcome-focused, no "feat:" prefix).
+    session: "picks-sort-by-roi"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 14
+    max_attempts: 3
