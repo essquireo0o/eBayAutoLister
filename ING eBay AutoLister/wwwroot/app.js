@@ -4036,6 +4036,7 @@
     on('dice-roll-btn', 'click', () => rollTheDice(null));
     on('dice-again-btn', 'click', () => rollTheDice(diceNextSeed));
     on('dice-only-buyable', 'change', renderDiceBoard);
+    on('dice-min-100', 'change', renderDiceBoard);
     on('dice-sort', 'change', renderDiceBoard);
     on('dice-fast-only', 'change', renderDiceBoard);
     on('dice-zip-input', 'keydown', e => { if (e.key === 'Enter') rollTheDice(null); });
@@ -4186,6 +4187,9 @@
 
   // Sorting and filtering are pure views over the response already in hand — neither may re-run a
   // roll, which is minutes of work across four systems.
+  /** What a play is worth: the live buy's net, or what buying at the target would net. */
+  const cashOf = p => (p.netProfit != null ? p.netProfit : p.profitAtTarget) || 0;
+
   function renderDiceBoard() {
     const board = $('dice-board');
     if (!board || !diceData) return;
@@ -4198,12 +4202,22 @@
     let rows = onlyBuyable ? all.filter(p => p.sources && p.sources.length) : all.slice();
     if (fastOnly) rows = rows.filter(p => p.speedTier === 'fast');
 
+    // The $100 bar. Judged on the same figure the headline quotes — what the live buy nets, or what
+    // buying at the target would net — so a row can't clear the bar in one place and fail it in
+    // another. A play that nets $33 does not pay for finding, buying, listing and packing the thing.
+    if ($('dice-min-100')?.checked) rows = rows.filter(p => cashOf(p) >= 100);
+
     // "best" is the order the server ranked them in — believability first — and is left alone.
     // The velocity sorts keep plays that can't be believed at the bottom, same rule the server uses.
     // The play's money: what the live buy nets, or what buying at the target would net.
-    const cash = p => (p.netProfit != null ? p.netProfit : p.profitAtTarget) || 0;
+    const cash = cashOf;
     const weak = p => p.tier === 'pass' || p.tier === 'no_data';
     const diceCmp = {
+      // Highest return on the cash tied up. Plays that cannot be believed stay at the bottom, the
+      // same rule the other sorts use, and net profit breaks a tie.
+      roi: (a, b) => (weak(a) - weak(b))
+        || ((a.roiPercent == null) - (b.roiPercent == null))
+        || ((b.roiPercent - a.roiPercent) || (cash(b) - cash(a))) || 0,
       fastest: (a, b) => (weak(a) - weak(b))
         || ((a.daysToCash == null) - (b.daysToCash == null))
         || ((a.daysToCash - b.daysToCash) || (cash(b) - cash(a))) || 0,
@@ -4247,7 +4261,10 @@
         : `net even if it were free — break even is ${moneyExact(play.maxBuyPrice)}`;
 
     const facts = [
-      play.ebayExpectedSale != null ? `Sells for <strong>${money(play.ebayExpectedSale)}</strong>` : '',
+      // The number a reseller reads first: what it actually goes for. Everything else on the row is
+      // arithmetic derived from it, so it gets the emphasis rather than sitting in a run of facts.
+      play.ebayExpectedSale != null
+        ? `<span class="sells-for">SELLS FOR: <strong>${money(play.ebayExpectedSale)}</strong></span>` : '',
       `Break even at <strong>${moneyExact(play.maxBuyPrice)}</strong>`,
       play.targetBuyPrice > 0 ? `Target buy <strong>${moneyExact(play.targetBuyPrice)}</strong>` : '',
       play.roiPercent != null ? `${Math.round(play.roiPercent)}% ROI` : '',
@@ -11165,12 +11182,48 @@
 
   // Open rewritten drafts as tabs in the listing editor — the same tabs the seller already knows
   // from saved drafts, so a rewrite lands somewhere familiar instead of somewhere new.
+  // ── A listing's own seller policies ──────────────────────────────────────
+  // The three Seller Policies dropdowns were WRITE-ONLY: publish reads them (see the
+  // fulfillmentPolicyId/paymentPolicyId/returnPolicyId lines in the outgoing request), and
+  // nothing ever read a draft's policies back INTO them. Two consequences, both visible on
+  // screen as three empty "- Select policy -" boxes:
+  //   * the list itself was never fetched on any route that skips openNewListingModal, so
+  //     there was nothing to choose from until the seller found "Reload Policies";
+  //   * even once loaded it defaulted to the account defaults from Settings, so a draft made
+  //     from a live listing lost the policies that listing was actually published under.
+  // Publishing with a blank policy is not a cosmetic problem, so this loads the list from eBay
+  // and then selects what the listing itself carries.
+  async function applyListingPolicies(data) {
+    if (!cachedPolicies && isConnected) await loadPolicies(false);
+    fillNlPolicySelects();
+    if (!data) return;
+
+    const pick = (selectId, id) => {
+      const sel = $(selectId);
+      if (!sel || !id) return;
+      if (![...sel.options].some(o => o.value === id)) {
+        // eBay no longer lists it (renamed, deleted, or a different account). Keep the id rather
+        // than silently switching the seller to a policy they did not choose.
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = '(on this listing: ' + id + ')';
+        sel.insertBefore(opt, sel.children[1] || null);
+      }
+      sel.value = id;
+    };
+
+    pick('nl-fulfillment-sel', data.fulfillmentPolicyId);
+    pick('nl-payment-sel',     data.paymentPolicyId);
+    pick('nl-return-sel',      data.returnPolicyId);
+  }
+
   async function openCopilotDrafts(filenames) {
     const wanted = (filenames || []).filter(Boolean);
     if (!wanted.length) return;
 
     let opened = 0;
     let lastFailure = null;
+    let firstDraftData = null;
     for (const filename of wanted) {
       if (draftTabs.some(t => t.filename === filename)) continue;   // already open
       const { ok, data: draft, failure } = await callApi('/api/local-drafts/load/' + encodeURIComponent(filename));
@@ -11179,6 +11232,7 @@
                               draft.imageBase64, draft.mimeType, draft.visualDescription);
       tab.saved = true;
       opened++;
+      if (!firstDraftData) firstDraftData = draft.data;
     }
 
     if (!opened && !draftTabs.some(t => wanted.includes(t.filename))) {
@@ -11206,6 +11260,7 @@
     overlay?.classList.add('nl-review-draft');
     setActiveNavItem('ai');
     markWorkspaceTabOpen('ai');
+    await applyListingPolicies(firstDraftData);
     // Land on the listing itself. rAF so the scroll happens after the form has been filled and
     // laid out, otherwise it measures the old height and lands short.
     requestAnimationFrame(() => {

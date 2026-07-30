@@ -1197,11 +1197,17 @@
               <div class="dice-board-controls">
                 <label for="dice-sort">Sort by</label>
                 <select id="dice-sort">
-                  <option value="best" selected>Best play</option>
+                  <!-- ROI first by default: return on the cash tied up is the question, and net
+                       profit alone puts one big-ticket play above several better ones. -->
+                  <option value="roi" selected>ROI %</option>
+                  <option value="best">Best play</option>
                   <option value="perday">Fastest profit ($ per day)</option>
                   <option value="fastest">Days to cash</option>
                   <option value="profit">Net profit</option>
                 </select>
+                <!-- "If I can't make $100 off it, forget it." On by default, same bar as the deal
+                     board. A $33 play is not a play - it is a row that hides the real ones. -->
+                <label class="fb-arb-check"><input id="dice-min-100" type="checkbox" checked /> Only plays that clear $100</label>
                 <label class="fb-arb-check"><input id="dice-only-buyable" type="checkbox" /> Only plays I can buy right now</label>
                 <label class="fb-arb-check"><input id="dice-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <span id="dice-shown" class="fb-arb-shown"></span>
@@ -4954,6 +4960,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=94"></script>
+  <script src="app.js?v=95"></script>
 </body>
 </html>

@@ -14323,3 +14323,25 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: no-preference) {
   .app-offline-banner { transition: background .25s ease, border-color .25s ease; }
 }
+
+/* ── Reviewing a rewritten draft ───────────────────────────────────────────
+   Same screen, different job. Opening a finished rewrite put the seller at the
+   top of the AI Listing page — three cards offering to start something NEW —
+   with the listing they had just paid to have rewritten below the fold. It read
+   as "it opened the wrong window". In review mode the intake block is out of the
+   way and the listing itself is the first thing on screen. Cleared again the
+   moment the screen is opened to start a listing (openNewListingModal). */
+.nl-review-draft .nl-url-section { display: none; }
+
+/* "SELLS FOR: $X" — the one number a reseller reads first. Everything else on the row is
+   arithmetic derived from it, so it does not sit in the same weight as the rest of the facts. */
+.sells-for {
+  font-size: var(--fs-sm, .95rem);
+  letter-spacing: .02em;
+  color: var(--text, #131c20);
+}
+.sells-for strong {
+  font-weight: 800;
+  font-size: 1.15em;
+  color: #16a34a;
+}
