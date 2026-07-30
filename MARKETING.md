@@ -90,7 +90,7 @@ For bulk sellers: paste a collection page URL, every product gets processed in p
 **Technical details:**
 - ASP.NET Core 10 minimal API, serves embedded wwwroot via EmbeddedFileProvider (single-file exe)
 - No install — all state lives in a fixed `%LOCALAPPDATA%\ING AutoLister` home, so credentials survive single-file extraction, an update, or running a different copy of the exe
-- Claude claude-sonnet-4-6 with structured JSON prompts for listing data
+- Claude Fable 5 with structured JSON prompts for listing data
 - eBay Sell API for inventory creation and OAuth token management
 - Freeware — no license enforcement, all features unlocked
 

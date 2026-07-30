@@ -239,7 +239,14 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
         result.BestReturns = counted
             .Where(f => f.RoiPercent.HasValue && (f.NetProfit ?? 0m) >= 10m)
             .OrderByDescending(f => f.RoiPercent!.Value).Take(8).ToList();
-        result.AwaitingCost = awaiting.OrderByDescending(f => f.NetProceeds).Take(25).ToList();
+        // Newest sale first. A cost you type is fresh in mind the day the sale lands and fades after;
+        // ordering by size instead buried this week's sale under a bigger one from last month and
+        // read as "the new sale didn't show up". Ties (a batch imported together) fall back to the
+        // larger proceeds, so within one day the one most worth pricing leads.
+        result.AwaitingCost = awaiting
+            .OrderByDescending(f => f.SoldUtc)
+            .ThenByDescending(f => f.NetProceeds)
+            .Take(25).ToList();
 
         result.Honesty = BuildHonesty(summary);
         return result;

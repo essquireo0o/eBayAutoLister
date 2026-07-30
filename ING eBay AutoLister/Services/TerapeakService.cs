@@ -72,8 +72,18 @@ public class TerapeakService
     /// </summary>
     public const string ResearchUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD";
 
+    /// <summary>
+    /// eBay's CURRENT sign-in page. The legacy <c>ws/eBayISAPI.dll?SignIn</c> entry point this used
+    /// to open no longer serves a sign-in form at all: measured 2026-07-30 in real Chrome, it
+    /// redirects to <c>/splashui/captcha</c> with no username or password field anywhere on the
+    /// page, with or without the <c>ru=</c> parameter. The seller was being handed a bot check and
+    /// an eBay error page and told their login had failed — nothing to do with their password.
+    ///
+    /// The same test against <c>signin.ebay.com/signin</c> returned HTTP 200 with the real sign-in
+    /// form, both bare and with <c>ru=</c>. So this is the door that is still open.
+    /// </summary>
     private static string LoginUrl =>
-        "https://signin.ebay.com/ws/eBayISAPI.dll?SignIn&ru=" + Uri.EscapeDataString(ResearchUrl);
+        "https://signin.ebay.com/signin?ru=" + Uri.EscapeDataString(ResearchUrl);
 
     /// <summary>The button the UI puts on a dead Terapeak session. Recognised by FIX_ACTIONS in app.js.</summary>
     public const string ConnectFixAction = "connect-terapeak";
@@ -206,9 +216,17 @@ public class TerapeakService
                 "TIMEOUT" => $"Nothing happened in the login window for {IdleMinutes} minutes, so it gave up. "
                     + "Click Connect and finish signing in — the clock only runs while the window is idle, "
                     + "so typing, clicking and page changes all keep it alive.",
+                // Two different situations wear this token, and only one of them is solvable by
+                // trying harder. A check that APPEARS is a check a person can clear. A check that
+                // replaces the sign-in form every time means eBay has flagged this browser profile,
+                // and no amount of retyping a password reaches a password box — so the way out has
+                // to be named here, or the seller retries forever.
                 "CAPTCHA" => "eBay showed a \"verify you're human\" check instead of the sign-in form. "
-                    + $"Click Connect again and complete that check in the window — you get {CaptchaMinutes} minutes "
-                    + "from when it appears, and the window closes itself once you're signed in.",
+                    + $"Complete it in the window — you get {CaptchaMinutes} minutes from when it appears, "
+                    + "and the window closes itself once you're signed in. "
+                    + "If you keep landing on that check and never see a sign-in form, eBay has flagged "
+                    + "this app's browser profile: click Disconnect, then Connect, which starts a new "
+                    + "one eBay has not seen before.",
                 var s when s.StartsWith("NAVFAIL:") =>
                     $"eBay's sign-in page wouldn't load ({s["NAVFAIL:".Length..].Trim()}). "
                     + "This is eBay's end, not your account — try again in a minute.",
@@ -512,7 +530,39 @@ public class TerapeakService
         // connected — see TerapeakSessionFile.Delete.
         TerapeakSessionFile.Delete(_sessionPath);
         LastVerification = null;
-        log.Add("Info", "Terapeak disconnected", "Saved session removed.");
+
+        // And the browser profile, which is where the login actually lives now.
+        //
+        // Deleting only the session file left a seller with no way out of the one failure they
+        // cannot fix by trying again: eBay flags the PROFILE. Measured 2026-07-30 — the same
+        // sign-in URL, opened from this app's profile, redirected to /splashui/captcha with no
+        // sign-in form on the page, while a fresh profile got the real form. Once that happens,
+        // Disconnect → Connect reuses the flagged profile and lands on the bot check forever, and
+        // the seller is told their password did not work.
+        //
+        // Disconnecting means "forget my login". The cookies are in here, so this is the half that
+        // makes that true.
+        ResetProfile();
+
+        log.Add("Info", "Terapeak disconnected", "Saved session and browser profile removed.");
+    }
+
+    /// <summary>
+    /// Throws away the Chrome profile so the next login starts as a browser eBay has never seen.
+    /// Best-effort: a locked file is not worth failing a disconnect over, and the next launch
+    /// recreates whatever is missing.
+    /// </summary>
+    public void ResetProfile()
+    {
+        try
+        {
+            if (Directory.Exists(_profileDir)) Directory.Delete(_profileDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Terapeak profile not fully cleared",
+                $"{ex.Message} — close any leftover login window and disconnect again.");
+        }
     }
 
     // ── Headless research using the saved session ─────────────────────────────

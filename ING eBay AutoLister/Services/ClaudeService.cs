@@ -198,6 +198,19 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
             timeout.CancelAfter(ModelCallTimeout);
 
             var response = await client.Messages.GetClaudeMessageAsync(buildRequest(), timeout.Token);
+
+            // A safety classifier can decline a request outright. That arrives as a perfectly normal
+            // HTTP 200 with stop_reason "refusal" and an empty content array — not an error, not an
+            // exception. Without this check TextOf falls through to its "{}" fallback and the seller
+            // gets a blank listing with no explanation, which reads as "the AI is broken".
+            //
+            // Deliberately not a transient failure: the classifier is deterministic, so retrying the
+            // same prompt burns latency to be refused again. FailureTranslator maps anything outside
+            // its transient list to no-retry, which is what we want here.
+            if (string.Equals(response.StopReason, "refusal", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Claude declined this request ({operation}). Try rewording the item details.");
+
             return parse(response);
         }, FailureDomain.Ai, operation, log, ResilientCall.DefaultAttempts, cancellationToken);
     }
@@ -277,7 +290,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return CallModelAsync(
             () => new MessageParameters
             {
-                Model      = "claude-opus-4-8",
+                Model      = "claude-fable-5",
                 MaxTokens  = 8192,
                 Messages   = messages,
                 Thinking   = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
@@ -342,7 +355,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return CallModelAsync(
             () => new MessageParameters
             {
-                Model    = "claude-opus-4-8",
+                Model    = "claude-fable-5",
                 MaxTokens = 8192,
                 Messages  = messages,
                 Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
@@ -415,7 +428,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         var products = await CallModelAsync(
             () => new MessageParameters
             {
-                Model     = "claude-opus-4-8",
+                Model     = "claude-fable-5",
                 MaxTokens = 4096,
                 Messages  = messages,
                 Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.medium }
@@ -516,7 +529,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         var lines = await CallModelAsync(
             () => new MessageParameters
             {
-                Model = "claude-opus-4-8",
+                Model = "claude-fable-5",
                 MaxTokens = 8192,
                 Messages = messages,
                 Thinking = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.medium }
@@ -618,7 +631,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return CallModelAsync(
             () => new MessageParameters
             {
-                Model     = "claude-opus-4-8",
+                Model     = "claude-fable-5",
                 MaxTokens = 8192,
                 Messages  = messages,
                 Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
@@ -700,7 +713,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         return CallModelAsync(
             () => new MessageParameters
             {
-                Model     = "claude-opus-4-8",
+                Model     = "claude-fable-5",
                 MaxTokens = 1024,
                 Messages  = messages,
                 // The whole point of this call is that it comes back before the seller has to answer
@@ -844,7 +857,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         var improved = await CallModelAsync(
             () => new MessageParameters
             {
-                Model    = "claude-opus-4-8",
+                Model    = "claude-fable-5",
                 MaxTokens = 8192,
                 Messages  = messages,
                 Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.high }
@@ -969,7 +982,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         var modified = await CallModelAsync(
             () => new MessageParameters
             {
-                Model     = "claude-opus-4-8",
+                Model     = "claude-fable-5",
                 MaxTokens = 8192,
                 Messages  = messages,
                 Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }

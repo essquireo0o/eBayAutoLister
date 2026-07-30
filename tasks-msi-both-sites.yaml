@@ -1,0 +1,69 @@
+tasks:
+  - prompt: |
+      GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed.
+      - NEVER print, echo, log or commit any secret value. Read credentials, use them, move on.
+      - NEVER git push. Commit locally only.
+      - Take a .bak-YYYY-MM-DD copy of ANY live file before overwriting it. These are production websites.
+
+      WHAT THE USER SAID:
+      "Get msi on website and make sure it works on inglisting.com and ingmining.com - you have sftp access"
+
+      MEASURED STARTING STATE (2026-07-30, verified - do not re-assume, but do re-check):
+        - inglisting.com/ING-AutoLister-Setup.msi  -> HTTP 200, 50.8 MB, dated today. WORKING.
+        - ingmining.com/ING-AutoLister-Setup.msi   -> HTTP 404
+        - ingmining.com/downloads/...msi           -> HTTP 404
+        - ingmining.com has NO .msi link anywhere on the homepage. It links to inglisting.com twice:
+          "ING eBay AutoLister(tm)" and "Visit inglisting.com", both to the bare domain.
+
+      CREDENTIALS
+        C:\Users\nsquires\.claude\projects\C--Users-nsquires-source-repos-ING-eBay-AutoLister\web-credentials.json
+          - ionos_sftp: host, port, user, password, and docroots for BOTH sites:
+              inglisting.com -> clickandbuilds/INGeBayAutolister/
+              ingmining.com  -> clickandbuilds/INGMining2026/   (routed via root .htaccess)
+          - wordpress: REST credentials per site
+        paramiko is installed and works; publish-update.ps1 in the repo root already uses this
+        exact block to upload to inglisting.com - copy its approach rather than inventing one.
+
+      DECIDE THIS FIRST, THEN DO IT
+      Two designs. Pick ONE and say in the commit why:
+
+        (a) ONE canonical file on inglisting.com, and ingmining.com LINKS to it.
+        (b) A copy of the .msi hosted on ingmining.com as well.
+
+      (a) is the safer default and you should need a real reason to choose (b): a 50 MB binary
+      hosted twice is two things to keep in sync, and the failure mode is silent - ingmining.com
+      quietly serving a build from three releases ago while everyone assumes both are current.
+      That is the exact bug that already happened once here: the download button on inglisting.com
+      served a four-day-old installer for 58 commits and nothing anywhere said so.
+
+      If you choose (b), you MUST also update publish-update.ps1 so every future release uploads to
+      BOTH docroots and verifies BOTH URLs. A second copy that only one script knows about is worse
+      than no second copy.
+
+      WHAT TO SHIP
+        - ingmining.com must offer a working way to get the app. At minimum a visible, working
+          download route - not just the bare-domain link it has now, which lands on a homepage and
+          makes the visitor hunt.
+        - The .msi to publish is the current release: installer-out/ING-AutoLister-Setup-B1.msi,
+          50.84 MB, version 2.3.0, already live on inglisting.com and attached to GitHub release
+          v2.3.0. Do NOT rebuild it - ship the exact bytes that are already released, and verify by
+          comparing size against what inglisting.com currently serves.
+
+      VERIFY - and this is the whole task, not a formality
+        - GET (not HEAD alone) both URLs and confirm HTTP 200, Content-Type of an .msi, and a byte
+          length matching the local file exactly. A HEAD that 200s while the body is an HTML error
+          page is a real failure mode on shared hosting.
+        - Confirm ingmining.com's download route is reachable by a human: fetch the page it lives on
+          and assert the link is actually in the served HTML, with a browser User-Agent. That site
+          returns 503 to non-browser agents - a bare fetch WILL mislead you.
+        - Report the before/after for both sites with sizes and Last-Modified.
+
+      Do NOT touch the WordPress store content, products or theme beyond what the download route
+      needs. This site sells hardware; it is not a test bed.
+
+      Commit any repo changes (e.g. publish-update.ps1) in the existing message style - imperative,
+      outcome-focused, no "feat:" prefix. Do not push.
+    session: "msi-on-both-sites"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 15
+    max_attempts: 3

@@ -3598,6 +3598,14 @@
 
         <div class="opportunity-overlay-body">
 
+          <!-- Money sitting behind a missing cost, at the very top — above even the headline. A new
+               sale eBay imported with no record of what you paid is the one thing on this page you
+               act on, and typing the cost makes the headline number go UP, honestly. It used to sit
+               below the hero, where a thin strip between a big hero block and the chart got scrolled
+               straight past. So it leads the page now, and only when there IS something waiting —
+               renderEarningsAwaiting hides it otherwise, so a paid-up account never sees an empty bar. -->
+          <div id="er-awaiting" class="er-awaiting hidden"></div>
+
           <!-- The headline. One hero figure per view, per the design system — everything else on
                this page is context for this number. -->
           <div class="er-hero">
@@ -3634,11 +3642,6 @@
           </div>
 
           <div id="er-notice" class="inv-warning hidden"></div>
-
-          <!-- Money sitting behind a missing cost. Placed above the chart on purpose: it is the one
-               thing on this page the seller can do something about, and it makes the headline
-               number go UP — honestly — rather than being an apology for it being low. -->
-          <div id="er-awaiting" class="er-awaiting hidden"></div>
 
           <div id="er-stats" class="er-stats hidden"></div>
 

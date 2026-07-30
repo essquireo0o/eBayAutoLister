@@ -124,4 +124,20 @@ public class TerapeakLoginScriptTests
         Assert.True(match.Success, $"{constName} is no longer a named minutes constant");
         return int.Parse(match.Groups[1].Value);
     }
+
+    [Fact]
+    public void TheLoginWindowOpensOnAPageThatActuallyHasASignInForm()
+    {
+        // Measured in real Chrome 2026-07-30: the legacy ws/eBayISAPI.dll?SignIn entry point
+        // redirects to /splashui/captcha with no username or password field on the page, with or
+        // without ru=. signin.ebay.com/signin returns the real form. A login window pointed at the
+        // dead one shows a bot check and an eBay error page, and the seller is told their password
+        // failed.
+        Assert.Contains("signin.ebay.com/signin?ru=", Js);
+        Assert.DoesNotContain("eBayISAPI.dll", Js);
+
+        // ru= is not decoration: it is what lands the seller on /sh/research after sign-in, which
+        // is the URL the wait loop watches for.
+        Assert.Contains("sh%2Fresearch", Js);
+    }
 }
