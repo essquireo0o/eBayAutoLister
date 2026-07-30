@@ -133,6 +133,47 @@ public sealed class FeeProfileStore
         return stored;
     }
 
+    // ── The Tax Pack's one seller-supplied number ────────────────────────────────────────────
+    // The marginal income-tax bracket is the only figure the Tax Pack cannot derive, and asking for
+    // it on every visit would make the screen feel like a form. It lives in this table rather than
+    // on FeeProfile because FeeProfile round-trips through the Fees & Costs screen, which knows
+    // nothing about tax — saving fees there would quietly reset the bracket to the default.
+    private const string TaxRateKey = "tax_income_rate_percent";
+
+    /// <summary>The seller's stored bracket, or 12% — the band most side-income resellers sit in.</summary>
+    public decimal LoadTaxRate()
+    {
+        var values = ReadAll();
+        if (values.TryGetValue(TaxRateKey, out var raw)
+            && decimal.TryParse(raw, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            return Math.Clamp(value, 0m, 50m);
+
+        return new TaxAssumptions().IncomeTaxRatePercent;
+    }
+
+    /// <summary>Stores the bracket and returns what was actually kept after clamping.</summary>
+    public decimal SaveTaxRate(decimal ratePercent)
+    {
+        var clean = Math.Clamp(Math.Round(ratePercent, 2), 0m, 50m);
+
+        lock (_gate)
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO fee_profile (key, value, updated_at) VALUES (@key, @value, @updated_at)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+                """;
+            command.Parameters.AddWithValue("@key", TaxRateKey);
+            command.Parameters.AddWithValue("@value", clean.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("@updated_at", DateTimeOffset.UtcNow.ToString("O"));
+            command.ExecuteNonQuery();
+        }
+
+        return clean;
+    }
+
     // ── Mapping to and from the wire shape ───────────────────────────────────────────────────
 
     public static FeeProfileView ToView(FeeProfile profile) => new()

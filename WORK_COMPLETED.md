@@ -7024,3 +7024,137 @@ New tests, all against **real captured fixtures**:
   next silent failure announces itself instead of showing 30 empty boxes.
 - **Liquidation could not be measured live.** HiBid rate-limited this IP for the whole session,
   before and after the change alike. It was audited from a captured search page instead.
+
+---
+
+# The Tax Pack — the second half of "what did I make?"
+
+**Branch** `auto/queue-features-20260726` · **New feature.** Money Made says what the seller earned.
+Nothing in this app, and nothing in Vendoo, List Perfectly, ZIK or Crosslist, said how much of it
+was never theirs.
+
+## Why this one, and what it is worth in dollars
+
+Every other money screen here is a forecast, and Money Made is the ledger. Between them they answer
+"what would this make" and "what did it make". The question that decides how much of it the seller
+*keeps* was unanswered, and it is the most expensive unanswered question a reseller has:
+
+| The money | Where it goes today |
+|---|---|
+| **Sales with no recorded cost basis** | Money Made refuses to count them as profit — correctly, because the profit might not exist. **The IRS taxes those same proceeds in full, as though the goods were free.** So the figure that is honestly cautious upstairs is the one that costs real money on a return, and nothing in the app said so. On a single sale at $840 of proceeds that is **$212 of avoidable tax**. |
+| **Unclaimed deductions** | Packaging is set to $0 in Fees & Costs on this account, so every box bought this year is a deduction going unclaimed. At the rate this seller is actually taxed, **a provable dollar of expense is worth 25.3¢**, and the screen now prints that number rather than leaving "keep your receipts" as folklore. |
+| **The February surprise** | eBay reports **gross payments** on a 1099-K. On this account that is **$12,701** against **$4,192** of taxable profit. A seller who does not know why assumes they owe tax on the larger figure, or pays somebody to explain it. |
+| **Underpayment penalties** | The IRS estimated-tax windows are **3, 2, 3 and 4 months** long, not calendar quarters. Splitting the year into four equal quarters puts June's sales in the wrong payment, which is the standard way a seller earns a penalty on a year they had the cash for all along. |
+
+Competitively this is a gap, not a nice-to-have. Vendoo and List Perfectly cross-list; ZIK does
+market research; Crosslist does inventory. **None of them produce a Schedule C**, and the seller
+currently pays somebody else to do by hand what the app already has every figure for.
+
+## What it does
+
+A new page, `#tax`, directly under Money Made in the sidebar — because the two are two halves of one
+sentence.
+
+- **A Schedule C**, line by line with the actual IRS line numbers (1, 2, 3, 4, 5, 7, 10, 22, 27a,
+  28, 31), each carrying the arithmetic that produced it in plain English. A number an accountant
+  cannot trace is a number they re-derive by hand, which is the cost this is meant to remove.
+- **A set-aside, not a bill.** The hero is what to move out of the account, because that is the only
+  figure on the page that is an instruction. Self-employment tax on 92.35% of net profit at 15.3%,
+  with the $400 floor honoured; income tax at the seller's own bracket, applied *after* half the SE
+  tax comes off — doing that the other way round overstates every return.
+- **The cost-basis gap, priced.** Sales with no record of what the goods cost, and the tax that
+  rests on finding them. It leads the page, above everything it explains, because it is the one
+  thing here the seller can fix today, and fixing it makes the total go **down**.
+- **Quarterly payment dates** on the real IRS windows, with each quarter's share of the bill. The
+  four payments add up to the year's total to the cent, so following the plan lands on the number.
+- **A 1099-K reconciliation** — what eBay will report, why it is so much larger, and what is in it
+  that is not in the profit figure.
+- **Two CSV exports** — the Schedule C summary an accountant reads, and the sale-by-sale ledger they
+  check one line of it against.
+- **A year picker**, driven off the years the seller actually has sales in.
+
+## The one deliberate disagreement
+
+`TaxPackCalculator` reaches a **different net profit** from `EarningsCalculator` for the same year,
+on purpose, and the screen reconciles the two in words rather than leaving one looking like a bug:
+
+1. A sale with no cost basis contributes **nothing** to Money Made and is taxed **in full** here.
+2. The seller's own labour is charged against profit by every forecast in the app. It is **not
+   deductible** on a sole proprietor's Schedule C — you cannot pay yourself a wage and deduct it —
+   so it is added back.
+3. Fully refunded sales are excluded from Money Made's profit but still belong on lines 1 and 2 of
+   a return.
+
+On the seller's live data the two now sit at **$4,190.12** (Money Made) against **$4,191.61**
+(line 31), and the page says which is which and why.
+
+## A real bug the live data caught
+
+The first run against the seller's own 49 sales showed line 31 **$449 lower** than Money Made. The
+cause was in the new code: **a fully refunded sale was deducting the cost of goods for an item that
+had come back.** A $285 miner refunded in full was claiming a $180 loss on a unit sitting on the
+shelf — an over-deduction, in exactly the direction this feature must never run.
+
+Fixed by treating a full refund as voiding the *sale* but not the *stock*: it stays on lines 1 and
+2 (eBay reports it in gross payments, and line 2 is where it comes back out) and contributes no
+cost of goods sold. A **partial** refund is a price concession — the buyer kept the item — so its
+cost still counts. Both cases are pinned by tests.
+
+A second one was caught in the screenshot: **Q4's payment date rendered as "Jan 14" instead of the
+15th.** The server stamps the due date in the seller's current UTC offset, so a January payment
+computed in July is an hour out once standard time applies. Payment dates are now read off the date
+parts of the string and never through a timezone.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/TaxPackCalculator.cs` | new — the whole calculation, pure, no I/O and no clock of its own |
+| `Models/TaxModels.cs` | the wire shapes, plus `TaxRateRequest` |
+| `Services/FeeProfileStore.cs` | `LoadTaxRate` / `SaveTaxRate`. Kept **off** `FeeProfile` on purpose: that object round-trips through the Fees & Costs screen, which knows nothing about tax, so saving a shipping cost there would silently reset the seller's bracket. A test pins that. |
+| `Program.cs` | DI registration; `GET /api/tax`, `POST /api/tax/rate`, `GET /api/tax/export` |
+| `wwwroot/index.html` | the sidebar entry and the screen; `app.js?v=96`, `style.css?v=86` |
+| `wwwroot/app.js` | the page, its workspace-tab registration, and its renderers |
+| `wwwroot/style.css` | built out of the Money Made furniture, so the second half of the sentence does not need a new layout learned |
+| `Tests/TaxPackCalculatorTests.cs` | 28 tests — the form, the disagreement with Money Made, the bill, the quarters, the 1099-K, the exports, CSV injection |
+| `Tests/TaxPackAssetTests.cs` | 11 tests — the wiring nothing in C# would otherwise notice breaking, plus the two decisions that are easy to "tidy" into their opposite |
+
+Read-only throughout. Nothing here touches eBay, files anything, or leaves the machine except as a
+CSV the seller asked for. Every honesty line the screen prints is generated from the figures, not
+hardcoded — including the one that says this is a set-aside plan and not tax advice.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2532 passed**, 0 failed — 39 of them new here, no pre-existing test changed or removed |
+| `node --check wwwroot/app.js` | clean |
+| `GET /api/tax` against the running build | 49 real sales → $12,701.44 gross receipts, $4,191.61 taxable profit, $1,059.72 to set aside, 25.3% effective |
+| `GET /api/tax/export?kind=summary` | 200, `text/csv`, `attachment; filename=schedule-c-2026-ING.csv`, 2,101 bytes |
+| `POST /api/tax/rate` at 22% | bill moved $1,059.72 → $1,449.27, deduction value 25.3¢ → 34.6¢, persisted and re-read |
+| The screen itself | rendered headless at 1500×2600 against the running `AutoListerB1.exe` on `:9332` and read end to end, in dark mode |
+
+`wwwroot` is an `EmbeddedResource`, so the UI was verified by rebuilding and driving the running
+app — the server was confirmed serving the new `index.html` (`id="tax-section"`, `data-page="tax"`)
+before the page was read.
+
+## Known limits — all stated on the screen itself
+
+- **Federal only.** State and local income tax is not included, and most states charge it.
+- **The income-tax figure is a set-aside, not a return.** It applies one flat marginal bracket and
+  ignores the standard deduction, the 20% QBI deduction most resellers can take, other income,
+  filing status and every credit. The screen says all five.
+- **No Social Security wage cap and no W-2 wages.** Both would reduce the SE line, so it errs large.
+- **No 1099-K threshold is stated.** The federal figure has moved three times since 2022 and several
+  states set their own; a wrong number here would tell a seller they are not being reported on when
+  they are. The screen says where to find the figure eBay is actually using.
+- **Mileage, home office and storage are not tracked by this app**, so they are not claimed — but
+  the screen prices what each provable dollar of them is worth.
+
+## Left untouched
+
+Four files were already modified in the working tree when this session started
+(`ClaudeService.cs`, `HostedMarketplaceRepository.cs`, `TerapeakService.cs`,
+`TerapeakLoginScriptTests.cs`) plus `tasks-msi-both-sites.yaml`. They are unrelated to this work and
+were **not** committed with it — they remain uncommitted, exactly as they were found.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=85" />
+  <link rel="stylesheet" href="style.css?v=86" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -97,6 +97,10 @@
         <!-- The one screen that reports money already in the bank rather than money forecast. It
              sits with Sell, above the tools, because it is the answer to "is any of this working". -->
         <button class="nav-item" type="button" data-page="earnings"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Money Made</button>
+        <!-- Directly under Money Made, because it is the second half of that sentence: what you
+             made, and how much of it was never yours. Sellers who never open it once a year are the
+             ones who overpay, so it sits in the nav rather than behind a link on the earnings page. -->
+        <button class="nav-item" type="button" data-page="tax"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Tax Pack</button>
         <!-- The thread between every other screen: one flip from the forecast that justified it to
              the sale that settled it. Next to Money Made because between them they answer "what
              have I made" and "what's still out there" — the two halves of the same question. -->
@@ -3752,6 +3756,141 @@
         </div>
       </section>
 
+      <!-- The Tax Pack. Money Made says what the seller earned; this says how much of it was never
+           theirs, and it is allowed to disagree with the screen above it.
+
+           The disagreement is the feature. Money Made refuses to count a sale whose cost isn't
+           recorded, because claiming profit that might not exist is the one direction that screen
+           must never be wrong in. The IRS applies the opposite rule to the same sale: with no cost
+           on record the whole of the proceeds is taxable, as though the goods were free. So the
+           figure that is honestly cautious upstairs is the one that costs real money on a return,
+           and the block at the top of this page is that number with a dollar sign on it.
+
+           See Services/TaxPackCalculator.cs. Nothing here is filed, and nothing leaves the machine
+           except the CSV the seller asks for. -->
+      <section id="tax-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="tx-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Keep more of what you made</div>
+              <h2>🧾 Tax Pack</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <label class="tx-year-label" for="tx-year">Tax year</label>
+            <select id="tx-year" class="tx-year"></select>
+            <!-- Plain links, not buttons: the server answers with a file, so the browser downloads
+                 it without leaving the page or losing the screen behind it. -->
+            <a id="tx-export-summary" class="btn btn-secondary" href="/api/tax/export?kind=summary">Schedule C (CSV)</a>
+            <a id="tx-export-ledger" class="btn btn-ghost" href="/api/tax/export?kind=ledger">Every sale (CSV)</a>
+            <button id="tx-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- One hero figure, and it is the set-aside rather than the bill: what to move out of
+               the account today is the only number on this page that is an instruction. -->
+          <div class="er-hero tx-hero">
+            <div class="er-hero-main">
+              <p class="er-hero-label">Set aside for federal tax</p>
+              <p id="tx-hero-figure" class="er-hero-figure">$0</p>
+              <p id="tx-hero-sub" class="er-hero-sub">your sales appear here on their own once eBay is connected</p>
+            </div>
+            <div class="er-hero-side">
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Taxable profit</span>
+                <span id="tx-hero-profit" class="er-hero-stat-value">$0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Of every profit dollar</span>
+                <span id="tx-hero-rate" class="er-hero-stat-value">—</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Next payment due</span>
+                <span id="tx-hero-due" class="er-hero-stat-value">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- The money at stake, above everything else it explains. This is the one block on the
+               page the seller can act on today, and acting on it makes the bill go DOWN — so it
+               leads rather than sitting in a footnote apologising for the total. -->
+          <div id="tx-gap" class="tx-gap hidden"></div>
+
+          <!-- The only figure this screen cannot derive. It is one input, inline, with the effect
+               of changing it printed underneath — not a settings page the seller has to go and find. -->
+          <div class="tx-rate-card">
+            <div class="tx-rate-field">
+              <label for="tx-rate">Your income tax bracket</label>
+              <div class="tx-rate-input">
+                <input id="tx-rate" type="number" min="0" max="50" step="0.5" value="12" />
+                <span class="tx-rate-suffix">%</span>
+                <button id="tx-rate-save" class="btn btn-secondary small" type="button">Apply</button>
+              </div>
+            </div>
+            <p id="tx-rate-note" class="tx-rate-note">Most side-income resellers sit at 12% or 22%. Self-employment tax is added on top automatically — it is the same 15.3% for everybody.</p>
+          </div>
+
+          <!-- When to have the money, not just how much. The IRS windows are 3, 2, 3 and 4 months
+               long; four equal quarters put June's sales in the wrong payment, which is the usual
+               way a seller earns a penalty on a year they had the cash for all along. -->
+          <div id="tx-quarters-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Estimated payments</p>
+                <h3>When to have it</h3>
+              </div>
+            </div>
+            <div id="tx-quarters" class="tx-quarters"></div>
+            <p class="tx-quarters-note">These are the IRS windows, which are not calendar quarters. A due date landing on a weekend or holiday moves to the next business day.</p>
+          </div>
+
+          <!-- The form itself, line numbers and all, because the seller or their accountant is
+               copying these into something laid out exactly this way. Every line carries the
+               arithmetic that produced it: a number nobody can trace gets re-derived by hand. -->
+          <div id="tx-schedule-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Schedule C</p>
+                <h3 id="tx-schedule-title">Profit or Loss From Business</h3>
+              </div>
+              <button id="tx-schedule-toggle" class="btn btn-ghost small" type="button" aria-expanded="true">Hide workings</button>
+            </div>
+            <div id="tx-schedule" class="tx-schedule"></div>
+          </div>
+
+          <!-- What eBay will tell the IRS. The 1099-K is the single most common February panic:
+               it reports gross payments, so it is always far bigger than anything else here, and a
+               seller who doesn't know why assumes they owe tax on all of it. -->
+          <div id="tx-1099-card" class="viz-panel hidden">
+            <div class="viz-panel-head">
+              <div>
+                <p class="eyebrow">Form 1099-K</p>
+                <h3 id="tx-1099-figure">$0</h3>
+                <p class="viz-panel-sub">is roughly what eBay will report for you — and it is not what you are taxed on.</p>
+              </div>
+            </div>
+            <div id="tx-1099" class="tx-notes"></div>
+          </div>
+
+          <div id="tx-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">Know the bill before it knows you.</div>
+              <p class="state-body">Once your sales are here, this turns them into a Schedule C, tells you what to set aside and when it's due, and prices the one thing that quietly costs resellers the most — sales with no record of what the goods cost, which get taxed as though they were free.</p>
+              <div class="state-actions">
+                <button class="btn btn-secondary" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;earnings&quot;]')?.click()">Go to Money Made</button>
+              </div>
+              <p class="state-hint">Nothing here is filed and nothing leaves this machine. It is a set-aside plan, not tax advice.</p>
+            </div>
+          </div>
+
+          <div id="tx-honesty" class="inv-footnote hidden"></div>
+        </div>
+      </section>
+
       <!-- The Deal Pipeline. Every other money screen in the app is a snapshot of one moment; this
            is the thread between them, carrying one flip from the sourcing forecast that justified
            buying it to the sale in Money Made that settled it.
@@ -4960,6 +5099,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=95"></script>
+  <script src="app.js?v=96"></script>
 </body>
 </html>

@@ -414,6 +414,10 @@ builder.Services.AddSingleton<EarningsImportRunner>();
 // is no browser in the path and nothing that can be blocked. See EarningsAutoImport.
 builder.Services.AddSingleton<EarningsAutoImport>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EarningsAutoImport>());
+// The Tax Pack. Money Made answers "what did I make"; this answers the question that decides how
+// much of it the seller keeps. It reads the same flips and deliberately reaches a different net
+// profit — see TaxPackCalculator for why both numbers are right.
+builder.Services.AddSingleton<TaxPackCalculator>();
 // The Deal Pipeline — the thread that joins all of the above. Every other money service answers
 // one question about one moment; this one carries a single flip from the sourcing forecast that
 // justified the buy, through the cash that left the bank, to the sale in EarningsStore that
@@ -3633,6 +3637,76 @@ static EarningsResult BuildEarnings(
 
     // Local time, not UTC: "this month" has to mean the month the seller is living in.
     return calculator.Summarize(computed, DateTimeOffset.Now);
+}
+
+// ── The Tax Pack — what you owe on what you made ──────────────────────────────────────────────
+// Money Made reports the money. This reports the share of it that was never the seller's, and the
+// two disagree on purpose: a sale with no recorded cost contributes nothing to profit upstairs and
+// is taxed in full down here. That gap is the most expensive thing in most resellers' books, and
+// nowhere else in the app — or in Vendoo, List Perfectly or anything else on the market — is it
+// priced.
+//
+// Reads the app's own database only. Nothing here touches eBay, files anything, or leaves the machine
+// except as a CSV the seller asked for.
+
+app.MapGet("/api/tax", (
+    int? year, EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator,
+    TaxPackCalculator tax, FeeProfileStore feeStore, FeeProfile feeProfile) =>
+    Results.Ok(BuildTaxPack(store, costBasis, calculator, tax, feeProfile, feeStore.LoadTaxRate(), year)));
+
+// The seller's marginal bracket — the one figure the pack cannot derive. Saved rather than asked
+// for each visit, because a screen that demands a number before it shows anything is a form.
+app.MapPost("/api/tax/rate", (
+    TaxRateRequest body, int? year, EarningsStore store, CostBasisStore costBasis,
+    EarningsCalculator calculator, TaxPackCalculator tax, FeeProfileStore feeStore,
+    FeeProfile feeProfile, ActionLog log) =>
+{
+    if (body.IncomeTaxRatePercent is null or < 0 or > 50)
+        return Results.BadRequest("Enter your income tax bracket as a percentage between 0 and 50.");
+
+    var saved = feeStore.SaveTaxRate(body.IncomeTaxRatePercent.Value);
+    log.Add("Info", "Tax bracket updated", $"{saved:0.##}% — used by the Tax Pack only");
+
+    return Results.Ok(BuildTaxPack(store, costBasis, calculator, tax, feeProfile, saved, year));
+});
+
+// The handover to an accountant. Two files: the summary they read, and the sale-by-sale backup they
+// check one line of it against. A summary nobody can trace gets re-derived by hand, which is the
+// cost this feature exists to remove.
+app.MapGet("/api/tax/export", (
+    int? year, string? kind, EarningsStore store, CostBasisStore costBasis,
+    EarningsCalculator calculator, TaxPackCalculator tax, FeeProfileStore feeStore,
+    FeeProfile feeProfile, ActionLog log) =>
+{
+    var pack = BuildTaxPack(store, costBasis, calculator, tax, feeProfile, feeStore.LoadTaxRate(), year);
+    var ledger = string.Equals(kind, "ledger", StringComparison.OrdinalIgnoreCase);
+
+    if (!pack.HasSales) return Results.BadRequest($"There are no sales on record for {pack.Year} to export.");
+
+    var (csv, filename) = ledger
+        ? (pack.LedgerCsv, pack.LedgerCsvFilename)
+        : (pack.SummaryCsv, pack.SummaryCsvFilename);
+
+    log.Add("Info", "Tax pack exported", $"{pack.Year} — {(ledger ? "sale-by-sale ledger" : "Schedule C summary")}");
+
+    // Encoded here rather than left to the framework's default so a title with an em dash or a £
+    // in it survives the trip into Excel.
+    return Results.File(new System.Text.UTF8Encoding(true).GetBytes(csv), "text/csv", filename);
+});
+
+// One assembler, so the GET, the rate change and both exports can never answer from different
+// arithmetic. Mirrors BuildEarnings deliberately — same flips, same cost table, same fee profile.
+static TaxPackResult BuildTaxPack(
+    EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator,
+    TaxPackCalculator tax, FeeProfile feeProfile, decimal incomeRatePercent, int? year)
+{
+    var costs = costBasis.GetAll();
+    var computed = store.GetAll()
+        .Select(flip => calculator.Compute(flip, CostBasisStore.Find(costs, flip.ListingId, flip.Sku), feeProfile))
+        .ToList();
+
+    // Local time again: a sale at 7pm on 31 December belongs to the year the seller files it in.
+    return tax.Build(computed, feeProfile, incomeRatePercent, year, DateTimeOffset.Now);
 }
 
 // ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────

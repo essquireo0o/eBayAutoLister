@@ -620,6 +620,7 @@
     bindWhereToSell();
     bindSniper();
     bindEarnings();
+    bindTax();
     bindPipeline();
     bindHomeButtons();
     bindForm();
@@ -855,6 +856,11 @@
   const WORKSPACE_PAGES = {
     dashboard:   { section: 'dashboard-section',     open: showDashboard, pinned: true },
     earnings:    { section: 'earnings-section',      open: showEarningsSection },
+    // Server state end to end — no field on it holds anything the seller typed except the bracket,
+    // which is saved the moment it is applied — so every return to the tab re-reads it. A sale
+    // imported since the last look changes the bill, and a stale bill is the one thing this screen
+    // must not show.
+    tax:         { section: 'tax-section',           open: showTaxSection, refresh: loadTaxPack },
     pipeline:    { section: 'pipeline-section',      open: showPipelineSection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
@@ -1228,7 +1234,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -7388,6 +7394,251 @@
     if (!value) return '';
     const d = new Date(value);
     return isNaN(d) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // ── The Tax Pack ──────────────────────────────────────────────────────────
+  // Money Made renders what the seller earned. This renders the share of it that was never theirs,
+  // and it is allowed to print a different net profit for the same year — see TaxPackCalculator for
+  // why both are right. Three rules the UI has to keep on top of that:
+  //   * The hero is the SET-ASIDE, not the bill. It is the only number here that is an instruction:
+  //     move this much out of the account. A bill is something to dread; a set-aside is something
+  //     to do, and the seller who does it monthly never has the bad February.
+  //   * The block that makes the total go DOWN leads. Sales with no recorded cost are priced at the
+  //     top of the page, above everything they explain, because that is the one thing on this
+  //     screen the seller can fix today.
+  //   * Every figure says what it assumed, next to itself. A tax number with an unexplained gap in
+  //     it doesn't read as cautious — it reads as broken, and one distrusted figure here poisons
+  //     all of them.
+  let taxPack = null;
+  let taxYearWanted = null;
+
+  function showTaxSection() {
+    hideOverlaySections();
+    $('tax-section')?.classList.remove('hidden');
+    setActiveNavItem('tax');
+    markWorkspaceTabOpen('tax');
+    if (!taxPack) loadTaxPack();
+  }
+
+  function closeTaxSection() { closeWorkspacePage('tax'); }
+
+  function bindTax() {
+    on('tx-close', 'click', closeTaxSection);
+    on('tx-home', 'click', goHome);
+    on('tx-year', 'change', e => { taxYearWanted = e.target.value; loadTaxPack(); });
+    on('tx-rate-save', 'click', saveTaxRate);
+    // Enter in the bracket box applies it. Typing a number and pressing Enter is what everybody
+    // does, and a screen that silently ignores it looks like it didn't take the change.
+    on('tx-rate', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveTaxRate(); } });
+    on('tx-schedule-toggle', 'click', () => {
+      const host = $('tx-schedule'), btn = $('tx-schedule-toggle');
+      if (!host || !btn) return;
+      const bare = host.classList.toggle('tx-schedule-bare');
+      btn.textContent = bare ? 'Show workings' : 'Hide workings';
+      btn.setAttribute('aria-expanded', bare ? 'false' : 'true');
+    });
+
+    // Delegated, because the prompt inside the cost-gap block is re-rendered on every reload.
+    $('tax-section')?.addEventListener('click', e => {
+      if (e.target.closest?.('.tx-gap-action')) navigateTo('earnings');
+    });
+  }
+
+  async function loadTaxPack(quiet) {
+    const query = taxYearWanted ? `?year=${encodeURIComponent(taxYearWanted)}` : '';
+    try {
+      const res = await fetch('/api/tax' + query);
+      if (!res.ok) throw new Error('Could not work out your tax position.');
+      taxPack = await res.json();
+      renderTaxPack();
+    } catch (err) {
+      if (!quiet) setTaxRateNote(errorText(err, 'Could not work out your tax position.'), true);
+    }
+  }
+
+  async function saveTaxRate() {
+    const raw = parseFloat($('tx-rate')?.value);
+    if (!isFinite(raw) || raw < 0 || raw > 50) {
+      setTaxRateNote('Enter your bracket as a percentage between 0 and 50.', true);
+      return;
+    }
+
+    const query = taxYearWanted ? `?year=${encodeURIComponent(taxYearWanted)}` : '';
+    try {
+      const res = await fetch('/api/tax/rate' + query, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incomeTaxRatePercent: raw }),
+      });
+      if (!res.ok) throw new Error(await res.text() || 'That rate could not be saved.');
+      taxPack = await res.json();
+      renderTaxPack();
+    } catch (err) {
+      setTaxRateNote(errorText(err, 'That rate could not be saved.'), true);
+    }
+  }
+
+  function setTaxRateNote(text, isError) {
+    const el = $('tx-rate-note');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('tx-rate-note-error', !!isError);
+  }
+
+  function renderTaxPack() {
+    if (!taxPack) return;
+    const p = taxPack;
+    const has = !!p.hasSales;
+
+    $('tx-results')?.classList.toggle('hidden', has);
+    $('tx-quarters-card')?.classList.toggle('hidden', !has);
+    $('tx-schedule-card')?.classList.toggle('hidden', !has);
+    $('tx-1099-card')?.classList.toggle('hidden', !has);
+    $('tx-honesty')?.classList.toggle('hidden', !(p.honesty || []).length);
+
+    renderTaxYearPicker(p);
+    renderTaxHero(p, has);
+    renderTaxGap(p, has);
+
+    const rate = $('tx-rate');
+    if (rate && document.activeElement !== rate) rate.value = p.assumptions?.incomeTaxRatePercent ?? 12;
+
+    setTaxRateNote(has
+      ? `Every provable dollar of expense is worth about ${(p.assumptions?.deductionValuePercent ?? 0).toFixed(1)}¢ off this bill at your rate. Self-employment tax is added on top automatically — it is the same 15.3% for everybody.`
+      : 'Most side-income resellers sit at 12% or 22%. Self-employment tax is added on top automatically — it is the same 15.3% for everybody.', false);
+
+    const honesty = $('tx-honesty');
+    if (honesty) honesty.innerHTML = (p.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+
+    if (!has) {
+      ['tx-quarters', 'tx-schedule', 'tx-1099'].forEach(id => { const el = $(id); if (el) el.innerHTML = ''; });
+      return;
+    }
+
+    renderTaxQuarters(p);
+    renderTaxScheduleC(p);
+    renderTax1099(p);
+  }
+
+  // The picker doubles as the export target, so the two links always hand over the year on screen
+  // rather than whatever the server last defaulted to.
+  function renderTaxYearPicker(p) {
+    const select = $('tx-year');
+    if (select) {
+      const years = (p.availableYears || [p.year]);
+      select.innerHTML = years.map(y =>
+        `<option value="${y}"${y === p.year ? ' selected' : ''}>${y}</option>`).join('');
+    }
+
+    const summary = $('tx-export-summary'), ledger = $('tx-export-ledger');
+    if (summary) summary.href = `/api/tax/export?kind=summary&year=${p.year}`;
+    if (ledger) ledger.href = `/api/tax/export?kind=ledger&year=${p.year}`;
+    [summary, ledger].forEach(a => a?.classList.toggle('is-disabled', !p.hasSales));
+  }
+
+  function renderTaxHero(p, has) {
+    setText('tx-hero-figure', moneyExact(p.totalTax || 0));
+    setText('tx-hero-profit', moneyExact(p.netProfit || 0));
+
+    const sub = $('tx-hero-sub');
+    if (sub) {
+      sub.textContent = !has
+        ? `nothing is on record for ${p.year} yet — your eBay sales arrive on their own`
+        : `${p.yearInProgress ? 'so far in' : 'for'} ${p.year} — ${moneyExact(p.selfEmploymentTax || 0)} self-employment tax and ${moneyExact(p.incomeTax || 0)} income tax`;
+    }
+
+    // Cents in the dollar rather than a percentage: "27¢ of every profit dollar" is a rule a seller
+    // can apply to the next sale without a calculator, which a "27.4% effective rate" is not.
+    setText('tx-hero-rate', has && (p.netProfit || 0) > 0
+      ? `${Math.round(p.effectiveRatePercent || 0)}¢` : '—');
+
+    const next = (p.quarters || []).find(q => !q.isPast);
+    setText('tx-hero-due', has && next
+      ? `${moneyExact(next.setAside)} · ${taxDueLabel(next.dueDate)}`
+      : '—');
+  }
+
+  // A due date is a calendar date, not an instant. The server stamps it in the seller's offset at
+  // the time of the request, so a January payment computed in July arrives an hour off in standard
+  // time and shortDate() renders "Jan 14" for the 15th. Read the date parts straight off the
+  // string and no offset can move a payment by a day.
+  function taxDueLabel(value) {
+    const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+    if (!parts) return shortDate(value);
+    return new Date(+parts[1], +parts[2] - 1, +parts[3])
+      .toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // The block that makes the number go down. It is rendered above everything it explains because
+  // it is the only thing on this page the seller can act on today.
+  function renderTaxGap(p, has) {
+    const el = $('tx-gap');
+    if (!el) return;
+    const gap = p.costGap || {};
+    if (!has || !(gap.sales > 0) || !(gap.taxAtRisk > 0)) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+    el.classList.remove('hidden');
+    el.innerHTML = `
+      <div class="tx-gap-figure">${esc(moneyExact(gap.taxAtRisk))}</div>
+      <div class="tx-gap-body">
+        <p class="tx-gap-lead">of this bill is tax on goods the IRS thinks were free.</p>
+        <p class="tx-gap-detail">${gap.sales} sale${gap.sales === 1 ? '' : 's'} worth ${esc(moneyExact(gap.taxableProceeds))} after fees ${gap.sales === 1 ? 'has' : 'have'} no record of what you paid, so all of it counts as profit. Money Made leaves those sales out of your earnings for exactly the same reason — the cost is missing — but the tax is charged either way.</p>
+        <button class="btn btn-primary tx-gap-action" type="button">Enter what you paid →</button>
+      </div>`;
+  }
+
+  function renderTaxQuarters(p) {
+    const el = $('tx-quarters');
+    if (!el) return;
+
+    el.innerHTML = (p.quarters || []).map(q => {
+      const classes = ['tx-quarter'];
+      if (q.isPast) classes.push('is-past');
+      if (q.isCurrent) classes.push('is-current');
+      return `
+        <div class="${classes.join(' ')}">
+          <div class="tx-q-head">
+            <span class="tx-q-name">${esc(q.name)}</span>
+            ${q.isCurrent ? '<span class="tx-q-tag">earning into this now</span>' : ''}
+            ${q.isPast && !q.isCurrent ? '<span class="tx-q-tag tx-q-tag-past">due date passed</span>' : ''}
+          </div>
+          <div class="tx-q-amount">${esc(moneyExact(q.setAside))}</div>
+          <div class="tx-q-due">pay by ${esc(taxDueLabel(q.dueDate))}</div>
+          <div class="tx-q-meta">${esc(q.covers)} · ${q.sales} sale${q.sales === 1 ? '' : 's'} · ${esc(moneyExact(q.netProfit))} profit</div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderTaxScheduleC(p) {
+    const el = $('tx-schedule');
+    if (!el) return;
+
+    const lines = (p.scheduleC || []).map(line => `
+      <div class="tx-line${line.isSubtotal ? ' is-subtotal' : ''}">
+        <span class="tx-line-no">${esc(line.line)}</span>
+        <span class="tx-line-label">${esc(line.label)}${line.measured ? '' : ' <span class="tx-line-chip">partly estimated</span>'}</span>
+        <span class="tx-line-amount">${esc(moneyExact(line.amount))}</span>
+      </div>
+      <p class="tx-line-basis">${esc(line.basis)}</p>`).join('');
+
+    // The estimate sits under the form rather than inside it: lines 1–31 are figures anybody can
+    // copy onto a return, and the tax below them is this app's arithmetic, not the IRS's.
+    const estimate = `
+      <div class="tx-estimate">
+        <div class="tx-line"><span class="tx-line-no"></span><span class="tx-line-label">Self-employment tax</span><span class="tx-line-amount">${esc(moneyExact(p.selfEmploymentTax || 0))}</span></div>
+        <div class="tx-line"><span class="tx-line-no"></span><span class="tx-line-label">Federal income tax at ${esc(String(p.assumptions?.incomeTaxRatePercent ?? 0))}%</span><span class="tx-line-amount">${esc(moneyExact(p.incomeTax || 0))}</span></div>
+        <div class="tx-line is-subtotal"><span class="tx-line-no"></span><span class="tx-line-label">Set aside</span><span class="tx-line-amount">${esc(moneyExact(p.totalTax || 0))}</span></div>
+        <p class="tx-line-basis">Claiming the ${esc(moneyExact(p.deductionsTotal || 0))} of costs above is what keeps ${esc(moneyExact(p.taxSavedByDeductions || 0))} of tax off this figure. State and local tax is not included.</p>
+      </div>`;
+
+    el.innerHTML = lines + estimate;
+  }
+
+  function renderTax1099(p) {
+    const check = p.form1099K || {};
+    setText('tx-1099-figure', moneyExact(check.expectedGross || 0));
+    const el = $('tx-1099');
+    if (el) el.innerHTML = (check.notes || []).map(n => `<p>${esc(n)}</p>`).join('');
   }
 
   // ── Deal Pipeline ─────────────────────────────────────────────────────────
