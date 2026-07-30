@@ -273,6 +273,9 @@
     // A dead Facebook session is only ever fixed by the person, in a browser — so it gets the
     // button that opens one rather than a Retry that would fail the same way every time.
     'connect-facebook': { label: 'Reconnect Facebook', run: () => facebookConnect() },
+    // Same story for Terapeak: eBay stopped accepting the saved session, and only a real sign-in
+    // in a real browser replaces it. Retry would be handed the same sign-in page every time.
+    'connect-terapeak': { label: 'Reconnect Terapeak', run: () => terapeakConnect() },
   };
 
   // The eBay sign-in button lives in more than one place depending on which screen is open, so the
@@ -437,9 +440,26 @@
     window.addEventListener('pagehide', () => flushAutosave(true));
   }
 
+  /**
+   * The recovery banner is off at the seller's request.
+   *
+   * It stacked one row per unfinished listing at the top of the dashboard, and with seven of them it
+   * pushed the entire app below the fold. Most of those seven were not abandoned work at all - they
+   * were autosave snapshots left behind every time the app was restarted during development, so the
+   * banner was mostly reporting its own noise.
+   *
+   * Autosave itself is untouched: /api/work/autosave still runs, the snapshots are still stored, and
+   * /api/work/recoverable still returns them. Nothing anyone was working on has been thrown away -
+   * the dashboard just stops announcing it. Delete this early return and the banner comes back
+   * exactly as it was.
+   */
+  const SHOW_RECOVERY_BANNER = false;
+
   async function loadRecoverableWork() {
     const banner = $('recovery-banner');
     if (!banner) return;
+
+    if (!SHOW_RECOVERY_BANNER) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
 
     const { ok, data } = await callApi('/api/work/recoverable', { timeoutMs: 15000 });
     const items = (ok && data?.items) || [];
@@ -1203,7 +1223,12 @@
 
   // Every full-screen view in the app, including the AI Listing modal: hiding "the screens" has
   // to mean all of them, or navigating out of a draft leaves it sitting on top of the next one.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'new-listing-overlay'];
+  // 'copilot-section' was missing from this list, which is a bigger bug than it looks: every other
+  // screen calls hideOverlaySections() on the way in, so leaving the Copilot out meant navigating
+  // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
+  // draft was where it showed — the AI Listing tab opened and went active, the route changed to
+  // #ai, and the Copilot was still the thing you were looking at.
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -1270,15 +1295,35 @@
       if (connectBtn) connectBtn.disabled = true;
       disconnectBtn?.classList.add('hidden');
     } else if (data.connected) {
-      statusEl.textContent = '✓ Connected — sold-comp lookups will use real Terapeak data.';
+      // "Connected" and "checked against eBay" are different claims, and only the second one is
+      // worth anything. A session that was saved but could not be exercised — a bot check, a page
+      // that never rendered — says so here rather than promising data it may not be able to fetch.
+      statusEl.textContent = data.verified === false
+        ? `⚠ Session saved, but not confirmed: ${data.verificationDetail || 'eBay did not serve the research page when it was tested.'}`
+        : '✓ Connected — checked against eBay\'s research page, so sold-comp lookups will use real Terapeak data.';
       connectBtn?.classList.add('hidden');
       disconnectBtn?.classList.remove('hidden');
     } else {
+      // A login that died and a login that was never made are different sentences with different
+      // buttons. Telling someone whose session expired that they are "not connected" reads as the
+      // app having forgotten what they set up, and sends them hunting for a setting instead of
+      // pressing the one button that fixes it.
       statusEl.textContent = data.lastError
         ? `Terapeak connect failed: ${data.lastError}`
-        : 'Not connected — sold comps will show links only. Click Connect to log in.';
+        : data.needsReconnect
+          ? `${data.reason || 'The saved Terapeak login is no longer accepted by eBay.'} Click Reconnect to sign in again.`
+          : 'Not connected — sold comps fall back to the sold-comps database and research links. Click Connect to log in.';
       connectBtn?.classList.remove('hidden');
-      if (connectBtn) connectBtn.disabled = false;
+      if (connectBtn) {
+        connectBtn.disabled = false;
+        // The three copies of this button are labelled differently in the markup ("Connect
+        // Terapeak →" and friends), so the original is kept and only its first word swapped —
+        // overwriting the whole label would strip the product name off two of them.
+        if (!connectBtn.dataset.connectLabel) connectBtn.dataset.connectLabel = connectBtn.textContent;
+        connectBtn.textContent = data.needsReconnect
+          ? connectBtn.dataset.connectLabel.replace(/^Connect\b/, 'Reconnect')
+          : connectBtn.dataset.connectLabel;
+      }
       disconnectBtn?.classList.add('hidden');
     }
   }
@@ -2461,6 +2506,10 @@
 
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     if (status) status.textContent = 'Opening your Marketplace feed — this drives a real page load, so it takes about half a minute…';
+    // These cards arrive in Facebook's order and stay in it until the prices land, so the sort
+    // line has to go away for as long as it isn't true.
+    const order = $('fb-picks-order');
+    if (order) order.hidden = true;
     // Placeholder tiles rather than an empty strip: this call takes ~30s, and a panel that shows
     // nothing at all for that long reads as broken rather than as busy.
     grid.innerHTML = Array.from({ length: 12 },
@@ -2489,10 +2538,6 @@
       if (status) status.textContent = data.error || 'Connect Facebook to see your Marketplace picks.';
       grid.innerHTML = '';
       return;
-    // These cards arrive in Facebook's order and stay in it until the prices land, so the sort
-    // line has to go away for as long as it isn't true.
-    const order = $('fb-picks-order');
-    if (order) order.hidden = true;
     }
     if (data.status !== 'ok' || !(data.items || []).length) {
       if (status) status.textContent = data.error || 'Facebook returned no picks just now — try Refresh in a minute.';
@@ -2567,6 +2612,10 @@
       priced++;
     }
 
+    // The numbers are on the cards; now put the best one first. Only worth doing — and only
+    // honest to announce — if something could actually be ranked.
+    if (priced) reorderFacebookPicks(data.items);
+
     if (note) {
       note.textContent = priced
         ? `${priced} of ${feed.items.length} priced against real eBay sold data. Profit is after fees and shipping.`
@@ -2574,38 +2623,6 @@
     }
   }
 
-  // ── eBay scanner (its own panel, above the local one) ─────────────────────
-  // Buying and selling on the same site is a one-field search: no zip, no radius, no login. It
-  // runs the SAME scan engine as the panel below, restricted to the eBay source, and renders into
-  // the same results table — one scanner, two front doors. Nothing here duplicates renderArbitrage.
-  const EBAY_SOURCE_ID = 'ebay';
-
-  // A seller's buying rules don't change between sessions — someone who only buys used under $500
-  // is still doing that tomorrow. Restored rather than re-typed.
-  function restoreEbayScanFilters() {
-    let saved;
-    try { saved = JSON.parse(localStorage.getItem('ebayScanFilters') || 'null'); } catch (_) { return; }
-    if (!saved) return;
-    const set = (id, value) => { if (value !== null && value !== undefined && value !== '' && $(id)) $(id).value = value; };
-    set('ebay-scan-type', saved.type);
-    set('ebay-scan-condition', saved.condition);
-    set('ebay-scan-min', saved.min);
-    set('ebay-scan-max', saved.max);
-    set('ebay-scan-feedback', saved.feedback);
-  }
-
-  async function runEbayScan() {
-    // The numbers are on the cards; now put the best one first. Only worth doing — and only
-    // honest to announce — if something could actually be ranked.
-    if (priced) reorderFacebookPicks(data.items);
-
-    const query = $('ebay-scan-query')?.value.trim() || '';
-    const btn   = $('ebay-scan-btn');
-
-    if (!query) return setLocalStatus('Type what you want to look for on eBay.');
-
-    // Re-running is what the Try again button does, so it has to point at this scan and not at
-    // whatever the panel below ran last.
   /**
    * How two priced picks rank against each other. Pure — no DOM, no fetch — so the rule can be
    * tested on its own rather than only by looking at a grid.
@@ -2678,6 +2695,34 @@
     if (order) order.hidden = false;
   }
 
+  // ── eBay scanner (its own panel, above the local one) ─────────────────────
+  // Buying and selling on the same site is a one-field search: no zip, no radius, no login. It
+  // runs the SAME scan engine as the panel below, restricted to the eBay source, and renders into
+  // the same results table — one scanner, two front doors. Nothing here duplicates renderArbitrage.
+  const EBAY_SOURCE_ID = 'ebay';
+
+  // A seller's buying rules don't change between sessions — someone who only buys used under $500
+  // is still doing that tomorrow. Restored rather than re-typed.
+  function restoreEbayScanFilters() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem('ebayScanFilters') || 'null'); } catch (_) { return; }
+    if (!saved) return;
+    const set = (id, value) => { if (value !== null && value !== undefined && value !== '' && $(id)) $(id).value = value; };
+    set('ebay-scan-type', saved.type);
+    set('ebay-scan-condition', saved.condition);
+    set('ebay-scan-min', saved.min);
+    set('ebay-scan-max', saved.max);
+    set('ebay-scan-feedback', saved.feedback);
+  }
+
+  async function runEbayScan() {
+    const query = $('ebay-scan-query')?.value.trim() || '';
+    const btn   = $('ebay-scan-btn');
+
+    if (!query) return setLocalStatus('Type what you want to look for on eBay.');
+
+    // Re-running is what the Try again button does, so it has to point at this scan and not at
+    // whatever the panel below ran last.
     lastLocalRun = runEbayScan;
 
     $('fb-results')?.classList.add('hidden');
@@ -11152,10 +11197,21 @@
     // register the workspace tab up top. Revealing the overlay on its own left the rewrite open
     // underneath the Copilot with no tab in the bar, so there was nothing to click back to.
     hideOverlaySections();
-    $('new-listing-overlay')?.classList.remove('hidden');
-    $('new-listing-overlay')?.focus();
+    const overlay = $('new-listing-overlay');
+    overlay?.classList.remove('hidden');
+    // Reviewing a rewrite is not starting a listing. The top of this screen is the intake block —
+    // AI Product Research, Import From URL, Bulk Catalog Import — so opening here dropped the
+    // seller on three ways to begin something new, with the draft they had just paid for sitting
+    // below the fold. It read as "it opened the AI Listing window instead of my draft".
+    overlay?.classList.add('nl-review-draft');
     setActiveNavItem('ai');
     markWorkspaceTabOpen('ai');
+    // Land on the listing itself. rAF so the scroll happens after the form has been filled and
+    // laid out, otherwise it measures the old height and lands short.
+    requestAnimationFrame(() => {
+      overlay?.querySelector('.nl-form-panel')?.scrollIntoView({ block: 'start' });
+      $('nl-title')?.focus({ preventScroll: true });
+    });
     addActivity(`Opened ${wanted.length} rewritten draft${wanted.length === 1 ? '' : 's'}`,
                 'Review the new title, description and item specifics, then publish');
   }
@@ -14503,6 +14559,23 @@
     el.className = 'mr-status' + (kind ? ' ' + kind : '');
   }
 
+  // The one failure in this panel a seller fixes in a single click, and eBay only accepts a real
+  // sign-in in a real browser — so it gets the button that opens one rather than a Retry that
+  // would be handed the same sign-in page every time. Appended after the status text rather than
+  // replacing it, so the sentence explaining what happened stays on screen beside the button.
+  function offerTerapeakReconnect() {
+    const el = $('mr-status');
+    if (!el || el.querySelector('[data-mr-reconnect]')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary small';
+    btn.dataset.mrReconnect = '1';
+    btn.textContent = 'Reconnect Terapeak';
+    btn.addEventListener('click', () => { btn.disabled = true; terapeakConnect(); });
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(btn);
+  }
+
   // Median is the anchor rather than the mean: a couple of parts-only or
   // mislabelled comps skew an average badly on low sold counts.
   function recommendedPrice() {
@@ -14558,18 +14631,34 @@
 
     if (!count) {
       results?.classList.add('hidden');
+      // The server's own sentence wins when it has one. "No comparable sales" is a fact about the
+      // item; "your Terapeak session expired" is a fact about the app, and the two used to be the
+      // same blank panel — so a seller with a dead session concluded the product had never sold.
       setResearchStatus(
-        d.source === 'none'
+        d.dataNote ||
+        (d.source === 'none'
           ? 'No comparable sales available. Terapeak may not be connected (Settings → Terapeak), or eBay has not approved sold-data access for this account. Use the buttons above to research manually.'
-          : 'No comparable sold listings found for this query.',
+          : 'No comparable sold listings found for this query.'),
         'empty');
+      if (d.needsReconnect) offerTerapeakReconnect();
       return;
     }
 
     results?.classList.remove('hidden');
-    setResearchStatus('');
 
-    const srcLabel = { terapeak: 'Terapeak', marketplace_insights: 'eBay Insights', none: 'Links only' }[d.source] || d.source || '—';
+    // Where these numbers came from, on screen with the numbers. Live Terapeak, the sold-comps
+    // database and eBay Insights are not equally current, and a median means something different
+    // depending on which one produced it — the server names the source, so nothing here has to
+    // guess from a slug.
+    const srcLabel = d.sourceLabel ||
+      { terapeak: 'Terapeak', marketplace_insights: 'eBay Insights', hosted_comps: 'Sold-comps database', none: 'Links only' }[d.source] ||
+      d.source || '—';
+
+    // A source that answered does not mean every source did. When Terapeak dropped out and the
+    // sold-comps database caught the fall, the numbers are real but they are not the ones the
+    // seller thinks they are looking at, so the swap is stated rather than silently absorbed.
+    setResearchStatus(d.dataNote ? `${d.dataNote} Showing ${srcLabel} instead.` : '', d.dataNote ? 'empty' : '');
+    if (d.needsReconnect) offerTerapeakReconnect();
     setText('mr-avg',    money(d.average));
     setText('mr-median', money(d.median));
     setText('mr-min',    money(d.min));
@@ -15647,6 +15736,8 @@
   }
 
   function openNewListingModal(keepTabs = false) {
+    // Starting a listing, not reviewing a rewrite: the intake block comes back.
+    $('new-listing-overlay')?.classList.remove('nl-review-draft');
     // The AI Listing screen is a workspace tab like any other, and it opens by several routes
     // that never went through the sidebar — a pasted screenshot, a recovered draft, the dashboard
     // button. Clearing the other screens here means every one of those routes behaves the same.
