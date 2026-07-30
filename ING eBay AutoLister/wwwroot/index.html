@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=87" />
+  <link rel="stylesheet" href="style.css?v=88" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -4122,10 +4122,28 @@
         <div class="panel-header">
           <div>
             <p class="eyebrow dark">Settings</p>
-            <h2>Connections &amp; Local System Status</h2>
+            <h2>Connections, costs and defaults</h2>
           </div>
           <button id="btn-open-credentials" class="btn btn-secondary" type="button">API Credentials</button>
         </div>
+
+        <!-- Settings is six subjects and about three screens of scrolling, and until now the only
+             way to reach one of them was to scroll past the other five. The rail is the map.
+
+             Buttons, not <a href="#…">: the hash is this app's router (see handleNav) — a real
+             anchor here would set location.hash and navigate the whole workspace away from
+             Settings on the way to a card six inches down the page. -->
+        <div class="settings-layout">
+          <nav id="settings-nav" class="settings-nav" aria-label="Settings sections">
+            <button class="settings-nav-link" type="button" data-settings-target="pg-connections-card">Connections</button>
+            <button class="settings-nav-link" type="button" data-settings-target="pg-required-card">Required setup</button>
+            <button class="settings-nav-link" type="button" data-settings-target="pg-optional-group">Optional extras</button>
+            <button class="settings-nav-link" type="button" data-settings-target="pg-fees-card">Fees &amp; costs</button>
+            <button class="settings-nav-link" type="button" data-settings-target="pg-defaults-card">Listing defaults</button>
+            <button class="settings-nav-link" type="button" data-settings-target="pg-system-card">This computer</button>
+          </nav>
+
+          <div class="settings-body">
 
         <!-- ── Connections ────────────────────────────────────────────────────
              The connection doctor, on screen. Every other connection readout in
@@ -4159,16 +4177,20 @@
           <div id="cd-rows" class="cd-rows" aria-live="polite"></div>
         </div>
 
-        <p class="settings-eyebrow">Local system status</p>
-        <div id="settings-status" class="settings-list"></div>
-
         <!-- ── Required setup ─────────────────────────────────────────────────
              The same two steps as the modal, restated where a seller who came
              looking for "settings" will find them, with live state rather than a
-             second copy of the fields. -->
+             second copy of the fields.
+
+             Its claim — "everything below this card is optional" — used to be
+             false: read-only local system status sat above it, and fees and
+             defaults below it are not optional at all if you want the profit
+             numbers to be true. Diagnostics moved to the bottom of the page,
+             where a thing nobody acts on belongs, and the sentence now says
+             what it means: the two steps are what the app cannot run without. -->
         <div class="setup-section settings-card" id="pg-required-card">
           <h3>Required setup</h3>
-          <p class="settings-card-copy">Two things make the app work. Everything below this card is optional.</p>
+          <p class="settings-card-copy">Two things make the app work. Nothing else on this page has to be done before you can list.</p>
           <ol class="pg-required-list">
             <li class="pg-required-item" id="pg-required-key">
               <span class="pg-required-state" id="pg-required-key-state">Needed</span>
@@ -4179,7 +4201,7 @@
               <span class="pg-required-text"><strong>Your eBay business policies</strong> — the shipping, payment and return policy every listing publishes under.</span>
             </li>
           </ol>
-          <div class="imggen-test-row">
+          <div class="settings-card-foot imggen-test-row">
             <button id="pg-open-required" class="btn btn-primary" type="button">Open required setup</button>
             <span id="pg-required-msg" class="sd-test-msg"></span>
           </div>
@@ -4191,6 +4213,7 @@
              with before you could list anything. It is a connect strip now — the
              same shape as Terapeak and Facebook, in the row of things you add
              when you want them and never before. -->
+        <div id="pg-optional-group" class="settings-group">
         <p class="settings-optional-eyebrow">Optional — add any of these later, in any order</p>
 
         <div class="setup-section settings-card connect-card" id="pg-imggen-card">
@@ -4218,8 +4241,8 @@
             </div>
             <div id="pg-imggen-model-wrap" class="field" style="display:none">
               <label for="pg-imggen-model">ComfyUI Checkpoint</label>
-              <div style="display:flex;gap:6px;align-items:center">
-                <select id="pg-imggen-model" style="flex:1">
+              <div class="field-inline">
+                <select id="pg-imggen-model">
                   <option value="">— click Load to fetch models —</option>
                 </select>
                 <button id="pg-imggen-load-models" class="btn btn-ghost small" type="button">Load Models</button>
@@ -4230,7 +4253,7 @@
               <textarea id="pg-image-prompt" rows="2" placeholder="Professional ecommerce product photo of {ITEM}, white seamless background, studio lighting, realistic detail, marketplace listing photography, no text, no watermarks" autocomplete="off"></textarea>
             </div>
           </div>
-          <div class="imggen-test-row" style="margin-top:14px">
+          <div class="settings-card-foot imggen-test-row">
             <button id="pg-imggen-save" class="btn btn-primary" type="button">Save image settings</button>
             <button id="pg-imggen-test" class="btn btn-secondary" type="button">Test Connection</button>
             <span id="pg-imggen-msg" class="sd-test-msg"></span>
@@ -4253,7 +4276,7 @@
             eBay doesn't offer a Terapeak API, so this logs into eBay once in a real browser window and saves that
             session locally to read real sold-price data for Auto-Fill. Your eBay password is never seen or stored by this app.
           </p>
-          <div class="imggen-test-row">
+          <div class="settings-card-foot imggen-test-row">
             <button id="pg-terapeak-connect" class="btn btn-primary" type="button">Connect Terapeak</button>
             <button id="pg-terapeak-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             <span id="pg-terapeak-status" class="sd-test-msg">Not connected — sold comps will show links only.</span>
@@ -4272,7 +4295,7 @@
             browser window and saves that session locally to search local listings by zip code and radius. Your Facebook password
             is never seen or stored by this app, and nothing is ever searched or posted without you clicking.
           </p>
-          <div class="imggen-test-row">
+          <div class="settings-card-foot imggen-test-row">
             <button id="pg-facebook-connect" class="btn btn-primary" type="button">Connect Facebook</button>
             <button id="pg-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             <span id="pg-facebook-status" class="sd-test-msg">Not connected — local sourcing search is unavailable.</span>
@@ -4283,155 +4306,302 @@
           </p>
         </div>
 
-        <!-- Fees &amp; Costs and Listing Defaults — one card: both are the numbers stamped onto
-             every listing, and neither is part of getting started. -->
-        <div class="setup-section settings-card">
-          <!-- Fees &amp; Costs — the numbers behind every net-profit figure in the app. Saving here
-               re-prices the listing editor, market research, local arbitrage, lot analysis,
-               inventory health and watcher offers at once (they share one FeeProfile). -->
-          <h3 id="fees-costs">Fees &amp; Costs</h3>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        </div><!-- /#pg-optional-group -->
+
+        <!-- ── Fees &amp; Costs ─────────────────────────────────────────────────
+             The numbers behind every net-profit figure in the app. Saving here re-prices the
+             listing editor, market research, local arbitrage, lot analysis, inventory health and
+             watcher offers at once — they share one FeeProfile.
+
+             Eleven number boxes in one flat grid is a form, not an answer. They are four different
+             questions — what someone else takes, what the order costs you, what you keep back for
+             the ones that go wrong, and the line you won't sell under — and a seller who can see
+             which is which fills all four in. One undifferentiated wall is why most of them are
+             still zero, and a zero here is the app quietly overstating every profit it shows. -->
+        <div class="setup-section settings-card" id="pg-fees-card">
+          <div class="connect-card-head">
+            <h3 id="fees-costs">Fees &amp; costs</h3>
+            <span class="connect-tag">Used everywhere</span>
+          </div>
+          <p class="settings-card-copy">
             Every "net profit" and "break-even" the app shows is computed from these. Leaving shipping,
             packaging and handling at zero is what makes a listing look more profitable than it is —
             put your real numbers in once and every screen tells you the truth.
           </p>
-          <div class="form-grid">
-            <div class="field">
-              <label>eBay Final Value Fee (%)</label>
-              <input id="pg-fee-fvf" type="number" step="0.01" min="0" max="90" value="13.25" />
-              <small style="color:var(--muted);font-size:11px">Varies by category and store level — check a recent payout.</small>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">What eBay and the processor take</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-fee-fvf">eBay final value fee</label>
+                <div class="unit-field">
+                  <input id="pg-fee-fvf" type="number" step="0.01" min="0" max="90" value="13.25" />
+                  <label for="pg-fee-fvf" class="unit-mark">%</label>
+                </div>
+                <small class="field-hint">Varies by category and store level — check a recent payout.</small>
+              </div>
+              <div class="field">
+                <label for="pg-fee-fixed">Per-order fee</label>
+                <div class="unit-field is-prefix">
+                  <label for="pg-fee-fixed" class="unit-mark">$</label>
+                  <input id="pg-fee-fixed" type="number" step="0.01" min="0" value="0.40" />
+                </div>
+                <small class="field-hint">eBay's flat charge on every order, whatever it sold for.</small>
+              </div>
+              <div class="field">
+                <label for="pg-fee-promoted">Promoted Listings ad rate</label>
+                <div class="unit-field">
+                  <input id="pg-fee-promoted" type="number" step="0.01" min="0" max="90" value="0" />
+                  <label for="pg-fee-promoted" class="unit-mark">%</label>
+                </div>
+                <small class="field-hint">0 if you don't run Promoted Listings.</small>
+              </div>
+              <div class="field">
+                <label for="pg-fee-payment">Payment processing</label>
+                <div class="unit-field">
+                  <input id="pg-fee-payment" type="number" step="0.01" min="0" max="90" value="0" />
+                  <label for="pg-fee-payment" class="unit-mark">%</label>
+                </div>
+                <small class="field-hint">0 on eBay's all-inclusive fee; set it for other marketplaces.</small>
+              </div>
             </div>
-            <div class="field">
-              <label>Per-Order Fee (USD)</label>
-              <input id="pg-fee-fixed" type="number" step="0.01" min="0" value="0.40" />
-            </div>
-            <div class="field">
-              <label>Promoted Listings Ad Rate (%)</label>
-              <input id="pg-fee-promoted" type="number" step="0.01" min="0" max="90" value="0" />
-              <small style="color:var(--muted);font-size:11px">0 if you don't run Promoted Listings.</small>
-            </div>
-            <div class="field">
-              <label>Payment Processing (%)</label>
-              <input id="pg-fee-payment" type="number" step="0.01" min="0" max="90" value="0" />
-              <small style="color:var(--muted);font-size:11px">0 on eBay's all-inclusive fee; set it for other marketplaces.</small>
-            </div>
-            <div class="field">
-              <label>Typical Shipping Label (USD)</label>
-              <input id="pg-fee-shipping" type="number" step="0.01" min="0" value="0" />
-            </div>
-            <div class="field">
-              <label>Packaging per Order (USD)</label>
-              <input id="pg-fee-packaging" type="number" step="0.01" min="0" value="0" />
-            </div>
-            <div class="field">
-              <label>Your Handling Time (USD)</label>
-              <input id="pg-fee-labor" type="number" step="0.01" min="0" value="0" />
-              <small style="color:var(--muted);font-size:11px">What your time is worth to pick, pack and ship one order.</small>
-            </div>
-            <div class="field">
-              <label>Returns Reserve (%)</label>
-              <input id="pg-fee-returns" type="number" step="0.01" min="0" max="90" value="0" />
-              <small style="color:var(--muted);font-size:11px">Share of sales that come back. 2–5% is typical.</small>
-            </div>
-            <div class="field">
-              <label>Testing / Failure Reserve (%)</label>
-              <input id="pg-fee-testing" type="number" step="0.01" min="0" max="90" value="0" />
-            </div>
-            <div class="field full-width">
-              <div class="fees-floor-head">Your floor — the lowest offer you'll accept</div>
-              <p style="font-size:12px;color:var(--muted);margin:2px 0 10px">
-                Break-even stops you selling at a loss. This stops you selling for nothing. Whichever
-                of the two is higher becomes the minimum offer shown on every listing, the floor the
-                repricer won't cut through, and the limit on offers sent to watchers.
-              </p>
-            </div>
-            <div class="field">
-              <label>Minimum Net Profit per Sale (USD)</label>
-              <input id="pg-fee-min-profit" type="number" step="0.01" min="0" value="0" />
-            </div>
-            <div class="field">
-              <label>Minimum Margin (%)</label>
-              <input id="pg-fee-min-margin" type="number" step="0.01" min="0" max="95" value="0" />
-            </div>
-          </div>
-          <div class="fees-summary" id="pg-fees-summary"></div>
-          <div class="imggen-test-row" style="margin-top:14px">
-            <button id="pg-fees-save" class="btn btn-primary" type="button">Save Fees &amp; Costs</button>
-            <span id="pg-fees-msg" class="sd-test-msg"></span>
           </div>
 
-          <h3>Listing Defaults</h3>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:14px">These values are pre-filled into every new listing. You can still change them per-listing in the modal.</p>
-          <div class="form-grid">
-            <div class="field">
-              <label>Item Location ZIP</label>
-              <input id="pg-default-zip" type="text" maxlength="10" placeholder="e.g. 90210" autocomplete="off" />
-            </div>
-            <div class="field">
-              <label>Country</label>
-              <select id="pg-default-country">
-                <option value="US">United States</option>
-                <option value="CN">China</option>
-                <option value="HK">Hong Kong</option>
-                <option value="CA">Canada</option>
-                <option value="GB">United Kingdom</option>
-                <option value="AU">Australia</option>
-                <option value="DE">Germany</option>
-                <option value="JP">Japan</option>
-                <option value="KR">South Korea</option>
-                <option value="TW">Taiwan</option>
-                <option value="SG">Singapore</option>
-                <option value="FR">France</option>
-                <option value="IT">Italy</option>
-                <option value="ES">Spain</option>
-                <option value="NL">Netherlands</option>
-                <option value="MX">Mexico</option>
-                <option value="IN">India</option>
-                <option value="BR">Brazil</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Package Type</label>
-              <select id="pg-default-package-type">
-                <option value="LETTER">Letter</option>
-                <option value="LARGE_ENVELOPE_OR_FLAT_PACK">Large Envelope / Flat Pack</option>
-                <option value="PACKAGE_THICK_ENVELOPE">Package / Thick Envelope</option>
-                <option value="MAILING_BOX">Mailing Box</option>
-                <option value="BULKY_GOODS">Bulky Goods</option>
-                <option value="VERY_LARGE_PACKAGE">Very Large Package</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Handling Time</label>
-              <select id="pg-default-handling">
-                <option value="1">1 business day</option>
-                <option value="2">2 business days</option>
-                <option value="3">3 business days</option>
-                <option value="5">5 business days</option>
-              </select>
-            </div>
-            <div class="field"><label>Weight — Pounds</label><input id="pg-default-weight-lbs" type="number" min="0" value="0" /></div>
-            <div class="field"><label>Weight — Ounces</label><input id="pg-default-weight-oz" type="number" min="0" max="15" value="0" /></div>
-            <div class="field"><label>Length (inches)</label><input id="pg-default-length" type="number" min="0" step="0.1" value="0" /></div>
-            <div class="field"><label>Width (inches)</label><input id="pg-default-width" type="number" min="0" step="0.1" value="0" /></div>
-            <div class="field"><label>Height (inches)</label><input id="pg-default-height" type="number" min="0" step="0.1" value="0" /></div>
-            <div class="field full-width">
-              <label>Default Shipping / Fulfillment Policy ID</label>
-              <input id="pg-default-fulfillment" type="text" placeholder="Policy ID — loaded from your eBay policies" autocomplete="off" />
-              <small id="pg-default-fulfillment-name" style="color:var(--muted);font-size:11px;margin-top:3px;display:block"></small>
-            </div>
-            <div class="field full-width">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input id="pg-default-best-offer" type="checkbox" />
-                Enable Best Offer by default on every listing
-              </label>
+          <div class="settings-fieldset">
+            <p class="settings-subhead">What each order costs you</p>
+            <p class="settings-subnote">The three most commonly left at zero, and the three that decide whether a $12 flip was worth doing.</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-fee-shipping">Typical shipping label</label>
+                <div class="unit-field is-prefix">
+                  <label for="pg-fee-shipping" class="unit-mark">$</label>
+                  <input id="pg-fee-shipping" type="number" step="0.01" min="0" value="0" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-fee-packaging">Packaging per order</label>
+                <div class="unit-field is-prefix">
+                  <label for="pg-fee-packaging" class="unit-mark">$</label>
+                  <input id="pg-fee-packaging" type="number" step="0.01" min="0" value="0" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-fee-labor">Your handling time</label>
+                <div class="unit-field is-prefix">
+                  <label for="pg-fee-labor" class="unit-mark">$</label>
+                  <input id="pg-fee-labor" type="number" step="0.01" min="0" value="0" />
+                </div>
+                <small class="field-hint">What your time is worth to pick, pack and ship one order.</small>
+              </div>
             </div>
           </div>
-          <div class="imggen-test-row" style="margin-top:14px">
-            <button id="pg-defaults-save" class="btn btn-primary" type="button">Save Defaults</button>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">What you hold back</p>
+            <p class="settings-subnote">Spread across every sale, so the ones that come back or turn out to be dead are already paid for.</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-fee-returns">Returns reserve</label>
+                <div class="unit-field">
+                  <input id="pg-fee-returns" type="number" step="0.01" min="0" max="90" value="0" />
+                  <label for="pg-fee-returns" class="unit-mark">%</label>
+                </div>
+                <small class="field-hint">Share of sales that come back. 2–5% is typical.</small>
+              </div>
+              <div class="field">
+                <label for="pg-fee-testing">Testing / failure reserve</label>
+                <div class="unit-field">
+                  <input id="pg-fee-testing" type="number" step="0.01" min="0" max="90" value="0" />
+                  <label for="pg-fee-testing" class="unit-mark">%</label>
+                </div>
+                <small class="field-hint">Share of what you buy that never makes it to a listing.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">Your floor — the lowest offer you'll accept</p>
+            <p class="settings-subnote">
+              Break-even stops you selling at a loss. This stops you selling for nothing. Whichever
+              of the two is higher becomes the minimum offer shown on every listing, the floor the
+              repricer won't cut through, and the limit on offers sent to watchers.
+            </p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-fee-min-profit">Minimum net profit per sale</label>
+                <div class="unit-field is-prefix">
+                  <label for="pg-fee-min-profit" class="unit-mark">$</label>
+                  <input id="pg-fee-min-profit" type="number" step="0.01" min="0" value="0" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-fee-min-margin">Minimum margin</label>
+                <div class="unit-field">
+                  <input id="pg-fee-min-margin" type="number" step="0.01" min="0" max="95" value="0" />
+                  <label for="pg-fee-min-margin" class="unit-mark">%</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="fees-summary" id="pg-fees-summary"></div>
+          <div class="settings-card-foot imggen-test-row">
+            <button id="pg-fees-save" class="btn btn-primary" type="button">Save fees &amp; costs</button>
+            <span id="pg-fees-msg" class="sd-test-msg"></span>
+          </div>
+        </div>
+
+        <!-- ── Listing Defaults ───────────────────────────────────────────────
+             Its own card, not a second half of the fees card. Fees are what a sale costs; these are
+             what goes in the box. Sharing one card meant one 24-field scroll with two Save buttons
+             in it, and a seller who pressed the first one had saved neither. -->
+        <div class="setup-section settings-card" id="pg-defaults-card">
+          <div class="connect-card-head">
+            <h3>Listing defaults</h3>
+            <span class="connect-tag">Per listing, editable</span>
+          </div>
+          <p class="settings-card-copy">These values are pre-filled into every new listing. You can still change them per-listing in the modal.</p>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">Where it ships from</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-default-zip">Item location ZIP</label>
+                <input id="pg-default-zip" type="text" maxlength="10" placeholder="e.g. 90210" autocomplete="off" />
+                <small class="field-hint">eBay quotes the buyer's shipping from here.</small>
+              </div>
+              <div class="field">
+                <label for="pg-default-country">Country</label>
+                <select id="pg-default-country">
+                  <option value="US">United States</option>
+                  <option value="CN">China</option>
+                  <option value="HK">Hong Kong</option>
+                  <option value="CA">Canada</option>
+                  <option value="GB">United Kingdom</option>
+                  <option value="AU">Australia</option>
+                  <option value="DE">Germany</option>
+                  <option value="JP">Japan</option>
+                  <option value="KR">South Korea</option>
+                  <option value="TW">Taiwan</option>
+                  <option value="SG">Singapore</option>
+                  <option value="FR">France</option>
+                  <option value="IT">Italy</option>
+                  <option value="ES">Spain</option>
+                  <option value="NL">Netherlands</option>
+                  <option value="MX">Mexico</option>
+                  <option value="IN">India</option>
+                  <option value="BR">Brazil</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">The box it goes in</p>
+            <p class="settings-subnote">A blank weight makes eBay's calculated shipping quote nothing at all. These are only the starting point — the listing form estimates the real ones from what the item is.</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-default-package-type">Package type</label>
+                <select id="pg-default-package-type">
+                  <option value="LETTER">Letter</option>
+                  <option value="LARGE_ENVELOPE_OR_FLAT_PACK">Large Envelope / Flat Pack</option>
+                  <option value="PACKAGE_THICK_ENVELOPE">Package / Thick Envelope</option>
+                  <option value="MAILING_BOX">Mailing Box</option>
+                  <option value="BULKY_GOODS">Bulky Goods</option>
+                  <option value="VERY_LARGE_PACKAGE">Very Large Package</option>
+                </select>
+              </div>
+            </div>
+            <div class="measure-grid">
+              <div class="field">
+                <label for="pg-default-weight-lbs">Pounds</label>
+                <div class="unit-field">
+                  <input id="pg-default-weight-lbs" type="number" min="0" value="0" />
+                  <label for="pg-default-weight-lbs" class="unit-mark">lb</label>
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-default-weight-oz">Ounces</label>
+                <div class="unit-field">
+                  <input id="pg-default-weight-oz" type="number" min="0" max="15" value="0" />
+                  <label for="pg-default-weight-oz" class="unit-mark">oz</label>
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-default-length">Length</label>
+                <div class="unit-field">
+                  <input id="pg-default-length" type="number" min="0" step="0.1" value="0" />
+                  <label for="pg-default-length" class="unit-mark">in</label>
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-default-width">Width</label>
+                <div class="unit-field">
+                  <input id="pg-default-width" type="number" min="0" step="0.1" value="0" />
+                  <label for="pg-default-width" class="unit-mark">in</label>
+                </div>
+              </div>
+              <div class="field">
+                <label for="pg-default-height">Height</label>
+                <div class="unit-field">
+                  <input id="pg-default-height" type="number" min="0" step="0.1" value="0" />
+                  <label for="pg-default-height" class="unit-mark">in</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-fieldset">
+            <p class="settings-subhead">How it sells</p>
+            <div class="form-grid">
+              <div class="field">
+                <label for="pg-default-handling">Handling time</label>
+                <select id="pg-default-handling">
+                  <option value="1">1 business day</option>
+                  <option value="2">2 business days</option>
+                  <option value="3">3 business days</option>
+                  <option value="5">5 business days</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="pg-default-fulfillment">Default shipping / fulfillment policy ID</label>
+                <input id="pg-default-fulfillment" type="text" placeholder="Policy ID — loaded from your eBay policies" autocomplete="off" />
+                <small id="pg-default-fulfillment-name" class="field-hint"></small>
+              </div>
+              <div class="field full-width">
+                <label class="toggle-label" for="pg-default-best-offer">
+                  <input id="pg-default-best-offer" type="checkbox" />
+                  Enable Best Offer by default on every listing
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card-foot imggen-test-row">
+            <button id="pg-defaults-save" class="btn btn-primary" type="button">Save defaults</button>
             <span id="pg-defaults-msg" class="sd-test-msg"></span>
           </div>
         </div>
+
+        <!-- ── This computer ──────────────────────────────────────────────────
+             Read-only diagnostics: where the database is, how many local edits are in it, which
+             photo folders were found. It used to be the second thing on the page, above the two
+             steps the app cannot run without — a paragraph nobody acts on, sitting where the
+             first thing to do belongs. It is a footer now. -->
+        <div class="setup-section settings-card" id="pg-system-card">
+          <div class="connect-card-head">
+            <h3>This computer</h3>
+            <span class="connect-tag">Read only</span>
+          </div>
+          <p class="settings-card-copy">
+            Where your work is kept on this machine. Nothing here needs changing — it is here so you
+            can find your database and your photos, and so a support question has an answer.
+          </p>
+          <div id="settings-status" class="settings-list"></div>
+        </div>
+
+          </div><!-- /.settings-body -->
+        </div><!-- /.settings-layout -->
       </section>
 
       <section id="logs-section" class="panel logs-panel hidden">
@@ -5111,6 +5281,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=99"></script>
+  <script src="app.js?v=100"></script>
 </body>
 </html>

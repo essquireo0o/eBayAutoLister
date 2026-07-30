@@ -7394,3 +7394,115 @@ move remains uncommitted in the working tree for whoever owns it.
 
 A dev-build `AutoListerB1.exe` from `bin\Debug` (PID 71644) held a file lock on the build output and
 was stopped. No installed app instance was running.
+
+---
+
+## Settings gets a map, and its numbers get their units (autonomous session, 2026-07-30)
+
+Settings was the last screen in the app that had never had a design pass. Every other surface has
+been through the identity, motion, chart, data-table and theme passes; this one was still the shape
+it grew into — six subjects stacked in one ~3,000px scroll with no way to reach any of them except
+by scrolling past the other five, and the only screen in the app that styled itself with `style=""`.
+
+**No endpoint, rule, number or business logic changed.** Nothing was added to the server, no request
+body changed shape, and every element id `app.js` reads on this page is still on the element it was
+bound to — a test now enumerates all 57 of them.
+
+## What changed
+
+**1. A rail, so the page has a map.** Six entries, sticky, scroll-spied. It is `<button>` and not
+`<a href="#pg-fees-card">` for a specific reason: `location.hash` is this app's router (`handleNav`),
+so a real in-page anchor would have navigated the whole workspace away from Settings on its way to a
+card six inches down the page. Nothing in `initSettingsNav` reads or writes the hash.
+
+**2. Every card is one subject.** Fees & Costs and Listing Defaults shared a single card — 24 fields
+and *two Save buttons inside one frame*. A seller who typed in both halves and pressed the first
+button had saved neither. They are two cards with one Save each now.
+
+**3. The eleven fee fields are four questions, so they are four groups.** What eBay and the
+processor take · what each order costs you · what you hold back · your floor. A flat grid of eleven
+number boxes is a form, not an answer, and a fee left at zero is the app quietly overstating every
+profit figure it shows.
+
+**4. Units are attached to their fields.** `13.25` was dollars or percent depending on a bracket
+four words away at the end of the label. Each field now carries a `$` / `%` / `lb` / `oz` / `in`
+mark — implemented as a **second `<label for>` on the same input**, not a decorative span, so the
+unit joins the accessible name rather than being a symbol only sighted users get, and clicking it
+focuses the field like the label it is.
+
+**5. Read-only diagnostics moved to the bottom.** "Local system status" — database path, edit count,
+photo folders — was the *second* thing on the page, above the two steps the app cannot run without.
+Nobody acts on it. It is a footer now, and the required card's own claim, which used to read
+"everything below this card is optional" while sitting under two things that were not, is finally
+true as written.
+
+**6. The inline styles are gone.** Around twenty `style=""` attributes became real classes
+(`.field-hint`, `.field-inline`, `.settings-card-foot`, `.settings-subhead`). Two survive and are
+not decoration: `applyPgImggenVisibility` writes `element.style.display` directly, so those two
+carry the initial state JavaScript then toggles. A test asserts exactly those two and no others.
+
+Also fixed while in here: `.settings-row` drew its own border and radius *inside* `.settings-list`,
+which already draws a frame and clips to it — four rounded boxes inside a rounded box. Rows share
+the container and split on a rule now, the same fix the log list got in the data-table pass and this
+list did not.
+
+## Two bugs the browser found that reading the CSS would not have
+
+- **The rail was pinned under the workspace tab bar.** `.ws-tab-bar` is `position: fixed`,
+  `z-index: 950`, and **0px tall until a second workspace tab is opened**. A flat `top` therefore
+  looks perfect for exactly as long as the seller has one tab, and eats the rail's first entry from
+  the moment they have two — which is always, by the time they have reached Settings from anywhere.
+  Every offset on the screen goes through `var(--ws-tabbar-h)` now, the same token the sidebar uses.
+- **In the horizontal layout each rail entry was one viewport wide.** The stacked rail sets
+  `width: 100%`; a flex item that keeps it is full-container-width, six times over, in a row that
+  then scrolls — showing exactly one name at a time. Measured, not guessed: six links at
+  99–118px, no scroll, at 1600 / 1280 / 1024.
+
+The breakpoint is **1280px**, not something narrower, because the fixed sidebar has already taken
+320px before this page gets a say: on a 1280-wide laptop a side rail leaves the form 672px and the
+same page with the rail overhead gets 896. A rail is worth having; it is not worth two-thirds of
+the form.
+
+## Files
+
+| File | What |
+|---|---|
+| `wwwroot/index.html` | the rail; the optional group wrapper; fees and defaults split into two cards with grouped fieldsets; unit-marked fields; diagnostics moved to the bottom; inline styles removed; `app.js?v=100`, `style.css?v=88` |
+| `wwwroot/style.css` | new "The Settings screen" section — layout, rail, cards, fieldsets, unit affixes, three breakpoints; `.settings-row` double-boxing fixed |
+| `wwwroot/app.js` | `initSettingsNav()` and one line in `init()` |
+| `Tests/SettingsScreenAssetTests.cs` | new — 9: all 57 bound ids, no duplicate ids page-wide, the rail's buttons-not-anchors rule, rail/page order agreement, the tab-bar offset, one Save per card, diagnostics below required setup, the unit labels, no inline styles, theme roles only |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2592 passed**, 0 failed — 9 new, no pre-existing test changed or removed |
+| `node --check wwwroot/app.js` | clean |
+| The screen itself | driven headless (Playwright/Chromium, 2x DPI) against the running `AutoListerB1.exe` on `:9332`, in **light and dark**, at **1600 / 1280 / 1024**: rail sticky and clearing the tab bar, all six entries visible with no scroll at every width, clicking an entry scrolls its card to just below the rail, the spy follows the scroll and reaches "This computer" at the bottom of the document, unit marks sit inside their inputs without touching the value, clicking a unit focuses its field, no horizontal document overflow, **no console or page errors in any run** |
+
+`wwwroot` is an `EmbeddedResource`, so every visual check was made against a rebuilt, restarted
+binary — the server was confirmed serving `style.css?v=88` and `app.js?v=100` first. The drive
+scripts and screenshots were deleted after the run; nothing from the harness ships.
+
+## Known limits
+
+- **The scroll-spy is a scroll listener, not an IntersectionObserver.** It is rAF-throttled and
+  returns immediately when `#settings-section` is hidden, which is every screen but this one.
+- **Number spinners are suppressed on unit-marked fields**, because the suffix sits exactly where
+  Chrome draws them. Keyboard stepping still works; only the two-pixel mouse arrows are gone.
+- **Nothing was made to warn about unsaved edits.** Each card still has to be saved on its own —
+  the change here is that it is now obvious which button saves which card, not that they were merged.
+- **The rail is not keyboard-arrow-navigable** as a tablist would be. It is six ordinary buttons in
+  a `<nav>`, reachable by Tab, with `aria-current` on the one you are reading.
+
+## Left untouched
+
+The same files were already modified in the working tree when this session started and are **not**
+part of this commit: `ClaudeService.cs`, `HostedMarketplaceRepository.cs`, `TerapeakService.cs`,
+`TerapeakLoginScriptTests.cs`, `EarningsCalculator.cs`, `MARKETING.md`, `tasks-msi-both-sites.yaml`,
+and another agent's `#er-awaiting` move inside `index.html`. `index.html` was staged as its committed
+version plus this session's hunks only, so that move remains uncommitted for whoever owns it.
+
+A dev-build `AutoListerB1.exe` from `bin\Debug` held a file lock on the build output and was stopped
+and restarted several times during verification. No installed app instance was running.

@@ -592,6 +592,7 @@
     initVizTooltips();        // one delegated tooltip layer, so any chart drawn later opts in with an attribute
     initPhotoGrid();          // render 6 photo slots on page load, not just on modal open
     initPhotoEditorPaste();
+    initSettingsNav();        // the Settings rail; idle until the Settings section is on screen
     bindDashboard();
     bindSetup();
     bindSetupChecklist();
@@ -1268,6 +1269,73 @@
     await loadSettingsStatus();
     await loadTerapeakStatus();
     await loadFacebookStatus();
+  }
+
+  // ── The Settings rail ─────────────────────────────────────────────────────
+  // Scroll-spy over the six cards on the Settings page, plus click-to-scroll.
+  //
+  // The rail is buttons and not <a href="#pg-fees-card">, and the reason is not
+  // cosmetic: location.hash is this app's router — see handleNav — so a real
+  // anchor would navigate the whole workspace away from Settings on its way to a
+  // card six inches down the page. Nothing here reads or writes the hash.
+  function initSettingsNav() {
+    const nav = $('settings-nav');
+    if (!nav) return;
+
+    const targets = Array.from(nav.querySelectorAll('.settings-nav-link'))
+      .map(link => ({ link, el: $(link.dataset.settingsTarget) }))
+      .filter(t => t.el);
+    if (!targets.length) return;
+
+    let current = null;
+
+    function mark(link) {
+      if (link === current) return;
+      current = link;
+      targets.forEach(({ link: l }) => {
+        if (l === link) l.setAttribute('aria-current', 'true');
+        else l.removeAttribute('aria-current');
+      });
+    }
+
+    // Whichever card crossed the reading line last. It starts on the first one
+    // rather than on nothing, because a rail with no mark on it reads as broken.
+    function spy() {
+      const line = Math.max(96, window.innerHeight * 0.28);
+      let found = targets[0];
+      for (const t of targets) {
+        if (t.el.getBoundingClientRect().top <= line) found = t;
+      }
+      // The last card is often too short to ever reach the line. At the bottom of
+      // the document it is the one being read, whatever the arithmetic says.
+      const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+      mark((atEnd ? targets[targets.length - 1] : found).link);
+    }
+
+    let ticking = false;
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        // Settings is one of twenty-odd sections sharing this scroll container.
+        if ($('settings-section')?.classList.contains('hidden')) return;
+        spy();
+      });
+    }
+
+    targets.forEach(({ link, el }) => {
+      link.addEventListener('click', () => {
+        // Marked before the scroll, not after it: the answer to a click is owed
+        // immediately, and smooth scrolling takes a few hundred milliseconds.
+        mark(link);
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    mark(targets[0].link);
   }
 
   // The header chip on an optional connect strip. Three strips, one look, so "connected" means

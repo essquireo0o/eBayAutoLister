@@ -221,6 +221,10 @@
   --r-xl: 20px;
   --r-2xl: 28px;
   --r-pill: 999px;
+
+  /* Shared width for the Sold Price Research block, so the stat cards and the list of sales
+     below them line up on the same left and right edges instead of being two different widths. */
+  --sold-comps-w: 1120px;
   --radius: 12px;
 
   /* ── Elevation ────────────────────────────────────────────────────────
@@ -1606,16 +1610,21 @@ button { cursor: pointer; }
    border of its own. */
 .logs-list > .state { border: 0; border-radius: 0; }
 
+/* One bordered container, rows split on a rule — not a bordered rounded box
+   inside a bordered rounded box, four times over. `.settings-list` already
+   draws the frame and clips to it; each row drawing its own frame again is the
+   double-boxing the log list was fixed of and this one was not. */
 .settings-row {
   display: grid;
   grid-template-columns: minmax(120px, 180px) 1fr;
   gap: 12px;
   align-items: start;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
   background: var(--soft);
 }
+
+.settings-row:last-child { border-bottom: 0; }
 
 .settings-row span {
   color: var(--muted);
@@ -2947,10 +2956,18 @@ textarea {
 .nl-sold-comps-link.hidden { display: none; }
 .nl-sold-comps-link-secondary { color: rgba(255,255,255,.7); font-weight: 600; padding-left: 4px; border-left: 1px solid rgba(255,255,255,.2); margin-left: -4px; }
 
+/* Stats row and the comps list below it share one width and one centre line. They used to
+   disagree — the stats stretched edge to edge while the list was capped at 780px, so on a wide
+   window the numbers ran the full panel and the sales sat in a narrow column underneath with
+   dead space either side. Same max-width on both makes it read as one block. */
 .nl-sold-comps-stats {
   display: flex;
   gap: 10px;
   margin-bottom: 10px;
+  max-width: var(--sold-comps-w);
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
 }
 .nl-sold-comps-stat {
   flex: 1;
@@ -2974,14 +2991,18 @@ textarea {
   flex-direction: column;
   gap: 7px;
   padding-right: 4px;
-  max-width: 780px;
+  max-width: var(--sold-comps-w);
   margin: 0 auto;
   width: 100%;
 }
 .nl-sold-comp-table:empty { display: none; }
+/* Fixed tracks for date and price rather than auto: with auto, every row sized its own columns
+   from its own text, so the dates and the money zig-zagged down the list instead of forming two
+   straight edges. Price is right-aligned so the figures line up on the decimal side, which is
+   how you actually scan a column of prices. */
 .nl-sold-comp-row {
   display: grid;
-  grid-template-columns: 32px 1fr auto auto;
+  grid-template-columns: 32px minmax(0, 1fr) 62px 104px;
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
@@ -3012,8 +3033,24 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.nl-sold-comp-date  { color: rgba(255,255,255,.6); font-size: var(--fs-sm); white-space: nowrap; }
-.nl-sold-comp-price { color: var(--gold-note); font-weight: 700; font-size: var(--fs-md); white-space: nowrap; }
+.nl-sold-comp-date  { color: rgba(255,255,255,.6); font-size: var(--fs-sm); white-space: nowrap; text-align: right; }
+.nl-sold-comp-price {
+  color: var(--gold-note);
+  font-weight: 700;
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  text-align: right;
+  /* Tabular figures: proportional digits make a 1 narrower than a 0, so a column of prices
+     never quite lines up. This locks every digit to the same advance width. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Narrow windows: drop the fixed money tracks before they squeeze the title to nothing. */
+@media (max-width: 720px) {
+  .nl-sold-comp-row { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .nl-sold-comp-date { display: none; }
+}
 
 .nl-ai-modify-input:focus { border-color: var(--accent-600) !important; }
 .nl-ai-modify-input::placeholder { color: var(--pale-accent); }
@@ -3909,6 +3946,270 @@ textarea {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .06em;
+}
+
+/* ── The Settings screen ───────────────────────────────────────────────────
+   Six subjects, about three screens of scrolling, and until this pass the only
+   way to reach one of them was to scroll past the other five. Three things
+   change and nothing about what any control does:
+
+   1. A rail, so the page has a map. Sticky, so the map does not scroll away.
+   2. Every card is one subject. Fees and Listing Defaults shared a card with
+      two Save buttons in it, which is a trap: press the first one and you have
+      saved neither half of what you just typed.
+   3. Units live on the field, not in a parenthesis at the end of the label.
+      "13.25" is a fee, a dollar amount or a percentage depending on a bracket
+      four words away — and getting that wrong writes a wrong number into every
+      profit figure the app shows. */
+.settings-panel { max-width: 1240px; }
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+/* Pinned below the workspace tab bar, not under it. `.ws-tab-bar` is
+   position:fixed at z-index 950 and is only ever 0px tall until a second tab is
+   opened — so a rail pinned at a flat `top` looks right for exactly as long as
+   the seller has one tab, and loses its first entry behind the bar the moment
+   they have two. The sidebar already offsets by this token; so does this. */
+.settings-nav {
+  position: sticky;
+  top: calc(var(--ws-tabbar-h) + var(--s5));
+  display: grid;
+  gap: 2px;
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.settings-nav-link {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 8px 10px 8px 14px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+
+/* One marker that never leaves the DOM, so reading down the page grows and
+   shrinks a gold bar rather than blinking six of them on and off. */
+.settings-nav-link::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: var(--r-pill);
+  background: var(--gold);
+  transform: translateY(-50%);
+  transition: height var(--dur-2) var(--ease-out);
+}
+
+.settings-nav-link:hover { color: var(--ink); background: var(--soft); }
+.settings-nav-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.settings-nav-link[aria-current="true"] {
+  color: var(--ink);
+  background: var(--soft-2);
+  font-weight: 750;
+}
+.settings-nav-link[aria-current="true"]::before { height: 18px; }
+
+.settings-body { min-width: 0; }
+
+/* A scroll target has to clear the top of the viewport rather than land under
+   it — otherwise pressing a rail item puts its own heading off-screen. */
+.settings-body .settings-card,
+.settings-group { scroll-margin-top: calc(var(--ws-tabbar-h) + var(--s5)); }
+
+/* Real cards, not rule-separated bands. `.setup-section` gives every one of
+   these a hairline and no frame, which is right inside the setup modal where
+   they are steps of one thing, and wrong on a page where they are six separate
+   subjects. `#pg-required-card` keeps its own gold-edged treatment — it is the
+   only one of them you are behind on. */
+.settings-body .settings-card {
+  margin-top: var(--s4);
+  padding: var(--s5) var(--s5) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+.settings-fieldset { margin-top: var(--s5); }
+
+.settings-subhead {
+  margin: 0;
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+
+.settings-subnote {
+  margin: var(--s2) 0 0;
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
+.settings-fieldset .form-grid,
+.settings-fieldset .measure-grid { margin-top: var(--s3); }
+
+/* Five short numbers that belong together read as five short numbers, not as
+   two-and-a-half rows of a two-column form. */
+.measure-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+/* The action row is the bottom of a card, so it is drawn as one. */
+.settings-card-foot {
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line-soft);
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  line-height: 1.45;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-inline > select,
+.field-inline > input { flex: 1; min-width: 0; }
+
+/* ── Units on the field ────────────────────────────────────────────────
+   The mark is a second <label for> on the same input, not a decorative span:
+   an input may carry any number of labels and their text concatenates, so the
+   unit is part of the accessible name rather than a symbol only sighted users
+   get — and clicking it focuses the field, like the label it is. */
+/* A percentage is two characters wide. Letting it stretch to a third of a
+   1240px page is the difference between a form that was laid out and a form
+   that was merely filled with controls. */
+.unit-field {
+  position: relative;
+  display: block;
+  max-width: 240px;
+}
+
+.unit-field > input { padding-right: 38px; }
+.unit-field.is-prefix > input { padding-right: 11px; padding-left: 26px; }
+
+/* Spinner arrows would sit exactly where the suffix does. Keyboard stepping
+   still works — only the two-pixel mouse targets go. */
+.unit-field > input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.unit-field > input[type="number"]::-webkit-outer-spin-button,
+.unit-field > input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.unit-mark {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  padding: 0 10px 0 4px;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: text;
+  user-select: none;
+}
+
+.unit-field.is-prefix > .unit-mark {
+  right: auto;
+  left: 1px;
+  min-width: 0;
+  padding: 0 4px 0 11px;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+
+/* Below the two-column width the rail becomes a scroller across the top: still
+   the same six names in the same order, still sticky, still marking where you
+   are — the marker just moves from the left edge to the underline.
+
+   The breakpoint is 1280 and not something narrower because the fixed sidebar
+   has already taken 320px before this page gets a say: on a 1280-wide laptop a
+   side rail leaves the form 672px, and the same page with the rail overhead
+   gets 896. A rail is worth having; it is not worth two-thirds of the form. */
+@media (max-width: 1280px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s4);
+  }
+
+  .settings-nav {
+    position: sticky;
+    top: var(--ws-tabbar-h);
+    z-index: 5;
+    display: flex;
+    gap: var(--s1);
+    overflow-x: auto;
+    border-radius: var(--r-md);
+  }
+
+  /* `width: auto` is load-bearing: the stacked rail sets width:100%, and a flex
+     item keeping it is one viewport wide each — six of them in a row that then
+     scrolls, showing exactly one name at a time. */
+  .settings-nav-link {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 7px 12px;
+    white-space: nowrap;
+  }
+
+  .settings-nav-link::before {
+    left: 10px;
+    right: 10px;
+    top: auto;
+    bottom: 3px;
+    width: auto;
+    transform: none;
+  }
+  .settings-nav-link[aria-current="true"]::before { height: 2px; }
+
+  /* The rail is overhead now, so a card scrolled to has to clear it as well as
+     the tab bar it is itself sitting under. */
+  .settings-body .settings-card,
+  .settings-group { scroll-margin-top: calc(var(--ws-tabbar-h) + 62px); }
+}
+
+@media (max-width: 900px) {
+  .measure-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .measure-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-body .settings-card { padding: var(--s4) var(--s4) var(--s3); }
 }
 
 /* ── Connections: the connection doctor ─────────────────────────────
