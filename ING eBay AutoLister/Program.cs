@@ -7830,7 +7830,7 @@ app.MapGet("/api/ebay/category-aspects", async (string? categoryId, EbayService 
 // it couldn't check rather than implying everything passed.
 app.MapPost("/api/listing/readiness", async (
     ReadinessRequest req, EbayService ebay, CredentialsStore store,
-    ProductIdentityExtractor identity, ActionLog log) =>
+    ProductIdentityExtractor identity, PackageEstimator packages, ActionLog log) =>
 {
     var aspectStatus  = "ok";
     var aspectMessage = "";
@@ -7885,7 +7885,19 @@ app.MapPost("/api/listing/readiness", async (
     var (fields, custom) = AspectMatcher.Evaluate(
         aspects, req.ItemSpecifics ?? [], facts);
 
-    var result = ListingReadinessAnalyzer.Analyze(req, fields, aspectStatus, aspectMessage, custom);
+    // What the app can fill in for the seller. Same estimator every sourcing board in the app
+    // prices shipping with, so the box quoted on the deal that bought this item and the box on
+    // the listing that sells it are the same box. Never throws into the check: a readiness pass
+    // that fails because an offer couldn't be built has got in the way of listing.
+    List<FieldSuggestion> suggestions = [];
+    try
+    {
+        var zip = store.GetPublicFields().DefaultPostalCode;
+        suggestions = ListingAutofill.Suggest(req, parsed, packages.EstimateFromListing(req), zip);
+    }
+    catch (Exception ex) { log.Add("Warning", "Readiness: autofill suggestions failed", ex.Message); }
+
+    var result = ListingReadinessAnalyzer.Analyze(req, fields, aspectStatus, aspectMessage, custom, suggestions);
     return Results.Ok(result);
 });
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=86" />
+  <link rel="stylesheet" href="style.css?v=87" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1074,6 +1074,18 @@
                 <span class="rd-counts" id="nl-rd-counts"></span>
                 <span class="rd-chevron" aria-hidden="true">▾</span>
               </button>
+
+              <!-- The one click. Everything the app can fill from what the seller already typed —
+                   brand, part number, the ZIP in Settings, the packed box — plus eBay's own
+                   required Item Specifics, applied together. Outside the collapsed fix list on
+                   purpose: an action buried behind a disclosure triangle is an action nobody
+                   takes. Hidden entirely when there is nothing to fill, so it never sits there
+                   as a button that does nothing. -->
+              <div id="nl-rd-fill-row" class="rd-fill-row" hidden>
+                <button type="button" id="nl-rd-fill" class="btn btn-primary small">Fill in what you can</button>
+                <span class="rd-fill-note" id="nl-rd-fill-note"></span>
+              </div>
+
               <div id="nl-rd-list" class="rd-list" hidden></div>
             </div>
 
@@ -5099,6 +5111,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=98"></script>
+  <script src="app.js?v=99"></script>
 </body>
 </html>

@@ -7280,3 +7280,117 @@ this one. The `index.html` hunks were swept into the first commit by a path-leve
 **split back out by amend**; both files are left uncommitted for whoever owns them. The only
 `index.html` line in this commit is the `app.js?v=96 → 98` bump. That agent had already moved the
 tag to 97 in the working tree, so 98 clears both.
+
+---
+
+## The checklist fills itself in — one click from item to listable (autonomous session, 2026-07-30)
+
+The pre-publish readiness check could say a field was empty and nothing else. Every finding ended
+at **"Go to it"**: the seller was told what eBay wanted, scrolled to the box, and typed it. For most
+of them the app already knew the answer — the brand was in the title it had just written, the ZIP
+was in Settings, and what a packed ASIC miner weighs is the entire reason `PackageEstimator` exists.
+
+That estimator has been in the codebase pricing every sourcing board in the app, and **nothing in
+the listing form had ever called it.** A seller filling in shipping got one global default weight
+applied to a trading card and a lawn mower alike, or a blank — and a blank weight means eBay's
+calculated shipping quotes nothing at all.
+
+So a finding can now carry the value that resolves it, and one button applies all of them.
+
+## What it fills
+
+| Field | Where the value comes from | Confidence |
+|---|---|---|
+| Brand | the brand named in the seller's own title | high |
+| MPN | the part number in the title — only when the listing has *no* identifier at all | high |
+| Item location ZIP | the ZIP already saved in Settings | high |
+| Package weight | `PackageEstimator` — pounds and ounces together | medium (low if unrecognised) |
+| Package size | `PackageEstimator` — all three sides or none | medium (low if unrecognised) |
+| Package type | the smallest of eBay's six classes the estimated box actually fits | medium |
+
+**Package type is the one field here that was never blank.** Every listing opens on the seller's
+default, so a 44 lb miner inherited "Package / Thick Envelope" in silence and eBay quoted the buyer
+from it. It is only ever suggested *upward* — a seller may well know something packs flatter than
+the estimate expects, but nobody benefits from a parcel booked smaller than it is.
+
+## The three rules that make it safe to press
+
+1. **It never writes over a fact.** A suggestion is only ever attached to a finding the readiness
+   check itself raised, and the checks are the only thing that decides a field is empty. The
+   browser refuses again on the way in, because a result rendered a moment before the seller typed
+   is stale by the time the button is pressed.
+2. **It never passes a guess off as a reading.** Anything inferred is flagged `isEstimate` and
+   carries the estimator's own basis — *"Estimated from "bitcoin miner" in the title — a typical
+   packed asic miner. Weigh it to make this exact."* — on the button that accepts it, not in a
+   tooltip. This number prices a shipping label.
+3. **An unrecognised item is not swept in.** When the estimator falls back (nothing in the title
+   said what the item is), the package is still offered — a blank weight quotes nothing — but at
+   `low` confidence, so it has to be read and clicked on its own. Same high/medium rule the Item
+   Specifics autofill already used.
+
+Offering values changed no severities: these are the app's opinion about what sells, and being
+able to fix them in one click must not promote a tip into one of eBay's rules. A test pins that.
+
+## Fewer clicks
+
+`Fill in N things` sits **above** the collapsed fix list, not inside it — an action behind a
+disclosure triangle is an action nobody takes. Its label counts what pressing it will actually do,
+listing fields *plus* eBay's own required Item Specifics, so the promise and the action can't
+drift. Nothing to fill means no button rather than a dead one.
+
+Measured on a real draft (title + price, nothing else): **six fields in one click**, and the
+readiness score moved 23 → 34 with four findings cleared.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/ListingAutofill.cs` | new — the whole engine, pure and static: no eBay call, no database, no clock |
+| `Models/ListingReadinessModels.cs` | `FieldSuggestion`; `ReadinessFix.Suggestion`; `FieldSuggestions` + `FillableFieldCount` on the result |
+| `Services/ListingReadinessAnalyzer.cs` | attaches each offer to the finding it answers and drops the rest; two new tips (`dimensions-missing`, `package-type-too-small`) |
+| `Program.cs` | `/api/listing/readiness` now builds the offers — same estimator the sourcing boards price with, wrapped so a failure to build one can never fail the check |
+| `wwwroot/index.html` | the fill row; `app.js?v=99`, `style.css?v=87` |
+| `wwwroot/app.js` | `nlApplySuggestion`, `nlFillEverything`, `nlRenderFillRow`; aspect autofill split so filling everything reports once |
+| `wwwroot/style.css` | the fill row and the offer pill, built from the existing `asp-suggest` treatment — it is the same promise, so it is the same affordance |
+| `Tests/ListingAutofillTests.cs` | new — 16: what it fills, what it refuses, the estimate labelling, the package classes |
+| `Tests/ListingFillAssetTests.cs` | new — 7: the wiring nothing in C# would notice breaking, plus the decisions easy to "tidy" into their opposite |
+| `Tests/ListingReadinessAnalyzerTests.cs` | 6 more — offers can't outlive their findings, counts match the button, tips stay tips |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2582 passed**, 0 failed — 34 new, no pre-existing test changed or removed |
+| `node --check wwwroot/app.js` | clean |
+| `POST /api/listing/readiness` against the running build | 4 offers on an Antminer draft, each on the finding it answers |
+| The screen itself | driven headless against the running `AutoListerB1.exe` on `:9332` — button read `Fill in 4 things`, one click wrote Bitmain / 44 lb 0 oz / 22×16×14 / BULKY\_GOODS and the score moved 23 → 34 |
+
+`wwwroot` is an `EmbeddedResource`, so the UI was verified by rebuilding and driving the running
+app; the server was confirmed serving the new `index.html`, `app.js` and `style.css` first.
+
+## Known limits
+
+- **The estimator is keyword-to-profile, not a scale.** A "laptop" in the title gets a typical
+  packed laptop. It errs upward by design, which protects the seller on a label but will overstate
+  a light item — the basis says so on the button, and the fix's own advice is to weigh it.
+- **Package classes are the app's reading of the six words on eBay's dropdown**, from box size and
+  weight. They are not eBay's rate card, and eBay may still price a parcel differently.
+- **MPN is offered only when there is no identifier at all.** A listing with a UPC that would also
+  benefit from an MPN is not told so.
+- **Nothing here touches the title, the description or the price.** Those are claims about the
+  item and its worth, not empty boxes with known answers.
+- **The ZIP offer needs a saved default.** A seller who has never opened Settings gets the finding
+  without a value, exactly as before.
+
+## Left untouched
+
+The same files were already modified in the working tree when this session started and are **not**
+part of this commit: `ClaudeService.cs`, `HostedMarketplaceRepository.cs`, `TerapeakService.cs`,
+`TerapeakLoginScriptTests.cs`, `EarningsCalculator.cs`, `MARKETING.md`, `tasks-msi-both-sites.yaml`,
+and another agent's `#er-awaiting` move inside `index.html`. `index.html` was staged as its
+committed version plus this session's hunks only (the fill row and the two `?v=` bumps), so that
+move remains uncommitted in the working tree for whoever owns it.
+
+A dev-build `AutoListerB1.exe` from `bin\Debug` (PID 71644) held a file lock on the build output and
+was stopped. No installed app instance was running.

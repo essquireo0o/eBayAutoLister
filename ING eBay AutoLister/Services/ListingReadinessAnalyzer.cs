@@ -48,13 +48,27 @@ public static class ListingReadinessAnalyzer
     private const int MissingRecommendedCost = 3;
     private const int MissingRecommendedCap  = 12;
 
+    // Which finding each of ListingAutofill's suggestions answers. Kept here rather than on the
+    // suggestion itself so the autofill engine never has to know what the checklist calls things.
+    private static readonly Dictionary<string, string> SuggestionFixIds = new(StringComparer.Ordinal)
+    {
+        ["brand"]       = "brand-missing",
+        ["mpn"]         = "identifiers-missing",
+        ["postalCode"]  = "location-missing",
+        ["weight"]      = "weight-missing",
+        ["dimensions"]  = "dimensions-missing",
+        ["packageType"] = "package-type-too-small",
+    };
+
     public static ListingReadinessResult Analyze(
         ListingData listing,
         IReadOnlyList<AspectField> aspects,
         string aspectStatus = "ok",
         string aspectMessage = "",
-        IReadOnlyList<string>? customAspectNames = null)
+        IReadOnlyList<string>? customAspectNames = null,
+        IReadOnlyList<FieldSuggestion>? suggestions = null)
     {
+        var offered = suggestions ?? [];
         var fixes = new List<ReadinessFix>();
         var score = 100;
 
@@ -207,6 +221,19 @@ public static class ListingReadinessAnalyzer
                 "Without it, calculated shipping cannot quote and a flat rate has to absorb the worst case.",
                 "nl-weight-lbs", 3);
 
+        if (listing.PackageLengthIn <= 0 || listing.PackageWidthIn <= 0 || listing.PackageHeightIn <= 0)
+            Add("dimensions-missing", FixSeverity.Tip, "No package size",
+                "Carriers bill the greater of weight and box size, so a big light parcel costs more than it weighs — and without the three numbers calculated shipping quotes nothing at all.",
+                "nl-length", 2);
+
+        // Only raised when the app has a bigger class to offer. Every listing opens on the
+        // seller's default package type, so "it's wrong" without "here's what it is" would be a
+        // permanent complaint about a field that was never blank.
+        if (offered.Any(s => s.Field == "packageType"))
+            Add("package-type-too-small", FixSeverity.Tip, "Package type is smaller than the item",
+                "eBay quotes the buyer from this, and a parcel booked as an envelope is a difference you pay at the counter.",
+                "nl-package-type", 2);
+
         if (listing.Price >= 250 && !listing.BestOfferEnabled)
             Add("best-offer-off", FixSeverity.Tip, "Best Offer is off",
                 "On higher-priced items it converts browsers into a negotiation you can still decline.",
@@ -217,6 +244,20 @@ public static class ListingReadinessAnalyzer
             Add("condition-desc-missing", FixSeverity.Tip, "No condition description",
                 "On a used item this is the single line that prevents a not-as-described case.",
                 "nl-condition-desc", 3);
+
+        // Hand each suggestion to the finding it answers. A suggestion whose finding wasn't
+        // raised is dropped rather than kept: the checks above are the only place that decides a
+        // field is empty, and an offer with nothing to fix is an offer to overwrite something.
+        var applicable = new List<FieldSuggestion>();
+        foreach (var s in offered)
+        {
+            if (!SuggestionFixIds.TryGetValue(s.Field, out var fixId)) continue;
+            var target = fixes.FirstOrDefault(f => f.Id == fixId);
+            if (target is null) continue;
+            target.Suggestion = s;
+            target.AutoFixable = true;
+            applicable.Add(s);
+        }
 
         score = Math.Clamp(score, 0, 100);
 
@@ -246,6 +287,8 @@ public static class ListingReadinessAnalyzer
             BlockerCount = blockers,
             WarningCount = warnings,
             AutoFillableCount = AspectMatcher.AutoFillable(aspects).Count,
+            FieldSuggestions = applicable,
+            FillableFieldCount = applicable.Count(ListingAutofill.IsBulkFillable),
             AspectStatus = aspectStatus,
             AspectMessage = aspectMessage,
         };

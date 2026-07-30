@@ -315,6 +315,104 @@ public class ListingReadinessAnalyzerTests
         Assert.Equal(2, ListingReadinessAnalyzer.Analyze(Complete(), aspects).AutoFillableCount);
     }
 
+    // ── Offers attached to findings ───────────────────────────────────────────────────────────
+    //
+    // The checklist can now carry the value that resolves a finding. What matters is that an
+    // offer and a finding cannot come apart: an offer with no finding behind it is an offer to
+    // overwrite something, and a count that doesn't match what the button does is a lie about
+    // what pressing it will change.
+
+    private static FieldSuggestion Offer(string field, string value = "x", string confidence = "high") =>
+        new()
+        {
+            Field = field, Label = field, Display = value, Source = "a test",
+            Confidence = confidence, FieldId = "nl-" + field, Set = { ["nl-" + field] = value },
+        };
+
+    [Fact]
+    public void An_offer_lands_on_the_finding_it_answers_and_marks_it_fixable()
+    {
+        var listing = Complete();
+        listing.Brand = "";
+
+        var r = ListingReadinessAnalyzer.Analyze(listing, [], "ok", "", null, [Offer("brand", "Bitmain")]);
+        var fix = Assert.Single(r.Fixes, f => f.Id == "brand-missing");
+        Assert.NotNull(fix.Suggestion);
+        Assert.Equal("Bitmain", fix.Suggestion.Display);
+        Assert.True(fix.AutoFixable);
+    }
+
+    [Fact]
+    public void An_offer_for_a_field_that_is_not_missing_is_dropped_rather_than_kept()
+    {
+        // The checks above are the only place that decides a field is empty. An offer that
+        // outlived its finding — the seller typed a brand a keystroke ago — must not survive to
+        // be applied by "fill everything".
+        var r = ListingReadinessAnalyzer.Analyze(Complete(), [], "ok", "", null,
+            [Offer("brand", "Bitmain"), Offer("postalCode", "89101")]);
+
+        Assert.DoesNotContain(r.Fixes, f => f.Suggestion is not null);
+        Assert.Empty(r.FieldSuggestions);
+        Assert.Equal(0, r.FillableFieldCount);
+    }
+
+    [Fact]
+    public void The_fillable_count_only_counts_what_one_click_would_actually_apply()
+    {
+        var listing = Complete();
+        listing.Brand = "";
+        listing.WeightLbs = 0;
+
+        var r = ListingReadinessAnalyzer.Analyze(listing, [], "ok", "", null,
+        [
+            Offer("brand", "Bitmain"),
+            Offer("weight", "44 lb 0 oz", ListingAutofill.Low),   // a guess: offered, not swept in
+        ]);
+
+        Assert.Equal(2, r.FieldSuggestions.Count);
+        Assert.Equal(1, r.FillableFieldCount);
+    }
+
+    [Fact]
+    public void The_package_type_is_only_questioned_when_there_is_a_better_one_to_offer()
+    {
+        // Every listing opens on the seller's default package type, so this finding without a
+        // value beside it would be a permanent complaint about a field that was never blank.
+        Assert.DoesNotContain(ListingReadinessAnalyzer.Analyze(Complete(), []).Fixes,
+            f => f.Id == "package-type-too-small");
+
+        var r = ListingReadinessAnalyzer.Analyze(Complete(), [], "ok", "", null, [Offer("packageType", "Bulky Goods")]);
+        var fix = Assert.Single(r.Fixes, f => f.Id == "package-type-too-small");
+        Assert.Equal(FixSeverity.Tip, fix.Severity);
+        Assert.NotNull(fix.Suggestion);
+    }
+
+    [Fact]
+    public void A_half_measured_box_still_asks_for_the_missing_sides()
+    {
+        var listing = Complete();
+        listing.PackageLengthIn = 10m;
+        listing.PackageWidthIn = 9m;
+        Assert.Contains(ListingReadinessAnalyzer.Analyze(listing, []).Fixes, f => f.Id == "dimensions-missing");
+
+        listing.PackageHeightIn = 8m;
+        Assert.DoesNotContain(ListingReadinessAnalyzer.Analyze(listing, []).Fixes, f => f.Id == "dimensions-missing");
+    }
+
+    [Fact]
+    public void Offering_values_never_turns_a_tip_into_something_that_blocks_a_publish()
+    {
+        // The whole point of the severity split: these are the app's opinion about what sells,
+        // and being able to fix them in one click must not promote them into eBay's rules.
+        var listing = new ListingData { Title = "x", CategoryId = "1", Price = 5m, ImageUrls = ["a"] };
+        var r = ListingReadinessAnalyzer.Analyze(listing, [], "ok", "", null,
+            [Offer("brand", "Bitmain"), Offer("weight", "6 lb 0 oz"), Offer("packageType", "Mailing Box")]);
+
+        Assert.Equal(0, r.BlockerCount);
+        Assert.All(r.Fixes.Where(f => f.Suggestion is not null),
+                   f => Assert.NotEqual(FixSeverity.Blocker, f.Severity));
+    }
+
     // ── Field ids ─────────────────────────────────────────────────────────────────────────────
 
     [Theory]

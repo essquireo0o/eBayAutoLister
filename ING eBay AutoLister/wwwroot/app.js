@@ -17272,6 +17272,7 @@
     });
     on('nl-aspects-refresh', 'click', () => nlRunReadiness(true));
     on('nl-aspects-autofill', 'click', nlAutofillAspects);
+    on('nl-rd-fill', 'click', nlFillEverything);
 
     // Re-check as the listing is written. Debounced, because these fire per keystroke.
     ['nl-title', 'nl-price', 'nl-brand', 'nl-mpn', 'nl-upc', 'nl-ean', 'nl-isbn',
@@ -17295,6 +17296,7 @@
     const badge = $('nl-aspects-badge'); if (badge) badge.hidden = true;
     const bar = $('nl-readiness'); if (bar) bar.hidden = true;
     const fill = $('nl-aspects-autofill'); if (fill) fill.hidden = true;
+    const fillRow = $('nl-rd-fill-row'); if (fillRow) fillRow.hidden = true;
     const status = $('nl-aspects-status');
     if (status) {
       status.textContent = 'Pick a category and eBay’s required Item Specifics appear here.';
@@ -17344,6 +17346,8 @@
       const grade = $('nl-rd-grade'), headline = $('nl-rd-headline');
       if (grade)    grade.textContent = 'Check unavailable';
       if (headline) headline.textContent = 'Couldn’t reach the app for the pre-publish check — publishing still works.';
+      // The offers came from that answer; leaving the button up would promise values nobody has.
+      const fillRow = $('nl-rd-fill-row'); if (fillRow) fillRow.hidden = true;
       return;
     }
 
@@ -17507,9 +17511,12 @@
     return wrap;
   }
 
-  function nlAutofillAspects() {
+  // Writes the high/medium aspect suggestions into their fields and says how many landed.
+  // Deliberately side-effect-free beyond the fields themselves — the activity line and the
+  // re-check belong to whoever asked, so filling everything at once reports once.
+  function nlApplyAspectSuggestions() {
     const r = nlRdState;
-    if (!r || !(r.aspects || []).length) return;
+    if (!r || !(r.aspects || []).length) return 0;
     let applied = 0;
     (r.aspects || []).forEach(a => {
       if (!a.suggestedValue) return;
@@ -17522,10 +17529,69 @@
       el.classList.add('asp-just-filled');
       applied++;
     });
+    return applied;
+  }
+
+  function nlAutofillAspects() {
+    const applied = nlApplyAspectSuggestions();
     if (applied) {
       addActivity('Item Specifics filled', applied + ' filled from the listing’s own title, description and identifier fields');
       nlRunReadiness(true);
     }
+  }
+
+  // ── Filling the listing's own fields ─────────────────────────────
+  //
+  // A suggestion carries a map of field id → value, because several of these are more than one
+  // box: a weight is pounds and ounces, a size is three numbers. Applying half of either is
+  // worse than applying none, so the whole map goes in together.
+  //
+  // Nothing is written over. The server only attaches a suggestion to a field its own check
+  // found empty, and this refuses again on the way in — a stale result rendered a moment before
+  // the seller typed must not undo the typing.
+  function nlApplySuggestion(s) {
+    if (!s || !s.set) return false;
+    const targets = Object.entries(s.set)
+      .map(([id, value]) => [$(id), value])
+      .filter(([el]) => el);
+    if (!targets.length) return false;
+
+    // "Already answered" differs by control: a package type always has a value, so it is the one
+    // field here that is a correction rather than a gap, and the server only offers it when the
+    // current choice is too small for the box.
+    const isCorrection = s.field === 'packageType';
+    if (!isCorrection && targets.some(([el]) => String(el.value || '').trim() && parseFloat(el.value) !== 0)) return false;
+
+    targets.forEach(([el, value]) => {
+      el.value = value;
+      el.classList.add('asp-just-filled');
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    return true;
+  }
+
+  // One click from "not ready" to as ready as the app can make it: every listing field it has a
+  // confident value for, plus eBay's own required Item Specifics. Low-confidence offers — the
+  // package guessed for an item the estimator did not recognise — are left on their rows to be
+  // read and clicked individually.
+  function nlFillEverything() {
+    const r = nlRdState;
+    if (!r) return;
+
+    const fields = (r.fieldSuggestions || [])
+      .filter(s => s.confidence === 'high' || s.confidence === 'medium');
+    let filled = 0;
+    const labels = [];
+    fields.forEach(s => { if (nlApplySuggestion(s)) { filled++; labels.push(s.label); } });
+
+    const aspects = nlApplyAspectSuggestions();
+
+    if (!filled && !aspects) return;
+    const parts = [];
+    if (labels.length) parts.push(labels.join(', '));
+    if (aspects) parts.push(aspects + ' item specific' + (aspects === 1 ? '' : 's') + ' from eBay’s list');
+    addActivity('Listing filled in', parts.join(' · ') + ' — from your own title, your saved settings and the packing estimate');
+    nlRunReadiness(true);
   }
 
   // ── Rendering: the readiness bar and its fix list ────────────────
@@ -17555,6 +17621,7 @@
     }
 
     nlSyncBlockerGate(r);
+    nlRenderFillRow(r);
 
     const list = $('nl-rd-list');
     if (!list) return;
@@ -17575,7 +17642,28 @@
           <span class="rd-fix-label">${esc(f.label)}</span>
           <span class="rd-fix-why">${esc(f.why)}</span>
         </div>`;
-      if (f.fieldId) {
+      // The value, where the app has one — the row stops being a thing to read and becomes a
+      // thing to press. The source is on the button itself, not in a tooltip: a number that
+      // prices a shipping label has to say where it came from at the moment it is accepted.
+      if (f.suggestion) {
+        const s = f.suggestion;
+        const fillBtn = document.createElement('button');
+        fillBtn.type = 'button';
+        fillBtn.className = 'rd-fix-fill' + (s.confidence === 'low' ? ' is-low' : '');
+        // The estimator's own basis already opens by saying it estimated; only sources that
+        // don't say so get the word put in front of them.
+        const src = s.isEstimate && !/^estimat/i.test(s.source) ? 'estimated — ' + s.source : s.source;
+        fillBtn.innerHTML =
+          `Use “${esc(s.display)}”` +
+          `<span class="rd-fix-src${s.isEstimate ? ' rd-fix-est' : ''}">${esc(src)}</span>`;
+        fillBtn.addEventListener('click', () => {
+          if (nlApplySuggestion(s)) {
+            addActivity(s.label + ' filled', s.display + ' — ' + s.source);
+            nlRunReadiness(true);
+          }
+        });
+        row.appendChild(fillBtn);
+      } else if (f.fieldId) {
         const go = document.createElement('button');
         go.type = 'button';
         go.className = 'btn btn-ghost small rd-fix-go';
@@ -17585,6 +17673,32 @@
       }
       list.appendChild(row);
     });
+  }
+
+  // The single button above the fix list. Its label counts what pressing it will actually do —
+  // listing fields the app is confident about plus eBay's own specifics — so the promise and the
+  // action cannot drift apart. Nothing to fill means no button at all rather than a dead one.
+  function nlRenderFillRow(r) {
+    const row  = $('nl-rd-fill-row');
+    const btn  = $('nl-rd-fill');
+    const note = $('nl-rd-fill-note');
+    if (!row || !btn) return;
+
+    const fields  = r.fillableFieldCount || 0;
+    const aspects = r.aspectStatus === 'ok' ? (r.autoFillableCount || 0) : 0;
+    const total   = fields + aspects;
+
+    row.hidden = total === 0;
+    if (!total) return;
+
+    btn.textContent = `Fill in ${total} thing${total === 1 ? '' : 's'}`;
+    if (note) {
+      const estimated = (r.fieldSuggestions || [])
+        .some(s => s.isEstimate && (s.confidence === 'high' || s.confidence === 'medium'));
+      note.textContent = estimated
+        ? 'From your title, your saved settings and an estimated packing weight — nothing you already typed is touched.'
+        : 'From your own title and saved settings — nothing you already typed is touched.';
+    }
   }
 
   // Jump to the field a fix belongs to, opening whatever collapsed panel it lives in — a

@@ -7887,6 +7887,42 @@ td.skeleton-cell { padding: 0 !important; }
 .rd-chevron { flex-shrink: 0; color: var(--muted); transition: transform var(--dur-2) var(--ease); }
 .rd-toggle.is-open .rd-chevron { transform: rotate(180deg); }
 
+/* The one-click fill. Sits between the score and the fix list, above the fold of the
+   disclosure, because it is the shortest route from "not ready" to "ready" on the screen. */
+.rd-fill-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: 0 var(--s4) var(--s3);
+}
+.rd-fill-note { font-size: var(--fs-xs); color: var(--ink-2); }
+
+/* A value the app is offering for a listing field. Same dashed-gold treatment as an Item
+   Specific suggestion — it is the same promise: nothing is written until this is clicked. */
+.rd-fix-fill {
+  flex-shrink: 0;
+  align-self: center;
+  border: 1px dashed var(--gold);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  cursor: pointer;
+  max-width: 240px;
+  text-align: left;
+  transition: border-color var(--dur-1) var(--ease);
+}
+.rd-fix-fill:hover { border-color: var(--gold-dark); }
+.rd-fix-fill.is-low { border-color: var(--line-strong); background: var(--soft); color: var(--ink-2); }
+
+/* Where the value came from, and — for an inferred one — that it was inferred. The estimate
+   mark is not decoration: this number prices a shipping label. */
+.rd-fix-src { display: block; font-weight: 500; opacity: .8; margin-top: 1px; }
+.rd-fix-est { font-style: italic; }
+
 .rd-list {
   border-top: 1px solid var(--line-soft);
   background: var(--card);
