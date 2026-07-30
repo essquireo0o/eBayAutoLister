@@ -7606,3 +7606,10 @@ part of this commit, exactly as the previous session left them: `ClaudeService.c
 `TerapeakLoginScriptTests.cs`, `MARKETING.md`, `index.html`, `tasks-msi-both-sites.yaml`.
 
 `wwwroot/app.js` was not touched, so no `?v=` bump was needed.
+
+**Where the file actually landed.** Between this session writing `ResaleValuationTests.cs` and
+committing it, a concurrent session ran `git add -A` and swept the new file into its own commit,
+`f96bf15` ("Reconnect Terapeak on the current sign-in page…"). The content is correct and the branch
+is green; the history is just misattributed, and rewriting another session's commit to fix that
+would cost more than it is worth. Anyone looking for these tests in the log wants `f96bf15`, not the
+commit this entry sits in.
