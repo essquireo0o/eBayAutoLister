@@ -25,6 +25,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- wwwroot is also where the app writes its working images at runtime - AI photo generation
+         (url_*.png) and background removal (rembg_*.png) both land here, and generated-photos/ is
+         gitignored for that reason. The SDK's default Content glob then copies every one of them
+         into publish output, so an installer built on a machine that has been used carries the
+         seller's own scratch images to everyone who downloads it: measured 2026-07-30, 300 untracked
+         files and 60MB of someone's listing photos in an 83MB installer. Only 7 files in wwwroot are
+         actually part of the product, and all 7 are embedded below.
+         Excluded from Content, not deleted - the app still reads and writes them at runtime. -->
+    <Content Remove="wwwroot\generated-photos\**" />
+    <Content Remove="wwwroot\url_*.png" />
+    <Content Remove="wwwroot\rembg_*.png" />
+    <Content Remove="wwwroot\*.dll" />
+    <None Remove="wwwroot\generated-photos\**" />
+
     <!-- Embed static UI files into the assembly so the exe is self-contained -->
     <Content Remove="wwwroot\index.html" />
     <Content Remove="wwwroot\reauth.html" />
