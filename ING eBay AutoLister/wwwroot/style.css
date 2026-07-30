@@ -14982,3 +14982,141 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   .tx-line { grid-template-columns: 2.6rem 1fr auto; }
   .tx-line-basis { padding-left: 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   How this price was worked out — the price/confidence trail
+   Rendered by priceBasisHtml() on the deals board's row detail and on the
+   Opportunity Finder's scoring details. One panel, one set of rules, so the
+   two screens can never explain the same pipeline's numbers differently.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.pb-basis {
+  margin-top: var(--s4);
+  max-width: 96ch;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+.pb-summary {
+  cursor: pointer;
+  padding: var(--s2) var(--s3);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  color: var(--muted);
+  list-style: none;
+}
+
+/* The marker is drawn here rather than left to the browser: the default
+   triangle sits on a different baseline in each engine and pushed the label a
+   pixel out of line with every other label in the panel. */
+.pb-summary::-webkit-details-marker { display: none; }
+.pb-summary::before {
+  content: "›";
+  display: inline-block;
+  margin-right: var(--s2);
+  transition: transform var(--dur-1) var(--ease);
+}
+.pb-basis[open] > .pb-summary::before { transform: rotate(90deg); }
+.pb-summary:hover { color: var(--ink); }
+
+.pb-body {
+  padding: 0 var(--s3) var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* The blend in one line. Tabular figures because the whole point of the
+   sentence is that the reader can check the multiplication in it. */
+.pb-arith {
+  margin: var(--s3) 0 var(--s2);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-disagree {
+  margin: var(--s3) 0 0;
+  padding: var(--s2);
+  border-radius: var(--r-sm);
+  background: var(--warning-soft);
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.pb-srcs { display: flex; flex-direction: column; gap: 2px; }
+
+/* Name · count · figure · share. The share is last and right-aligned because
+   it is the column a reader scans down to check the two add to 100. */
+.pb-src {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1fr) auto minmax(8rem, auto) 3.2rem;
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: var(--fs-2xs);
+  border-bottom: 1px solid var(--line-soft);
+}
+.pb-src:last-child { border-bottom: 0; }
+.pb-src-name { font-weight: var(--fw-semibold); color: var(--ink); }
+.pb-src-count { color: var(--muted); }
+.pb-src-value { color: var(--ink); font-variant-numeric: tabular-nums; }
+.pb-src-weight {
+  text-align: right;
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-also {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-conf-head {
+  margin: var(--s4) 0 var(--s2);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--faint);
+}
+.pb-conf-head strong { color: var(--ink); font-size: var(--fs-sm); }
+
+.pb-factors { display: flex; flex-direction: column; gap: 3px; }
+
+/* Label, bar, sentence. The bar is the shared viz meter rather than a second
+   bar drawn to its own scale — a seven-term score is a chart, and this is the
+   only place on either board where the terms can be compared at a glance. */
+.pb-factor {
+  display: grid;
+  grid-template-columns: minmax(8rem, 11rem) minmax(90px, 130px) 1fr;
+  gap: var(--s3);
+  align-items: center;
+  padding: 2px 0;
+  font-size: var(--fs-2xs);
+}
+.pb-factor-label { color: var(--ink); font-weight: var(--fw-semibold); }
+.pb-factor-detail { color: var(--muted); line-height: 1.45; }
+.pb-factor .viz-meter-value { min-width: 3.6em; }
+
+.pb-gap {
+  margin: var(--s3) 0 0;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+.pb-gap strong { color: var(--ink); }
+
+/* Below this the three-column factor row is two words wide per column, so it
+   stacks: the sentence under its own bar rather than beside it. */
+@media (max-width: 720px) {
+  .pb-src { grid-template-columns: 1fr auto; }
+  .pb-factor { grid-template-columns: 1fr; gap: 2px; padding: var(--s2) 0; }
+}

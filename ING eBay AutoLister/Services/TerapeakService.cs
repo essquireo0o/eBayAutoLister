@@ -474,7 +474,18 @@ public class TerapeakService
         "    }\n" +
         // Have they finished signing in somewhere this loop cannot see? Save the moment they have,
         // so closing the window a second later cannot throw the login away.
-        "    if (Date.now() - lastProbe >= PROBE_MS) {\n" +
+        //
+        // But NEVER run this probe while the seller is still on the sign-in page. signedIn() fires
+        // ctx.request.get(RESEARCH_URL) with the browser's cookies, and hitting a gated Seller Hub
+        // endpoint every few seconds WHILE a credential POST is in flight is a textbook bot signal.
+        // Measured symptom: eBay answers the sign-in submit with its own "Something went wrong on
+        // our end" error page at /signin/s — which reads to the seller as a rejected password, when
+        // nothing was wrong with it. A normal human browser never makes that background request
+        // mid-login. Success is still caught two other ways below (a tab reaching /sh/research via
+        // the ru= redirect, and the activity beacon), neither of which touches the network. So only
+        // probe once they have LEFT the sign-in flow.
+        "    const onSignin = /signin\\.ebay\\.com|\\/splashui\\/captcha/i.test(url);\n" +
+        "    if (!onSignin && Date.now() - lastProbe >= PROBE_MS) {\n" +
         "      lastProbe = Date.now();\n" +
         "      if (await signedIn()) { await saveSession(); break; }\n" +
         "    }\n" +
@@ -488,8 +499,13 @@ public class TerapeakService
         // that's why it's the thing re-run here, not a second native win32 call.
         // Gentle tab-focus only during the wait — NOT the hard minimize/normal cycle, which would
         // visibly refresh the window every few seconds and interrupt the user mid-CAPTCHA.
+        // ...but never yank the window while they are actively typing. Re-focusing mid-password is
+        // how a keystroke goes missing — the seller reported exactly that ("my number key doesn't
+        // work"). If the activity beacon saw input in the last few seconds, leave the window alone
+        // this tick and let them finish.
         "    sinceFocus++;\n" +
-        "    if (sinceFocus >= 8) { sinceFocus = 0; await raise(false); }\n" +
+        "    const typingNow = lastActivity > 0 && (Date.now() - lastActivity) < 6000;\n" +
+        "    if (sinceFocus >= 8 && !typingNow) { sinceFocus = 0; await raise(false); }\n" +
         "  }\n" +
         // Last look before giving up: the wait may have run out at the exact moment the sign-in
         // landed, and a session that exists is a session worth keeping.
