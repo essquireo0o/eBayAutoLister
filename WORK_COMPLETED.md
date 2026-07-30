@@ -7613,3 +7613,125 @@ committing it, a concurrent session ran `git add -A` and swept the new file into
 is green; the history is just misattributed, and rewriting another session's commit to fix that
 would cost more than it is worth. Anyone looking for these tests in the log wants `f96bf15`, not the
 commit this entry sits in.
+
+---
+
+## The comps path that spends the seller's eBay account, under test — `TerapeakPriceCache` + `TerapeakMarketService` (autonomous session, 2026-07-30)
+
+Since eBay put sold search behind a login wall, Terapeak **is** the sold-comps path. It is not an
+API: every miss drives a real browser, logged in as the seller, for 5-40 seconds — and enough of
+them in a row is how that account meets a "Security Measure" challenge. Two files stand between the
+app and that outcome, and between the board and a wrong price. Neither had a single direct test.
+
+`TerapeakPriceCache` is the permanent record of every scrape ever paid for. It never evicts, on
+purpose: the longer the app runs, the more of the keyword space is already priced for free. That
+also means anything wrong that gets written stays written.
+
+`TerapeakMarketService` does two jobs. It rations the browser — it must never initiate a scrape on
+its own, and must answer from the cache whenever it can. And it says *why* a lookup produced
+nothing, which is the distinction the whole `TerapeakOutcome` enum was added for: "Terapeak has no
+sold history for this item" is a fact about the item, and "Terapeak never answered" is not, and
+collapsing the two is how a dead session became a confident price with nothing on screen admitting
+the second opinion was gone.
+
+## What is now pinned
+
+**The cache is a ledger, not a cache.** A stale price is refused, not deleted — a caller willing to
+accept a six-month-old comp can still get it after a caller who wasn't has asked. Prices outlive
+the object that stored them and the process that ran it. Re-scraping refreshes in place rather than
+duplicating.
+
+**Cents survive SQLite.** The money columns are declared `REAL` and the values are `decimal`. $0.01
+through $99,999.99 round-trip exactly — pinned rather than assumed, because drift here moves the
+profit on every row priced off the entry.
+
+**Zero is not unknown, in both directions.** A measured 0% sell-through stays 0% (nothing sells is a
+finding); a sell-through Terapeak printed as "-" stays null (nobody measured it). One read as the
+other either condemns a live market or rescues a dead one.
+
+**The scrape ledger only counts what actually happened.** A stored scrape is real traffic; a served
+price is traffic avoided; a **miss is charged to neither column**, and a stale entry counts as a
+miss rather than a saved scrape. This ratio is the app's only view of how hard it is leaning on the
+seller's account, and counting misses would make it read low exactly when it shouldn't.
+
+**The insight cards.** Ranked by sell-through, keywords with none left off entirely, the age window
+honoured, and the normalized key shown. Including one that reads oddly and is intended: the ranking
+looks at the **200 most recently scraped** keywords, not the whole table — so past 200 categories,
+a record-breaking sell-through measured earlier stops appearing. That is "best of what we've looked
+at lately", not "top sell-through", and it is now pinned so changing the window is deliberate.
+
+**The key that decides whether a scrape gets spent.** Two wordings of the same machine — `"***
+BITMAIN ANTMINER S19 95TH/s *** WORKING PULL"` and a clean one — share one entry and one scrape.
+Condition and capacity split it, because a used S19 and a boxed one are different markets and
+sharing a price between them is a several-hundred-dollar error in whichever direction the first
+scrape ran. Blank fields are dropped rather than left as empty segments. An unrecognised product
+falls back to its scrubbed title, word order preserved, so the fallback can only ever cost an extra
+scrape — never merge two products.
+
+**Reading the research page**, which was entirely uncovered and is where the number on screen comes
+from. The median is computed from the per-listing rows, not from the page's blended average, and
+rows are sorted before the middle is taken; an even count takes the midpoint of the middle two; all
+three listing formats (Fixed price, Auction, Best Offer) are real sales and count. Thousands
+separators don't move the decimal point — `$1,150.40` is not 1.15 and not 115,040. Dollar amounts
+that aren't sales (a shipping quote, a promoted-listing budget) are not counted as sales.
+
+**And the assertion the caching guard rests on:** a sign-in wall, a bot challenge, a subscription
+page, an empty string and a genuine zero-result page all parse to **nothing at all**. Anything else
+would be written to a table that never evicts, and that keyword would serve a bogus price forever.
+
+**Rationing, end to end.** A cached price is served with `allowRealScrape: false` and is served even
+when the saved session is dead — the price was already paid for, and letting a broken login suppress
+prices the app already owns would blank the board the moment eBay logged the seller out. The default
+window is two days (47h hits, 49h misses). Freshness weight steps 1.0 / 0.7 / 0.4 / 0.2 at exactly
+30, 90 and 180 days. A served price is dated when it was scraped, not when it was read.
+
+**Every way of not answering, and which button it asks for.** Authorisation is checked *before* the
+session file, because it's free and a scan runs the pre-pass over hundreds of products. An expired
+session asks for Reconnect and carries eBay's own sentence; a login never made asks for Connect; a
+session file truncated by a crash asks for Connect too, because telling the seller eBay refused a
+login it never held sends them to the wrong screen. **None of the three is ever `NoData`** — that
+one is a claim about the item, and printing it on the strength of a broken connection is how the
+board tells a seller to pass on a good flip. A failed lookup costs the scrape ledger nothing.
+
+## Files
+
+| File | What |
+|---|---|
+| `Tests/TerapeakPriceCacheTests.cs` | new — 31 tests over `TerapeakPriceCache.cs`: round-tripping, cents through `REAL`, key normalization, the no-eviction contract, age, cross-process persistence, the scrape/hit ledger, the insight-card ranking and its 200-row window, and concurrent scans |
+| `Tests/TerapeakMarketServiceTests.cs` | new — 47 tests over `TerapeakMarketService.cs`: cache-key construction and its splits, the full research-page parse, every bounced-page shape parsing to null, and every browser-free lookup outcome (`Cached`, `NotAttempted`, `SessionExpired`, `NotConnected`) with the reason and the flags each one sets |
+
+No production code was changed — this is coverage of behaviour that already ships. Nothing here
+launches a browser, touches the network, or reads the machine's real session or database: every
+path is reachable from a temp session file, a temp SQLite database and a string.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2700 passed**, 0 failed — 78 new, no pre-existing test changed or removed |
+
+## Known limits
+
+- **These pin behaviour; they did not find a bug.** All 78 passed on first run against the shipping
+  implementation. The 200-row insight window is the one finding, and it is a documented intent
+  reading misleadingly rather than a defect.
+- **The four scrape-path outcomes are still uncovered** — `Scraped`, `NoData`, `Blocked`, and the
+  `SessionExpired` that comes back from a scrape rather than from the session file. Reaching them
+  needs a fake `TerapeakService`, and `ScrapeAsync` is neither virtual nor behind an interface;
+  making it so is a production change, and the 2-10 second anti-metronome delay in front of it would
+  have to become injectable too or every such test would sleep for it. The guard those tests would
+  assert — that a bounced page is never cached — is covered from the other side here: the parse
+  those branches feed returns null for every bounced-page shape, so there is nothing to cache.
+- **Concurrency is exercised, not proven.** `Two_scans_writing_at_once_do_not_collide` runs 60
+  parallel writes and would catch the lock being removed, but a passing run is not a proof of
+  absence for a race.
+
+## Left untouched
+
+The working tree held nothing but these two new files when this session started — the modified files
+noted in the previous two entries (`ClaudeService.cs`, `HostedMarketplaceRepository.cs`,
+`TerapeakService.cs`, `EarningsCalculator.cs`, `MARKETING.md`, `index.html`,
+`tasks-msi-both-sites.yaml`) have since been committed or reverted by whoever owned them.
+
+`wwwroot/app.js` was not touched, so no `?v=` bump was needed.
