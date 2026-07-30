@@ -1488,6 +1488,56 @@ app.MapGet("/api/shipping/leaks", async (int? maxItems, EbayService ebay, Shippi
     return Results.Ok(result);
 });
 
+// The name a person reads for each sold-comps source. Kept beside the endpoint that emits it so
+// a new source cannot be added without deciding what to call it — "source: hosted_comps" reaching
+// a screen unlabelled is how a seller ends up unable to tell a live Terapeak median from a
+// database one, which are different claims about how current the number is.
+static string SoldCompsSourceLabel(string source) => source switch
+{
+    "terapeak"              => "Terapeak (live eBay sold data)",
+    "marketplace_insights"  => "eBay Marketplace Insights",
+    "hosted_comps"          => "Sold-comps database",
+    _                       => "No sold-comp data — research links only",
+};
+
+// Turns hosted sold-comps rows into the same shape every other source answers in. Returns null
+// when there is nothing to report, so the caller falls through rather than presenting an empty
+// sample as an answer: a count of zero with a median of zero renders as a $0.00 market price,
+// which is not "no data", it is wrong data.
+static SoldCompsResult? BuildHostedCompsResult(IReadOnlyList<MarketplaceComparableResult> comps, string query)
+{
+    // Same outlier trim the rest of the pricing stack uses, so the median here and the median a
+    // scan reports for the same product cannot disagree about which sales counted.
+    var kept = MarketplacePricingCalculator.RemovePriceOutliers(comps)
+        .Where(c => c.SoldPrice > 0m)
+        .ToList();
+    if (kept.Count == 0) return null;
+
+    var prices = kept.Select(c => c.SoldPrice).OrderBy(p => p).ToList();
+
+    return new SoldCompsResult
+    {
+        Query   = query,
+        Count   = kept.Count,
+        Average = Math.Round(prices.Average(), 2),
+        Median  = Math.Round(MarketplacePricingCalculator.Median(prices), 2),
+        Min     = prices[0],
+        Max     = prices[^1],
+        Items   = kept
+            .OrderByDescending(c => c.MatchScore)
+            .Take(12)
+            .Select(c => new SoldComp
+            {
+                Title    = c.Title,
+                Price    = c.SoldPrice,
+                SoldDate = c.SoldDate ?? default,
+                Url      = c.ItemUrl ?? "",
+                ImageUrl = c.ImageUrl ?? "",
+            })
+            .ToList(),
+    };
+}
+
 app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, decimal? buyerShipping,
     EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace,
     NetProceedsCalculator net, FeeProfile fees, ActionLog log) =>
@@ -1557,6 +1607,24 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
     // app failed and the seller should not conclude anything at all from the blank panel.
     var dataNote = "";
 
+    // The button, if any, the answer carries. A dead Terapeak session is the one failure on this
+    // path a seller fixes in a single click, and a blank panel never says so.
+    var fixAction = "";
+    var needsReconnect = false;
+
+    // Which source these numbers came from, said in words rather than left to a slug the UI has to
+    // know about. Three sources answer this endpoint and they are not equally strong — a seller
+    // deciding what to list at is entitled to know whether the median came from live Terapeak, from
+    // the hosted sold-comps database, or from eBay's own Insights API.
+    IResult Answer(SoldCompsResult r, decimal average, string source) => Results.Ok(new
+    {
+        r.Query, r.Items, r.Count, Average = average, r.Median, r.Min, r.Max,
+        terapeakUrl, fallbackUrl,
+        source, sourceLabel = SoldCompsSourceLabel(source),
+        dataNote, fixAction, needsReconnect,
+        pricing = PricingFor(r.Median, average),
+    });
+
     // 1) Real Terapeak data, if the seller has connected their session (Settings > Terapeak)
     if (terapeak.IsConnected)
     {
@@ -1569,14 +1637,19 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
                 if (parsed is not null)
                 {
                     var average = await BlendLocalAverageAsync(parsed.Average);
-                    return Results.Ok(new { parsed.Query, parsed.Items, parsed.Count, Average = average, parsed.Median, parsed.Min, parsed.Max, terapeakUrl, fallbackUrl, source = "terapeak", pricing = PricingFor(parsed.Median, average) });
+                    return Answer(parsed, average, "terapeak");
                 }
             }
-            else if (scrape.Status == "session_expired")
+            else if (scrape.IsConnectionProblem)
             {
-                log.Add("Warning", "Terapeak session expired", "Reconnect in Settings.");
-                dataNote = "Your Terapeak session has expired, so its sold data was not available. "
-                         + "Reconnect it in Settings.";
+                // Said out loud, and carried through to the answer below. Terapeak handing back a
+                // sign-in page and Terapeak reporting that an item has never sold are opposite
+                // facts; both used to render as the same blank panel, so a seller with a dead
+                // session was quietly shown eBay's weaker sources for weeks without being told.
+                log.Add("Warning", $"Terapeak unavailable for this search ({scrape.Status})", scrape.Reason);
+                dataNote = scrape.Reason;
+                fixAction = scrape.FixAction;
+                needsReconnect = scrape.Status == "session_expired";
             }
         }
         catch (Exception ex)
@@ -1597,7 +1670,7 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
         if (result.Count > 0)
         {
             var average = await BlendLocalAverageAsync(result.Average);
-            return Results.Ok(new { result.Query, result.Items, result.Count, Average = average, result.Median, result.Min, result.Max, terapeakUrl, fallbackUrl, source = "marketplace_insights", pricing = PricingFor(result.Median, average) });
+            return Answer(result, average, "marketplace_insights");
         }
     }
     catch (Exception ex)
@@ -1607,12 +1680,31 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
         if (dataNote.Length == 0) dataNote = failure.WhatHappened + " " + failure.WhatToDo;
     }
 
-    // 3) Links only. Still a 200 with a usable body: the eBay research links work in the seller's own
+    // 3) The hosted sold-comps database, on its own rather than as a 40% blend into someone else's
+    //    average. This is what a Terapeak failure degrades TO. Until it was here, a dead session
+    //    meant this endpoint fell all the way through to "links only" while a database of real eBay
+    //    sale prices sat one call away — and the seller, seeing an empty panel, priced by feel.
+    try
+    {
+        var hosted = await marketplace.SearchByKeywordAsync(q, limit: 24);
+        var hostedResult = BuildHostedCompsResult(hosted, q);
+        if (hostedResult is not null)
+            return Answer(hostedResult, hostedResult.Average, "hosted_comps");
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+        log.Add("Warning", "Hosted sold-comps lookup failed", $"{failure.Kind} — {failure.Technical}");
+        if (dataNote.Length == 0) dataNote = failure.WhatHappened + " " + failure.WhatToDo;
+    }
+
+    // 4) Links only. Still a 200 with a usable body: the eBay research links work in the seller's own
     // logged-in browser and are a real answer, not a consolation prize.
     return Results.Ok(new
     {
         query = q, items = Array.Empty<object>(), count = 0, average = 0, median = 0, min = 0, max = 0,
-        terapeakUrl, fallbackUrl, source = "none", dataNote,
+        terapeakUrl, fallbackUrl, source = "none", sourceLabel = SoldCompsSourceLabel("none"),
+        dataNote, fixAction, needsReconnect,
         // No comps, but the seller's own price still has fees on it. The take-home panel stays
         // useful on the one path where the market data is missing entirely.
         pricing = PricingFor(0m, 0m),
@@ -1900,8 +1992,30 @@ app.MapPost("/api/terapeak/connect", (TerapeakService terapeak) =>
 app.MapGet("/api/diagnostics/connections", async (ConnectionDoctor doctor, CancellationToken ct) =>
     Results.Ok(new { connections = await doctor.CheckAllAsync(ct) }));
 
+// Cheap enough to poll, unlike /api/diagnostics/connections above: every field here is read off
+// the session file. The extra fields beyond `connected` are what let the banner offer Reconnect
+// instead of Connect, and say why — "not connected" for a login that died is the sentence that
+// sent sellers looking for a setting they had already set.
 app.MapGet("/api/terapeak/status", (TerapeakService terapeak) =>
-    Results.Ok(new { connected = terapeak.IsConnected, loginInProgress = terapeak.IsLoginInProgress, lastError = terapeak.LastLoginError }));
+{
+    var session = terapeak.Session;
+    var verification = terapeak.LastVerification;
+    return Results.Ok(new
+    {
+        connected = terapeak.IsConnected,
+        loginInProgress = terapeak.IsLoginInProgress,
+        lastError = terapeak.LastLoginError,
+        state = session.State.ToString(),
+        reason = session.Reason,
+        needsReconnect = session.NeedsReconnect,
+        // Whether the saved session was ever actually exercised against eBay, as opposed to merely
+        // written. Null before any login has completed in this process — which is not the same as
+        // "failed", and the UI must not draw it as one.
+        verified = verification?.Verified,
+        verifiedAtUtc = verification?.AtUtc,
+        verificationDetail = verification?.Detail,
+    });
+});
 
 app.MapPost("/api/terapeak/disconnect", (TerapeakService terapeak) =>
 {

@@ -9,12 +9,40 @@ namespace ING_eBay_AutoLister.Services;
 /// eBay normally, saves that session to disk, then reuses it headlessly to read real sold-comp
 /// data straight off the rendered Seller Hub page.
 /// </summary>
-public class TerapeakService(IWebHostEnvironment env, ActionLog log)
+public class TerapeakService
 {
-    private readonly string _sessionPath = Path.Combine(env.ContentRootPath, "terapeak-session.json");
+    private readonly string _sessionPath;
+    private readonly string _profileDir;
+    private readonly ActionLog log;
 
     /// <summary>
-    /// The Chrome profile this app keeps for eBay. Login and scrape both open THIS directory.
+    /// Where the session and the browser profile live, and both are named through
+    /// <see cref="AppPaths"/> rather than composed from <c>ContentRootPath</c>.
+    /// </summary>
+    /// <remarks>
+    /// Those resolve to the same folder today — <c>ContentRootPath</c> is set to
+    /// <see cref="AppPaths.DataHome"/> at startup — but only by arrangement, and a hosting property
+    /// is exactly the kind of thing that gets changed for an unrelated reason. When it moved before,
+    /// bin\Debug, a copied build and the installed app each looked in their own folder. For the
+    /// session file that meant being told to connect Terapeak again for a login sitting on disk the
+    /// whole time; for the profile directory it is worse, because the cookies actually travel in
+    /// there — a build looking one folder over hands eBay a browser it has never seen, which is what
+    /// a stolen session looks like. Saying both paths outright removes the possibility.
+    /// </remarks>
+    public TerapeakService(ActionLog log)
+        : this(AppPaths.TerapeakSessionPath, AppPaths.TerapeakProfilePath, log) { }
+
+    /// <summary>Explicit-path constructor, for tests and for anything that keeps its session elsewhere.</summary>
+    public TerapeakService(string sessionPath, string profileDir, ActionLog log)
+    {
+        _sessionPath = sessionPath;
+        _profileDir  = profileDir;
+        this.log     = log;
+    }
+
+    /// <summary>
+    /// The Chrome profile this app keeps for eBay. Login, verification and scrape all open THIS
+    /// directory.
     /// </summary>
     /// <remarks>
     /// The cookies live here now rather than being replayed from a JSON file into a fresh browser on
@@ -25,7 +53,7 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     /// Separate from the seller's own Chrome profile on purpose: this app must never touch the
     /// browser they use themselves.
     /// </remarks>
-    private readonly string _profileDir = Path.Combine(env.ContentRootPath, "terapeak-profile");
+    public string ProfileDirectory => _profileDir;
 
     // Interlocked, not a volatile bool: "check the flag, then set it" is two separate steps, so
     // clicks that land together all read "not running" and each launch a browser window. The same
@@ -42,10 +70,13 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     /// on /sh/research immediately after sign-in, which is exactly the URL the wait loop below
     /// watches for. Without it the success condition is only ever met by accident.
     /// </summary>
-    private const string ResearchUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD";
+    public const string ResearchUrl = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD";
 
     private static string LoginUrl =>
         "https://signin.ebay.com/ws/eBayISAPI.dll?SignIn&ru=" + Uri.EscapeDataString(ResearchUrl);
+
+    /// <summary>The button the UI puts on a dead Terapeak session. Recognised by FIX_ACTIONS in app.js.</summary>
+    public const string ConnectFixAction = "connect-terapeak";
 
     // Windows blocks a background process from stealing focus by default — without a foreground
     // grant the login browser can open behind the app window with no visible indication it
@@ -56,7 +87,17 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     // setup for the same reason (no public search API, so drive a real logged-in browser).
     private static string PlaywrightDir => NodeRuntime.PlaywrightDir;
 
-    public bool IsConnected => File.Exists(_sessionPath);
+    /// <summary>
+    /// What the saved session on disk actually is — five states, not <c>File.Exists</c>. A zero-byte
+    /// or truncated file used to count as connected, which turned "your login is broken" into a
+    /// sold-comps lookup that quietly found nothing. See <see cref="TerapeakSessionFile"/>.
+    /// </summary>
+    public TerapeakSessionStatus Session => TerapeakSessionFile.Inspect(_sessionPath);
+
+    public bool IsConnected => Session.CanSearch;
+
+    /// <summary>True when the button to offer is Reconnect rather than Connect.</summary>
+    public bool NeedsReconnect => Session.NeedsReconnect;
 
     /// <summary>Where the saved storageState lives. Exposed so ConnectionDoctor can load it into a
     /// headless context and actually test it, rather than settling for "the file is there".</summary>
@@ -64,6 +105,12 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
 
     public bool IsLoginInProgress => Volatile.Read(ref _loginInProgress) == 1;
     public string? LastLoginError { get; private set; }
+
+    /// <summary>
+    /// What happened the last time a fresh login was tested against the live research page. Null
+    /// until a login has completed in this process.
+    /// </summary>
+    public TerapeakVerification? LastVerification { get; private set; }
 
     // ── One-time interactive login ────────────────────────────────────────────
 
@@ -102,24 +149,35 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     /// <summary>Kills the process. Above <see cref="HardCapMinutes"/> so the script always ends the wait itself.</summary>
     public static TimeSpan ProcessTimeout => TimeSpan.FromMinutes(HardCapMinutes + 2);
 
+    /// <summary>Ceiling on one headless page load — the post-login check and every research call.</summary>
+    /// <remarks>
+    /// Every wait underneath it is bounded too (see <see cref="BuildPageScript"/>). This is the
+    /// backstop, not the mechanism: a script that always ends by itself reports a named reason,
+    /// where a killed process only ever reports "timed out".
+    /// </remarks>
+    public static TimeSpan PageTimeout => TimeSpan.FromSeconds(60);
+
     private async Task RunLoginProcessAsync()
     {
-        Directory.CreateDirectory(_profileDir);
-        var script = BuildLoginScript(PlaywrightDir.Replace("\\", "\\\\"), _sessionPath.Replace("\\", "\\\\"), _profileDir.Replace("\\", "\\\\"));
-
         try
         {
+            // Both folders, made before node is asked to write into them: on a machine where the
+            // data home had never been created, the save threw at the last instant of a completed
+            // login and reported it as a cancelled one.
+            Directory.CreateDirectory(_profileDir);
+            var sessionDir = Path.GetDirectoryName(_sessionPath);
+            if (!string.IsNullOrEmpty(sessionDir)) Directory.CreateDirectory(sessionDir);
+
+            var script = BuildLoginScript(NodeRuntime.JsPath(PlaywrightDir), NodeRuntime.JsPath(_sessionPath),
+                                          NodeRuntime.JsPath(_profileDir));
+
             // Grant foreground rights before launch so the Chrome window this spawns can raise
             // itself above whatever the user is currently looking at, instead of opening
-            // silently behind it. Only needed here — ScrapeAsync's browser is headless.
+            // silently behind it. Only needed here — the headless runs below have no window.
             // Above the script's own HARD_CAP_MS on purpose: the loop should always be
             // what ends the wait, so the outcome is a named token rather than a killed process.
             var run = await NodeRuntime.RunAsync(script, ProcessTimeout, "terapeak_login",
-                beforeStart: () =>
-                {
-                    LoginWindowFocus.Grant();
-                    LoginWindowFocus.PinNewBrowserWindowBriefly();
-                });
+                beforeStart: LoginWindowFocus.PrepareForLoginWindow);
 
             if (run.TimedOut)
             {
@@ -132,33 +190,34 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
             var stderr = run.StdErr;
 
             if (stdout == "SAVED")
-                log.Add("Info", "Terapeak connected", "Session saved — sold comps will now use real Terapeak data.");
-            else
             {
-                // The script's outcome tokens are for this method, not for a human. Passing them
-                // through raw is how the UI ends up reporting "connect failed: CANCELLED".
-                LastLoginError = stdout switch
-                {
-                    "CANCELLED" => "The login window was closed before the sign-in finished — click Connect and leave the window open; it closes itself the moment you're in.",
-                    // Named separately from CANCELLED because they are different failures with
-                    // different fixes, and telling a seller who sat there for six minutes that they
-                    // "closed the window" is how this ends up reported as broken.
-                    "TIMEOUT" => $"Nothing happened in the login window for {IdleMinutes} minutes, so it gave up. "
-                        + "Click Connect and finish signing in — the clock only runs while the window is idle, "
-                        + "so typing, clicking and page changes all keep it alive.",
-                    "CAPTCHA" => "eBay showed a \"verify you're human\" check instead of the sign-in form. "
-                        + $"Click Connect again and complete that check in the window — you get {CaptchaMinutes} minutes "
-                        + "from when it appears, and the window closes itself once you're signed in.",
-                    var s when s.StartsWith("NAVFAIL:") =>
-                        $"eBay's sign-in page wouldn't load ({s["NAVFAIL:".Length..].Trim()}). "
-                        + "This is eBay's end, not your account — try again in a minute.",
-                    var s when !string.IsNullOrWhiteSpace(s) => s,
-                    _ => string.IsNullOrWhiteSpace(stderr)
-                        ? "Login window was closed before signing in."
-                        : stderr,
-                };
-                log.Add("Warning", "Terapeak login not completed", LastLoginError);
+                await ConfirmFreshLoginAsync();
+                return;
             }
+
+            // The script's outcome tokens are for this method, not for a human. Passing them
+            // through raw is how the UI ends up reporting "connect failed: CANCELLED".
+            LastLoginError = stdout switch
+            {
+                "CANCELLED" => "The login window was closed before the sign-in finished — click Connect and leave the window open; it closes itself the moment you're in.",
+                // Named separately from CANCELLED because they are different failures with
+                // different fixes, and telling a seller who sat there for six minutes that they
+                // "closed the window" is how this ends up reported as broken.
+                "TIMEOUT" => $"Nothing happened in the login window for {IdleMinutes} minutes, so it gave up. "
+                    + "Click Connect and finish signing in — the clock only runs while the window is idle, "
+                    + "so typing, clicking and page changes all keep it alive.",
+                "CAPTCHA" => "eBay showed a \"verify you're human\" check instead of the sign-in form. "
+                    + $"Click Connect again and complete that check in the window — you get {CaptchaMinutes} minutes "
+                    + "from when it appears, and the window closes itself once you're signed in.",
+                var s when s.StartsWith("NAVFAIL:") =>
+                    $"eBay's sign-in page wouldn't load ({s["NAVFAIL:".Length..].Trim()}). "
+                    + "This is eBay's end, not your account — try again in a minute.",
+                var s when !string.IsNullOrWhiteSpace(s) => s,
+                _ => string.IsNullOrWhiteSpace(stderr)
+                    ? "Login window was closed before signing in."
+                    : stderr,
+            };
+            log.Add("Warning", "Terapeak login not completed", LastLoginError);
         }
         catch (Exception ex)
         {
@@ -173,6 +232,83 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         {
             Volatile.Write(ref _loginInProgress, 0);
         }
+    }
+
+    /// <summary>
+    /// Tests the session that was just saved by loading the research page headlessly, and only then
+    /// reports the connection as working.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The old success condition was "the login script wrote a file". That is not the same claim,
+    /// and the gap between them is where "Terapeak says connected but every lookup is empty" lived.
+    /// A storageState gets written for a browser that reached /sh/research once; whether the profile
+    /// still works from a headless launch a second later is a separate question, and it is the only
+    /// one the seller cares about. eBay answers no to it routinely — a subscription the account
+    /// doesn't have, a challenge the headless browser draws that the visible one didn't, a sign-in
+    /// that only half-completed.
+    /// </para>
+    /// <para>
+    /// A verdict of "couldn't tell" is kept distinct from "no". The session is left in place and the
+    /// seller is told what happened, because deleting a login over an inconclusive probe costs them
+    /// the six minutes it took to make and fixes nothing.
+    /// </para>
+    /// </remarks>
+    private async Task ConfirmFreshLoginAsync()
+    {
+        var verification = await VerifySessionAsync();
+        LastVerification = verification;
+
+        if (verification.Verified)
+        {
+            // A fresh, confirmed session starts clean: leaving a marker from the login that died
+            // would have the very next lookup report the one that just succeeded as expired.
+            TerapeakSessionFile.ClearExpiredMarker(_sessionPath);
+            log.Add("Info", "Terapeak connected",
+                "Session saved and checked against the live research page — sold comps will now use real Terapeak data.");
+            return;
+        }
+
+        if (TerapeakResearchPage.NeedsReconnect(verification.Wall))
+        {
+            TerapeakSessionFile.MarkExpired(_sessionPath, $"post-login check: {verification.Wall}");
+            LastLoginError = verification.Detail;
+            log.Add("Warning", "Terapeak login didn't take", verification.Detail);
+            return;
+        }
+
+        // Inconclusive: a bot check, a page that never rendered, no Node runtime. The session stays.
+        LastLoginError = verification.Detail;
+        log.Add("Warning", "Terapeak connected but unconfirmed", verification.Detail);
+    }
+
+    /// <summary>
+    /// Loads the research page in a headless browser on the saved profile and says what eBay served.
+    /// Never throws — an inconclusive answer is a result, not an error.
+    /// </summary>
+    public async Task<TerapeakVerification> VerifySessionAsync(CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var page = await LoadPageAsync(ResearchUrl, screenshotPath: null, ct);
+        if (page.Error is not null)
+            return new TerapeakVerification(false, TerapeakPageWall.None,
+                $"The saved session couldn't be tested — the headless browser didn't finish ({page.Error}). "
+                + "That says nothing about whether the login is good; try a sold-comps lookup, or use Check connections in Settings.",
+                now);
+
+        var wall = TerapeakResearchPage.DetectWall(page.Url, page.BodyText);
+        if (wall != TerapeakPageWall.None)
+            return new TerapeakVerification(false, wall, TerapeakResearchPage.Describe(wall), now);
+
+        if (!TerapeakResearchPage.LooksLikeResearchPage(page.Url, page.BodyText))
+            return new TerapeakVerification(false, TerapeakPageWall.None,
+                "eBay served neither the research page nor a sign-in page when the new session was tested, "
+                + "so there's no verdict to report. Try a sold-comps lookup — if it comes back empty, reconnect.",
+                now);
+
+        return new TerapeakVerification(true, TerapeakPageWall.None,
+            "The saved session was replayed in a headless browser and eBay served the research page.", now);
     }
 
     /// <summary>
@@ -202,11 +338,21 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
     /// session be saved the INSTANT it exists rather than at the end of a wait the seller may
     /// never sit through.
     /// </para>
+    /// <para>
+    /// Every await in the loop is bounded, including the ones that look instant. <c>page.evaluate</c>
+    /// against a tab whose renderer has wedged, and <c>ctx.storageState()</c> on a context mid-crash,
+    /// both hang indefinitely with no timeout of their own — and an await that never returns inside
+    /// the wait loop outlives every deadline the loop is checking, because the loop is not running
+    /// any more. That is a login window that sits open forever with a status that never changes.
+    /// </para>
     /// </remarks>
     public static string BuildLoginScript(string playwrightDir, string sessionPath, string profileDirEscaped) =>
         $"const {{ chromium }} = require('{playwrightDir}');\n" +
         "(async () => {\n" +
         $"  const RESEARCH_URL = '{ResearchUrl}';\n" +
+        // Nothing in here may wait forever. Every await below is either given an explicit timeout by
+        // Playwright or wrapped in this, which resolves to the fallback rather than hanging.
+        BoundedAwaitJs + "\n" +
         // The real installed Chrome (not Playwright's bundled "Chrome for Testing" build)
         // reports a normal, self-consistent fingerprint — eBay's bot detection flags the
         // bundled test browser much more readily, especially after repeated automated hits.
@@ -269,9 +415,13 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         // truncated session file, which reads as "not connected" and costs the seller the eBay
         // login they just finished.
         "  async function saveSession() {\n" +
-        "    const state = await ctx.storageState();\n" +
+        // Bounded: storageState() has no timeout of its own, and a context caught mid-crash never
+        // resolves it — which stalls the loop past every deadline it is checking.
+        "    const state = await bounded(ctx.storageState(), 20000, null);\n" +
+        "    if (!state) return false;\n" +
         "    " + AtomicFile.NodeWriteJs(sessionPath, "JSON.stringify(state)") + "\n" +
         "    saved = true;\n" +
+        "    return true;\n" +
         "  }\n" +
         // The only question that actually matters, asked the only way that cannot be fooled by
         // which tab is in front: fetch the research page with this browser's cookies and see
@@ -298,8 +448,10 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         "      sawCaptcha = true; deadline = Date.now() + CAPTCHA_MS;\n" +
         "    }\n" +
         // Typing on a page that never changes URL is the commonest way to sign in. It counts.
+        // Bounded: evaluate() against a wedged renderer never settles, and the .catch() below only
+        // covers a rejection — it does nothing at all for a promise that simply never resolves.
         "    for (const p of pages) {\n" +
-        "      const seen = await p.evaluate(() => window.__ingActivity || 0).catch(() => 0);\n" +
+        "      const seen = await bounded(p.evaluate(() => window.__ingActivity || 0).catch(() => 0), 5000, 0);\n" +
         "      if (seen > lastActivity) { lastActivity = seen; deadline = Math.max(deadline, seen + IDLE_MS); }\n" +
         "    }\n" +
         // Have they finished signing in somewhere this loop cannot see? Save the moment they have,
@@ -328,79 +480,287 @@ public class TerapeakService(IWebHostEnvironment env, ActionLog log)
         "  try { await browser.close(); } catch (_) {}\n" +
         "})();\n";
 
+    /// <summary>
+    /// <c>bounded(promise, ms, fallback)</c> — resolves to <c>fallback</c> if the promise has not
+    /// settled in time, instead of waiting on it forever.
+    /// </summary>
+    /// <remarks>
+    /// Playwright gives most calls a timeout option, but not all of them: <c>storageState()</c> and
+    /// <c>evaluate()</c> have none, and neither does a <c>close()</c> on a browser that has stopped
+    /// answering. A <c>.catch()</c> is not a substitute — it handles a promise that rejects, and the
+    /// failure here is a promise that never settles at all. The timer is unref'd so a script that
+    /// has finished its work exits immediately rather than idling until the last timeout fires.
+    /// </remarks>
+    public const string BoundedAwaitJs = """
+          function bounded(promise, ms, fallback) {
+            let timer = null;
+            const guard = new Promise((resolve) => {
+              timer = setTimeout(() => resolve(fallback), ms);
+              if (timer && typeof timer.unref === 'function') timer.unref();
+            });
+            return Promise.race([
+              Promise.resolve(promise).catch(() => fallback),
+              guard,
+            ]).then((value) => { try { clearTimeout(timer); } catch (_) {} return value; });
+          }
+        """;
+
     public void Disconnect()
     {
-        try { File.Delete(_sessionPath); } catch { }
+        // The backup and the expired marker go too. Leaving the .bak behind means the next
+        // inspection recovers from it and reports the session the seller just disconnected as
+        // connected — see TerapeakSessionFile.Delete.
+        TerapeakSessionFile.Delete(_sessionPath);
+        LastVerification = null;
         log.Add("Info", "Terapeak disconnected", "Saved session removed.");
     }
 
-    // ── Headless scrape using the saved session ────────────────────────────────
+    // ── Headless research using the saved session ─────────────────────────────
 
-    public async Task<TerapeakScrapeResult> ScrapeAsync(string query)
+    public async Task<TerapeakScrapeResult> ScrapeAsync(string query, CancellationToken ct = default)
     {
-        if (!IsConnected)
-            return new TerapeakScrapeResult { Status = "not_connected" };
-
-        var pwPath = PlaywrightDir.Replace("\\", "\\\\");
-        var sessionPathEscaped = _sessionPath.Replace("\\", "\\\\");
-        Directory.CreateDirectory(_profileDir);
-        var profileDirEscaped = _profileDir.Replace("\\", "\\\\");
-        var debugShotPath = Path.Combine(env.ContentRootPath, "generated-photos", $"terapeak_debug_{Guid.NewGuid():N}.png");
-        var debugShotEscaped = debugShotPath.Replace("\\", "\\\\");
-        var url = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60&keywords=" + Uri.EscapeDataString(query);
-
-        var script =
-            $"const {{ chromium }} = require('{pwPath}');\n" +
-            "(async () => {\n" +
-            // The SAME profile directory the login wrote to. Replaying storageState into a fresh
-            // browser handed eBay its own cookies from a browser it had never seen, every single
-            // scrape; reopening the profile is the same browser returning, which is what actually
-            // happened. storageState is still written at login as the connected-marker this service
-            // and ConnectionDoctor read, but it is no longer how the session travels.
-            $"  const ctx = await chromium.launchPersistentContext('{profileDirEscaped}', {{ channel: 'chrome', headless: true, viewport: {{ width: 1400, height: 1000 }} }});\n" +
-            "  const browser = ctx.browser() || { close: () => ctx.close() };\n" +
-            "  const page = ctx.pages()[0] || await ctx.newPage();\n" +
-            "  let loggedOut = false;\n" +
-            "  try {\n" +
-            $"    await page.goto('{url}', {{ waitUntil: 'domcontentloaded', timeout: 25000 }});\n" +
-            "    await page.waitForTimeout(3500);\n" +
-            "    loggedOut = /signin\\.ebay\\.com|\\/signin/.test(page.url());\n" +
-            "  } catch (_) {}\n" +
-            $"  await page.screenshot({{ path: '{debugShotEscaped}', fullPage: true }}).catch(()=>{{}});\n" +
-            "  const bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');\n" +
-            "  process.stdout.write(JSON.stringify({ loggedOut, url: page.url(), bodyText: bodyText.slice(0, 15000) }));\n" +
-            "  await browser.close();\n" +
-            "})();\n";
-
-        var run = await NodeRuntime.RunAsync(script, TimeSpan.FromSeconds(40), "terapeak_scrape");
-        if (run.TimedOut)
-            return new TerapeakScrapeResult { Status = "error", Error = "Scrape timed out." };
-
-        if (string.IsNullOrWhiteSpace(run.StdOut))
-            return new TerapeakScrapeResult { Status = "error", Error = string.IsNullOrWhiteSpace(run.StdErr) ? "No output from scrape." : run.StdErr };
-
-        using var doc = JsonDocument.Parse(run.StdOut);
-        var loggedOut = doc.RootElement.TryGetProperty("loggedOut", out var lo) && lo.GetBoolean();
-        var bodyText  = doc.RootElement.TryGetProperty("bodyText", out var bt) ? bt.GetString() ?? "" : "";
-
-        if (loggedOut)
+        // The verdict reached by reading a file, before a browser is launched for it. An expired
+        // session answers instantly and says which button to press, rather than spending 40 seconds
+        // to be handed the same sign-in page it was handed last time.
+        var session = Session;
+        switch (session.State)
         {
-            // No auto-reconnect here (removed 2026-07-15 along with the background scanner —
-            // see Program.cs) — popping a login window as a side effect of any scrape,
-            // including a passive on-demand lookup, is exactly the unattended behavior that
-            // was turned off. Reconnecting is the user's call, made explicitly in Settings.
-            Disconnect();
-            return new TerapeakScrapeResult { Status = "session_expired" };
+            case TerapeakSessionState.Valid:
+                break;
+
+            case TerapeakSessionState.Expired:
+                return Expired($"{session.Reason} Reconnect Terapeak in Settings to use its sold data again.",
+                               TerapeakPageWall.SignIn);
+
+            case TerapeakSessionState.Missing:
+                return new TerapeakScrapeResult
+                {
+                    Status = "not_connected",
+                    Reason = "Terapeak has never been connected on this machine — it needs a one-time eBay sign-in.",
+                    FixAction = ConnectFixAction,
+                };
+
+            // Empty and Malformed: the login was made and the file did not survive being written.
+            default:
+                return new TerapeakScrapeResult
+                {
+                    Status = "not_connected",
+                    Reason = $"{session.Reason} Reconnect Terapeak in Settings to save a fresh one.",
+                    FixAction = ConnectFixAction,
+                };
         }
 
-        return new TerapeakScrapeResult { Status = "ok", BodyText = bodyText, DebugScreenshotPath = debugShotPath };
+        var debugShotPath = Path.Combine(AppPaths.DataHome, "generated-photos", $"terapeak_debug_{Guid.NewGuid():N}.png");
+        var url = "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60&keywords="
+                + Uri.EscapeDataString(query);
+
+        var page = await LoadPageAsync(url, debugShotPath, ct);
+        if (page.Error is not null)
+            return new TerapeakScrapeResult { Status = "error", Error = page.Error };
+
+        var wall = TerapeakResearchPage.DetectWall(page.Url, page.BodyText);
+
+        if (TerapeakResearchPage.NeedsReconnect(wall))
+        {
+            // No auto-reconnect here (removed 2026-07-15 along with the background scanner —
+            // see Program.cs) — popping a login window as a side effect of any lookup,
+            // including a passive on-demand one, is exactly the unattended behavior that
+            // was turned off. Reconnecting is the user's call, made explicitly in Settings.
+            //
+            // Marked, not deleted: deleting made the next screen say "never connected", so the
+            // seller went looking for a setting they had already set. See TerapeakSessionFile.
+            TerapeakSessionFile.MarkExpired(_sessionPath, $"research call bounced to {wall}");
+            log.Add("Warning", "Terapeak session expired", TerapeakResearchPage.Describe(wall));
+            return Expired(TerapeakResearchPage.Describe(wall), wall);
+        }
+
+        // A bot check is not a logged-out page, and reconnecting does not clear one. Saying
+        // "expired" here sends the seller through an interactive re-login to fix nothing — so this
+        // is its own status, and the saved session is left exactly as it was.
+        if (wall == TerapeakPageWall.Challenge)
+        {
+            log.Add("Warning", "Terapeak blocked by a bot check", TerapeakResearchPage.Describe(wall));
+            return new TerapeakScrapeResult
+            {
+                Status = "challenged",
+                Wall = wall,
+                Reason = TerapeakResearchPage.Describe(wall),
+                Url = page.Url,
+                DebugScreenshotPath = debugShotPath,
+            };
+        }
+
+        return new TerapeakScrapeResult
+        {
+            Status = "ok",
+            BodyText = page.BodyText,
+            Url = page.Url,
+            DebugScreenshotPath = debugShotPath,
+        };
     }
+
+    private TerapeakScrapeResult Expired(string reason, TerapeakPageWall wall) => new()
+    {
+        Status = "session_expired",
+        Wall = wall,
+        Reason = reason,
+        FixAction = ConnectFixAction,
+    };
+
+    /// <summary>One headless page load on the saved profile: where it ended up, and what it said.</summary>
+    private sealed record PageLoad(string Url, string BodyText, string? Error);
+
+    private async Task<PageLoad> LoadPageAsync(string url, string? screenshotPath, CancellationToken ct)
+    {
+        try
+        {
+            Directory.CreateDirectory(_profileDir);
+            if (screenshotPath is not null)
+            {
+                var shotDir = Path.GetDirectoryName(screenshotPath);
+                if (!string.IsNullOrEmpty(shotDir)) Directory.CreateDirectory(shotDir);
+            }
+        }
+        catch (Exception ex)
+        {
+            return new PageLoad("", "", $"Couldn't prepare the browser profile folder: {ex.Message}");
+        }
+
+        var script = BuildPageScript(NodeRuntime.JsPath(PlaywrightDir), NodeRuntime.JsPath(_profileDir), url,
+                                     screenshotPath is null ? null : NodeRuntime.JsPath(screenshotPath));
+
+        NodeRunResult run;
+        try
+        {
+            run = await NodeRuntime.RunAsync(script, PageTimeout, "terapeak_page", ct: ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            return new PageLoad("", "", $"The headless browser wouldn't start: {ex.Message}");
+        }
+
+        if (run.TimedOut)
+            return new PageLoad("", "", $"The research page didn't load within {PageTimeout.TotalSeconds:0} seconds.");
+
+        if (string.IsNullOrWhiteSpace(run.StdOut))
+            return new PageLoad("", "", string.IsNullOrWhiteSpace(run.StdErr)
+                ? "No output from the research page load."
+                : run.StdErr.Trim());
+
+        try
+        {
+            var root = JsonDocument.Parse(run.StdOut).RootElement;
+            string Str(string prop) => root.TryGetProperty(prop, out var v) ? v.GetString() ?? "" : "";
+
+            var error = Str("error");
+            var pageUrl = Str("url");
+            var body = Str("bodyText");
+
+            // An error alongside a page that rendered is a detail, not a failure — a slow sub-resource
+            // times out on eBay's research page routinely while the stats the parser wants are already
+            // there. Only an error with nothing to show for it is a failed load.
+            if (error.Length > 0 && pageUrl.Length == 0 && body.Length == 0)
+                return new PageLoad("", "", error);
+
+            return new PageLoad(pageUrl, body, null);
+        }
+        catch (JsonException)
+        {
+            return new PageLoad("", "", "The research page load returned output that wasn't valid JSON.");
+        }
+    }
+
+    /// <summary>
+    /// The headless page-load script, shared by the post-login check and every research call.
+    /// Public, like <see cref="BuildLoginScript"/>, because it is JavaScript embedded in C# —
+    /// nothing in the build type-checks a word of it, so TerapeakLoginScriptTests pins it instead.
+    /// </summary>
+    /// <remarks>
+    /// Emits JSON on stdout and never throws out of the script: a load that failed is "we don't
+    /// know", which is a different verdict from "the session is dead". Every wait is bounded — the
+    /// navigation and the settle by Playwright's own timeouts, the rest by <c>bounded()</c> — so the
+    /// outcome is always a reported reason rather than a node process killed at the ceiling.
+    /// </remarks>
+    public static string BuildPageScript(string playwrightDir, string profileDirEscaped, string url, string? screenshotPath) =>
+        $"const {{ chromium }} = require('{playwrightDir}');\n" +
+        "(async () => {\n" +
+        "  const out = { url: '', bodyText: '', error: '' };\n" +
+        BoundedAwaitJs + "\n" +
+        "  let ctx = null, browser = null;\n" +
+        "  try {\n" +
+        // The SAME profile directory the login wrote to. Replaying storageState into a fresh
+        // browser handed eBay its own cookies from a browser it had never seen, every single
+        // scrape; reopening the profile is the same browser returning, which is what actually
+        // happened. storageState is still written at login as the connected-marker this service
+        // and ConnectionDoctor read, but it is no longer how the session travels.
+        $"    ctx = await bounded(chromium.launchPersistentContext('{profileDirEscaped}', {{ channel: 'chrome', headless: true, viewport: {{ width: 1400, height: 1000 }} }}), 30000, null);\n" +
+        "    if (!ctx) { process.stdout.write(JSON.stringify({ url: '', bodyText: '', error: 'The browser did not start within 30s.' })); return; }\n" +
+        "    browser = ctx.browser() || { close: () => ctx.close() };\n" +
+        // Belt and braces: any Playwright call that takes a timeout and was not given one here
+        // still gets a ceiling, so a future edit cannot reintroduce an unbounded wait by omission.
+        "    ctx.setDefaultTimeout(25000);\n" +
+        "    ctx.setDefaultNavigationTimeout(25000);\n" +
+        "    const page = ctx.pages()[0] || await ctx.newPage();\n" +
+        "    try {\n" +
+        $"      await page.goto('{url}', {{ waitUntil: 'domcontentloaded', timeout: 25000 }});\n" +
+        // The stat tiles the parser reads are rendered by script after domcontentloaded, so a fixed
+        // settle is still needed. Short and capped: a page that has not painted in this long is not
+        // going to, and every extra second is spent on every single lookup.
+        "      await page.waitForTimeout(3500);\n" +
+        "    } catch (e) { out.error = String((e && e.message) || e).split('\\n')[0]; }\n" +
+        "    out.url = String(page.url() || '');\n" +
+        (screenshotPath is null
+            ? ""
+            : $"    await bounded(page.screenshot({{ path: '{screenshotPath}', fullPage: true, timeout: 15000 }}), 20000, null);\n") +
+        // Bounded for the same reason it is in the login loop: evaluate() has no timeout of its own,
+        // and a wedged renderer turns "read the page text" into a wait that outlives the process.
+        "    out.bodyText = String(await bounded(page.evaluate(() => document.body.innerText), 15000, '') || '').slice(0, 15000);\n" +
+        "  } catch (e) {\n" +
+        "    if (!out.error) out.error = String((e && e.message) || e).split('\\n')[0];\n" +
+        "  }\n" +
+        "  try { await bounded(browser ? browser.close() : null, 10000, null); } catch (_) {}\n" +
+        "  process.stdout.write(JSON.stringify(out));\n" +
+        "})();\n";
+}
+
+/// <summary>
+/// What a live check of the saved session found. <see cref="Verified"/> is the only thing that
+/// justifies telling the seller they are connected.
+/// </summary>
+/// <param name="Wall">What eBay served instead, when it served something. <see cref="TerapeakPageWall.None"/> when nothing was in the way.</param>
+/// <param name="Detail">One sentence for the seller.</param>
+public sealed record TerapeakVerification(
+    bool Verified, TerapeakPageWall Wall, string Detail, DateTimeOffset AtUtc)
+{
+    /// <summary>True when the right button is Reconnect — eBay said no, rather than "not now".</summary>
+    public bool NeedsReconnect => !Verified && TerapeakResearchPage.NeedsReconnect(Wall);
 }
 
 public class TerapeakScrapeResult
 {
-    public string Status { get; set; } = ""; // ok | not_connected | session_expired | error
+    /// <summary>ok | not_connected | session_expired | challenged | error</summary>
+    public string Status { get; set; } = "";
     public string BodyText { get; set; } = "";
     public string? DebugScreenshotPath { get; set; }
     public string? Error { get; set; }
+
+    /// <summary>Where the page load actually ended up. Empty when nothing loaded.</summary>
+    public string Url { get; set; } = "";
+
+    /// <summary>What eBay put in front of the research page, when it put something there.</summary>
+    public TerapeakPageWall Wall { get; set; } = TerapeakPageWall.None;
+
+    /// <summary>The sentence to show a seller for a non-ok status.</summary>
+    public string Reason { get; set; } = "";
+
+    /// <summary>The button to offer with <see cref="Reason"/>. See TerapeakService.ConnectFixAction.</summary>
+    public string FixAction { get; set; } = "";
+
+    /// <summary>
+    /// True when this lookup produced no sold data for a reason that is about the connection, not
+    /// about the item. The distinction is the whole point: a caller that treats these as "no recent
+    /// sales" prices the item off a sample of zero and reports it with a straight face.
+    /// </summary>
+    public bool IsConnectionProblem => Status is "not_connected" or "session_expired" or "challenged" or "error";
 }

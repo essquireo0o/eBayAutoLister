@@ -43,6 +43,23 @@ public static class LoginWindowFocus
     private static readonly TimeSpan PinWindow = TimeSpan.FromSeconds(5);
 
     /// <summary>
+    /// The whole native treatment, in the order it has to happen: grant the foreground right, then
+    /// start watching for the window that is about to appear. Call immediately before launching a
+    /// login process — this is <c>beforeStart</c> for <see cref="NodeRuntime.RunAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// Named as one call because it is one decision. Terapeak and Facebook both need exactly these
+    /// two, in exactly this order, and a service that did only <see cref="Grant"/> would get a login
+    /// window that is *allowed* to raise itself and then loses the race anyway — which is the
+    /// original bug wearing a different hat. Best-effort and a no-op off Windows.
+    /// </remarks>
+    public static void PrepareForLoginWindow()
+    {
+        Grant();
+        PinNewBrowserWindowBriefly();
+    }
+
+    /// <summary>
     /// Grants any process a one-time pass to call SetForegroundWindow, so the browser this app
     /// is about to spawn can raise itself. Call immediately before starting the login process.
     /// </summary>

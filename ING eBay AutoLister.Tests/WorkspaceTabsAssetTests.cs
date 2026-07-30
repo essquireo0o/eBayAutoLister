@@ -217,4 +217,27 @@ public class WorkspaceTabsAssetTests
         Assert.True(File.Exists(path), "missing web asset: " + path);
         return File.ReadAllText(path);
     }
+
+    [Fact]
+    public void EveryScreenTheRouterCanOpenIsAlsoAScreenItCanHide()
+    {
+        // hideOverlaySections() is what gets the previous screen off the way, and every show*
+        // function calls it. A screen registered in WORKSPACE_PAGES but missing from
+        // OVERLAY_SECTIONS therefore never gets hidden: navigating away from it leaves it sitting
+        // over whatever you just opened, with the new tab active and the wrong thing on screen.
+        //
+        // That is exactly how "open the rewritten draft" looked broken — the AI Listing tab opened
+        // and went active, the route changed to #ai, and the Listing Copilot was still what you
+        // were looking at, because copilot-section was not in the list.
+        var overlays = OverlaySections();
+        var missing = RegisteredSections()
+            // The dashboard is the page the overlays sit ON, not one of them — hiding it would
+            // leave the app on a blank screen between navigations.
+            .Where(sec => sec is not null && sec != "dashboard-section" && !overlays.Contains(sec))
+            .ToList();
+
+        Assert.True(missing.Count == 0,
+            "screens the router opens but hideOverlaySections() never hides — they will stay on " +
+            $"screen over the next one: {string.Join(", ", missing)}");
+    }
 }

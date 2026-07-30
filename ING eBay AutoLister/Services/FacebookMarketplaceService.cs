@@ -134,11 +134,7 @@ public class FacebookMarketplaceService : ILocalSupplySource
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
             var run = await NodeRuntime.RunAsync(script, LoginProcessTimeout, "fbmarket_login",
-                beforeStart: () =>
-                {
-                    LoginWindowFocus.Grant();
-                    LoginWindowFocus.PinNewBrowserWindowBriefly();
-                });
+                beforeStart: LoginWindowFocus.PrepareForLoginWindow);
 
             if (run.TimedOut)
             {

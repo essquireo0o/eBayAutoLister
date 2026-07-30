@@ -49,6 +49,27 @@ public static class AppPaths
     /// <summary>Absolute path to <see cref="FacebookSessionFileName"/> under <see cref="DataHome"/>.</summary>
     public static string FacebookSessionPath => Path.Combine(DataHome, FacebookSessionFileName);
 
+    /// <summary>The saved eBay/Terapeak browser session, for exactly the reasons above.</summary>
+    public const string TerapeakSessionFileName = "terapeak-session.json";
+
+    /// <summary>Absolute path to <see cref="TerapeakSessionFileName"/> under <see cref="DataHome"/>.</summary>
+    public static string TerapeakSessionPath => Path.Combine(DataHome, TerapeakSessionFileName);
+
+    /// <summary>
+    /// The Chrome profile directory the Terapeak login and every Terapeak scrape both open.
+    /// </summary>
+    /// <remarks>
+    /// This matters more than the session file does. The cookies actually travel in here — the
+    /// storageState beside it is only the connected-marker — so a build that resolved this to a
+    /// different folder would not merely mislay a marker, it would hand eBay a browser it has never
+    /// seen and get the login challenged or killed. Which is what "Terapeak keeps disconnecting"
+    /// looked like from the seller's side.
+    /// </remarks>
+    public const string TerapeakProfileDirName = "terapeak-profile";
+
+    /// <summary>Absolute path to <see cref="TerapeakProfileDirName"/> under <see cref="DataHome"/>.</summary>
+    public static string TerapeakProfilePath => Path.Combine(DataHome, TerapeakProfileDirName);
+
     private static readonly Lazy<string> _dataHome =
         new(() => Resolve(Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService()));
 
@@ -78,7 +99,7 @@ public static class AppPaths
     public static readonly string[] StateFiles =
     [
         "credentials.json",         // Anthropic key, eBay tokens, Stripe, comps API
-        "terapeak-session.json",    // saved eBay/Terapeak browser session
+        TerapeakSessionFileName,    // saved eBay/Terapeak browser session
         FacebookSessionFileName,    // saved Facebook Marketplace browser session
     ];
 
@@ -88,6 +109,9 @@ public static class AppPaths
         "App_Data",         // ing_listing_engine.db (listings, work-recovery, publish journal), analytics, caches
         "generated-photos", // photos the app made or fetched, referenced by live listing image URLs
         "photos",           // the seller's own per-model representative photo library
+        // The browser profile carrying the live eBay cookies. Left behind by a build that ran from
+        // its own folder, this is the whole Terapeak login — not a cache that rebuilds itself.
+        TerapeakProfileDirName,
     ];
 
     /// <summary>
