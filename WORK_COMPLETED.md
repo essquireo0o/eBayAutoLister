@@ -7735,3 +7735,112 @@ noted in the previous two entries (`ClaudeService.cs`, `HostedMarketplaceReposit
 `tasks-msi-both-sites.yaml`) have since been committed or reverted by whoever owned them.
 
 `wwwroot/app.js` was not touched, so no `?v=` bump was needed.
+
+---
+
+## The price and the confidence score, taken apart — `PriceBasis` (autonomous session, 2026-07-30)
+
+Every money column on a deal row — net profit, ROI, margin, max buy price, days-to-cash — is
+derived from **one figure**, the expected sale price. That figure is a weighted blend of two
+sources whose own numbers are overwritten the moment they are combined, in
+`MarketPriceEstimator.ApplyAdaptiveWeighting`. So the board could say *"63% local / 37% Terapeak"*
+and had no way to say **63% and 37% of what**.
+
+The confidence score beside it was worse. `ConfidenceScoringService` computes seven weighted terms,
+sums them, builds a `Reasons` list — and that list was **read by nothing**: it was dropped at
+`ResalePricing.From`, and what reached the screen was a bare `62` with the level as a tooltip. A
+number a seller can only accept or ignore is not evidence; it is decoration on a figure they are
+about to spend money against.
+
+Both are now reconstructable by the person spending the money.
+
+## What the panel says
+
+**The blend, as arithmetic.** `$418.20 = 63% × $430.00 (eBay sold comps, 7 sold comps) + 37% ×
+$398.00 (Terapeak, 12 sold comps)`, then a row per source: name, `7 of 19 comps`, its own figure,
+its share. Under it, the two figures the sentence does not state and a seller checking the row
+*will* look for — the plain median (what an eBay sold search shows them) and what to actually list
+at.
+
+**The confidence score as seven bars**, each with points earned out of points possible and this
+row's own numbers in words: `Exact identifier matches — 6.7 / 20 — 1 comp matched on a part number
+or catalog id`. Then the one sentence worth acting on: **the biggest gap**, ranked by points lost
+rather than by how red a term looks. A seller with twenty identifier points missing must not be
+sent to fix a five-point consistency term because it happens to sit at zero.
+
+## The rule the whole thing rests on
+
+**The price reconciles.** Multiply each source's figure by the weight the trail carries, add them
+up, and the number the money was computed from comes back out. A breakdown that does not add up is
+worse than none — it invites trust on the strength of working that is wrong — so this is the test,
+pinned across two sources, either one alone, an awkward weight, a median with no expected sale, and
+a row nothing priced.
+
+Two decisions fall straight out of it:
+
+- **Weights are carried unrounded.** 63.4157% displayed as "63%" is fine to read and wrong to
+  compute with — dollars out on a four-figure item. The display rounds; the model does not.
+- **The local row states the *weighted* median, not the plain one**, because the weighted median is
+  what the blend multiplied. Quoting the plain median beside a weight never applied to it produces a
+  trail that reads correct and does not add up. A test drives real comps through the estimator with
+  the dearest sales as the closest matches, so the two genuinely differ and quoting the wrong one
+  fails.
+
+And the refusals: a source that carried **zero weight is not listed** (a figure beside "0%" can only
+be misread as a second opinion the price rests on), and a row nothing priced gets **no panel at
+all** — it has a reason instead of a number, and stating that reason is `ResaleValuation`'s job.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/PriceBasis.cs` | **New** — `PriceBasis` + `PriceBasisSource`, built from a `PriceEstimate` and a `ConfidenceBreakdown`; the blend sentence; the reconciliation contract |
+| `Services/ConfidenceScoringService.cs` | The seven terms now emit `ConfidenceFactor` rows (earned/possible/detail/lever) and `BiggestGap`; the seven weights and two full-marks thresholds became named constants. **The score arithmetic is unchanged** — no row moves |
+| `Models/MarketAnalysisModels.cs` | `ConfidenceFactor`; `ConfidenceBreakdown.Factors`/`BiggestGap`; `PriceEstimate.LocalMedianPrice` / `LocalExpectedSalePrice` / `TerapeakMedianPrice` |
+| `Services/MarketPriceEstimator.cs` | Keeps the three pre-blend figures before the blend overwrites them |
+| `Services/LocalArbitrageAnalyzer.cs` | `ResalePricing.Basis`, built in `From`, carried onto the row in `ApplyResale` |
+| `Models/LocalArbitrageModels.cs`, `Models/ListingData.cs`, `Program.cs` | `PriceBasis` on the deal row and on the scan row |
+| `wwwroot/app.js` | `priceBasisHtml()` — one renderer, called from the deals-board row detail and the Opportunity Finder's scoring details; `?v=101` |
+| `wwwroot/style.css` | The panel: blend line, source rows, factor bars on the shared `vizMeter`, gap line, one breakpoint; `?v=89` |
+| `Tests/PriceBasisTests.cs` | **New** — 18: the reconciliation on every shape, what each figure means, the sentence, the refusals, one end-to-end through the real `MarketPriceEstimator`, and the carry through to a built deal row |
+| `Tests/ConfidenceScoringServiceTests.cs` | +12: the terms total 100, their earned points sum to the score at four points on the range, per-term details and levers, the gap ranking, and the old `Reasons` list still produced |
+| `Tests/PriceBasisPanelAssetTests.cs` | **New** — 25: one renderer, both call sites, every JSON field the panel reads, the unpriced guard, bars scaled to each term's own ceiling, and both `?v=` bumps |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2755 passed**, 0 failed — 55 new, no pre-existing test changed or removed |
+| `node --check wwwroot/app.js` | clean |
+
+## Known limits
+
+- **A cached Terapeak price contributes nothing to the blend.** Found while writing the end-to-end
+  test. `TerapeakMarketService` serves cache hits with `SoldCompsResult.Count = 0` (the per-listing
+  rows are not stored, only the aggregates), and `ResolveWeights` returns `(1, 0)` the moment
+  `terapeakStrongCount <= 0` — so a cached median is computed, carried, and then given zero weight.
+  It is therefore correctly *absent* from this panel rather than shown at 0%, which is the honest
+  rendering of what happens. Fixing the behaviour underneath means storing the comp count on the
+  cache entry, and that is a change to pricing rather than to its presentation — deliberately not
+  done here.
+- **The panel was not driven in a browser this session.** It is pinned by asset tests (both call
+  sites, every field, the escaping, both `?v=` bumps) and `node --check`, but a real scan with
+  Terapeak connected is what would show the two-source layout at its full width.
+- **The trail explains the comps price, not the warranty uplift.** When `WarrantyPricer` lifts a
+  row's resale above the comps, the row's own figure moves and the panel keeps stating what the sold
+  comps said. The uplift has its own line beside the resale figure; the two are not reconciled
+  against each other.
+- **Nothing was changed about how the score is computed.** These are the same seven terms with the
+  same weights; only their reporting is new.
+
+## Concurrency note
+
+Another autonomous session was working in this repository at the same time and ran its own
+failure-revert (`git reset`, `git checkout -- .`, `git clean -fd`) **three times** during this one,
+wiping the working tree each time. The production change was rebuilt from scratch after each wipe
+and then committed as soon as it went green, which is the only durable protection against it.
+`wwwroot/style.css` had been staged when that session ran `git add -A`, so this panel's CSS is
+committed under **`ab457ff`** ("Stop the app tripping eBay's bot check during Terapeak sign-in")
+rather than under `20e11e8`. The content is correct and the branch is green; only the attribution is
+off, and rewriting another session's commit to fix that would cost more than it is worth.
