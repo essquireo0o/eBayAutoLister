@@ -7506,3 +7506,103 @@ version plus this session's hunks only, so that move remains uncommitted for who
 
 A dev-build `AutoListerB1.exe` from `bin\Debug` held a file lock on the build output and was stopped
 and restarted several times during verification. No installed app instance was running.
+
+---
+
+## The refusal to invent a price, pinned down — `Services/ResaleValuation.cs` under test (autonomous session, 2026-07-30)
+
+`Services/ResaleValuation.cs` is the one file allowed to say **"there is no resale price for this
+row"**, and it is the file with the most money riding on being right. The sold-comps database this
+app reads is electronics-heavy: ask it what a 2011 Tundra sells for and it answers with the median
+of four tow hitches — confidently, in milliseconds, in a number that looks exactly like a real one.
+Run that against an $8,500 ask and the board says "pass" on the best flip on it; run the mirror case
+and it says "goldmine" on a $600 wreck.
+
+Until now the only tests touching that file were six in `CategoryArbitrageTests`, all of them
+calling `Reject()` on the Cars category. Everything else was uncovered: the shape of a refused
+**outcome**, the bulky-goods provider in its entirety, the ask floor, the exact edges of the
+published multiples, the evidence count, the search link, and the registry that decides which of
+the three providers a category gets.
+
+## What is now pinned
+
+**The refusal contract.** The assertion the file exists for: a refused outcome carries `Pricing =
+null` even though the comps object came in with $180 on it. Nothing downstream can ever see that
+$180. Alongside it: `Confidence = none`, `SourceLabel = "estimate unavailable"`, the reason in this
+row's own numbers, and a prefilled eBay sold-and-completed search narrowed to eBay Motors
+(`_sacat=6001`) asking for `2011 Toyota Tundra SR5` — the identity, not the seller's "MUST SELL".
+
+**The bulky-goods provider**, which nothing exercised before. A $1,000 item reselling at $6,000 is
+an ordinary big-item flip and a comp for a different truck — same two ratios, two providers, two
+answers. Its wording is its own too: "something this size", never "a vehicle" on a dresser.
+
+**The ask floor.** Below it the ratio test is switched off deliberately, because a $120 nightstand
+comping at $12 is as likely to be a real underpriced pickup as a bad match, and refusing it drops
+money off the board to protect a number nobody was going to spend $120 on. One dollar over the
+floor, the same ratio is refused.
+
+**The edges are edges.** Exactly 5× and exactly 0.4× are allowed; a dollar past either is refused —
+the multiples are quoted at the seller verbatim ("a 5× return on a vehicle is a comp for a different
+one"), so a row at the stated multiple has to fall on the side the sentence claims.
+
+**The evidence is the comps that set the price**, not the ones the search returned. A twelve-result
+lookup that priced off one of them is refused as one comp; four Terapeak comps and no hosted ones
+count as four, not zero.
+
+**Two branches that could each quietly re-open the hole.** A `ResalePricing` built by hand with a
+median and no expected sale — how the trend projection and the negotiation endpoint arrive — is
+still ratio-checked rather than waved through. And an unpriced big-ticket ad (the live cars board is
+full of `*FREE SHIPPING!*` with no price, which parses as free, which makes ROI unbounded) is
+refused, while a genuine giveaway carrying `Freebie` is left to the freebie board's own cost basis.
+
+**The search link.** A classifieds title full of `&`, `#` and `%` round-trips out of `_nkw`
+intact — an unescaped ampersand doesn't break the link visibly, it silently truncates the search to
+the first two words and there is no way for the seller to tell. A null query still produces a usable
+URL; a site-wide category doesn't append `_sacat`.
+
+**The registry.** Every category in the catalog is owned by a provider that `Handles` it (an
+unmatched one falls back to the parcel answer — silently the wrong answer for a titled thing, and
+not the kind of thing to discover on a board). `Default` is the same set of rules the container
+registers. An unknown provider id degrades to eBay comps rather than failing; an empty registry
+refuses and still hands back the search. And catalog-wide: for every category, an unvalued row
+carries a non-empty reason and a well-formed search link — the invariant a new category must keep.
+
+**End to end**, through `LocalArbitrageAnalyzer.Build`: a sectional sofa whose comps are slipcovers
+shows no price, no profit, no ROI and `no_data`, and still shows its $600 ask, its category and its
+search; a plausible one is priced with eBay's percentage cut ($238.90 on $1,800) and no shipping,
+because nobody posts a sectional.
+
+## Files
+
+| File | What |
+|---|---|
+| `Tests/ResaleValuationTests.cs` | new — 30 tests over `ResaleValuation.cs`: registry routing and fallbacks, the parcel provider, the refusal contract, both guarded providers' bounds and wording, the ask floor, multiple edges, evidence counting, the freebie carve-out, URL escaping, and two `Build` paths on the bulky board |
+
+No production code was changed — this is coverage of behaviour that already ships.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2622 passed**, 0 failed — 30 new, no pre-existing test changed or removed |
+
+## Known limits
+
+- **These pin behaviour; they did not find a bug.** All 30 passed on first run against the shipping
+  implementation, which is the honest result and the point of writing them: the rules are now
+  executable rather than only documented in comments.
+- **The DI registration itself is still untested.** The tests assert `Default` equals
+  `BuildDefaults()`, which is what `Program.cs` registers — but `Program.cs` is top-level statements
+  and nothing here resolves the container.
+- **No test covers a provider that throws.** Every shipped provider is pure and total; a fourth one
+  that isn't would take the request down with it.
+
+## Left untouched
+
+The same files were already modified in the working tree at the start of this session and are **not**
+part of this commit, exactly as the previous session left them: `ClaudeService.cs`,
+`HostedMarketplaceRepository.cs`, `TerapeakService.cs`, `EarningsCalculator.cs`,
+`TerapeakLoginScriptTests.cs`, `MARKETING.md`, `index.html`, `tasks-msi-both-sites.yaml`.
+
+`wwwroot/app.js` was not touched, so no `?v=` bump was needed.
