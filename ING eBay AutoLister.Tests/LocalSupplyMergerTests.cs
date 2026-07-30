@@ -44,6 +44,33 @@ public class LocalSupplyMergerTests
     public void RollUpStatus_NoSourcesSelectedAtAll_SaysSo() =>
         Assert.Equal("no_sources", LocalSupplyMerger.RollUpStatus([]));
 
+    // A site the scan ran out of time to reach must not blank out one that answered — the same rule
+    // as a disconnected Facebook, and the reason a partial board is worth showing at all.
+    [Fact]
+    public void RollUpStatus_ASiteWasSkippedForTime_TheSearchIsStillOk()
+    {
+        var status = LocalSupplyMerger.RollUpStatus([
+            Result("craigslist", "ok", Item("craigslist", "1", 300m)),
+            Result("facebook", LocalSupplyGuard.SkippedStatus),
+        ]);
+
+        Assert.Equal("ok", status);
+    }
+
+    // "Wasn't searched" says nothing the seller can act on when another site actually broke. The
+    // error is the headline; the skipped site is still on its own chip.
+    [Fact]
+    public void RollUpStatus_NothingAnswered_AnErrorOutranksASiteThatWasNeverAsked() =>
+        Assert.Equal("error", LocalSupplyMerger.RollUpStatus([
+            Result("craigslist", "error"), Result("facebook", LocalSupplyGuard.SkippedStatus)]));
+
+    // Every site skipped is its own answer and not an error: nothing was tried, so nothing failed.
+    [Fact]
+    public void RollUpStatus_EverySiteSkipped_SaysSoRatherThanBlamingTheSites() =>
+        Assert.Equal(LocalSupplyGuard.SkippedStatus, LocalSupplyMerger.RollUpStatus([
+            Result("craigslist", LocalSupplyGuard.SkippedStatus),
+            Result("facebook", LocalSupplyGuard.SkippedStatus)]));
+
     // ── Merge ──────────────────────────────────────────────────────────────────
 
     [Fact]

@@ -127,8 +127,11 @@ public class LocalSupplySearchResult
     public string SourceId { get; set; } = "";
     public string SourceLabel { get; set; } = "";
 
-    // ok | not_connected | session_expired | error
+    // ok | not_connected | session_expired | error | skipped
     // Sources that need no login (Craigslist) never return not_connected/session_expired.
+    // "skipped" is the one status the source itself never sets: it means the scan ran out of time
+    // before reaching this site, so nothing here is a judgement on the site — see
+    // Services/LocalSupplyScanBudget.cs.
     public string Status { get; set; } = "";
     public string Query { get; set; } = "";
     public string ZipCode { get; set; } = "";

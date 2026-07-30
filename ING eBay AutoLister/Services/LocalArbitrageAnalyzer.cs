@@ -553,8 +553,28 @@ public sealed class LocalArbitrageAnalyzer(
         row.Coupons = savings;
     }
 
-    // Only an improvement is worth stating. A code that leaves the verdict where it was has already
-    // said everything it has to say in the money columns.
+    /// <summary>
+    /// How far the board is willing to stand behind a row, as a number. Higher is better.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two callers. The coupon pass compares a row's verdict against the one it would earn with a
+    /// code, because only an improvement is worth stating — a code that leaves the verdict where it
+    /// was has already said everything it has to say in the money columns.
+    /// </para>
+    /// <para>
+    /// <see cref="Rank"/> sorts on it, which is the reason this reads <see cref="Judge"/>'s answer
+    /// rather than forming a second opinion on the same evidence. The verdict already refuses to go
+    /// above "thin" when no sold comp carries the item's model number, when there are too few comps
+    /// to call a market price, or when the sold history is too scattered to trust — and
+    /// <see cref="ApplyEvidence"/> holds it there for those same reasons. Re-deriving any of it here
+    /// is how a board ends up calling one number confident in one place and thin in another.
+    /// </para>
+    /// <para>
+    /// "pass" and "no_data" share the floor. Ranking never has to tell them apart: both are already
+    /// below every profitable row by the two keys that run before this one.
+    /// </para>
+    /// </remarks>
     private static int VerdictRank(string verdict) => verdict switch
     {
         "goldmine" => 3, "solid" => 2, "thin" => 1, _ => 0,
@@ -970,12 +990,21 @@ public sealed class LocalArbitrageAnalyzer(
     // Every mode keeps that rule, and every mode keeps losers below winners: a listing that clears
     // its fees in 200 days is still a better row than one that never clears them at all, however
     // quickly it wouldn't.
+    //
+    // And every mode ranks by the verdict before it ranks by the money, because the biggest number
+    // on a sourcing board is routinely its least supported one. A $2,000 profit computed from a
+    // resale price that belongs to a different product outranks every honest deal under it on
+    // arithmetic alone — and the row a seller drives across town for is the top one, whatever the
+    // dimmed percentages beside it say. Sorting the app's own judgement first puts the comp-backed
+    // deals at the top and leaves the estimate below them, still visible, still carrying its
+    // figures, ordered among its own kind by exactly the same rule.
     public static List<LocalArbitrageOpportunity> Rank(
         IEnumerable<LocalArbitrageOpportunity> rows, string? sort = null)
     {
         var ordered = rows
             .OrderByDescending(r => r.NetProfit.HasValue)
-            .ThenByDescending(r => r.NetProfit > 0);
+            .ThenByDescending(r => r.NetProfit > 0)
+            .ThenByDescending(r => VerdictRank(r.Verdict));
 
         return NormalizeSort(sort) switch
         {

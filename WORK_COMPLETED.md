@@ -7158,3 +7158,125 @@ Four files were already modified in the working tree when this session started
 (`ClaudeService.cs`, `HostedMarketplaceRepository.cs`, `TerapeakService.cs`,
 `TerapeakLoginScriptTests.cs`) plus `tasks-msi-both-sites.yaml`. They are unrelated to this work and
 were **not** committed with it — they remain uncommitted, exactly as they were found.
+
+---
+
+## A slow site can't cost you the whole board — local arbitrage hardening (autonomous session, 2026-07-30)
+
+Three faults in the Craigslist/Facebook path, all of which showed up as the board lying about what
+it knew: a scan that could lose everything to one slow site, a source status that had no word for
+"we never asked", and a ranking that led with its least supported row.
+
+## 1. The whole-scan budget — `Services/LocalSupplyScanBudget.cs` (new)
+
+`LocalSupplyGuard` bounds **one** source. Nothing bounded their sum, and the loop is sequential on
+purpose — one source drives a real browser, and running that beside anything else turns a slow scan
+into a stuck one — so the per-source budgets **add up** rather than overlap:
+
+| Source | Guard budget |
+|---|---|
+| craigslist, freebies, deal feeds, liquidation, eBay | 45s each |
+| facebook (browser) | 180s |
+| **worst case, six registered sources** | **405s ≈ 6m45s of searching alone** |
+
+That is before a single sold-comp lookup, against `LOCAL_ARBITRAGE_TIMEOUT_MS = 8 minutes` in
+`app.js`. When it overran, the seller lost **everything** — the fetch aborted and the forty
+Craigslist rows that had arrived in four seconds went with it. The cheap, reliable source paid for
+the expensive, unreliable one.
+
+The search half of a scan now has a budget of its own (5 minutes, leaving 3 for pricing):
+
+- Each source still gets its own timeout, **capped by whatever is left** — Facebook gets 90 seconds
+  when 90 seconds is all that remains, rather than three minutes that aren't there.
+- Time is charged as **measured, not as allowed**: Craigslist answering in 4s leaves the rest of the
+  scan the other 41.
+- Below `MinimumUsefulSlice` (15s) a source is not searched at all. Handing it 3 seconds only buys a
+  timeout the seller waits out to be told the site failed.
+- Pure and hand-wound — `Spend(elapsed)` is called by the caller, so every rule is unit-testable
+  without a clock.
+
+`SearchLocalSourcesAsync` in `Program.cs` is the one loop both scan endpoints now share
+(`/api/local/search` and `FindLocalArbitrageAsync`), replacing two hand-rolled `foreach`es.
+
+## 2. `skipped` — a status that doesn't blame the site
+
+An `error` on a source that was **never asked** is a lie about it, and it puts a red "blocked" chip
+on a site that is working perfectly — sending the seller off to check a connection that was never
+the problem. So `skipped` is its own status, plumbed the whole way:
+
+| Layer | Change |
+|---|---|
+| `LocalSupplyGuard` | `SkippedStatus` const; added to `KnownStatuses` so `Normalize` doesn't rewrite it to `error` |
+| `LocalSupplyMerger.RollUpStatus` | a skipped site never blanks one that answered; a real `error` outranks it when nothing answered; all-skipped says so rather than blaming the sites |
+| `app.js` chip | `not searched — out of time`, with the existing Retry button (it *is* retryable — run it again with fewer sites ticked) |
+| `app.js` `partialLocalNote` | `"…Facebook wasn't reached before the scan ran out of time"` |
+| `app.js` both boards | the partial-board sentence now carries the re-run button itself, instead of making the seller find the matching chip |
+
+## 3. The ranking led with the row it trusted least
+
+`Rank()` ordered by `NetProfit` and never read `Verdict` or `EvidenceTier`. But `Judge` already
+refuses to go above `thin` when **no sold comp carries the item's model or part number** — so a
+$2,000 profit can be arithmetic on a different product's price, and it sat at **row 1**. The row a
+seller drives across town for is the top one, whatever the dimmed percentages beside it say.
+
+`Rank` now sorts on the app's **own** verdict before the money, in every mode:
+
+```
+NetProfit.HasValue  →  NetProfit > 0  →  VerdictRank  →  (profit | fastest | profit-per-day)
+```
+
+- It reads `Judge`'s answer rather than forming a second opinion — re-deriving the evidence rules
+  here is how a board calls one number confident in one place and thin in another. `VerdictRank`
+  already existed for the coupon pass; it is now shared and documented for both callers.
+- **Demoted, never dropped.** The estimate keeps its place and all its figures.
+- **Within a band the money still decides**, so a $2,000 estimate still leads an $80 one.
+- **Losers and unpriced rows cannot be lifted** — those two keys run first and stay first.
+
+## Tests
+
+| File | Added |
+|---|---|
+| `LocalSupplyScanBudgetTests.cs` (new) | 8 — slices, measured spend, refusal below the minimum, overspend clamping, `Exhausted` only once a source is actually refused, and that a skipped result survives `Normalize` |
+| `LocalSupplyMergerTests.cs` | 3 — skipped never blanks an answering site; `error` outranks it; all-skipped says so |
+| `LocalArbitrageAnalyzerTests.cs` | 5 — the unsupported $2,000 no longer outranks the comp-backed $140; it stays on the board; money still decides within a band; velocity sorts are gated too; losers are never lifted |
+
+## Verification
+
+| Command | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Build succeeded**, 0 errors, 2 warnings (pre-existing) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2548 passed**, 0 failed — 16 new, no pre-existing test changed or removed |
+| `dotnet test --filter LocalSupplyScanBudgetTests` | 8 passed |
+| `node --check wwwroot/app.js` | clean |
+
+`wwwroot` is an `EmbeddedResource`, so `index.html` was bumped to `app.js?v=98`.
+
+## Known limits
+
+- **The 5-minute search budget is a constant, not a setting.** It is derived from the browser's
+  8-minute fetch timeout; changing one without the other reopens the hole.
+- **Skipping is order-dependent.** Sources are searched in registration order (public, no-login
+  first — see `Program.cs`), so the site most likely to be skipped is the browser-driven one at the
+  end. That is the right one to lose, but it is a consequence of the ordering rather than a choice
+  the budget makes.
+- **The budget does not make a slow source faster.** A Facebook search cut to 90 seconds reports the
+  guard's ordinary timeout error, which is honest — it was asked, and it didn't answer in the time
+  there was — but it reads as a Facebook failure rather than as a short budget.
+- **Verdict-band ranking is only as good as `Judge`.** A row wrongly graded `solid` still leads.
+  What changed is that the board no longer ranks *against* its own stated confidence.
+
+## Left untouched
+
+The same four files were already modified in the working tree when this session started
+(`ClaudeService.cs`, `HostedMarketplaceRepository.cs`, `TerapeakService.cs`,
+`TerapeakLoginScriptTests.cs`) plus `MARKETING.md` and `tasks-msi-both-sites.yaml`. They are
+unrelated to this work and were **not** committed with it — they remain uncommitted, exactly as they
+were found.
+
+**Another agent was editing this repo during this session.** `Services/EarningsCalculator.cs`
+(ordering the awaiting-cost list newest-first) and a matching `index.html` change (moving
+`#er-awaiting` above the hero) appeared in the working tree mid-session — an earnings change, not
+this one. The `index.html` hunks were swept into the first commit by a path-level `git add` and were
+**split back out by amend**; both files are left uncommitted for whoever owns them. The only
+`index.html` line in this commit is the `app.js?v=96 → 98` bump. That agent had already moved the
+tag to 97 in the working tree, so 98 clears both.

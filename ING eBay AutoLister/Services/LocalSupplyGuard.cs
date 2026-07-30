@@ -32,6 +32,9 @@ namespace ING_eBay_AutoLister.Services;
 ///
 /// Nothing here retries. A source that just refused us is not a source to ask again immediately —
 /// the result carries <see cref="LocalSupplySearchResult.Retryable"/> and the seller decides.
+///
+/// This bounds ONE source. What bounds their sum — the sequential loop that adds six of these
+/// budgets together and outlasts the browser's patience — is <see cref="LocalSupplyScanBudget"/>.
 /// </summary>
 public static class LocalSupplyGuard
 {
@@ -47,7 +50,14 @@ public static class LocalSupplyGuard
     /// </summary>
     public static readonly TimeSpan SessionSourceTimeout = TimeSpan.FromMinutes(3);
 
-    private static readonly string[] KnownStatuses = ["ok", "not_connected", "session_expired", "error"];
+    /// <summary>
+    /// A source the scan ran out of time to search at all — see <see cref="LocalSupplyScanBudget"/>.
+    /// Kept apart from <c>error</c> because it says nothing about the site: it was never asked.
+    /// </summary>
+    public const string SkippedStatus = "skipped";
+
+    private static readonly string[] KnownStatuses =
+        ["ok", "not_connected", "session_expired", "error", SkippedStatus];
 
     public static TimeSpan TimeoutFor(ILocalSupplySource source) =>
         source.RequiresConnection ? SessionSourceTimeout : PublicSourceTimeout;

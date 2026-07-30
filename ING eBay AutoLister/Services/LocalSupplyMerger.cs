@@ -14,6 +14,12 @@ public static class LocalSupplyMerger
     /// nothing answered does the reason matter, and then the most actionable one wins — a missing
     /// or expired session is something the seller can fix in one click, a site error isn't.
     /// </summary>
+    /// <remarks>
+    /// <c>skipped</c> loses to every other reason, and to <c>error</c> in particular. A scan that
+    /// spent its whole budget on two sites that then failed has an error to report and a source it
+    /// never reached; the error is what the seller can act on, and "wasn't searched" as the headline
+    /// would bury it. See <see cref="LocalSupplyScanBudget"/>.
+    /// </remarks>
     public static string RollUpStatus(IEnumerable<LocalSupplySearchResult> results)
     {
         var list = results.ToList();
@@ -21,7 +27,10 @@ public static class LocalSupplyMerger
         if (list.Any(r => r.Status == "ok")) return "ok";
         if (list.Any(r => r.Status == "session_expired")) return "session_expired";
         if (list.Any(r => r.Status == "not_connected")) return "not_connected";
-        return "error";
+        if (list.Any(r => r.Status == "error")) return "error";
+        return list.All(r => r.Status == LocalSupplyGuard.SkippedStatus)
+            ? LocalSupplyGuard.SkippedStatus
+            : "error";
     }
 
     public static LocalSupplyMultiResult Merge(

@@ -2189,6 +2189,9 @@
     const why = missing.map(s =>
       s.status === 'not_connected' ? `${s.label} needs connecting`
       : s.status === 'session_expired' ? `${s.label}'s session expired`
+      // Not a failure of the site and mustn't read as one: the scan spent its time on the sites
+      // before it and never asked this one. The seller's move is different too — untick something.
+      : s.status === 'skipped' ? `${s.label} wasn't reached before the scan ran out of time`
       : s.retryable ? `${s.label} is blocked right now`
       : `${s.label} couldn't be searched`).join(', ');
 
@@ -2211,6 +2214,9 @@
         : ok ? 'no results'
         : s.status === 'not_connected' ? 'connect required'
         : s.status === 'session_expired' ? 'session expired'
+        // "not searched" rather than "blocked": this site did nothing wrong and a red chip reading
+        // as a site failure sends the seller off to check a connection that was never the problem.
+        : s.status === 'skipped' ? 'not searched — out of time'
         : s.retryable ? 'blocked — retry'
         : 'unavailable';
       // Connect is offered only for the source whose connect flow this page actually has. A future
@@ -2256,7 +2262,9 @@
 
     // Blank unless part of the search is missing, in which case the count above it needs the
     // caveat more than the panel needs a clean status line.
-    setLocalStatus(partialLocalNote(data.sources));
+    // A partial board offers the re-run here as well as on the chip. The sentence is what the
+    // seller reads; making them find the matching chip to act on it is a step for nothing.
+    setLocalStatus(partialLocalNote(data.sources), (data.sources || []).some(s => s.status !== 'ok' && s.retryable));
     // Radius is echoed from the response, not the form: Facebook snaps it to one of its own
     // dropdown values, so this reports what was actually searched. Per-site links live in the
     // source chips above, since each site has its own results URL.
@@ -2901,7 +2909,9 @@
     }
 
     arbitrageData = data;
-    setLocalStatus(partialLocalNote(data.sources));
+    // A partial board offers the re-run here as well as on the chip. The sentence is what the
+    // seller reads; making them find the matching chip to act on it is a step for nothing.
+    setLocalStatus(partialLocalNote(data.sources), (data.sources || []).some(s => s.status !== 'ok' && s.retryable));
 
     // Which sites are actually in this ranking — a mixed table has to say so, and a site that
     // returned nothing shouldn't be implied to have been searched fruitfully.

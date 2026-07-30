@@ -2245,9 +2245,11 @@ app.MapGet("/api/local/search", async (
         var picked = registry.Resolve(sources);
 
         // Sequential, not parallel: one of these sites is searched by driving a real browser, and
-        // running that alongside anything else is how a slow search becomes a stuck one.
-        foreach (var source in picked)
-            results.Add(await SearchLocalSourceAsync(source, q ?? "", zip ?? "", radiusMiles, craigslistSite, wanted, ct));
+        // running that alongside anything else is how a slow search becomes a stuck one. `results`
+        // is passed in rather than returned so the catch below still has whatever was gathered
+        // before something outside the per-source guard broke.
+        await SearchLocalSourcesAsync(
+            picked, q ?? "", zip ?? "", radiusMiles, craigslistSite, wanted, ct, into: results);
 
         var merged = LocalSupplyMerger.Merge(results, q ?? "", zip ?? "", radiusMiles);
         // What each row actually IS, worked out once for the whole search. The plain list only uses
@@ -2296,7 +2298,7 @@ static LocalSupplyMultiResult FailedLocalSearch(
 // afterwards — see ResaleCategoryCatalog.ClassifyAll.
 static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
     ILocalSupplySource source, string q, string zip, int radius, string? craigslistSite,
-    ResaleCategory category, CancellationToken ct) =>
+    ResaleCategory category, CancellationToken ct, TimeSpan? timeout = null) =>
     LocalSupplyGuard.RunAsync(
         source,
         token => source is CraigslistService craigslist
@@ -2310,7 +2312,50 @@ static Task<LocalSupplySearchResult> SearchLocalSourceAsync(
                 // classifieds section.
                 allowBlankQuery: !category.IsDefault)
             : source.SearchAsync(q, zip, radius, category, token),
-        q, zip, radius, ct: ct);
+        q, zip, radius, timeout, ct);
+
+// Every selected site, one after another, under one budget for the lot of them.
+//
+// The loop is sequential for the reason above — a real browser is involved and running it beside
+// anything else makes a slow scan a stuck one — which means the per-source timeouts ADD UP. Six
+// registered sources is over six minutes of searching before a single sold-comp lookup, against a
+// browser that abandons the request at eight. When that happened the seller lost the whole board,
+// including the forty Craigslist rows that arrived in four seconds.
+//
+// LocalSupplyScanBudget is what stops that: each source still gets its own timeout, capped by
+// whatever is left of the scan, and the ones there is no time for come back "skipped" rather than
+// the request never answering. Three sites and a sentence saying which two were missed beats a
+// spinner that ends in nothing.
+static async Task<List<LocalSupplySearchResult>> SearchLocalSourcesAsync(
+    IReadOnlyList<ILocalSupplySource> sources, string q, string zip, int radius, string? craigslistSite,
+    ResaleCategory category, CancellationToken ct, List<LocalSupplySearchResult>? into = null)
+{
+    var results = into ?? [];
+    var budget = new LocalSupplyScanBudget();
+
+    foreach (var source in sources)
+    {
+        if (budget.Allow(source) is not { } slice)
+        {
+            results.Add(LocalSupplyScanBudget.Skipped(source, q, zip, radius));
+            continue;
+        }
+
+        // Measured rather than assumed: a source that answers in four seconds must leave the rest
+        // of the scan the other forty-one, or the budget would be spent by the sites that were fast.
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            results.Add(await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, category, ct, slice));
+        }
+        finally
+        {
+            budget.Spend(started.Elapsed);
+        }
+    }
+
+    return results;
+}
 
 // The local-arbitrage ranking: the same zip/radius/keyword search as above, across every selected
 // site, but every result is priced against real eBay sold data and ranked by what's left after
@@ -4841,10 +4886,10 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     var wanted = category ?? ResaleCategoryCatalog.Anything;
 
     // Sequential: one of these sources drives a real browser, and running that concurrently with
-    // anything else turns a slow search into a stuck one.
-    var searches = new List<LocalSupplySearchResult>();
-    foreach (var source in sources)
-        searches.Add(await SearchLocalSourceAsync(source, q, zip, radius, craigslistSite, wanted, ct));
+    // anything else turns a slow search into a stuck one. Which is exactly why the whole loop runs
+    // under one budget — see SearchLocalSourcesAsync. This scan has a pricing half to pay for after
+    // the searching, so it can least afford to spend the browser's whole patience on the sites.
+    var searches = await SearchLocalSourcesAsync(sources, q, zip, radius, craigslistSite, wanted, ct);
 
     var search = LocalSupplyMerger.Merge(searches, q, zip, radius);
 

@@ -187,7 +187,7 @@ public class LocalArbitrageResult
 {
     // Rolled up across every source that was searched (LocalSupplyMerger.RollUpStatus), so one
     // disconnected site never blanks a ranking another site filled: ok | not_connected |
-    // session_expired | error | no_sources. The UI keeps its per-source connect prompts.
+    // session_expired | error | skipped | no_sources. The UI keeps its per-source connect prompts.
     public string Status { get; set; } = "";
     public string Query { get; set; } = "";
     public string ZipCode { get; set; } = "";

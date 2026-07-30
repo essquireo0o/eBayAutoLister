@@ -518,6 +518,84 @@ public class LocalArbitrageAnalyzerTests
         Assert.Equal(["near", "far"], ranked.Select(r => r.Title));
     }
 
+    // ── Ranking by what the board can stand behind ─────────────────────────────
+
+    private static LocalArbitrageOpportunity JudgedRow(
+        string title, decimal profit, string verdict, int? daysToCash = null) =>
+        new()
+        {
+            Title = title, NetProfit = profit, Verdict = verdict, DaysToCash = daysToCash,
+            ProfitPerDay = daysToCash is int d && d > 0 ? Math.Round(profit / d, 2) : null,
+        };
+
+    // The one that matters. Judge refuses to go above "thin" when no sold comp carries the item's
+    // model number — so a $2,000 row can be arithmetic on a different product's price. Ranked on
+    // money alone it led the board, and the top row is the one a seller drives across town for,
+    // whatever the dimmed percentages beside it say.
+    [Fact]
+    public void Rank_ABiggerButUnsupportedNumber_DoesNotOutrankACompBackedDeal()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank([
+            JudgedRow("priced-off-another-product", 2000m, "thin"),
+            JudgedRow("backed-by-comps", 140m, "solid"),
+        ]);
+
+        Assert.Equal(["backed-by-comps", "priced-off-another-product"], ranked.Select(r => r.Title));
+    }
+
+    // Demoted, never dropped. The estimate keeps its place on the board and its figures — the claim
+    // is only that it isn't the first thing the seller reads.
+    [Fact]
+    public void Rank_TheDemotedEstimateIsStillOnTheBoard()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank([
+            JudgedRow("estimate", 2000m, "thin"), JudgedRow("goldmine", 300m, "goldmine"),
+            JudgedRow("solid", 140m, "solid"),
+        ]);
+
+        Assert.Equal(["goldmine", "solid", "estimate"], ranked.Select(r => r.Title));
+        Assert.Equal(3, ranked.Count);
+    }
+
+    // Within one band nothing changed: the money still decides, which is what keeps a $2,000
+    // estimate above an $80 one instead of collapsing every unsupported row into one heap.
+    [Fact]
+    public void Rank_WithinTheSameVerdict_TheMoneyStillDecides()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank([
+            JudgedRow("small-estimate", 80m, "thin"), JudgedRow("big-estimate", 2000m, "thin"),
+        ]);
+
+        Assert.Equal(["big-estimate", "small-estimate"], ranked.Select(r => r.Title));
+    }
+
+    // Evidence gates every mode, not just the money one. A fast route to a number nothing supports
+    // is not a fast flip, and "fastest cash" is where a seller with one pot of money shops.
+    [Fact]
+    public void Rank_VelocitySortsAreGatedOnTheVerdictToo()
+    {
+        var unsupported = JudgedRow("unsupported-but-quick", 900m, "thin", daysToCash: 10);
+        var backed = JudgedRow("backed-but-slower", 200m, "solid", daysToCash: 45);
+
+        foreach (var sort in new[] { LocalArbitrageAnalyzer.SortByFastestCash, LocalArbitrageAnalyzer.SortByProfitPerDay })
+            Assert.Equal(["backed-but-slower", "unsupported-but-quick"],
+                LocalArbitrageAnalyzer.Rank([unsupported, backed], sort).Select(r => r.Title));
+    }
+
+    // The verdict may reorder winners among themselves; it must never lift a loser or an unpriced
+    // row over one that makes money. Those two keys run first and stay first.
+    [Fact]
+    public void Rank_TheVerdictNeverLiftsALoserOverAWinner()
+    {
+        var ranked = LocalArbitrageAnalyzer.Rank([
+            JudgedRow("loss", -50m, "pass"),
+            new LocalArbitrageOpportunity { Title = "unpriced", NetProfit = null, Verdict = "no_data" },
+            JudgedRow("thin-win", 20m, "thin"),
+        ]);
+
+        Assert.Equal(["thin-win", "loss", "unpriced"], ranked.Select(r => r.Title));
+    }
+
     // ── Days to cash: ranking by how fast the money comes back ─────────────────
 
     private static LocalArbitrageOpportunity SpeedRow(
