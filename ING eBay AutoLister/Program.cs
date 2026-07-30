@@ -6928,6 +6928,8 @@ static void ApplyAnalysisToOpportunityItem(OpportunityListItem candidate, Market
     candidate.TerapeakWeightPercent = analysis.Sources.TerapeakWeightPercent;
     candidate.ConfidenceScore = analysis.Confidence.Score;
     candidate.ConfidenceLevel = analysis.Confidence.Level;
+    // The working behind both of those and behind the resale price above — see Services/PriceBasis.cs.
+    candidate.PriceBasis = PriceBasis.From(analysis, analysis.Sources.LocalComparableCount);
     candidate.PriceStabilityScore = analysis.Stability.StabilityScore;
     candidate.PriceTrend = analysis.Stability.Trend;
     candidate.MarketDataDisagreement = analysis.PriceEstimate.MarketDataDisagreement;

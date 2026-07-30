@@ -3464,6 +3464,10 @@
             <span class="fb-arb-fig-label">Evidence</span>
             <span class="fb-arb-evidence">${evidence}${row.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(row.disagreementMessage)}">⚠</span>` : ''}</span>
           </div>
+          ${/* The evidence line above says how much to believe the price; this says how the price
+                was arrived at. Folded shut, because it is the answer to a question asked of one
+                row — but asked of that row it has to be answerable. */''}
+          ${priceBasisHtml(row.priceBasis)}
         </td>
       </tr>`;
   }
@@ -3550,6 +3554,73 @@
     return priced < found
       ? `<span title="${found} matched the search; the rest were a different product, a different quantity, or a price outlier.">${label} <span class="fb-arb-muted">of ${found}</span></span>`
       : label;
+  }
+
+  // ── Where the price came from, and where the confidence went ──────────────
+  // The panel that answers "why should I believe that number?" without asking anyone to take a
+  // word of it on trust. Two halves, and both are arithmetic rather than adjectives:
+  //
+  //   1. The blend. Each sold-data source's OWN figure, its comp count, and how much of the price
+  //      is its opinion. The board could already say "63% local / 37% Terapeak" and had no way to
+  //      say 63% and 37% *of what* — the two medians are overwritten the moment they are combined.
+  //   2. The confidence score, taken apart into the seven terms that make it, with the points each
+  //      one earned out of the points it could have. A bare "62" can only be accepted or ignored;
+  //      the same 62 with "no comp matched on a part number — 20 points" is something the seller
+  //      can act on.
+  //
+  // Shared by the deals board and the Opportunity Finder, so the two screens can never explain the
+  // same pipeline's numbers differently. See Services/PriceBasis.cs.
+  function priceBasisHtml(basis) {
+    if (!basis || !(basis.price > 0)) return '';
+
+    const sources = (basis.sources || []).map(s => {
+      // "7 of 19 comps" — the gap is the identity guard, the outlier trim and the strong-match
+      // filter, and it is routinely most of the search. Only the first number backs the price.
+      const counts = s.foundCount > s.compCount
+        ? `${s.compCount} of ${s.foundCount} comps`
+        : `${s.compCount} comp${s.compCount === 1 ? '' : 's'}`;
+      return `<div class="pb-src">
+        <span class="pb-src-name">${esc(s.label)}</span>
+        <span class="pb-src-count">${counts}</span>
+        <span class="pb-src-value">${esc(s.valueLabel)} ${moneyExact(s.value)}</span>
+        <span class="pb-src-weight">${Math.round(s.weightPercent)}%</span>
+      </div>`;
+    }).join('');
+
+    const factors = (basis.confidenceFactors || []).map(f => {
+      const earned = Number.isInteger(f.earned) ? f.earned : f.earned.toFixed(1);
+      const pts = `${earned} / ${f.possible}`;
+      return `<div class="pb-factor">
+        <span class="pb-factor-label">${esc(f.label)}</span>
+        ${vizMeter(f.earned, {
+          max: f.possible, valueText: pts,
+          label: `${f.label}: ${pts} confidence points`,
+          tip: f.lever ? `${f.detail}\n${f.lever}` : f.detail,
+        })}
+        <span class="pb-factor-detail">${esc(f.detail)}</span>
+      </div>`;
+    }).join('');
+
+    // The two figures the blend line doesn't state and a seller checking this row will look for:
+    // the plain median (what an eBay sold search shows them) and what to actually list at.
+    const alsos = [
+      basis.medianPrice != null ? `median of the same comps ${moneyExact(basis.medianPrice)}` : '',
+      basis.recommendedListingPrice != null ? `list at ${moneyExact(basis.recommendedListingPrice)}` : '',
+    ].filter(Boolean).join(' · ');
+
+    return `<details class="pb-basis">
+      <summary class="pb-summary">How this price and its confidence were worked out</summary>
+      <div class="pb-body">
+        ${basis.disagreementMessage ? `<p class="pb-disagree">⚠ ${esc(basis.disagreementMessage)}</p>` : ''}
+        <p class="pb-arith">${esc(basis.arithmetic)}</p>
+        ${sources ? `<div class="pb-srcs">${sources}</div>` : ''}
+        ${alsos ? `<p class="pb-also">${esc(alsos)}</p>` : ''}
+        <p class="pb-conf-head">Confidence <strong>${basis.confidenceScore}</strong> / 100${
+          basis.confidenceLevel ? ` — ${esc(basis.confidenceLevel)}` : ''}</p>
+        ${factors ? `<div class="pb-factors">${factors}</div>` : ''}
+        ${basis.biggestGap ? `<p class="pb-gap"><strong>Biggest gap:</strong> ${esc(basis.biggestGap)}</p>` : ''}
+      </div>
+    </details>`;
   }
 
   // The label beside a dimmed figure. Without it a greyed-out percentage reads as a rendering
@@ -12576,6 +12647,9 @@
           <div><span>Source weighting</span><strong>${(it.localWeightPercent ?? 0).toFixed(0)}% local / ${(it.terapeakWeightPercent ?? 0).toFixed(0)}% Terapeak</strong></div>
         </div>
         ${reasons || warnings ? `<ul class="opp-score-explanation">${reasons}${warnings}</ul>` : ''}
+        ${/* The same trail the deals board shows, from the same pipeline — one explanation of a
+              price, not a second friendlier one on the screen that found it. */''}
+        ${priceBasisHtml(it.priceBasis)}
       </div>
     </div>`;
   }

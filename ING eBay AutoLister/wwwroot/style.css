@@ -224,7 +224,9 @@
 
   /* Shared width for the Sold Price Research block, so the stat cards and the list of sales
      below them line up on the same left and right edges instead of being two different widths. */
-  --sold-comps-w: 1120px;
+  --sold-comps-w: none;  /* fill the strip: stats + list share the heading's left/right edges.
+                          A centred, capped block leaves a wedge of dead space on the left and
+                          lines up with nothing. Set a px value only for a reading-width cap. */
   --radius: 12px;
 
   /* ── Elevation ────────────────────────────────────────────────────────

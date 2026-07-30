@@ -76,6 +76,16 @@ public class PriceEstimate
     public bool MarketDataDisagreement { get; set; } // local vs Terapeak medians differ by >20%
     public string? DisagreementMessage { get; set; }
 
+    // ── What each source said, before they were blended into the figures above ────────────────
+    // MedianPrice and ExpectedSalePrice are overwritten by the blend, so without these three the
+    // two numbers that produced them are gone by the time anything can show them — and a row can
+    // say "63% local / 37% Terapeak" while being unable to say 63% and 37% OF WHAT. Kept so the
+    // price on screen can be reconstructed arithmetically by the person about to spend against it.
+    // See Services/PriceBasis.cs.
+    public decimal? LocalMedianPrice { get; set; }        // local comps' own median, pre-blend
+    public decimal? LocalExpectedSalePrice { get; set; }  // local weighted median — what entered the blend
+    public decimal? TerapeakMedianPrice { get; set; }     // Terapeak's own median, pre-blend
+
     // ── How much evidence these figures actually rest on ─────────────────────────────────────
     // How many local sold comps produced the numbers above, AFTER per-unit normalization, the
     // identity guard, outlier removal and the strong-match filter. Nearly always smaller than the
@@ -174,11 +184,32 @@ public class ScoreBreakdown
     public string? RejectionReason { get; set; }
 }
 
+/// <summary>
+/// One term of the confidence score, with the points it actually earned out of the points it could
+/// have. The score is a weighted sum of seven of these and nothing else — so a seller looking at
+/// "62" can be shown where the missing 38 went instead of being asked to take the number on trust.
+/// </summary>
+/// <param name="Key">Stable id for the UI (comps|identifier|model|agreement|recency|spread|consistency).</param>
+/// <param name="Earned">Points earned, 0..<paramref name="Possible"/>, rounded to two decimals.</param>
+/// <param name="Detail">This row's own numbers, in words — never a generic description of the term.</param>
+/// <param name="Lever">What would earn the rest of it. Null when the term is already full.</param>
+public sealed record ConfidenceFactor(
+    string Key, string Label, double Earned, double Possible, string Detail, string? Lever);
+
 public class ConfidenceBreakdown
 {
     public int Score { get; set; } // 0-100
     public string Level { get; set; } = "Insufficient Evidence"; // High|Good|Limited|Insufficient Evidence
     public List<string> Reasons { get; set; } = [];
+
+    // Every term of Score, earned and possible. Sums to Score (before rounding) by construction —
+    // there is no eighth, hidden term, which is the property that makes the panel worth showing.
+    public List<ConfidenceFactor> Factors { get; set; } = [];
+
+    // The single largest gap, phrased as the thing that would close it. One sentence, because a
+    // seller reading a low score wants to know whether it is fixable (scan again in a week, search
+    // the model number) or inherent to the item — not a ranked list of seven shortfalls.
+    public string? BiggestGap { get; set; }
 }
 
 public class PriceStability

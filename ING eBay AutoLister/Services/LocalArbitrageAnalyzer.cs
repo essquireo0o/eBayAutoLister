@@ -34,6 +34,11 @@ public sealed class ResalePricing
     public decimal AvgCompShipping { get; set; }
     public int ConfidenceScore { get; set; }
     public string ConfidenceLevel { get; set; } = "Insufficient Evidence";
+    // The arithmetic behind Median/ExpectedSale and behind ConfidenceScore — each source's own
+    // figure and weight, and the seven terms of the score. Null on the hand-built ResalePricing
+    // objects that never ran a lookup (the trend projection, the negotiation endpoint), which have
+    // a price but no working to show. See Services/PriceBasis.cs.
+    public PriceBasis? Basis { get; set; }
     public string? DisagreementMessage { get; set; }
     public int LiquidityScore { get; set; }
     public string LiquidityLevel { get; set; } = "";
@@ -64,6 +69,7 @@ public sealed class ResalePricing
             AvgCompShipping = comps.Count > 0 ? Math.Round(comps.Average(c => c.Shipping), 2) : 0m,
             ConfidenceScore = analysis.Confidence.Score,
             ConfidenceLevel = analysis.Confidence.Level,
+            Basis = PriceBasis.From(analysis, analysis.Sources.LocalComparableCount),
             DisagreementMessage = analysis.PriceEstimate.DisagreementMessage,
             LiquidityScore = analysis.SellThrough.LiquidityScore,
             LiquidityLevel = analysis.SellThrough.LiquidityLevel,
@@ -598,6 +604,7 @@ public sealed class LocalArbitrageAnalyzer(
         ApplyEvidence(row, resale);
         row.ConfidenceScore = resale.ConfidenceScore;
         row.ConfidenceLevel = resale.ConfidenceLevel;
+        row.PriceBasis = resale.Basis;
         row.DisagreementMessage = resale.DisagreementMessage;
         row.LiquidityScore = resale.LiquidityScore;
         row.LiquidityLevel = resale.LiquidityLevel;

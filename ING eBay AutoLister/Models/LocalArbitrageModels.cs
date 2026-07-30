@@ -137,6 +137,12 @@ public class LocalArbitrageOpportunity
     public string PricedAs { get; set; } = "";
     public int ConfidenceScore { get; set; }
     public string ConfidenceLevel { get; set; } = "Insufficient Evidence";
+    // The working behind both numbers above and behind every money column on this row: what each
+    // sold-data source said on its own, how much of the blend is its opinion, and where the missing
+    // confidence points went. A price nobody can take apart is a price nobody can check, and this
+    // board is read by someone about to hand over cash. Null on a row nothing priced, and on the
+    // hand-built pricings that never ran a lookup. See Services/PriceBasis.cs.
+    public PriceBasis? PriceBasis { get; set; }
     public string? DisagreementMessage { get; set; }
     // How fast it moves, from the sold-history date density the comps lookup already computed
     // (LiquidityScoringService) — profit you can't realise for six months isn't the same deal.

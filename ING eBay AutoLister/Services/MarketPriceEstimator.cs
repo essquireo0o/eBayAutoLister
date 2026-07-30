@@ -179,6 +179,16 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         var terapeakStrongCount = terapeak?.Data.Count ?? 0;
         estimate.TerapeakComparableCount = terapeakStrongCount;
 
+        // Kept before anything is blended, because the blend overwrites both figures below and the
+        // two numbers that produced them are otherwise unrecoverable — see PriceEstimate's comment
+        // and Services/PriceBasis.cs. Set on every path, including the single-source ones, so the
+        // trail reads the same whether or not Terapeak answered.
+        estimate.LocalMedianPrice = estimate.MedianPrice;
+        estimate.LocalExpectedSalePrice = estimate.ExpectedSalePrice;
+        // Null unless Terapeak actually priced something: a figure shown beside a 0% weight is a
+        // number the seller can't act on and can only be misread as a second opinion.
+        estimate.TerapeakMedianPrice = terapeak?.Data.Median > 0 ? terapeak.Data.Median : null;
+
         if (terapeak is null || terapeak.Data.Median <= 0)
         {
             estimate.LocalWeight = estimate.MedianPrice is > 0 ? 1.0m : 0m;

@@ -1,3 +1,5 @@
+using ING_eBay_AutoLister.Services;
+
 namespace ING_eBay_AutoLister.Models;
 
 public class ListingData
@@ -210,6 +212,10 @@ public class OpportunityListItem
     public decimal TerapeakWeightPercent { get; set; }
     public int ConfidenceScore { get; set; }
     public string? ConfidenceLevel { get; set; }
+    // Where the resale price and that confidence score came from, arithmetically: each sold-data
+    // source's own figure and weight, and the seven terms of the score with the points each earned.
+    // Null when nothing could price the item. See Services/PriceBasis.cs.
+    public PriceBasis? PriceBasis { get; set; }
     public int PriceStabilityScore { get; set; }
     public string PriceTrend { get; set; } = "Unknown";
     public bool MarketDataDisagreement { get; set; }
