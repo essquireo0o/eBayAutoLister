@@ -911,17 +911,28 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         if (q.Length < 3 || q.Length > 120) return null;
 
         var prompt = $"""
-            A seller searched eBay for this and got zero results. It is probably a typo.
+            A reseller searched eBay for this and got nothing worth buying — no results, or only
+            results too weak to price. It is probably a typo in a product name.
 
             SEARCH: {q}
 
             Reply with ONLY the corrected search terms, nothing else - no quotes, no explanation.
             If the spelling is already correct, reply with exactly: OK
 
-            These are product searches, so brand and model names matter more than dictionary words
-            (e.g. "antmnier s19" -> "antminer s19", "crytpocurrency" -> "cryptocurrency",
-            "dewlat" -> "dewalt"). Keep every word the seller meant; only fix spelling. Do not add
-            words, do not remove words, do not make it more specific.
+            Rules, in order of priority:
+
+            1. Prefer the SMALLEST change. The correct answer is usually one or two characters
+               different from what was typed. A candidate that changes more letters is usually wrong
+               even if it reads more naturally.
+            2. Prefer a real brand, manufacturer or model name over an ordinary English word. These
+               are product searches, and a seller typing a near-miss of a brand is far more common
+               than one misspelling a common noun. "facuc" is "fanuc" (one letter, a CNC brand), not
+               "facet" (two letters, a dictionary word). Likewise "antmnier s19" -> "antminer s19",
+               "dewlat" -> "dewalt", "allen bradly" -> "allen bradley".
+            3. Keep every word the seller meant. Do not add words, do not remove words, do not make
+               the search more specific, and do not expand an abbreviation.
+
+            If nothing plausible is within a small edit, reply exactly: OK
             """;
 
         var answer = await CallModelAsync(

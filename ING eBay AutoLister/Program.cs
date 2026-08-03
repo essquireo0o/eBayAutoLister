@@ -2426,7 +2426,20 @@ app.MapGet("/api/ebay/scan", async (
         // "total: 0" — no correction, no suggestion — so a typo is indistinguishable from a dead
         // market. Correcting a search that already returned rows would be the other failure:
         // quietly answering a question the seller did not ask.
-        if (result.Items.Count == 0 && !string.IsNullOrWhiteSpace(q))
+        // "No rows" was too narrow a trigger. A typo does not reliably return nothing: measured
+        // 2026-07-30, "facuc" (for "fanuc") came back with 2 listings, both priced as estimates
+        // because nothing in the sold-comps database matched them. Two untrustworthy rows counted
+        // as a working search, so the correction never ran and the seller was told there was
+        // nothing worth buying — when the real answer was that they had typed the brand wrong.
+        //
+        // A row whose EvidenceTier is "low" is one the board itself dims and labels an estimate,
+        // so a scan where EVERY row is "low" has found nothing it can stand behind. That is the
+        // same dead end as zero rows, and it deserves the same second look. A scan with even one
+        // confident row is left alone — correcting a search that worked is the opposite failure.
+        var nothingTrustworthy = result.Items.Count == 0
+            || result.Items.All(i => string.Equals(i.EvidenceTier, "low", StringComparison.OrdinalIgnoreCase));
+
+        if (nothingTrustworthy && !string.IsNullOrWhiteSpace(q))
         {
             var corrected = await claude.SuggestSearchSpellingAsync(q, ct);
             if (!string.IsNullOrWhiteSpace(corrected))
@@ -2442,7 +2455,13 @@ app.MapGet("/api/ebay/scan", async (
                 // priced against sold comps. Measured: "miners cryptocurrency" is 1,202 listings on
                 // eBay and still zero rows here. Gating the correction on priced rows meant a
                 // correct suggestion was thrown away.
-                if (retry.Items.Count > 0)
+                // Now that a scan of all-estimate rows also reaches here, "the retry found rows" is
+                // no longer enough to justify swapping — trading two estimates for one estimate
+                // changes the seller's search without improving the answer. Swap when the retry is
+                // actually better: it has a row the board would stand behind, or the original had
+                // literally nothing and anything beats it.
+                var retryHasConfident = retry.Items.Any(i => !string.Equals(i.EvidenceTier, "low", StringComparison.OrdinalIgnoreCase));
+                if (retryHasConfident || (result.Items.Count == 0 && retry.Items.Count > 0))
                 {
                     retry.CorrectedFrom = q;
                     retry.CorrectedTo = corrected;
