@@ -7958,3 +7958,141 @@ The working tree held two modified files when this session started (`Program.cs`
 `ClaudeService.cs`) — a previous session's search-spelling work, complete and green against the full
 suite. It was committed on its own as `a35a434` rather than swept into this change, since the two
 have nothing to do with each other.
+
+---
+
+## The save that said it worked — autosave, recovery and the publish journal (autonomous session, 2026-08-03)
+
+The app has always autosaved the listing being written, and has always claimed the seller's work is
+safe. Four things were wrong with that claim, and every one of them failed **silently** — no error,
+no log line, no change on screen. The seller found out when the listing was gone.
+
+**1. A failed save was never sent again.** `flushAutosave` set `lastAutosavePayload = payload`
+*before* the request left the browser. That variable is the app's entire idea of what is already
+stored, so a save that failed — app restarting, request dropped, endpoint erroring — marked its own
+payload clean anyway. The next autosave saw nothing had changed since the last "save" and did
+nothing. The seller typed their last sentence, the save failed, and the app spent the rest of the
+session confident it was holding work it had never received.
+
+**2. The unload save could vanish without a trace.** The one save there is no second chance at —
+tab closing, window closing — went by `navigator.sendBeacon`, and its return value was thrown away.
+sendBeacon does not throw when it declines; it returns `false`. It declines when the payload is over
+the browser's 64 KB floor, which a listing with a written description and a dozen item specifics
+reaches. **The longest listings, the ones that cost the most to write again, were the ones whose
+final save was silently discarded.**
+
+**3. An autosave could erase the record of a publish.** Press Publish and the browser flushes the
+current text one last time: two requests, in the air together. `Save`'s `ON CONFLICT DO UPDATE` wrote
+`stage = @stage`, and the client always sends `editing`. So an autosave landing just after
+`MarkPublishing` reset the row to `editing` — and a reset `publishing` row is no longer an
+unresolved publish, so an app that died mid-send came back with **nothing telling the seller a
+listing might be live**. One landing after `RecordPublished` reset it from `published` — and a reset
+`published` row is not found by `FindPublished`, so `PublishGuard`'s duplicate brake was gone and the
+next attempt puts **a second live listing up for the same physical item**: two insertion fees, two
+audiences, an oversell as soon as one sells.
+
+**4. The publish that most needed a safety net was the one that had none.** `MarkPublishing` and
+`MarkFailed` were `UPDATE … WHERE key = @key` and nothing more. A publish whose draft had never
+reached the store — because autosave had been failing, per (1) — matched no rows and was journalled
+nowhere. Exactly the seller in trouble was the seller with no record that anything had been sent.
+
+And underneath all four: the recovery banner had been switched off wholesale (`SHOW_RECOVERY_BANNER
+= false`) because it stacked a row per unfinished draft and pushed the app below the fold. That
+fixed the noise and left something worse — autosave kept writing rows the seller then had **no way
+at all to reach**. Work that cannot be recovered is work that was lost, whatever the database says.
+
+## What changed
+
+**The payload is clean only when the app says so.** `lastAutosavePayload` is assigned inside the
+confirmed branch and nowhere else. Everything that is not a confirmed save stays dirty, and is
+retried on a 2s → 5s → 15s → 30s ladder — and immediately when `whenBackendReturns` fires, which is
+the ordinary case: the app was restarted and it is back. One save in flight at a time, newest content
+wins, so two overlapping saves cannot land out of order and mark the newer payload clean.
+
+**A copy that outlives the app.** The store covers everything that can happen to the *browser*. It
+cannot cover the app itself going away. So every save writes to `localStorage` first, before anything
+is sent, including on the unload path — and the copy is cleared only when the app confirms *that*
+payload, never a newer one written while the save was in flight. On the next launch
+`replayLocalMirror` pushes it up **before** the recovery list is fetched, so the one listing most at
+risk is not the one missing from the list.
+
+**The unload save reads the answer.** `sendBeacon`'s return value is checked, and anything near or
+over the beacon ceiling goes by `keepalive` fetch instead, which has no size cap and outlives the
+document.
+
+**An autosave saves work; it never moves a publish stage.** `stage` is written on the insert — the
+row's first and only claim about itself — and never on the conflict update. A `published` row is
+refused outright rather than merely stage-preserved, because its `updated_at` is what the duplicate
+window is measured from and an autosave bumping it would silently extend the brake past the moment
+it should end. The refusal is *reported* (`WorkSaveOutcome.PublishJournal`), so the browser starts a
+fresh draft instead of retrying forever into a row that will refuse it.
+
+**The publish journals itself even with no draft behind it.** `MarkPublishing` / `MarkFailed` are
+upserts now, and both carry the listing's title — which is what makes such a row *actionable* rather
+than merely present, since the **Check eBay** button that resolves an unresolved publish reconciles
+by matching on the title. A draft's own title outranks it: a retry never renames the row under the
+seller.
+
+**Recovery is reachable again, split by urgency.** A publish the app cannot vouch for stays on the
+dashboard — it is about a listing that may be live and costing money right now, and there is never a
+stack of them. Ordinary unfinished drafts moved behind a **Recover (n)** button in the listing
+screen's own header, where someone who wants a draft back goes looking. Restore is only offered on
+rows that have something to restore, so a journal row with no payload cannot open an empty form over
+what the seller is doing.
+
+**The seller can see whether their work is safe.** One quiet line beside the tabs — *Saving… /
+Saved / Not saved yet / Too large to save* — because a seller whose saves have been failing for ten
+minutes was looking at exactly the same screen as one whose saves were all landing.
+
+**And the publish waits for the save it says it makes first.** The comment above that call has always
+read "committed to disk before anything is sent"; the code under it fired the save and moved straight
+on. It is awaited now, and `publishInFlight` is claimed *before* the first await — a guard that
+yields between its test and its set is one two quick clicks walk straight through.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/WorkRecoveryStore.cs` | `WorkSaveOutcome` + `SaveWithOutcome`; stage no longer written on the conflict update and `published` rows refused; `MarkPublishing` / `MarkFailed` upsert and carry a label; blank keys ignored |
+| `Services/PublishGuard.cs` | `Begin` / `Failed` carry the listing title through to the journal |
+| `Program.cs` | `/api/work/autosave` reports *why* it did not save (`too_large` / `published` / `empty`); publish passes the title to the guard |
+| `wwwroot/app.js` | Confirmed-save bookkeeping, the retry ladder, the local mirror and its replay, the keepalive unload path, the save-state line, the split recovery UI, awaited flush before publish; `?v=103` |
+| `wwwroot/index.html` | Recover button, save-state line, recovery panel; asset `?v=` bumps |
+| `wwwroot/style.css` | `.nl-recover-btn`, `.nl-recover-panel`, `.nl-save-state` and its two states — literal colours, since the line sits on the header's teal gradient where themed `--success` disappears; `?v=91` |
+| `Tests/WorkRecoveryStoreTests.cs` | +15: the four autosave-versus-publish races, each `WorkSaveOutcome`, and the journal rows a publish with no draft leaves behind |
+| `Tests/PublishGuardTests.cs` | +3: a publish with no saved draft leaves a row the seller can resolve, a failure is journalled with its title, and a journalled failure still releases the lease |
+| `Tests/WorkRecoveryAssetTests.cs` | **new**, +24: the browser half, where every failure is silent — the payload is clean only after confirmation, a rejected beacon falls back, the mirror is written before the send and cleared only on its own payload, the replay runs before the recovery load, the publish awaits the save, and every element and class the path drives exists in the other file |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2821 passed**, 0 failed — 42 new, no pre-existing test changed or removed (baseline this session: 2779) |
+| `node --check wwwroot/app.js` | clean |
+| Mutation check | Reverting the `ON CONFLICT` to `stage = @stage` fails 4 store tests; dropping the `await` before `flushAutosave` fails 2 asset tests. The tests bite on the exact regressions. |
+
+## Known limits
+
+- **Not driven in a browser.** The client half is pinned by asset tests and `node --check` only. The
+  save-state line, the Recover panel and the mirror replay have not been watched happening.
+- **The mirror holds one listing.** `LOCAL_MIRROR_KEY` is a single key, so with several listing tabs
+  open it holds whichever saved last. It is a last-resort copy of the *unconfirmed* save, not a
+  second database — but a seller with three tabs open and a dead app gets one of them back, not
+  three.
+- **`localStorage` can be unavailable.** Private mode and a full quota both throw; the write is
+  swallowed and the request remains the primary path, which is the pre-existing behaviour.
+- **A `too_large` payload is still not saved anywhere but this device.** The seller is now *told* —
+  which is the whole change on that path — but the fix is theirs to make (shorten the description, or
+  save it as an eBay draft).
+- **Beacon size is measured on the client's own JSON**, not on what the browser ultimately queues.
+  The 60 KB threshold leaves headroom under the 64 KB floor rather than computing it exactly.
+
+## Provenance
+
+The working tree already held this change, uncommitted, when the session opened — the app half of it
+(`Program.cs`, `PublishGuard.cs`, `WorkRecoveryStore.cs`, and the three web assets) complete and
+building, with no tests behind any of it. Rather than start something new beside it, this session
+verified it against the existing suite (green at 2779), then pinned all four failures and the new
+recovery UI with 42 tests, mutation-checked the sharpest of them, and committed the whole thing as
+one change. Nothing in the app half was rewritten.

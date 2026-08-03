@@ -8080,7 +8080,7 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
             "Set a price above zero, then publish.");
 
     var fingerprint = PublishGuard.Fingerprint(req);
-    var verdict = guard.Begin(fingerprint, req.WorkKey);
+    var verdict = guard.Begin(fingerprint, req.WorkKey, req.Title);
 
     if (verdict.Decision == PublishDecision.AlreadyPublished)
         return Results.Ok(new
@@ -8120,7 +8120,7 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
     catch (Exception ex)
     {
         var failure = FailureTranslator.Translate(ex, FailureDomain.Ebay);
-        guard.Failed(fingerprint, req.WorkKey, failure.Technical);
+        guard.Failed(fingerprint, req.WorkKey, failure.Technical, req.Title);
         log.Add("Warning", "eBay publish failed", $"{failure.Kind} — {failure.Technical}");
 
         // Only these three can lie about the outcome. An eBay rejection is a definite no: nothing was
@@ -8277,7 +8277,7 @@ app.MapPost("/api/work/autosave", (WorkAutosaveRequest req, WorkRecoveryStore wo
 
     try
     {
-        var saved = work.Save(new WorkSnapshot
+        var outcome = work.SaveWithOutcome(new WorkSnapshot
         {
             Key = req.Key,
             Label = req.Label ?? "",
@@ -8285,15 +8285,27 @@ app.MapPost("/api/work/autosave", (WorkAutosaveRequest req, WorkRecoveryStore wo
             Payload = req.Payload ?? "",
         });
 
-        // Reported rather than thrown. Autosave runs while the seller types; interrupting them to
-        // announce that a background save was too big would be worse than the problem.
-        if (!saved)
+        switch (outcome)
         {
-            log.Add("Warning", "Autosave skipped", $"Payload for {req.Key} exceeded {WorkRecoveryStore.MaxPayloadBytes} bytes.");
-            return Results.Ok(new { saved = false, reason = "too_large" });
-        }
+            case WorkSaveOutcome.Saved:
+                return Results.Ok(new { saved = true, reason = "" });
 
-        return Results.Ok(new { saved = true });
+            // Reported rather than thrown. Autosave runs while the seller types; interrupting them
+            // to announce that a background save was too big would be worse than the problem. The
+            // browser still says so quietly beside the tab, because a listing that is not being
+            // saved is something the seller has a right to know before they close the window.
+            case WorkSaveOutcome.TooLarge:
+                log.Add("Warning", "Autosave skipped", $"Payload for {req.Key} exceeded {WorkRecoveryStore.MaxPayloadBytes} bytes.");
+                return Results.Ok(new { saved = false, reason = "too_large" });
+
+            // This key has become the record that a listing went live. Saying so lets the browser
+            // start a fresh draft rather than retry into a row that will refuse it every time.
+            case WorkSaveOutcome.PublishJournal:
+                return Results.Ok(new { saved = false, reason = "published" });
+
+            default:
+                return Results.Ok(new { saved = false, reason = "empty" });
+        }
     }
     catch (Exception ex)
     {

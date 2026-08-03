@@ -19,6 +19,25 @@ public static class WorkStage
     public const string Failed = "failed";
 }
 
+/// <summary>What an autosave did, and why, when it did not simply save.</summary>
+public enum WorkSaveOutcome
+{
+    /// <summary>Written.</summary>
+    Saved,
+
+    /// <summary>Nothing in it worth offering back — a blank tab, not a failure.</summary>
+    Empty,
+
+    /// <summary>Over <see cref="WorkRecoveryStore.MaxPayloadBytes"/>. Nothing was written.</summary>
+    TooLarge,
+
+    /// <summary>
+    /// The row under this key is the record that a listing went live, and an autosave is not allowed
+    /// to write over it. See the remarks on <see cref="WorkRecoveryStore.SaveWithOutcome"/>.
+    /// </summary>
+    PublishJournal,
+}
+
 public sealed class WorkSnapshot
 {
     public string Key { get; set; } = "";
@@ -212,15 +231,43 @@ public sealed class WorkRecoveryStore
     /// seller who clears the form keeps the last save that had something in it.
     /// </para>
     /// </remarks>
-    public bool Save(WorkSnapshot snapshot)
+    public bool Save(WorkSnapshot snapshot) => SaveWithOutcome(snapshot) == WorkSaveOutcome.Saved;
+
+    /// <inheritdoc cref="Save(WorkSnapshot)"/>
+    /// <remarks>
+    /// <para>
+    /// <b>An autosave saves work. It never moves a listing's publish stage.</b> That rule is the
+    /// whole of the difference between this and what it replaced, and it was not a theoretical
+    /// concern: the client presses Publish, the browser flushes the current text one last time, and
+    /// those two requests race. The old <c>ON CONFLICT DO UPDATE</c> wrote <c>stage = @stage</c>, and
+    /// the client always sends <c>editing</c> — so an autosave landing a moment after
+    /// <see cref="MarkPublishing"/> quietly reset the row to <c>editing</c>, and one landing after
+    /// <see cref="RecordPublished"/> reset it from <c>published</c>.
+    /// </para>
+    /// <para>
+    /// Both losses are silent and both are expensive. A reset <c>publishing</c> row is no longer an
+    /// unresolved publish, so an app that dies mid-publish comes back with nothing telling the
+    /// seller the outcome is unknown. A reset <c>published</c> row is no longer found by
+    /// <see cref="FindPublished"/>, so <see cref="PublishGuard"/>'s duplicate brake is gone and the
+    /// seller's next attempt puts a second live listing up for the same physical item.
+    /// </para>
+    /// <para>
+    /// So: stage is written on the insert, where it is this row's first and only claim about itself,
+    /// and never on the update. A <c>published</c> row is refused outright rather than merely having
+    /// its stage preserved — its <c>updated_at</c> is what the duplicate window is measured from,
+    /// and an autosave bumping that would silently extend the window past the moment it should end.
+    /// </para>
+    /// </remarks>
+    public WorkSaveOutcome SaveWithOutcome(WorkSnapshot snapshot)
     {
-        if (string.IsNullOrWhiteSpace(snapshot.Key)) return false;
-        if (System.Text.Encoding.UTF8.GetByteCount(snapshot.Payload ?? "") > MaxPayloadBytes) return false;
-        if (!IsWorthRecovering(snapshot)) return false;
+        if (string.IsNullOrWhiteSpace(snapshot.Key)) return WorkSaveOutcome.Empty;
+        if (System.Text.Encoding.UTF8.GetByteCount(snapshot.Payload ?? "") > MaxPayloadBytes) return WorkSaveOutcome.TooLarge;
+        if (!IsWorthRecovering(snapshot)) return WorkSaveOutcome.Empty;
 
         var now = DateTimeOffset.UtcNow;
         snapshot.UpdatedUtc = now;
 
+        int written;
         lock (_writeLock)
         {
             using var connection = OpenConnection();
@@ -234,9 +281,9 @@ public sealed class WorkRecoveryStore
                      @attempt_count, @created_at, @updated_at)
                 ON CONFLICT(key) DO UPDATE SET
                     label = @label,
-                    stage = @stage,
                     payload = @payload,
-                    updated_at = @updated_at;
+                    updated_at = @updated_at
+                WHERE work_in_progress.stage <> 'published';
                 """;
             command.Parameters.AddWithValue("@key", snapshot.Key);
             command.Parameters.AddWithValue("@label", Clip(snapshot.Label, 200));
@@ -248,11 +295,16 @@ public sealed class WorkRecoveryStore
             command.Parameters.AddWithValue("@attempt_count", snapshot.AttemptCount);
             command.Parameters.AddWithValue("@created_at", now.ToString("O"));
             command.Parameters.AddWithValue("@updated_at", now.ToString("O"));
-            command.ExecuteNonQuery();
+            written = command.ExecuteNonQuery();
         }
 
+        // Nothing changed means the conflict update was filtered out: the key belongs to the publish
+        // journal now. Reported rather than swallowed, so the client can start a fresh draft instead
+        // of autosaving into a row that will refuse it for the rest of the session.
+        if (written == 0) return WorkSaveOutcome.PublishJournal;
+
         Prune();
-        return true;
+        return WorkSaveOutcome.Saved;
     }
 
     public WorkSnapshot? Get(string key)
@@ -351,40 +403,84 @@ public sealed class WorkRecoveryStore
 
     // ── Publish journal ─────────────────────────────────────────────────────
 
-    public void MarkPublishing(string key, string fingerprint)
+    /// <summary>
+    /// Records that this listing has been handed to eBay and the answer is still outstanding.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Creates the row when there isn't one, which is the case that matters. This used to be an
+    /// <c>UPDATE … WHERE key = @key</c> and nothing else — so a publish whose draft had never
+    /// reached the store affected no rows and was journalled nowhere. That is precisely the seller
+    /// whose autosave had been failing: the one publish that most needs a safety net was the one
+    /// publish that had none, and an app that died mid-send came back with no record that anything
+    /// had been sent at all.
+    /// </para>
+    /// <para>
+    /// <paramref name="label"/> is what makes such a row useful rather than merely present. The
+    /// recovery banner offers a <em>Check eBay</em> button on an unresolved publish, and that check
+    /// matches on the listing's title — a journal row with no title is a row the seller can be told
+    /// about but cannot resolve.
+    /// </para>
+    /// </remarks>
+    public void MarkPublishing(string key, string fingerprint, string? label = null)
     {
+        if (string.IsNullOrWhiteSpace(key)) return;
+
         lock (_writeLock)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                UPDATE work_in_progress
-                SET stage = 'publishing',
+                INSERT INTO work_in_progress
+                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                     attempt_count, created_at, updated_at)
+                VALUES
+                    (@key, @label, 'publishing', '', @fingerprint, '', '', 1, @updated_at, @updated_at)
+                ON CONFLICT(key) DO UPDATE SET
+                    stage = 'publishing',
                     fingerprint = @fingerprint,
-                    attempt_count = attempt_count + 1,
+                    -- A label only when this row has none: the draft's own title is the seller's
+                    -- wording and outranks whatever the publish path happened to carry.
+                    label = CASE WHEN work_in_progress.label = '' THEN @label ELSE work_in_progress.label END,
+                    attempt_count = work_in_progress.attempt_count + 1,
                     last_error = '',
-                    updated_at = @updated_at
-                WHERE key = @key;
+                    updated_at = @updated_at;
                 """;
             command.Parameters.AddWithValue("@key", key);
+            command.Parameters.AddWithValue("@label", Clip(label, 200));
             command.Parameters.AddWithValue("@fingerprint", fingerprint ?? "");
             command.Parameters.AddWithValue("@updated_at", DateTimeOffset.UtcNow.ToString("O"));
             command.ExecuteNonQuery();
         }
     }
 
-    public void MarkFailed(string key, string error)
+    /// <summary>Records that the publish under this key did not go through, and why.</summary>
+    /// <remarks>
+    /// Creates the row when there isn't one, for the same reason as <see cref="MarkPublishing"/>: a
+    /// failed publish the seller is never shown is a listing they believe they made.
+    /// </remarks>
+    public void MarkFailed(string key, string error, string? label = null)
     {
+        if (string.IsNullOrWhiteSpace(key)) return;
+
         lock (_writeLock)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                UPDATE work_in_progress
-                SET stage = 'failed', last_error = @error, updated_at = @updated_at
-                WHERE key = @key;
+                INSERT INTO work_in_progress
+                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                     attempt_count, created_at, updated_at)
+                VALUES
+                    (@key, @label, 'failed', '', '', '', @error, 1, @updated_at, @updated_at)
+                ON CONFLICT(key) DO UPDATE SET
+                    stage = 'failed',
+                    label = CASE WHEN work_in_progress.label = '' THEN @label ELSE work_in_progress.label END,
+                    last_error = @error,
+                    updated_at = @updated_at;
                 """;
             command.Parameters.AddWithValue("@key", key);
+            command.Parameters.AddWithValue("@label", Clip(label, 200));
             command.Parameters.AddWithValue("@error", Clip(error, 600));
             command.Parameters.AddWithValue("@updated_at", DateTimeOffset.UtcNow.ToString("O"));
             command.ExecuteNonQuery();

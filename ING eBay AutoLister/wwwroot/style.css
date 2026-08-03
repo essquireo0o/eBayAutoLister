@@ -8458,6 +8458,47 @@ td.skeleton-cell { padding: 0 !important; }
   margin-left: auto;
 }
 
+/* The way back to an unfinished listing, in the listing screen's own header. Styled off
+   .nl-load-all-drafts-btn beside it so the header keeps one kind of button, and tinted
+   teal for the same reason the banner is: recovering work is good news. */
+.nl-recover-btn {
+  border-color: var(--info-line);
+  color: var(--info);
+}
+
+/* Sits above the action cards, inside the modal's own scroller. Full width, because it is
+   a list of listings and a narrow one would truncate every title it exists to show. */
+.nl-recover-panel {
+  margin: var(--s3) var(--s5) 0;
+}
+
+/* Whether the listing on screen is actually stored, said in the header where it is visible
+   without being in the way. Autosave used to be entirely invisible, which is fine right up
+   until it stops working — a seller whose saves have been failing for ten minutes saw the
+   same screen as one whose saves were all landing. Muted by default: this is a status, not
+   an announcement, and it only raises its voice when the answer is no.
+
+   Colours are literal rather than themed. This line sits on the header's teal gradient,
+   which is the same in light and dark, and the themed --success is a dark green that
+   disappears against it. */
+.nl-save-state {
+  flex: none;
+  margin-left: auto;
+  align-self: center;
+  padding: 0 var(--s3) 6px;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: rgba(255, 255, 255, .6);
+  white-space: nowrap;
+}
+
+.nl-save-state--ok { color: #7fe3bd; }
+
+.nl-save-state--warn {
+  color: #ffcf7a;
+  cursor: help;
+}
+
 /* Below the list and right-aligned, away from the per-row Restore buttons: it clears every
    draft at once, so it must not be the button a hurried click lands on. */
 .recovery-bulk {

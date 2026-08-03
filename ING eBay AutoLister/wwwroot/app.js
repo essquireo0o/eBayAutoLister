@@ -350,9 +350,32 @@
   // lost if the tab dies mid-sentence.
   const AUTOSAVE_DEBOUNCE_MS = 2500;
 
+  // How long to wait before trying a save the app never took. The ladder is short at the front
+  // because most of these are a single dropped request, and capped at half a minute because a save
+  // that keeps failing is failing for a reason no amount of hurry will fix.
+  const AUTOSAVE_RETRY_MS = [2000, 5000, 15000, 30000];
+
+  // sendBeacon is capped at 64 KB by the spec's own floor, and a payload over the cap is not
+  // truncated or queued — the call returns false and nothing is sent. A listing with a written
+  // description and a dozen specifics gets close enough to that ceiling for it to matter, and it is
+  // the biggest listings, the ones that cost the most to redo, that cross it first. Anything near
+  // the limit goes by keepalive fetch instead, which has no such cap.
+  const BEACON_LIMIT_BYTES = 60 * 1024;
+
+  // The copy that outlives the app itself. See writeLocalMirror.
+  const LOCAL_MIRROR_KEY = 'ing-autolister.wip.v1';
+
   let workKey = null;
   let autosaveTimer = null;
+  let autosaveRetryTimer = null;
+  let autosaveRetryStep = 0;
+  // The payload the app has CONFIRMED it stored — not the one most recently sent to it. The
+  // difference is the whole of the bug this replaced: the old code marked the payload clean the
+  // moment the request left the browser, so a save that failed was never sent again. The seller
+  // typed their last sentence, the save failed, and `lastAutosavePayload` said it was safe.
   let lastAutosavePayload = '';
+  let autosaveInFlight = null;
+  let autosaveQueued = false;
 
   function currentWorkKey() {
     if (!workKey) workKey = `wip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -388,40 +411,242 @@
     autosaveTimer = setTimeout(() => { flushAutosave(false); }, AUTOSAVE_DEBOUNCE_MS);
   }
 
-  // `useBeacon` is the page-unload path: fetch is cancelled when the document goes away, and this is
-  // the one save that matters most — it is the save that makes the difference between recovering the
-  // listing and losing it.
-  function flushAutosave(useBeacon) {
-    clearTimeout(autosaveTimer);
+  // What would be saved right now, or null when there is nothing worth saving.
+  //
+  // An empty form is not work worth recovering. This used to be a size test (`length < 400`), which
+  // a blank tab sails past on its defaults alone — so opening the modal and closing it again left an
+  // "Untitled listing" behind, and a banner that cries wolf on every launch is one nobody reads on
+  // the launch it is holding a real Claude-written listing.
+  function autosaveBody() {
     let draft, payload;
     try {
       draft = buildNlPayload();
       payload = JSON.stringify(draft);
-    } catch { return; }
-
-    // A no-op save is still a database write and a Prune pass. Skip when nothing changed.
-    if (payload === lastAutosavePayload) return;
-
-    // An empty form is not work worth recovering. This used to be a size test (`length < 400`), which
-    // a blank tab sails past on its defaults alone — so opening the modal and closing it again left an
-    // "Untitled listing" behind, and a banner that cries wolf on every launch is one nobody reads on
-    // the launch it is holding a real Claude-written listing.
-    if (!hasAutosaveContent(draft)) return;
+    } catch { return null; }
+    if (!hasAutosaveContent(draft)) return null;
 
     const title = (draft.title || '').trim();
+    return { key: currentWorkKey(), label: title || 'Untitled listing', payload, stage: 'editing' };
+  }
 
-    lastAutosavePayload = payload;
-    const body = { key: currentWorkKey(), label: title || 'Untitled listing', payload, stage: 'editing' };
+  // ── The copy that outlives the app ────────────────────────────────────────
+  //
+  // The server-side store covers everything that can happen to the browser: a closed tab, a refresh,
+  // a cleared cache, a different browser. It cannot cover the one thing that happens to the app
+  // itself. A save that never arrived is not in the database, and until now it was not anywhere else
+  // either — the seller's last edits died with the process that was supposed to be keeping them.
+  //
+  // So a copy is written here first, on every path including the unload one, and removed only once
+  // the app confirms the row landed. The only work this holds is work that is not yet safe
+  // elsewhere, and it is replayed on the next launch.
 
-    if (useBeacon && navigator.sendBeacon) {
+  function writeLocalMirror(body) {
+    try {
+      localStorage.setItem(LOCAL_MIRROR_KEY, JSON.stringify({
+        key: body.key, label: body.label, payload: body.payload, mirroredAt: new Date().toISOString(),
+      }));
+    } catch { /* private mode, or the quota. The request is still the primary path. */ }
+  }
+
+  function readLocalMirror() {
+    try {
+      const held = JSON.parse(localStorage.getItem(LOCAL_MIRROR_KEY) || 'null');
+      return held && held.key && held.payload ? held : null;
+    } catch { return null; }
+  }
+
+  // Cleared only when what is held is the same work that was just confirmed. A mirror written after
+  // this save started belongs to a later edit, and dropping it would throw away the newer copy —
+  // which is the exact failure this whole mechanism exists to prevent.
+  function clearLocalMirror(payload) {
+    try {
+      const held = readLocalMirror();
+      if (held && payload && held.payload !== payload) return;
+      localStorage.removeItem(LOCAL_MIRROR_KEY);
+    } catch { /* nothing to clear */ }
+  }
+
+  // Run once on load, before the seller touches anything: whatever the app never received is pushed
+  // up now, so it shows up under Recover with every other unfinished listing rather than sitting in
+  // a browser key nobody reads.
+  async function replayLocalMirror() {
+    const held = readLocalMirror();
+    if (!held) return false;
+
+    const { ok, data } = await callApi('/api/work/autosave', {
+      method: 'POST',
+      body: { key: held.key, label: held.label || 'Untitled listing', payload: held.payload, stage: 'editing' },
+      timeoutMs: 15000,
+    });
+
+    // `saved:false` with a reason is the app declining on purpose — empty, oversized, or a key that
+    // has since gone live. None of those are worth holding the copy for.
+    if (!ok) return false;
+    clearLocalMirror(held.payload);
+    if (data?.saved) {
+      addActivity('Unsaved work recovered',
+        `"${held.label || 'an unfinished listing'}" was still on this device when the app last stopped. It is saved now.`);
+    }
+    return Boolean(data?.saved);
+  }
+
+  // ── Saving ────────────────────────────────────────────────────────────────
+
+  // `useBeacon` is the page-unload path: a plain fetch is cancelled when the document goes away, and
+  // this is the one save that matters most — it is the save that makes the difference between
+  // recovering the listing and losing it.
+  //
+  // Returns a promise for the ordinary path, so a caller that must not run ahead of the save — the
+  // publish button — can wait for it.
+  function flushAutosave(useBeacon) {
+    clearTimeout(autosaveTimer);
+
+    const body = autosaveBody();
+    if (!body) return Promise.resolve(true);
+
+    // A no-op save is still a database write and a Prune pass. Skip when nothing has changed since
+    // the app last confirmed one.
+    if (body.payload === lastAutosavePayload) return Promise.resolve(true);
+
+    // Written before anything is sent, so that whatever becomes of the request, the work exists.
+    writeLocalMirror(body);
+
+    if (useBeacon) return Promise.resolve(sendAutosaveOnUnload(body));
+
+    // One save at a time, and the newest content wins. Two overlapping saves of the same row can
+    // come back out of order, and the older one landing last would mark the newer payload clean.
+    if (autosaveInFlight) { autosaveQueued = true; return autosaveInFlight; }
+    return runAutosave(body);
+  }
+
+  async function runAutosave(body) {
+    setSaveState('saving');
+
+    autosaveInFlight = (async () => {
+      const { ok, data } = await callApi('/api/work/autosave', {
+        method: 'POST', body, timeoutMs: 15000,
+      });
+
+      if (ok && data?.saved) {
+        lastAutosavePayload = body.payload;
+        autosaveRetryStep = 0;
+        clearTimeout(autosaveRetryTimer);
+        clearLocalMirror(body.payload);
+        setSaveState('saved');
+        return true;
+      }
+
+      // This key is the record that a listing went live, and the app refuses to write over it. The
+      // draft continues under a new key rather than retrying into a row that will refuse it for the
+      // rest of the session.
+      if (ok && data?.reason === 'published') {
+        workKey = null;
+        lastAutosavePayload = '';
+        clearLocalMirror(body.payload);
+        setSaveState('saved');
+        return true;
+      }
+
+      // The app agrees there is nothing here worth keeping. Not a failure, and not worth retrying.
+      if (ok && data?.reason === 'empty') {
+        lastAutosavePayload = body.payload;
+        clearLocalMirror(body.payload);
+        setSaveState('idle');
+        return true;
+      }
+
+      // Everything else is a save that did not happen. The payload stays dirty so the next attempt
+      // carries it, the copy on this device stays where it is, and the seller is told which of the
+      // two is actually holding their listing.
+      if (ok && data?.reason === 'too_large') { setSaveState('too-big'); return false; }
+
+      setSaveState('local-only');
+      scheduleAutosaveRetry();
+      return false;
+    })();
+
+    try { return await autosaveInFlight; }
+    finally {
+      autosaveInFlight = null;
+      // A change that arrived mid-flight was never sent. Send it now.
+      if (autosaveQueued) { autosaveQueued = false; flushAutosave(false); }
+    }
+  }
+
+  function scheduleAutosaveRetry() {
+    clearTimeout(autosaveRetryTimer);
+    const wait = AUTOSAVE_RETRY_MS[Math.min(autosaveRetryStep, AUTOSAVE_RETRY_MS.length - 1)];
+    autosaveRetryStep += 1;
+    autosaveRetryTimer = setTimeout(retryAutosaveNow, wait);
+    // And the instant the app answers anything at all, rather than waiting out the ladder. This is
+    // the ordinary case behind a failed autosave: the app was restarted, and it is back.
+    whenBackendReturns(retryAutosaveNow);
+  }
+
+  function retryAutosaveNow() {
+    clearTimeout(autosaveRetryTimer);
+    flushAutosave(false);
+  }
+
+  // The unload save. Three things were wrong with what this replaced, all of them silent, and all of
+  // them on the one save the seller never gets a second chance at:
+  //
+  //   1. sendBeacon's return value was thrown away, so a rejected beacon looked exactly like an
+  //      accepted one.
+  //   2. A payload over the browser's beacon ceiling is rejected outright — so the largest listings,
+  //      the ones that took the longest to write, were the ones whose last save silently vanished.
+  //   3. Nothing was left on this device for the case where the app is what went away.
+  //
+  // The local mirror covers (3) and is written by the caller before this runs. Returns whether the
+  // save was handed to something that will deliver it.
+  function sendAutosaveOnUnload(body) {
+    const json = JSON.stringify(body);
+    const bytes = new Blob([json]).size;
+
+    if (navigator.sendBeacon && bytes <= BEACON_LIMIT_BYTES) {
       try {
-        navigator.sendBeacon('/api/work/autosave',
-          new Blob([JSON.stringify(body)], { type: 'application/json' }));
-        return;
-      } catch { /* fall through to the normal call */ }
+        if (navigator.sendBeacon('/api/work/autosave', new Blob([json], { type: 'application/json' }))) return true;
+      } catch { /* fall through to keepalive */ }
     }
 
-    callApi('/api/work/autosave', { method: 'POST', body, timeoutMs: 15000 });
+    // keepalive outlives the document the way a plain fetch does not, and has no size ceiling.
+    try {
+      fetch('/api/work/autosave', {
+        method: 'POST',
+        body: json,
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => { /* the mirror on this device is the answer to a failure here */ });
+      return true;
+    } catch { return false; }
+  }
+
+  // ── Saying whether the work is actually safe ──────────────────────────────
+  //
+  // Autosave used to be entirely invisible, which is fine right up until it stops working: a seller
+  // whose saves have been failing for ten minutes looks at exactly the same screen as one whose
+  // saves are all landing. This is one line beside the tabs, quiet when everything is fine and
+  // explicit when it is not.
+  const SAVE_STATES = {
+    saving:       { text: 'Saving…',            cls: '', title: 'Storing this listing in the app.' },
+    saved:        { text: 'Saved',              cls: 'nl-save-state--ok',
+                    title: 'This listing is stored in the app. Closing this tab will not lose it.' },
+    'local-only': { text: 'Not saved yet',      cls: 'nl-save-state--warn',
+                    title: 'The app did not take the last save, so this listing is being kept on this device '
+                         + 'and will be sent again automatically. Do not clear your browser data until it says Saved.' },
+    'too-big':    { text: 'Too large to save',  cls: 'nl-save-state--warn',
+                    title: 'This listing is past the size the app will autosave. Shorten the description, '
+                         + 'or save it as an eBay draft before closing this tab.' },
+  };
+
+  function setSaveState(state) {
+    const el = $('nl-save-state');
+    if (!el) return;
+    const shown = SAVE_STATES[state];
+    if (!shown) { el.textContent = ''; el.className = 'nl-save-state'; el.removeAttribute('title'); return; }
+    el.textContent = shown.text;
+    el.className = 'nl-save-state ' + shown.cls;
+    el.title = shown.title;
   }
 
   function bindAutosave() {
@@ -441,32 +666,52 @@
   }
 
   /**
-   * The recovery banner is off at the seller's request.
+   * Where recovered work is offered, and why it is offered in two different places.
    *
-   * It stacked one row per unfinished listing at the top of the dashboard, and with seven of them it
-   * pushed the entire app below the fold. Most of those seven were not abandoned work at all - they
-   * were autosave snapshots left behind every time the app was restarted during development, so the
-   * banner was mostly reporting its own noise.
+   * The dashboard banner used to stack one row per unfinished listing, and with seven of them it
+   * pushed the entire app below the fold. Most of those seven were not abandoned work at all — they
+   * were autosave snapshots left behind by app restarts — so the banner was mostly reporting its own
+   * noise, and it was turned off wholesale. That fixed the noise and left a worse problem behind it:
+   * autosave kept writing rows that the seller then had no way on earth to reach. Work that cannot
+   * be recovered is work that was lost, whatever the database says.
    *
-   * Autosave itself is untouched: /api/work/autosave still runs, the snapshots are still stored, and
-   * /api/work/recoverable still returns them. Nothing anyone was working on has been thrown away -
-   * the dashboard just stops announcing it. Delete this early return and the banner comes back
-   * exactly as it was.
+   * So the two kinds of row are separated rather than the whole feature being on or off:
+   *
+   *   - A publish the app cannot vouch for — still marked publishing when it came back up, or one
+   *     eBay refused — is announced on the dashboard, because it is about a listing that may be live
+   *     and costing money right now, and because there is never a stack of them.
+   *   - An ordinary unfinished draft waits behind Recover in the listing screen's own header, where
+   *     somebody who wants their draft back will go looking, and where a dozen of them cost the
+   *     dashboard nothing.
    */
-  const SHOW_RECOVERY_BANNER = false;
+  function isUrgentRecovery(item) {
+    return Boolean(item?.outcomeUnknown || item?.lastError);
+  }
+
+  // A publish is journalled even when its draft never reached the app — that is the whole point of
+  // journalling it — so some rows carry an outcome to resolve and no listing to put back on screen.
+  // Offering Restore on one of those opens an empty form over whatever the seller was doing.
+  function hasRestorableContent(item) {
+    const text = (item?.payload || '').trim();
+    if (text.length < 2) return false;
+    try { return Object.keys(JSON.parse(text) || {}).length > 0; }
+    catch { return true; }   // not JSON, but it is something — let the seller decide
+  }
+
+  let recoverableItems = [];
 
   async function loadRecoverableWork() {
-    const banner = $('recovery-banner');
-    if (!banner) return;
-
-    if (!SHOW_RECOVERY_BANNER) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
-
     const { ok, data } = await callApi('/api/work/recoverable', { timeoutMs: 15000 });
-    const items = (ok && data?.items) || [];
-    // Never announce recovery when there is nothing to recover.
-    if (!items.length) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
+    recoverableItems = (ok && data?.items) || [];
 
-    const rows = items.map((item, i) => {
+    renderRecoveryBanner(recoverableItems.filter(isUrgentRecovery));
+    renderRecoverButton(recoverableItems);
+    // Kept in step when it is open — restoring or discarding from it changes what it should list.
+    if (!$('nl-recover-panel')?.classList.contains('hidden')) renderRecoverPanel(recoverableItems);
+  }
+
+  function recoveryRowsHtml(items) {
+    return items.map((item, i) => {
       const when = item.updatedUtc ? new Date(item.updatedUtc).toLocaleString() : 'recently';
       const unknown = item.outcomeUnknown
         ? '<span class="recovery-flag">publish outcome unknown</span>' : '';
@@ -479,12 +724,65 @@
             ${unknown}${failed}
           </div>
           <div class="recovery-row-actions">
-            <button type="button" class="btn btn-primary small" data-recover="${i}">Restore</button>
+            ${hasRestorableContent(item) ? `<button type="button" class="btn btn-primary small" data-recover="${i}">Restore</button>` : ''}
             ${item.outcomeUnknown ? `<button type="button" class="btn btn-secondary small" data-recover-check="${i}">Check eBay</button>` : ''}
             <button type="button" class="btn btn-ghost small" data-recover-discard="${i}">Discard</button>
           </div>
         </li>`;
     }).join('');
+  }
+
+  // The buttons in a rendered list, wired against the exact rows that produced it. Passed in rather
+  // than read from `recoverableItems`, because the banner shows a filtered subset and an index into
+  // the wrong array restores the wrong listing.
+  function bindRecoveryActions(container, items) {
+    container.querySelectorAll('[data-recover]').forEach(btn =>
+      btn.addEventListener('click', () => restoreWork(items[Number(btn.dataset.recover)])));
+    container.querySelectorAll('[data-recover-check]').forEach(btn =>
+      btn.addEventListener('click', () => checkRecoveredPublish(items[Number(btn.dataset.recoverCheck)])));
+    container.querySelectorAll('[data-recover-discard]').forEach(btn =>
+      btn.addEventListener('click', () => discardWork(items[Number(btn.dataset.recoverDiscard)])));
+  }
+
+  function renderRecoveryBanner(urgent) {
+    const banner = $('recovery-banner');
+    if (!banner) return;
+
+    // Never announce recovery when there is nothing that needs announcing.
+    if (!urgent.length) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
+
+    banner.innerHTML =
+      `<div class="recovery-head">${urgent.length === 1
+          ? 'A publish did not finish'
+          : `${urgent.length} publishes did not finish`}</div>` +
+      '<p class="recovery-sub">The app cannot tell whether these reached eBay. Check before publishing '
+      + 'again — publishing twice puts two live listings up for one item.</p>' +
+      `<ul class="recovery-list">${recoveryRowsHtml(urgent)}</ul>`;
+    banner.classList.remove('hidden');
+    bindRecoveryActions(banner, urgent);
+  }
+
+  // The count on the header button, and nothing at all when there is nothing to recover.
+  function renderRecoverButton(items) {
+    const btn = $('nl-recover-btn');
+    if (!btn) return;
+    if (!items.length) { btn.classList.add('hidden'); return; }
+    btn.classList.remove('hidden');
+    btn.textContent = `Recover (${items.length})`;
+    btn.title = items.length === 1
+      ? 'One unfinished listing was saved before this screen last closed'
+      : `${items.length} unfinished listings were saved before this screen last closed`;
+  }
+
+  function renderRecoverPanel(items) {
+    const panel = $('nl-recover-panel');
+    if (!panel) return;
+
+    if (!items.length) {
+      panel.innerHTML = '<div class="recovery-head">Nothing to recover</div>'
+        + '<p class="recovery-sub">Every listing you have written is either published or still on screen.</p>';
+      return;
+    }
 
     // Offered only when there is more than one, so it does not sit beside a single row's own Discard
     // saying the same thing twice.
@@ -493,25 +791,33 @@
         + `id="recovery-discard-all">Discard all ${items.length}</button></div>`
       : '';
 
-    banner.innerHTML =
+    panel.innerHTML =
       `<div class="recovery-head">${items.length === 1
-          ? 'An unfinished listing was recovered'
-          : `${items.length} unfinished listings were recovered`}</div>` +
-      '<p class="recovery-sub">These were being written when the app last closed. Nothing was lost.</p>' +
-      `<ul class="recovery-list">${rows}</ul>` + discardAll;
-    banner.classList.remove('hidden');
+          ? 'An unfinished listing was saved'
+          : `${items.length} unfinished listings were saved`}</div>` +
+      '<p class="recovery-sub">These were being written when this screen last closed. Restore one to '
+      + 'carry on where it left off.</p>' +
+      `<ul class="recovery-list">${recoveryRowsHtml(items)}</ul>` + discardAll;
 
-    banner.querySelectorAll('[data-recover]').forEach(btn =>
-      btn.addEventListener('click', () => restoreWork(items[Number(btn.dataset.recover)])));
+    bindRecoveryActions(panel, items);
     $('recovery-discard-all')?.addEventListener('click', () => discardAllWork(items.length));
-    banner.querySelectorAll('[data-recover-check]').forEach(btn =>
-      btn.addEventListener('click', () => checkRecoveredPublish(items[Number(btn.dataset.recoverCheck)])));
-    banner.querySelectorAll('[data-recover-discard]').forEach(btn =>
-      btn.addEventListener('click', () => discardWork(items[Number(btn.dataset.recoverDiscard)])));
+  }
+
+  function toggleRecoverPanel() {
+    const panel = $('nl-recover-panel');
+    if (!panel) return;
+    const opening = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !opening);
+    if (opening) renderRecoverPanel(recoverableItems);
+  }
+
+  function bindRecoverButton() {
+    $('nl-recover-btn')?.addEventListener('click', toggleRecoverPanel);
   }
 
   function restoreWork(item) {
     if (!item) return;
+    $('nl-recover-panel')?.classList.add('hidden');
     let payload;
     try { payload = JSON.parse(item.payload || '{}'); }
     catch {
@@ -522,7 +828,12 @@
     // Adopt the recovered key so continuing to edit updates that same row rather than starting a
     // second one beside it — otherwise a restored draft would be offered back twice next launch.
     workKey = item.key;
-    lastAutosavePayload = '';
+    // What is on screen is exactly what the app is holding, so the next save is genuinely a no-op
+    // and the indicator says so rather than opening on a blank state.
+    lastAutosavePayload = item.payload || '';
+    autosaveRetryStep = 0;
+    clearTimeout(autosaveRetryTimer);
+    setSaveState('saved');
 
     openNewListingModal();
     fillNlForm(payload);
@@ -632,6 +943,7 @@
     bindTakeHome('f');
     loadFeeProfile();
     bindAutosave();
+    bindRecoverButton();
     restoreListingViewMode();
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
@@ -681,7 +993,11 @@
     // Last, and not awaited: a listing recovered from a crash is the most valuable thing on this
     // page, but it must not delay the page loading — and if the check itself fails, the banner simply
     // stays hidden rather than holding up everything behind it.
-    loadRecoverableWork();
+    //
+    // The mirror first, and awaited by the recovery load rather than the page: anything this device
+    // is still holding because the app never took it has to be pushed up before the app is asked
+    // what there is to recover, or the one listing most at risk is the one missing from the list.
+    replayLocalMirror().finally(loadRecoverableWork);
 
     // Navigate to whatever section the URL hash specifies (supports reload + deep links)
     if (location.hash) handleNav(location.hash.slice(1));
@@ -18746,11 +19062,9 @@
       return;
     }
 
-    // Committed to disk before anything is sent. If the app dies mid-publish, this is the row that
-    // comes back as "publish outcome unknown" with a Check eBay button beside it.
-    payload.workKey = currentWorkKey();
-    flushAutosave(false);
-
+    // Claimed before the first await below, not after it. The in-flight flag is what stops a second
+    // click becoming a second live listing, and a guard that yields between its test and its set is
+    // a guard two quick clicks walk straight through.
     publishInFlight = true;
     const publishBtn = $('nl-btn-publish');
     const draftBtn = $('nl-btn-draft');
@@ -18762,6 +19076,20 @@
     nlSetResult('', mode === 'publish' ? 'Publishing to eBay…' : 'Saving draft…');
 
     try {
+      // Committed to disk before anything is sent. If the app dies mid-publish, this is the row that
+      // comes back as "publish outcome unknown" with a Check eBay button beside it.
+      //
+      // Awaited, which it was not. The comment above has always said "before anything is sent", and
+      // the code underneath it fired the save and moved straight on to the publish — two requests
+      // racing, on the one path where their order decides what the seller is told afterwards. The
+      // publish marks the row `publishing`; a save landing a moment later used to write it back to
+      // `editing`, and took the unresolved-publish warning with it.
+      //
+      // A save that fails is no longer a reason to hold up the publish: the app now journals the
+      // attempt whether or not a draft ever reached it.
+      payload.workKey = currentWorkKey();
+      await flushAutosave(false);
+
       // Upload photos to eBay EPS before publishing so eBay has accessible URLs
       if (mode === 'publish' && payload.imageUrls && payload.imageUrls.length > 0) {
         const wanted = payload.imageUrls.length;

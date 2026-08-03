@@ -100,7 +100,13 @@ public sealed class PublishGuard(WorkRecoveryStore store, ActionLog log)
     /// <summary>
     /// Decides whether this publish should be sent, and claims the lease when it should.
     /// </summary>
-    public PublishVerdict Begin(string fingerprint, string? workKey)
+    /// <param name="label">
+    /// The listing's title, carried through so the journal row is one the seller can act on. When
+    /// the draft never reached <see cref="WorkRecoveryStore"/> — an autosave that failed, an app
+    /// restarted between typing and publishing — this is the only name the unresolved-publish row
+    /// will ever have, and the <em>Check eBay</em> button that resolves it matches on the title.
+    /// </param>
+    public PublishVerdict Begin(string fingerprint, string? workKey, string? label = null)
     {
         var now = DateTimeOffset.UtcNow;
 
@@ -132,7 +138,7 @@ public sealed class PublishGuard(WorkRecoveryStore store, ActionLog log)
                 "This listing is already being published — that request is still running.");
         }
 
-        if (!string.IsNullOrWhiteSpace(workKey)) store.MarkPublishing(workKey!, fingerprint);
+        if (!string.IsNullOrWhiteSpace(workKey)) store.MarkPublishing(workKey!, fingerprint, label);
         return new PublishVerdict(PublishDecision.Proceed);
     }
 
@@ -142,10 +148,10 @@ public sealed class PublishGuard(WorkRecoveryStore store, ActionLog log)
         store.RecordPublished(workKey, fingerprint, listingId);
     }
 
-    public void Failed(string fingerprint, string? workKey, string error)
+    public void Failed(string fingerprint, string? workKey, string error, string? label = null)
     {
         _inFlight.TryRemove(fingerprint, out _);
-        if (!string.IsNullOrWhiteSpace(workKey)) store.MarkFailed(workKey!, error);
+        if (!string.IsNullOrWhiteSpace(workKey)) store.MarkFailed(workKey!, error, label);
     }
 
     /// <summary>

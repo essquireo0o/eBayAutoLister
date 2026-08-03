@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=90" />
+  <link rel="stylesheet" href="style.css?v=91" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -567,6 +567,12 @@
               <button id="nl-tab-new-btn" class="nl-tab-new-btn" type="button" title="New draft">+</button>
               <button id="nl-load-all-drafts-btn" class="nl-load-all-drafts-btn" type="button" title="Load all saved drafts as tabs">Open All Drafts</button>
               <button id="nl-clear-drafts-btn" class="nl-clear-drafts-btn" type="button" title="Delete all saved drafts and clear all tabs">Clear All</button>
+              <!-- The way back to a listing that was being written when this screen last closed.
+                   Hidden when there is nothing to recover, so it is never a button that does
+                   nothing; it carries the count when there is. -->
+              <button id="nl-recover-btn" class="nl-load-all-drafts-btn nl-recover-btn hidden" type="button">Recover</button>
+              <!-- Whether the listing on screen is actually stored. Quiet when it is. -->
+              <span id="nl-save-state" class="nl-save-state" role="status" aria-live="polite"></span>
             </div>
             <button id="nl-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <button id="nl-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
@@ -587,6 +593,12 @@
             trapped scroller — see .nl-scroll in style.css.
           -->
           <div class="nl-scroll">
+
+          <!-- Unfinished listings, opened from Recover in the header above. Inside the listing
+               screen rather than on the dashboard: this is where somebody who wants a draft back
+               comes looking, and a dozen rows here cost the dashboard nothing. -->
+          <div id="nl-recover-panel" class="recovery-banner nl-recover-panel hidden" role="region"
+               aria-label="Unfinished listings"></div>
 
           <!-- Action cards — outcome-driven, not generic form fields -->
           <div class="nl-url-section">
@@ -5284,6 +5296,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=102"></script>
+  <script src="app.js?v=103"></script>
 </body>
 </html>

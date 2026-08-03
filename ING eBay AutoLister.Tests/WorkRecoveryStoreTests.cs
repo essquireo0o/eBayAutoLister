@@ -434,4 +434,186 @@ public class WorkRecoveryStoreTests : IDisposable
         Assert.True(row.Label.Length <= 200);
         Assert.True(row.LastError.Length <= 600);
     }
+
+    // ── An autosave saves work; it never moves a publish stage ──────────────
+    //
+    // The two requests really do race. The seller presses Publish, the browser flushes the text one
+    // last time, and both are in the air at once — so the ordering below is not contrived, it is the
+    // ordinary shape of the busiest moment in the app. Every test in this section is a way the later
+    // autosave used to overwrite what the publish path had just recorded.
+
+    [Fact]
+    public void An_autosave_landing_after_the_publish_started_does_not_erase_the_unresolved_publish()
+    {
+        var store = NewStore();
+        store.Save(Draft());
+        store.MarkPublishing("wip-1", "fp-1");
+
+        // Exactly what the browser sends: its own idea of the stage, which is always `editing`.
+        store.Save(Draft(payload: """{"title":"Antminer S19 Pro"}"""));
+
+        Assert.Equal(WorkStage.Publishing, store.Get("wip-1")!.Stage);
+        Assert.Equal("wip-1", Assert.Single(store.Unresolved()).Key);
+        // And the seller's last keystrokes are still kept — the row is not frozen, only its stage is.
+        Assert.Contains("S19 Pro", store.Get("wip-1")!.Payload);
+    }
+
+    // The expensive one. A published row that gets written back to `editing` is no longer found by
+    // FindPublished, so PublishGuard's duplicate brake is gone and the next attempt puts a second
+    // live listing up for the same physical item.
+    [Fact]
+    public void An_autosave_landing_after_the_publish_succeeded_cannot_reopen_the_published_row()
+    {
+        var store = NewStore();
+        store.Save(Draft());
+        store.RecordPublished("wip-1", "fp-1", "555");
+
+        Assert.Equal(WorkSaveOutcome.PublishJournal, store.SaveWithOutcome(Draft()));
+        Assert.Equal(WorkStage.Published, store.Get("wip-1")!.Stage);
+        Assert.Equal("555", store.FindPublished("fp-1", TimeSpan.FromMinutes(30))?.ListingId);
+        Assert.Empty(store.Recoverable());
+    }
+
+    // The duplicate window is measured from the published row's updated_at. An autosave bumping it
+    // would quietly extend the window every few seconds for as long as the tab stayed open, so the
+    // brake would outlive the moment it is meant to cover.
+    [Fact]
+    public void An_autosave_into_a_published_row_does_not_extend_the_duplicate_window()
+    {
+        var store = NewStore();
+        store.Save(Draft());
+        store.RecordPublished("wip-1", "fp-1", "555");
+        var publishedAt = store.Get("wip-1")!.UpdatedUtc;
+
+        Thread.Sleep(15);
+        store.Save(Draft(payload: """{"title":"still typing"}"""));
+
+        Assert.Equal(publishedAt, store.Get("wip-1")!.UpdatedUtc);
+    }
+
+    [Fact]
+    public void An_autosave_after_a_refusal_keeps_the_refusal_on_screen()
+    {
+        var store = NewStore();
+        store.Save(Draft());
+        store.MarkFailed("wip-1", "The item specific Model is missing.");
+
+        store.Save(Draft(payload: """{"title":"Antminer S19","itemSpecifics":{"Model":"S19 Pro"}}"""));
+
+        var row = store.Get("wip-1")!;
+        Assert.Equal(WorkStage.Failed, row.Stage);
+        Assert.Contains("Model is missing", row.LastError);
+        Assert.Contains("S19 Pro", row.Payload);   // and the fix the seller just typed survived
+    }
+
+    // ── What an autosave did, when it did not simply save ───────────────────
+    //
+    // The client acts on each of these differently — retry, give up, or start a fresh key — so a
+    // single false is not enough of an answer to build a recovery path on.
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void A_save_with_no_key_reports_that_there_was_nothing_to_save(string key)
+        => Assert.Equal(WorkSaveOutcome.Empty, NewStore().SaveWithOutcome(new WorkSnapshot { Key = key, Payload = "x" }));
+
+    [Fact]
+    public void An_oversized_payload_says_so_rather_than_looking_like_an_empty_one()
+    {
+        var store = NewStore();
+
+        Assert.Equal(WorkSaveOutcome.TooLarge,
+            store.SaveWithOutcome(Draft(payload: new string('x', WorkRecoveryStore.MaxPayloadBytes + 1))));
+        Assert.Null(store.Get("wip-1"));
+    }
+
+    [Fact]
+    public void A_blank_form_reports_empty_rather_than_a_failure_worth_retrying()
+        => Assert.Equal(WorkSaveOutcome.Empty,
+            NewStore().SaveWithOutcome(new WorkSnapshot
+            {
+                Key = "wip-blank", Label = "Untitled listing", Payload = BlankTabPayload,
+            }));
+
+    [Fact]
+    public void An_ordinary_save_reports_that_it_saved()
+        => Assert.Equal(WorkSaveOutcome.Saved, NewStore().SaveWithOutcome(Draft()));
+
+    // ── A publish whose draft never reached the app ─────────────────────────
+    //
+    // The seller whose autosave has been failing is the seller who most needs the safety net, and
+    // until now they were the one seller who had none: the journal was an UPDATE, so a publish with
+    // no row behind it affected nothing and was recorded nowhere. An app that died mid-send came
+    // back with no sign that anything had been sent.
+
+    [Fact]
+    public void A_publish_whose_draft_never_reached_the_app_is_still_journalled()
+    {
+        var store = NewStore();
+        store.MarkPublishing("wip-never-saved", "fp-1", "Antminer S19 Pro 110TH");
+
+        var row = Assert.Single(store.Unresolved());
+        Assert.Equal("wip-never-saved", row.Key);
+        Assert.Equal(WorkStage.Publishing, row.Stage);
+        // The title is what makes the row actionable: Check eBay resolves it by searching on it.
+        Assert.Equal("Antminer S19 Pro 110TH", row.Label);
+        Assert.Equal(1, row.AttemptCount);
+    }
+
+    [Fact]
+    public void A_refusal_whose_draft_never_reached_the_app_is_still_shown_to_the_seller()
+    {
+        var store = NewStore();
+        store.MarkFailed("wip-never-saved", "The item specific Model is missing.", "Antminer S19");
+
+        var row = Assert.Single(store.Recoverable());
+        Assert.Equal(WorkStage.Failed, row.Stage);
+        Assert.Equal("Antminer S19", row.Label);
+        Assert.Contains("Model is missing", row.LastError);
+    }
+
+    // The draft's title is the seller's own wording, and it outranks whatever the publish path
+    // happened to be carrying — otherwise a retry would rename the row under them.
+    [Fact]
+    public void A_saved_drafts_own_title_is_not_overwritten_by_the_publish()
+    {
+        var store = NewStore();
+        store.Save(Draft(label: "Antminer S19 — my listing"));
+        store.MarkPublishing("wip-1", "fp-1", "something the publish path made up");
+
+        Assert.Equal("Antminer S19 — my listing", store.Get("wip-1")!.Label);
+    }
+
+    [Fact]
+    public void A_journalled_publish_survives_a_restart_with_its_title_intact()
+    {
+        NewStore().MarkPublishing("wip-never-saved", "fp-1", "Antminer S19 Pro");
+
+        // A new process, a new store instance, the same file: what the seller comes back to.
+        Assert.Equal("Antminer S19 Pro", Assert.Single(NewStore().Unresolved()).Label);
+    }
+
+    [Fact]
+    public void A_publish_with_no_key_at_all_does_not_leave_a_nameless_row_behind()
+    {
+        var store = NewStore();
+        store.MarkPublishing("", "fp-1", "Antminer S19");
+        store.MarkFailed("   ", "some refusal", "Antminer S19");
+
+        Assert.Empty(store.Recoverable());
+        Assert.Empty(store.Unresolved());
+    }
+
+    [Fact]
+    public void A_retry_of_a_journalled_publish_counts_the_attempt_rather_than_starting_over()
+    {
+        var store = NewStore();
+        store.MarkPublishing("wip-never-saved", "fp-1", "Antminer S19");
+        store.MarkFailed("wip-never-saved", "first refusal");
+        store.MarkPublishing("wip-never-saved", "fp-1", "Antminer S19");
+
+        var row = store.Get("wip-never-saved")!;
+        Assert.Equal(2, row.AttemptCount);
+        Assert.Equal("", row.LastError);
+    }
 }

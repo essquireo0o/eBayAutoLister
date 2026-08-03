@@ -264,4 +264,57 @@ public class PublishGuardTests : IDisposable
 
         Assert.Equal("newer", PublishGuard.MatchPublished(active, "Same title", now, TimeSpan.FromMinutes(30))?.ListingId);
     }
+
+    // ── The publish whose draft never got saved ─────────────────────────────
+    //
+    // The seller whose autosave is failing is the one who most needs the journal, and they were the
+    // one seller who had none: the guard only ever updated an existing row, so a publish with no
+    // draft behind it went unrecorded. The two tests below are the end-to-end version of that — the
+    // guard is handed a key that is not in the store, exactly as the endpoint hands it one.
+
+    [Fact]
+    public void A_publish_with_no_saved_draft_still_leaves_a_row_the_seller_can_resolve()
+    {
+        var store = NewStore();
+        var guard = NewGuard(store);
+
+        guard.Begin(PublishGuard.Fingerprint(Listing()), "wip-never-saved", "Antminer S19 Pro 110TH");
+
+        var row = Assert.Single(store.Unresolved());
+        Assert.Equal(WorkStage.Publishing, row.Stage);
+        // The title has to reach the row, because Check eBay reconciles by matching on it — the same
+        // matching MatchPublished does above. A journal row with no title cannot be resolved.
+        Assert.Equal("Antminer S19 Pro 110TH", row.Label);
+    }
+
+    [Fact]
+    public void A_failure_with_no_saved_draft_is_reported_rather_than_dropped()
+    {
+        var store = NewStore();
+        var guard = NewGuard(store);
+        var fingerprint = PublishGuard.Fingerprint(Listing());
+
+        guard.Begin(fingerprint, "wip-never-saved", "Antminer S19 Pro 110TH");
+        guard.Failed(fingerprint, "wip-never-saved", "eBay rejected the category", "Antminer S19 Pro 110TH");
+
+        var row = Assert.Single(store.Recoverable());
+        Assert.Equal(WorkStage.Failed, row.Stage);
+        Assert.Equal("Antminer S19 Pro 110TH", row.Label);
+        Assert.Contains("category", row.LastError);
+    }
+
+    // A failure has to release the lease as well as record itself, or the retry the seller makes
+    // after fixing the problem is refused as a duplicate of the attempt that never worked.
+    [Fact]
+    public void A_journalled_failure_still_lets_the_seller_try_again()
+    {
+        var store = NewStore();
+        var guard = NewGuard(store);
+        var fingerprint = PublishGuard.Fingerprint(Listing());
+
+        guard.Begin(fingerprint, "wip-never-saved", "Antminer S19 Pro 110TH");
+        guard.Failed(fingerprint, "wip-never-saved", "eBay rejected the category", "Antminer S19 Pro 110TH");
+
+        Assert.Equal(PublishDecision.Proceed, guard.Begin(fingerprint, "wip-never-saved", "Antminer S19 Pro 110TH").Decision);
+    }
 }
