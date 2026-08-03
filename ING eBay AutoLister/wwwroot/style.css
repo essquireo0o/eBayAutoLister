@@ -15071,6 +15071,16 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 
+/* When this source saw the market, under its own row rather than squeezed into
+   a fifth column — it is a caveat on the line above, not a figure to scan down. */
+.pb-src-age {
+  grid-column: 1 / -1;
+  margin-top: 1px;
+  font-size: var(--fs-3xs);
+  line-height: 1.4;
+  color: var(--faint);
+}
+
 .pb-also {
   margin: var(--s2) 0 0;
   font-size: var(--fs-2xs);

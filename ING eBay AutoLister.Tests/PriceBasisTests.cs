@@ -348,6 +348,117 @@ public class PriceBasisTests : IDisposable
         Assert.NotEqual(basis.MedianPrice, basis.Price);
     }
 
+    // ── How old the evidence is ────────────────────────────────────────────────
+    // Every weight in this panel is already age-adjusted: recent local comps pull harder in the
+    // weighted median, and Terapeak's share is stepped down as its scrape ages. A reader shown the
+    // percentages and not the dates is being asked to accept an adjustment whose reason is off
+    // screen — and, worse, to read a price built from months-old sales as a price for today.
+
+    private static readonly DateTime Now = new(2026, 8, 3, 12, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void The_local_source_states_the_span_its_sales_cover()
+    {
+        var estimate = LocalOnly();
+        estimate.LocalOldestSoldAtUtc = new DateTime(2026, 3, 12, 0, 0, 0, DateTimeKind.Utc);
+        estimate.LocalNewestSoldAtUtc = new DateTime(2026, 7, 28, 0, 0, 0, DateTimeKind.Utc);
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal("sales dated 12 Mar 2026 – 28 Jul 2026", basis.Sources[0].AsOf);
+    }
+
+    [Fact]
+    public void Comps_that_all_sold_on_one_day_state_that_day_rather_than_a_span_of_none()
+    {
+        var estimate = LocalOnly();
+        estimate.LocalOldestSoldAtUtc = new DateTime(2026, 7, 28, 3, 0, 0, DateTimeKind.Utc);
+        estimate.LocalNewestSoldAtUtc = new DateTime(2026, 7, 28, 19, 0, 0, DateTimeKind.Utc);
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal("sales dated 28 Jul 2026", basis.Sources[0].AsOf);
+    }
+
+    /// <summary>
+    /// Undated comps say nothing rather than something. The confidence score has a term for exactly
+    /// this ("No comp carries a sale date"), and inventing a window here would contradict it.
+    /// </summary>
+    [Fact]
+    public void Comps_with_no_dates_leave_the_line_off()
+    {
+        var basis = PriceBasis.From(LocalOnly(), Confidence(), nowUtc: Now)!;
+
+        Assert.Equal("", basis.Sources[0].AsOf);
+    }
+
+    /// <summary>
+    /// Terapeak's figure is a snapshot, so it carries the date it was taken and how long ago that
+    /// was. The date alone makes the reader do the subtraction; the age alone hides which snapshot
+    /// this is.
+    /// </summary>
+    [Theory]
+    [InlineData(0, "scraped 3 Aug 2026 · today")]
+    [InlineData(1, "scraped 2 Aug 2026 · yesterday")]
+    [InlineData(9, "scraped 25 Jul 2026 · 9 days ago")]
+    [InlineData(120, "scraped 5 Apr 2026 · 4 months ago")]
+    [InlineData(500, "scraped 21 Mar 2025 · over a year ago")]
+    public void The_terapeak_source_states_when_it_was_scraped_and_how_long_ago(int ageDays, string expected)
+    {
+        var estimate = Blended();
+        estimate.TerapeakScrapedAtUtc = Now.AddDays(-ageDays);
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal(expected, basis.Sources[1].AsOf);
+    }
+
+    /// <summary>
+    /// When age has already cost a source part of its pull, the panel says how much. Without it the
+    /// share on screen is smaller than the comp counts explain and nothing accounts for the gap.
+    /// </summary>
+    [Fact]
+    public void A_stale_terapeak_figure_says_what_its_age_already_cost_it()
+    {
+        var estimate = Blended();
+        estimate.TerapeakScrapedAtUtc = Now.AddDays(-120);
+        estimate.TerapeakFreshnessWeight = 0.4;
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal("counted at 40% of full weight for its age", basis.Sources[1].FreshnessNote);
+    }
+
+    /// <summary>"Counted at 100%" is not news, and a panel that says it teaches the reader to skim.</summary>
+    [Fact]
+    public void A_fresh_figure_says_nothing_about_its_freshness()
+    {
+        var estimate = Blended();
+        estimate.TerapeakScrapedAtUtc = Now.AddHours(-6);
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal("", basis.Sources[1].FreshnessNote);
+    }
+
+    /// <summary>
+    /// None of this touches the arithmetic. The dates are stated beside the figures, never folded
+    /// into them, so the promise this whole class exists to keep still holds.
+    /// </summary>
+    [Fact]
+    public void Dating_the_sources_does_not_disturb_the_reconciliation()
+    {
+        var estimate = Blended();
+        estimate.LocalOldestSoldAtUtc = Now.AddDays(-200);
+        estimate.LocalNewestSoldAtUtc = Now.AddDays(-3);
+        estimate.TerapeakScrapedAtUtc = Now.AddDays(-120);
+        estimate.TerapeakFreshnessWeight = 0.4;
+
+        var basis = PriceBasis.From(estimate, Confidence(), nowUtc: Now)!;
+
+        Assert.Equal(basis.Price, Reconstruct(basis), 2);
+    }
+
     // ── The row it ends up on ──────────────────────────────────────────────────
 
     private static readonly LocalArbitrageAnalyzer Analyzer =

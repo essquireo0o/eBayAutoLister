@@ -128,12 +128,20 @@ public sealed class TerapeakMarketService(TerapeakService terapeak, TerapeakPric
         var cached = cache.TryGet(key, age);
         if (cached is not null)
         {
+            // Count and the price range come back with the money. Without them a served price was
+            // arithmetically present and practically absent: the blend weights each source by its
+            // sample size, so a median with Count = 0 was multiplied by a zero weight and dropped
+            // from the estimate it was supposed to be checking. Every scan leans on this path far
+            // harder than on the scrape path, so that was most of what Terapeak was ever asked.
+            // Rows written before the cache stored a count still read back as zero, and still
+            // behave the old way — an unknown sample size is not something to guess at.
             return new TerapeakLookup(new TerapeakMarketResult
             {
                 Data = new SoldCompsResult
                 {
                     Query = rawQueryForScrape, Average = cached.Average, Median = cached.Median,
                     AvgShipping = cached.AvgShipping, SellThroughPercent = cached.SellThroughPercent,
+                    Count = cached.CompCount, Min = cached.Min, Max = cached.Max,
                 },
                 ScrapedAtUtc = cached.ScrapedAtUtc,
                 FromCache = true,
@@ -205,7 +213,11 @@ public sealed class TerapeakMarketService(TerapeakService terapeak, TerapeakPric
             return new TerapeakLookup(null, TerapeakOutcome.NoData,
                 "Terapeak has no recent sold history for this one.");
 
-        cache.Set(key, parsed.Average, parsed.Median, parsed.AvgShipping, parsed.SellThroughPercent);
+        // Stored with the sample size and the range that produced the median, not just the median.
+        // Everything downstream of a cache hit weighs a source by how much it saw and how widely it
+        // scattered; a price saved without them comes back unweighable.
+        cache.Set(key, parsed.Average, parsed.Median, parsed.AvgShipping, parsed.SellThroughPercent,
+            parsed.Count, parsed.Min, parsed.Max);
         return new TerapeakLookup(
             new TerapeakMarketResult { Data = parsed, ScrapedAtUtc = now, FromCache = false, FreshnessWeight = 1.0 },
             TerapeakOutcome.Scraped);

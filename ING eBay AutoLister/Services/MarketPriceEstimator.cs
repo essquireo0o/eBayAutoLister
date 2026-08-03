@@ -77,6 +77,16 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
             // condition") is the caller's responsibility (Program.cs / OpportunityScoringService),
             // since competition/demand data lives outside this estimator.
             estimate.HighPriceTarget = estimate.Percentile75;
+
+            // The window these sales actually span. Taken from the pricing set — the comps that
+            // produced the figures — not from everything the lookup returned, so the dates on
+            // screen belong to the same sales as the number beside them.
+            var dated = strongForStats.Where(c => c.SoldDate.HasValue).Select(c => c.SoldDate!.Value).ToList();
+            if (dated.Count > 0)
+            {
+                estimate.LocalOldestSoldAtUtc = dated.Min();
+                estimate.LocalNewestSoldAtUtc = dated.Max();
+            }
         }
 
         // ── Terapeak — validates current pricing, on-demand only (never bulk/background) ──────
@@ -188,6 +198,11 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         // Null unless Terapeak actually priced something: a figure shown beside a 0% weight is a
         // number the seller can't act on and can only be misread as a second opinion.
         estimate.TerapeakMedianPrice = terapeak?.Data.Median > 0 ? terapeak.Data.Median : null;
+        if (terapeak is not null)
+        {
+            estimate.TerapeakScrapedAtUtc = terapeak.ScrapedAtUtc;
+            estimate.TerapeakFreshnessWeight = terapeak.FreshnessWeight;
+        }
 
         if (terapeak is null || terapeak.Data.Median <= 0)
         {
@@ -214,6 +229,15 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
 
         estimate.LocalWeight = localWeight;
         estimate.TerapeakWeight = terapeakWeight;
+
+        // A source carrying no weight must not move the number. Terapeak reaches here with a median
+        // and no weight when nothing says how many sales are behind it — a cache row written before
+        // the count was stored — and running the blend anyway multiplies its figure by zero and
+        // then overwrites the local figures with the result. That is a no-op for the median, and
+        // was NOT one for the recommended listing price: the competition-scaled negotiation buffer
+        // (8% in a thin market, 2% in a crowded one) was being replaced with a flat 5% by a source
+        // that had contributed nothing to the price it was buffering.
+        if (terapeakWeight <= 0m) return;
 
         var blendedMedian = localMedian * localWeight + terapeakMedian * terapeakWeight;
         var blendedExpected = (estimate.ExpectedSalePrice ?? localMedian) * localWeight + terapeakMedian * terapeakWeight;

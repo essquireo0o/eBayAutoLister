@@ -117,6 +117,102 @@ public class TerapeakPriceCacheTests : IDisposable
         Assert.Null(cache.TryGet("no sell-through on the page", Forever)!.SellThroughPercent);
     }
 
+    // ── The sample size behind the price ─────────────────────────────────────
+    // A median with no count behind it cannot be weighed against anything. The pricing blend sizes
+    // each source by how many sales it saw, so a price stored without its count comes back as a
+    // figure that is computed, carried, and then multiplied by a zero weight — present in the
+    // database and absent from the estimate it was paid for.
+
+    [Fact]
+    public void Stores_the_sample_size_and_the_range_the_median_came_from()
+    {
+        var cache = NewCache();
+        cache.Set("Antminer S19 95TH", 1150.40m, 1099m, 84.25m, 72m,
+            compCount: 14, min: 880.00m, max: 1425.50m);
+
+        var entry = cache.TryGet("Antminer S19 95TH", Forever)!;
+
+        Assert.Equal(14, entry.CompCount);
+        Assert.Equal(880.00m, entry.Min);
+        Assert.Equal(1425.50m, entry.Max);
+    }
+
+    /// <summary>
+    /// This table never evicts, so an installed copy of the app carries rows written under the
+    /// original schema — which had no room for any of this — and will carry them for as long as it
+    /// runs. Opening that database must migrate it in place rather than throw or drop the prices in
+    /// it, and the old rows must read back as an unknown sample size rather than a made-up one.
+    /// </summary>
+    [Fact]
+    public void A_price_stored_before_the_sample_size_had_a_column_still_opens_and_still_reads()
+    {
+        WriteRowUnderTheOriginalSchema("legacy keyword", average: 1150m, median: 1099m);
+
+        var entry = new TerapeakPriceCache(Db()).TryGet("legacy keyword", Forever)!;
+
+        Assert.Equal(1150m, entry.Average);
+        Assert.Equal(1099m, entry.Median);
+        Assert.Equal(0, entry.CompCount); // not recorded — and not guessed at
+        Assert.Equal(0m, entry.Min);
+        Assert.Equal(0m, entry.Max);
+    }
+
+    /// <summary>
+    /// And the row heals the first time that keyword is scraped again: the upsert replaces the
+    /// count and range along with the money, rather than leaving a fresh price sitting on the old
+    /// row's zeros.
+    /// </summary>
+    [Fact]
+    public void Re_scraping_a_keyword_replaces_its_sample_size_too()
+    {
+        WriteRowUnderTheOriginalSchema("legacy keyword", average: 1150m, median: 1099m);
+        var cache = new TerapeakPriceCache(Db());
+
+        cache.Set("legacy keyword", 900m, 890m, 40m, 61m, compCount: 9, min: 700m, max: 1100m);
+
+        var entry = cache.TryGet("legacy keyword", Forever)!;
+        Assert.Equal(9, entry.CompCount);
+        Assert.Equal(700m, entry.Min);
+        Assert.Equal(1100m, entry.Max);
+        Assert.Equal(1, cache.Count); // healed in place, not duplicated
+    }
+
+    /// <summary>
+    /// Creates the six-column table this cache shipped with and puts a row in it, without going
+    /// through <see cref="TerapeakPriceCache"/> at all — the only honest way to test the migration
+    /// is to write the database the way the previous version wrote it.
+    /// </summary>
+    private void WriteRowUnderTheOriginalSchema(string queryKey, decimal average, decimal median)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = Db().DatabasePath }.ToString());
+        connection.Open();
+
+        using var create = connection.CreateCommand();
+        create.CommandText = """
+            CREATE TABLE IF NOT EXISTS terapeak_price_cache (
+                query_key TEXT PRIMARY KEY,
+                average REAL NOT NULL,
+                median REAL NOT NULL,
+                avg_shipping REAL NOT NULL,
+                sell_through_percent REAL NULL,
+                scraped_at_utc TEXT NOT NULL
+            );
+            """;
+        create.ExecuteNonQuery();
+
+        using var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO terapeak_price_cache (query_key, average, median, avg_shipping, sell_through_percent, scraped_at_utc)
+            VALUES (@key, @avg, @median, 0, 72, @at);
+            """;
+        insert.Parameters.AddWithValue("@key", queryKey);
+        insert.Parameters.AddWithValue("@avg", average);
+        insert.Parameters.AddWithValue("@median", median);
+        insert.Parameters.AddWithValue("@at", DateTime.UtcNow.ToString("O"));
+        insert.ExecuteNonQuery();
+    }
+
     // ── The key ──────────────────────────────────────────────────────────────
 
     [Fact]

@@ -1,10 +1,22 @@
 using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
+using Microsoft.Data.Sqlite;
 
 namespace ING_eBay_AutoLister.Tests;
 
-public class MarketPriceEstimatorTests
+public class MarketPriceEstimatorTests : IDisposable
 {
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "ing-estimator-" + Guid.NewGuid().ToString("N"));
+
+    public MarketPriceEstimatorTests() => Directory.CreateDirectory(_root);
+
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
+        try { Directory.Delete(_root, recursive: true); } catch { }
+        GC.SuppressFinalize(this);
+    }
+
     private static MarketplaceComparableResult Comp(string itemId, string title, decimal price) =>
         new() { ItemId = itemId, Title = title, SoldPrice = price, TotalPrice = price, MatchScore = 60 };
 
@@ -276,5 +288,149 @@ public class MarketPriceEstimatorTests
         var kept = MarketPriceEstimator.ApplyIdentityGuard(target, comps);
 
         Assert.Equal(3, kept.Count);
+    }
+
+    // ── The second opinion, through the cache ────────────────────────────────────
+    // Every scan answers from the Terapeak cache far more often than it scrapes — that is the whole
+    // point of the cache, and it is the path nearly every priced row takes. So what a cached price
+    // does to the estimate is not an edge case; it is the normal case.
+
+    private TerapeakMarketService Market(out TerapeakPriceCache cache)
+    {
+        var log = new ActionLog();
+        cache = new TerapeakPriceCache(new ListingDatabase(new StubWebHostEnvironment { ContentRootPath = _root }));
+        return new TerapeakMarketService(
+            new TerapeakService(Path.Combine(_root, "no-session.json"), Path.Combine(_root, "profile"), log),
+            cache, log);
+    }
+
+    private static readonly NormalizedProduct Miner = new() { Brand = "Bitmain", Model = "S19j Pro" };
+
+    /// <summary>Five local sales either side of $410, the two dearest being the closest matches.</summary>
+    private static List<MarketplaceComparableResult> LocalComps() =>
+        new[] { (380m, 60), (400m, 60), (410m, 60), (425m, 95), (440m, 95) }
+            .Select((c, i) => new MarketplaceComparableResult
+            {
+                ItemId = $"c{i}", Title = "Bitmain Antminer S19j Pro 104TH", SoldPrice = c.Item1,
+                TotalPrice = c.Item1, MatchScore = c.Item2, SoldDate = DateTime.UtcNow.AddDays(-5 - (i * 10)),
+            })
+            .ToList();
+
+    /// <summary>
+    /// A cached Terapeak price is a second opinion again.
+    ///
+    /// It was not. The cache stored the median and nothing about the sample behind it, so a served
+    /// price arrived with a count of zero — and the blend gives a source with no sample size a
+    /// weight of zero. The figure was looked up, computed, carried the length of the pipeline and
+    /// then multiplied by nothing, on nearly every row, while the panel beside it said the price
+    /// rested on one source. Both halves of that were true and neither was intended.
+    /// </summary>
+    [Fact]
+    public async Task A_cached_terapeak_price_counts_towards_the_price_instead_of_being_multiplied_by_zero()
+    {
+        var market = Market(out var cache);
+        cache.Set(TerapeakMarketService.BuildCacheKey(Miner), 300m, 300m, 20m, 65m,
+            compCount: 12, min: 260m, max: 340m);
+
+        var estimate = await new MarketPriceEstimator(market).EstimateAsync(
+            Miner, LocalComps(), "Bitmain Antminer S19j Pro 104TH", "FIXED_PRICE",
+            allowRealTerapeakScrape: false);
+
+        Assert.True(estimate.TerapeakWeight > 0m, "a cached price with a known sample size has to carry weight");
+        Assert.Equal(12, estimate.TerapeakComparableCount);
+        Assert.Equal(300m, estimate.TerapeakMedianPrice);
+        // Terapeak says $300 and the local comps say more, so the blend has to land between them —
+        // the arithmetic proof that the second opinion actually moved the number.
+        Assert.True(estimate.ExpectedSalePrice < estimate.LocalExpectedSalePrice,
+            $"expected the blend to be pulled below the local {estimate.LocalExpectedSalePrice}, got {estimate.ExpectedSalePrice}");
+        Assert.True(estimate.ExpectedSalePrice > 300m);
+        // And it reconciles, which is the promise PriceBasis makes about these same two figures.
+        Assert.Equal(
+            estimate.LocalExpectedSalePrice!.Value * estimate.LocalWeight + 300m * estimate.TerapeakWeight,
+            estimate.ExpectedSalePrice!.Value, 2);
+    }
+
+    /// <summary>
+    /// The rows already in the seller's database were written before the count was stored. They are
+    /// still left out — a price with an unknown sample size cannot be weighed against one with a
+    /// known one, and assuming a size would put arbitrary weight on it. They heal on the next scrape.
+    /// </summary>
+    [Fact]
+    public async Task A_cached_price_with_no_recorded_sample_size_is_still_left_out()
+    {
+        var market = Market(out var cache);
+        cache.Set(TerapeakMarketService.BuildCacheKey(Miner), 300m, 300m, 20m, 65m);
+
+        var estimate = await new MarketPriceEstimator(market).EstimateAsync(
+            Miner, LocalComps(), "Bitmain Antminer S19j Pro 104TH", "FIXED_PRICE",
+            allowRealTerapeakScrape: false);
+
+        Assert.Equal(0m, estimate.TerapeakWeight);
+        Assert.Equal(1m, estimate.LocalWeight);
+    }
+
+    /// <summary>
+    /// And while it is left out, it must not move anything either.
+    ///
+    /// It did. A Terapeak median with zero weight still ran the whole blend, and the last thing the
+    /// blend does is re-derive the recommended listing price at a flat 5% over the expected sale —
+    /// overwriting the competition-scaled buffer the estimator had just worked out (8% when almost
+    /// nobody else is listing this, 2% when the market is crowded). A source contributing nothing to
+    /// the price was silently repricing what to list it at.
+    /// </summary>
+    [Fact]
+    public async Task A_source_with_no_weight_does_not_reprice_what_to_list_at()
+    {
+        var market = Market(out var cache);
+        cache.Set(TerapeakMarketService.BuildCacheKey(Miner), 300m, 300m, 20m, 65m); // no sample size
+
+        var estimate = await new MarketPriceEstimator(market).EstimateAsync(
+            Miner, LocalComps(), "Bitmain Antminer S19j Pro 104TH", "FIXED_PRICE",
+            allowRealTerapeakScrape: false, activeCompetitionCount: 1);
+
+        // One competing listing earns the wide 8% buffer, and nothing that carried no weight in the
+        // price gets to trim it back to 5%.
+        Assert.Equal(Math.Round(estimate.ExpectedSalePrice!.Value * 1.08m, 2), estimate.RecommendedListingPrice);
+    }
+
+    /// <summary>
+    /// When each source saw the market, recorded on the estimate. Both weights above are already
+    /// age-adjusted, so a reader given the weights and not the dates is being shown an adjustment
+    /// with its reason left off screen — see <see cref="PriceBasis"/>.
+    /// </summary>
+    [Fact]
+    public async Task The_estimate_records_when_each_source_last_saw_the_market()
+    {
+        var market = Market(out var cache);
+        cache.Set(TerapeakMarketService.BuildCacheKey(Miner), 300m, 300m, 20m, 65m, compCount: 12);
+
+        var estimate = await new MarketPriceEstimator(market).EstimateAsync(
+            Miner, LocalComps(), "Bitmain Antminer S19j Pro 104TH", "FIXED_PRICE",
+            allowRealTerapeakScrape: false);
+
+        // The local comps span 5 to 45 days back, and the window says so.
+        Assert.NotNull(estimate.LocalNewestSoldAtUtc);
+        Assert.NotNull(estimate.LocalOldestSoldAtUtc);
+        Assert.InRange((DateTime.UtcNow - estimate.LocalNewestSoldAtUtc!.Value).TotalDays, 4.9, 5.1);
+        Assert.InRange((DateTime.UtcNow - estimate.LocalOldestSoldAtUtc!.Value).TotalDays, 44.9, 45.1);
+        // Terapeak's figure is dated when it was scraped, which for a cache hit is not now.
+        Assert.NotNull(estimate.TerapeakScrapedAtUtc);
+        Assert.Equal(1.0, estimate.TerapeakFreshnessWeight);
+    }
+
+    /// <summary>
+    /// Comps with no sale date leave the window empty rather than filling it with today. An undated
+    /// comp is undated; a window invented for it would read as evidence of recency.
+    /// </summary>
+    [Fact]
+    public async Task Undated_comps_leave_the_sold_window_empty_rather_than_inventing_one()
+    {
+        var estimate = await new MarketPriceEstimator(Market(out _)).EstimateAsync(
+            Miner,
+            [Comp("1", "Bitmain Antminer S19j Pro 104TH", 400m), Comp("2", "Bitmain Antminer S19j Pro 104TH", 420m)],
+            "Bitmain Antminer S19j Pro 104TH", "FIXED_PRICE", allowRealTerapeakScrape: false);
+
+        Assert.Null(estimate.LocalOldestSoldAtUtc);
+        Assert.Null(estimate.LocalNewestSoldAtUtc);
     }
 }

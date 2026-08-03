@@ -63,6 +63,8 @@ public class PriceBasisPanelAssetTests
     [InlineData("s.weightPercent")]
     [InlineData("s.compCount")]
     [InlineData("s.foundCount")]
+    [InlineData("s.asOf")]
+    [InlineData("s.freshnessNote")]
     [InlineData("f.possible")]
     [InlineData("f.earned")]
     [InlineData("f.detail")]
@@ -93,18 +95,32 @@ public class PriceBasisPanelAssetTests
         Assert.Contains("max: f.possible", Js);
     }
 
+    /// <summary>
+    /// How old each source's evidence is, on the source's own row. Both weights in this panel are
+    /// age-adjusted before they reach the browser, so a share shown without a date asks the reader
+    /// to accept an adjustment they cannot see the reason for. Escaped like everything else: it is
+    /// server-built text.
+    /// </summary>
+    [Fact]
+    public void Each_source_says_how_old_its_evidence_is()
+    {
+        Assert.Contains("[s.asOf, s.freshnessNote].filter(Boolean)", Js);
+        Assert.Contains("class=\"pb-src-age\">${esc(age)}", Js);
+    }
+
     [Fact]
     public void The_panel_is_styled_and_the_browser_is_told_to_fetch_the_new_files()
     {
         Assert.Contains(".pb-basis {", Css);
         Assert.Contains(".pb-factor {", Css);
         Assert.Contains(".pb-src {", Css);
+        Assert.Contains(".pb-src-age {", Css);
 
         // wwwroot is embedded, so a stale cached bundle is a real failure mode: the markup ships
         // and the browser keeps the version that can't render it.
         Assert.Matches(@"app\.js\?v=(\d+)", Html);
-        Assert.True(Version(Html, @"app\.js\?v=(\d+)") >= 101, "app.js ?v= was not bumped for this panel");
-        Assert.True(Version(Html, @"style\.css\?v=(\d+)") >= 89, "style.css ?v= was not bumped for this panel");
+        Assert.True(Version(Html, @"app\.js\?v=(\d+)") >= 102, "app.js ?v= was not bumped for this panel");
+        Assert.True(Version(Html, @"style\.css\?v=(\d+)") >= 90, "style.css ?v= was not bumped for this panel");
     }
 
     private static int Version(string html, string pattern) =>

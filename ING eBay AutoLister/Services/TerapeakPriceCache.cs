@@ -9,6 +9,27 @@ public class TerapeakCacheEntry
     public decimal AvgShipping { get; set; }
     public decimal? SellThroughPercent { get; set; }
     public DateTime ScrapedAtUtc { get; set; }
+
+    /// <summary>
+    /// How many sold listings the median was taken from. Zero means "not recorded" — every row
+    /// written before this column existed reads back as zero, and a caller must treat that as an
+    /// unknown sample size rather than as a measured zero.
+    /// </summary>
+    /// <remarks>
+    /// Not decoration. The pricing blend weights each source by its sample size
+    /// (<see cref="MarketPriceEstimator.ResolveWeights"/>), so a stored price with no count behind
+    /// it is a price that gets weighted at nothing — the second opinion is computed, carried, and
+    /// then multiplied by zero. That was the state of every cache hit until this column existed.
+    /// </remarks>
+    public int CompCount { get; set; }
+
+    /// <summary>
+    /// The sold price range behind the median. Both zero when unrecorded. The blend reads the
+    /// spread to decide how much to trust the median: a source whose sales ran $200-$900 is worth
+    /// less than one whose sales ran $410-$430, whatever the midpoint says.
+    /// </summary>
+    public decimal Min { get; set; }
+    public decimal Max { get; set; }
 }
 
 // Terapeak is a real logged-in browser scrape, not an API — each call is a genuine ~5-40s hit
@@ -40,7 +61,8 @@ public class TerapeakPriceCache
             using var connection = OpenConnection();
             using var select = connection.CreateCommand();
             select.CommandText = """
-                SELECT average, median, avg_shipping, sell_through_percent, scraped_at_utc
+                SELECT average, median, avg_shipping, sell_through_percent, scraped_at_utc,
+                       comp_count, price_min, price_max
                 FROM terapeak_price_cache WHERE query_key = @key;
                 """;
             select.Parameters.AddWithValue("@key", key);
@@ -66,12 +88,22 @@ public class TerapeakPriceCache
                 Median             = reader.GetDecimal(1),
                 AvgShipping        = reader.GetDecimal(2),
                 SellThroughPercent = reader.IsDBNull(3) ? null : reader.GetDecimal(3),
-                ScrapedAtUtc       = scrapedAt
+                ScrapedAtUtc       = scrapedAt,
+                CompCount          = reader.GetInt32(5),
+                Min                = reader.GetDecimal(6),
+                Max                = reader.GetDecimal(7),
             };
         }
     }
 
-    public void Set(string query, decimal average, decimal median, decimal avgShipping, decimal? sellThroughPercent)
+    /// <param name="compCount">
+    /// How many sold listings the median came from. Store it: a price kept without its sample size
+    /// is a price the blend cannot weigh, and it will be dropped from the estimate rather than
+    /// disagreed with. Zero is written only when the caller genuinely doesn't know.
+    /// </param>
+    public void Set(
+        string query, decimal average, decimal median, decimal avgShipping, decimal? sellThroughPercent,
+        int compCount = 0, decimal min = 0m, decimal max = 0m)
     {
         var key = Normalize(query);
         lock (_sync)
@@ -79,11 +111,14 @@ public class TerapeakPriceCache
             using var connection = OpenConnection();
             using var upsert = connection.CreateCommand();
             upsert.CommandText = """
-                INSERT INTO terapeak_price_cache (query_key, average, median, avg_shipping, sell_through_percent, scraped_at_utc)
-                VALUES (@key, @avg, @median, @ship, @sellThrough, @scrapedAt)
+                INSERT INTO terapeak_price_cache
+                    (query_key, average, median, avg_shipping, sell_through_percent, scraped_at_utc,
+                     comp_count, price_min, price_max)
+                VALUES (@key, @avg, @median, @ship, @sellThrough, @scrapedAt, @count, @min, @max)
                 ON CONFLICT(query_key) DO UPDATE SET
                     average = excluded.average, median = excluded.median, avg_shipping = excluded.avg_shipping,
-                    sell_through_percent = excluded.sell_through_percent, scraped_at_utc = excluded.scraped_at_utc;
+                    sell_through_percent = excluded.sell_through_percent, scraped_at_utc = excluded.scraped_at_utc,
+                    comp_count = excluded.comp_count, price_min = excluded.price_min, price_max = excluded.price_max;
                 """;
             upsert.Parameters.AddWithValue("@key", key);
             upsert.Parameters.AddWithValue("@avg", average);
@@ -91,6 +126,9 @@ public class TerapeakPriceCache
             upsert.Parameters.AddWithValue("@ship", avgShipping);
             upsert.Parameters.AddWithValue("@sellThrough", (object?)sellThroughPercent ?? DBNull.Value);
             upsert.Parameters.AddWithValue("@scrapedAt", DateTime.UtcNow.ToString("O"));
+            upsert.Parameters.AddWithValue("@count", compCount);
+            upsert.Parameters.AddWithValue("@min", min);
+            upsert.Parameters.AddWithValue("@max", max);
             upsert.ExecuteNonQuery();
 
             RecordRealScrape(connection);
@@ -187,7 +225,10 @@ public class TerapeakPriceCache
                 median REAL NOT NULL,
                 avg_shipping REAL NOT NULL,
                 sell_through_percent REAL NULL,
-                scraped_at_utc TEXT NOT NULL
+                scraped_at_utc TEXT NOT NULL,
+                comp_count INTEGER NOT NULL DEFAULT 0,
+                price_min REAL NOT NULL DEFAULT 0,
+                price_max REAL NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS terapeak_cache_stats (
@@ -197,6 +238,26 @@ public class TerapeakPriceCache
             );
             """;
         command.ExecuteNonQuery();
+
+        // This table never evicts, so an installed copy of the app is carrying rows written under
+        // the original six-column schema and will carry them for as long as it runs. Add the three
+        // columns in place rather than rebuilding: `NOT NULL DEFAULT 0` fills the existing rows,
+        // and zero is exactly what those rows know about their sample size.
+        AddColumnIfMissing(connection, "comp_count", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "price_min", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "price_max", "REAL NOT NULL DEFAULT 0");
+    }
+
+    private static void AddColumnIfMissing(SqliteConnection connection, string column, string declaration)
+    {
+        using var probe = connection.CreateCommand();
+        probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('terapeak_price_cache') WHERE name = @name;";
+        probe.Parameters.AddWithValue("@name", column);
+        if (Convert.ToInt32(probe.ExecuteScalar()) > 0) return;
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE terapeak_price_cache ADD COLUMN {column} {declaration};";
+        alter.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

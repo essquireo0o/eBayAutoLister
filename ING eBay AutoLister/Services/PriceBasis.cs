@@ -20,9 +20,18 @@ namespace ING_eBay_AutoLister.Services;
 /// when there is nothing extra to say. The gap is the identity guard, the outlier trim and the
 /// strong-match filter doing their work, and it is routinely most of the search.
 /// </param>
+/// <param name="AsOf">
+/// When this source saw the market, in words — the span the sales cover, or the date the figure was
+/// taken. Empty when nothing carried a date. A weight quoted without it asks the reader to accept
+/// an age adjustment whose reason is off screen.
+/// </param>
+/// <param name="FreshnessNote">
+/// Stated only when age has already cost this source part of its pull, and says how much. Empty
+/// otherwise, because "counted at 100%" is not news.
+/// </param>
 public sealed record PriceBasisSource(
     string Key, string Label, string ValueLabel, decimal Value, decimal WeightPercent,
-    int CompCount, int FoundCount);
+    int CompCount, int FoundCount, string AsOf = "", string FreshnessNote = "");
 
 /// <summary>
 /// The arithmetic behind one resale price, and behind the confidence score printed next to it.
@@ -86,14 +95,16 @@ public sealed class PriceBasis
     /// <param name="localCompsFound">
     /// How many comps the local lookup returned, before the identity guard and the trim.
     /// </param>
-    public static PriceBasis? From(MarketAnalysisResult analysis, int localCompsFound = 0) =>
-        From(analysis.PriceEstimate, analysis.Confidence, localCompsFound);
+    public static PriceBasis? From(MarketAnalysisResult analysis, int localCompsFound = 0, DateTime? nowUtc = null) =>
+        From(analysis.PriceEstimate, analysis.Confidence, localCompsFound, nowUtc);
 
-    public static PriceBasis? From(PriceEstimate estimate, ConfidenceBreakdown confidence, int localCompsFound = 0)
+    public static PriceBasis? From(
+        PriceEstimate estimate, ConfidenceBreakdown confidence, int localCompsFound = 0, DateTime? nowUtc = null)
     {
         var price = estimate.ExpectedSalePrice ?? estimate.MedianPrice;
         if (price is not > 0) return null;
 
+        var now = nowUtc ?? DateTime.UtcNow;
         var sources = new List<PriceBasisSource>();
 
         // The local side contributes its weighted median — the figure that entered the blend. When
@@ -104,14 +115,17 @@ public sealed class PriceBasis
             sources.Add(new PriceBasisSource(
                 HostedCompsKey, "eBay sold comps", "weighted median", localValue.Value,
                 estimate.LocalWeight * 100m, estimate.PricedOnCompCount,
-                localCompsFound > estimate.PricedOnCompCount ? localCompsFound : 0));
+                localCompsFound > estimate.PricedOnCompCount ? localCompsFound : 0,
+                SoldWindow(estimate.LocalOldestSoldAtUtc, estimate.LocalNewestSoldAtUtc)));
         }
 
         if (estimate.TerapeakMedianPrice is > 0 && estimate.TerapeakWeight > 0)
         {
             sources.Add(new PriceBasisSource(
                 TerapeakKey, "Terapeak", "median", estimate.TerapeakMedianPrice.Value,
-                estimate.TerapeakWeight * 100m, estimate.TerapeakComparableCount, 0));
+                estimate.TerapeakWeight * 100m, estimate.TerapeakComparableCount, 0,
+                ScrapedOn(estimate.TerapeakScrapedAtUtc, now),
+                FreshnessNote(estimate.TerapeakFreshnessWeight)));
         }
 
         return new PriceBasis
@@ -143,6 +157,55 @@ public sealed class PriceBasis
 
     private static string Comps(PriceBasisSource s) =>
         s.CompCount == 1 ? "1 sold comp" : $"{s.CompCount} sold comps";
+
+    /// <summary>
+    /// The span the local comps cover, e.g. <c>sales dated 12 Mar – 28 Jul 2026</c>. One date when
+    /// they all landed on the same day; empty when none of them carried one, which is itself worth
+    /// not papering over — the confidence score has a term for exactly that.
+    /// </summary>
+    private static string SoldWindow(DateTime? oldest, DateTime? newest)
+    {
+        if (oldest is not DateTime from || newest is not DateTime to) return "";
+        return from.Date == to.Date
+            ? $"sales dated {Day(to)}"
+            : $"sales dated {Day(from)} – {Day(to)}";
+    }
+
+    /// <summary>
+    /// When the Terapeak figure was taken, with the age spelled out. The date alone makes the
+    /// reader do the subtraction, and the age alone hides which snapshot this was.
+    /// </summary>
+    private static string ScrapedOn(DateTime? scrapedAtUtc, DateTime nowUtc)
+    {
+        if (scrapedAtUtc is not DateTime at) return "";
+
+        var days = (int)Math.Floor((nowUtc - at).TotalDays);
+        var age = days switch
+        {
+            <= 0 => "today",
+            1 => "yesterday",
+            < 60 => $"{days} days ago",
+            < 365 => $"{days / 30} months ago",
+            _ => "over a year ago",
+        };
+        return $"scraped {Day(at)} · {age}";
+    }
+
+    /// <summary>
+    /// What age has already cost this source. The freshness step (1.0 / 0.7 / 0.4 / 0.2 at 30, 90
+    /// and 180 days) is applied to the weight before it reaches this panel, so without this line the
+    /// share on screen is smaller than the comp counts explain and nothing says why.
+    /// </summary>
+    private static string FreshnessNote(double freshnessWeight)
+    {
+        if (freshnessWeight is <= 0 or >= 1) return "";
+        return string.Format(
+            System.Globalization.CultureInfo.GetCultureInfo("en-US"),
+            "counted at {0:P0} of full weight for its age", freshnessWeight);
+    }
+
+    private static string Day(DateTime value) =>
+        value.ToString("d MMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
 
     private static string Money(decimal value) =>
         value.ToString("C2", System.Globalization.CultureInfo.GetCultureInfo("en-US"));

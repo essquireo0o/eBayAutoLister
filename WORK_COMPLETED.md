@@ -7844,3 +7844,117 @@ and then committed as soon as it went green, which is the only durable protectio
 committed under **`ab457ff`** ("Stop the app tripping eBay's bot check during Terapeak sign-in")
 rather than under `20e11e8`. The content is correct and the branch is green; only the attribution is
 off, and rewriting another session's commit to fix that would cost more than it is worth.
+
+---
+
+## The second opinion the cache was throwing away — `TerapeakPriceCache` (autonomous session, 2026-08-03)
+
+The previous session's price trail ended with a note in its own Known Limits: *"a cached Terapeak
+price contributes nothing to the blend."* That note undersold it. This is what was happening on
+nearly every priced row.
+
+`TerapeakPriceCache` stored the median, the average, the shipping and the sell-through — and nothing
+about the **sample** behind them. So a cache hit came back with `SoldCompsResult.Count = 0`, and
+`ResolveWeights` gives a source with no sample size a weight of zero:
+
+```
+if (terapeakStrongCount <= 0) return (1m, 0m);
+```
+
+A Terapeak figure the app had already paid a real browser scrape for was looked up, parsed, carried
+the length of the pipeline, and then **multiplied by nothing**. And this is not the rare path. The
+cache exists precisely so that a scan answers from it rather than driving a browser — every scan
+runs a cache-only pre-pass over every product and rations real scrapes to a handful. The path that
+worked was the exception; the path that silently dropped the second source was the rule.
+
+It cost more than the blend. The same zero flowed into `SourceBreakdown.TerapeakComparableCount`,
+and from there into the row's total comp count, its evidence tier, its "eBay + Terapeak" source
+label, and the confidence score's **Source agreement** term — which reads `TerapeakWeight > 0` and
+was therefore paying half marks ("priced by the sold-comps database alone — no second source to
+check it against") on rows that had a second source sitting in the database.
+
+## What changed
+
+**The cache stores the sample, not just the price.** Three columns — `comp_count`, `price_min`,
+`price_max` — added in place with `ALTER TABLE`, because this table never evicts and an installed
+copy is carrying rows written under the six-column schema for as long as it runs. The migration is
+pinned by a test that writes the old table by hand and opens it with the new code.
+
+**Zero still means unrecorded.** A legacy row reads back as a count of zero and keeps behaving
+exactly as it did — left out of the blend rather than given a guessed-at sample size. Those rows
+heal on their next scrape, and since the default acceptance window is 48 hours, the ones actually
+being used heal within two days of use.
+
+**A source carrying no weight no longer moves the price.** Found while writing the tests for the
+above, and the reason it matters is small and expensive: with a zero weight the blend was still
+running end to end, and its last act is to re-derive the recommended listing price at a flat +5% —
+overwriting the competition-scaled negotiation buffer the estimator had just computed. A thin market
+earns +8% and a crowded one +2%; both were being quietly reset to +5% by a source that had
+contributed nothing to the price it was buffering. The blend now returns before it can.
+
+**Every source in the trail states how old its evidence is.** The weights on that panel are already
+age-adjusted — recent comps pull harder in the weighted median, and Terapeak's share is stepped down
+as its scrape ages — so a reader shown the percentages and not the dates was being asked to accept
+an adjustment whose reason was off screen. The local row now carries `sales dated 12 Mar 2026 – 28
+Jul 2026`, and the Terapeak row `scraped 2 Aug 2026 · yesterday`, plus what age has already cost it
+when that is anything at all. Stated beside the figures, never folded into them: the reconciliation
+this panel exists to keep is re-pinned with the dates present.
+
+## What moves on screen as a result
+
+On a row whose keyword is in the cache, and which previously showed one source: Terapeak reappears
+in the blend with its real weight, the comp count on the row rises by Terapeak's share, the source
+label goes back to naming both, and the confidence score gains up to 8 points on the agreement term
+— honestly, because the second source really is there and really does agree. Prices move where the
+two sources differ, which is the entire point of having a second one.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/TerapeakPriceCache.cs` | `comp_count` / `price_min` / `price_max` on `TerapeakCacheEntry`, written by `Set` (optional args — old call sites unchanged), read by `TryGet`, and an `ALTER TABLE` migration for databases already in the field |
+| `Services/TerapeakMarketService.cs` | A cache hit restores `Count`/`Min`/`Max` onto the served `SoldCompsResult`; a scrape stores them |
+| `Services/MarketPriceEstimator.cs` | Records the local comps' sold-date window and Terapeak's scrape date/freshness; **returns before the blend when the second source carries no weight** |
+| `Models/MarketAnalysisModels.cs` | `LocalOldestSoldAtUtc`, `LocalNewestSoldAtUtc`, `TerapeakScrapedAtUtc`, `TerapeakFreshnessWeight` on `PriceEstimate` |
+| `Services/PriceBasis.cs` | `PriceBasisSource.AsOf` / `.FreshnessNote`, and the three phrasings behind them; `From` takes an optional `nowUtc` so the age is testable |
+| `wwwroot/app.js` | The age line on each source row; `?v=102` |
+| `wwwroot/style.css` | `.pb-src-age` — full-width under its own row, since it is a caveat on the line above rather than a figure to scan down; `?v=90` |
+| `Tests/TerapeakPriceCacheTests.cs` | +3: the sample size round-trips, a row written under the original schema still opens and reads, and it heals on re-scrape |
+| `Tests/TerapeakMarketServiceTests.cs` | +2: a served price carries the sample size that earns it its weight; one stored without a sample size does not pretend to have one |
+| `Tests/MarketPriceEstimatorTests.cs` | +5, end-to-end through the real estimator against a real cache: a cached price counts and pulls the blend towards itself, a count-less one is still left out, the listing buffer survives a weightless source, and the dates land |
+| `Tests/PriceBasisTests.cs` | +9: the sold-date span, the single-day case, the undated case, five scrape-age phrasings, the freshness note and its silence at full weight, and the reconciliation with all of it present |
+| `Tests/PriceBasisPanelAssetTests.cs` | +3: both new fields read by the panel, the age line rendered and escaped, both `?v=` bumps |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2779 passed**, 0 failed — 24 new, no pre-existing test changed or removed (baseline this session: 2755) |
+| `node --check wwwroot/app.js` | clean |
+
+## Known limits
+
+- **The freshness ladder is still unreachable in production, and so is the note that explains it.**
+  Every caller takes the default 48-hour window, and the ladder's first step is at 30 days — so a
+  served Terapeak price is always weighted 1.0 and `freshnessNote` never renders today. The line is
+  correct and tested at the unit level; it appears the moment any caller widens `maxAge`. Widening
+  it is a pricing-policy change (a 5-day-old price is currently discarded outright rather than
+  counted at the full weight the ladder would give it, which is arguably the larger finding) and
+  deliberately not made here.
+- **Legacy rows stay out until re-scraped.** By design — a sample size nobody recorded is not one to
+  invent — but it does mean the benefit arrives as the cache turns over rather than all at once.
+- **The scrape path is still untestable**, unchanged from the previous session's note: `ScrapeAsync`
+  is neither virtual nor behind an interface, so "a scrape stores its count" is pinned by reading
+  the call rather than by executing it. The cache-hit side of the same contract is executed.
+- **The panel was not driven in a browser.** Asset tests and `node --check` only.
+- **Prices will move.** That is the intended effect and it is worth stating plainly: a row priced off
+  a cached Terapeak entry gets a different number than it did yesterday, because yesterday's number
+  was a blend with one side multiplied by zero.
+
+## Left untouched
+
+The working tree held two modified files when this session started (`Program.cs`,
+`ClaudeService.cs`) — a previous session's search-spelling work, complete and green against the full
+suite. It was committed on its own as `a35a434` rather than swept into this change, since the two
+have nothing to do with each other.

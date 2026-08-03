@@ -86,6 +86,20 @@ public class PriceEstimate
     public decimal? LocalExpectedSalePrice { get; set; }  // local weighted median — what entered the blend
     public decimal? TerapeakMedianPrice { get; set; }     // Terapeak's own median, pre-blend
 
+    // ── When each source last saw the market ─────────────────────────────────────────────────
+    // A price is a claim about now, made out of sales that happened at some point in the past, and
+    // how far in the past is the difference between evidence and an anecdote. Both weights above
+    // already account for age — the freshness step decays Terapeak's pull, and recent local comps
+    // pull harder in the weighted median — so a reader shown the weights and not the dates is
+    // being shown an adjustment without its reason. Null when nothing carried a date.
+    public DateTime? LocalOldestSoldAtUtc { get; set; }
+    public DateTime? LocalNewestSoldAtUtc { get; set; }
+    // When the Terapeak figure was scraped, and how much of its weight survived that age. The
+    // scrape is a snapshot: served from cache it can be up to the caller's max age old, and the
+    // freshness weight (1.0 / 0.7 / 0.4 / 0.2 at 30, 90 and 180 days) is what that cost it.
+    public DateTime? TerapeakScrapedAtUtc { get; set; }
+    public double TerapeakFreshnessWeight { get; set; } = 1.0;
+
     // ── How much evidence these figures actually rest on ─────────────────────────────────────
     // How many local sold comps produced the numbers above, AFTER per-unit normalization, the
     // identity guard, outlier removal and the strong-match filter. Nearly always smaller than the

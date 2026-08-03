@@ -427,6 +427,47 @@ public class TerapeakMarketServiceTests : IDisposable
     }
 
     /// <summary>
+    /// A served price arrives with the evidence behind it, not just the number: how many sales the
+    /// median came from and how widely they ranged.
+    ///
+    /// This is the difference between a second opinion and a decoration. Everything downstream
+    /// weighs a source by its sample size and its spread — <see cref="MarketPriceEstimator"/> gives
+    /// a source with no count a weight of zero — and this path is the one nearly every lookup takes,
+    /// because a scan's whole job is to answer from the cache rather than drive a browser. A count
+    /// dropped here is Terapeak dropped from the price, quietly, on almost every row.
+    /// </summary>
+    [Fact]
+    public async Task A_cached_price_is_served_with_the_sample_size_that_earns_it_its_weight()
+    {
+        var cache = Cache();
+        cache.Set(TerapeakMarketService.BuildCacheKey(Antminer()), 1150.40m, 1099m, 84.25m, 72m,
+            compCount: 14, min: 880m, max: 1425.50m);
+
+        var lookup = await Service(cache).LookupAsync(Antminer(), "Bitmain Antminer S19 95TH", allowRealScrape: false);
+
+        Assert.Equal(14, lookup.Result!.Data.Count);
+        Assert.Equal(880m, lookup.Result.Data.Min);
+        Assert.Equal(1425.50m, lookup.Result.Data.Max);
+    }
+
+    /// <summary>
+    /// The rows already in the database were written before the count was stored, and they come back
+    /// saying so. Zero here means "unrecorded" and has to keep behaving the old way — inventing a
+    /// sample size for a price whose sample size nobody kept would put weight on nothing at all.
+    /// </summary>
+    [Fact]
+    public async Task A_price_cached_without_a_sample_size_does_not_pretend_to_have_one()
+    {
+        var cache = Cache();
+        cache.Set(TerapeakMarketService.BuildCacheKey(Antminer()), 1150m, 1099m, 84m, 72m);
+
+        var lookup = await Service(cache).LookupAsync(Antminer(), "q", allowRealScrape: false);
+
+        Assert.Equal(1099m, lookup.Result!.Data.Median);
+        Assert.Equal(0, lookup.Result.Data.Count);
+    }
+
+    /// <summary>
     /// The result carries the seller's own query back, not the normalized key it was stored under —
     /// the key is an implementation detail and putting it on screen reads as the app having searched
     /// for something the seller never typed.

@@ -3579,11 +3579,16 @@
       const counts = s.foundCount > s.compCount
         ? `${s.compCount} of ${s.foundCount} comps`
         : `${s.compCount} comp${s.compCount === 1 ? '' : 's'}`;
+      // When these sales happened, and what their age already cost this source's share. The
+      // weights are age-adjusted before they get here, so a reader given the percentages and not
+      // the dates is being shown an adjustment with its reason left off screen.
+      const age = [s.asOf, s.freshnessNote].filter(Boolean).join(' · ');
       return `<div class="pb-src">
         <span class="pb-src-name">${esc(s.label)}</span>
         <span class="pb-src-count">${counts}</span>
         <span class="pb-src-value">${esc(s.valueLabel)} ${moneyExact(s.value)}</span>
         <span class="pb-src-weight">${Math.round(s.weightPercent)}%</span>
+        ${age ? `<span class="pb-src-age">${esc(age)}</span>` : ''}
       </div>`;
     }).join('');
 
