@@ -8349,3 +8349,111 @@ buying*.
 - **The recommendation is about the past.** It knows what has sold for this seller before. It does not
   know that a supply dried up, a model was discontinued or a price halved last week — which the
   screen says, in those words, at the bottom of every load.
+
+---
+
+## The one thing on the board that survives the next roll — Watch for one (autonomous session, 2026-08-04)
+
+Roll the Dice is minutes of work across four systems: a sweep of sold comps across several
+categories, a real pricing lookup per product kept, a supply search per product. What comes back is
+a ranked board, and its most common tier is **target** — *"nothing is for sale right now, buy under
+$396.34 and it clears the bar."* The footnote under it said, in those words, that the target prices
+were "still worth watching for". There was no way to watch for one. Pressing **Roll again** threw
+the whole board away.
+
+Deal Radar has been the thing that keeps looking since it shipped: a saved keyword, a price ceiling,
+a profit bar, a scan on a cadence, a desktop notification for the rows that clear it. A play has a
+keyword, a ceiling and a bar. Nothing connected them. This is that connection, and deliberately
+nothing more — no new scanning, no new pricing, no second definition of a good buy.
+
+## The mapping, which is the whole feature
+
+Three numbers cross:
+
+* **The ceiling is the play's target buy price, never its break-even.** Paying break-even earns
+  nothing; a watch set there wakes the seller at 2am for a flip worth $0.
+* **The bar is the app's own jackpot bar** — `LocalArbitrageAnalyzer.GoldmineProfit` and
+  `GoldmineRoiPercent`, which is where the target price was computed from. So a watch made here can
+  never fire on something the board that made it would call a pass. That is stricter than a
+  hand-typed watch's $75/40% defaults, on purpose: nobody typed this one, and it runs unattended.
+  A test buys at the ceiling through `LocalArbitrageAnalyzer` and checks it clears the bar the watch
+  carries — the two numbers come from different code, and if they drift the watch becomes one that
+  can never fire.
+* **It looks where the roll looked** — the roll's own zip, radius and ticked sources — rather than
+  somewhere the seller never chose.
+
+## What it refuses to create
+
+A notification has room for one sentence and no room to explain a caveat, so every refusal here
+makes the feature smaller:
+
+1. **Thin evidence is never worth waking somebody up for.** Below `MinCompsToBelieve` comps or
+   `MinConfidenceToBelieve` confidence there is no button, however large the arithmetic — the same
+   rule `DealWatch.RequireConfidentEvidence` exists for, applied one level earlier.
+2. **A product no price can make a deal of has nothing to watch for.** A $60 item never clears the
+   jackpot bar however cheaply it's bought, so its target price is zero and the row says so.
+3. **The round trip is not trusted.** The board hiding the button is a courtesy; `PlayWatchBuilder`
+   re-checks the same rule on the way in, so a request naming a believable price on evidence that
+   isn't there is refused rather than saved.
+4. **The same search is not watched twice.** Rolling again re-surfaces products, and twelve watch
+   slots is the whole budget. A duplicate returns the existing watch and says so.
+
+Live supply is *not* a refusal. One Craigslist post is one chance, and a jackpot found today is
+exactly the product worth being told about again next month.
+
+## Presentation
+
+The board opens knowing what the radar already watches, so a product already on it reads **"Deal
+Radar is watching"** rather than offering to spend a slot on it a second time. The watched state is
+remembered, not just re-labelled — sorting redraws every row from scratch, and a button that forgets
+on a sort offers to create the watch again. Where a play *can't* be kept the reason is shown only on
+rows with no live supply, because that is the one row where watching was the last thing left to do;
+on a row with a Craigslist link, or under a tier note that already says the evidence is thin, it
+would be noise on exactly the rows that need it least.
+
+`play.canWatch` is the server's answer. The browser never re-derives the evidence bar — two places
+deciding the same thing drift, and the drift shows up as a button the endpoint then refuses.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/PlayWatchBuilder.cs` | **new**. The whole mapping and all four refusals. Pure and static — no store, no clock, no eBay call |
+| `Models/JackpotModels.cs` | `JackpotPlay.CanWatch`/`WatchRefusal`; `PlayWatchRequest`, `PlayWatchResult` |
+| `Services/JackpotHunter.cs` | `BuildPlay` asks `PlayWatchBuilder.CanWatch` and answers it on the play, so the board and the endpoint are one rule |
+| `Program.cs` | `POST /api/opportunities/watch-play`. Builds, dedupes against the existing watches, writes through `DealRadarStore.SaveWatch` — a watch made this way is indistinguishable from one typed by hand and is scanned, priced and rate-limited by the same loop |
+| `wwwroot/index.html` | The footnote says where a kept play goes; `?v=` bumps |
+| `wwwroot/app.js` | The button, the three outcomes, the watched set, the never-stuck-on-"Saving…" guard; `?v=106` |
+| `wwwroot/style.css` | `.dice-watch-btn.is-watching`, `.dice-watch-refusal`; `?v=94` |
+| `Tests/PlayWatchBuilderTests.cs` | **new**, +15: the mapping, all four refusals, the ceiling-clears-the-bar cross-check, the name's floored price |
+| `Tests/WatchPlayAssetTests.cs` | **new**, +14: the browser half, where every failure is silent — the server-decides rule, the ceiling, the post, the state surviving a re-sort, the escaping, the `?v=` bumps |
+| `dice_watch_play.png` | The board with a play kept, driven in a real browser |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2936 passed**, 0 failed — 29 new, no pre-existing test changed or removed (baseline this session: 2907) |
+| `node --check wwwroot/app.js` | clean |
+| Driven in a real browser | **yes** — Chromium against the real `index.html`/`app.js`/`style.css`, API stubbed on a spare port because the seller's installed app owns 9332. All three button states render, the refusal renders escaped against a title carrying `<img onerror=…>`, pressing it posts the play and the roll's search settings, the toast offers **Open Deal Radar**, and the watched state survives a re-sort. The only console error is the stub answering `{}` to an unrelated Facebook picks call |
+| An existing test caught a real slip | `FetchFailureMessageTests` failed on `e.message` reaching the screen raw from the new handler. Routed through `errorText` |
+| One flaky run | The first full run also failed a `DealStoreTests` case inside SQLite's native handle under parallel load. It passed on re-run and touches nothing this change went near |
+
+## Known limits
+
+- **The watch is created from numbers the roll printed, and the market moves.** A target price
+  computed today is watched against listings found next month; the radar re-prices every hit through
+  its own fresh comps before firing, so a stale ceiling makes the watch quiet, never wrong.
+- **Twelve watch slots is the whole budget**, shared with hand-made watches. The thirteenth press
+  returns `DealRadarStore`'s own sentence about deleting or pausing one; nothing is auto-evicted.
+- **No zip means no local sources.** A roll run without a zip code creates a watch without one, which
+  is a watch over whatever sources need none. It is the same behaviour the roll had, not a new gap.
+- **Nothing prunes a watch when the product dies.** A discontinued model is watched until the seller
+  deletes it, and the radar's own "0 matches" note is the only signal that it has gone quiet.
+- **The board's own dedupe is a snapshot.** It is read once when the board renders; a watch deleted
+  in the Deal Radar tab afterwards still reads as watched here until the next roll. The server is
+  the authority either way — the worst case is the wrong wording, never a duplicate.
+- **The grouping is `JackpotHunter.ProductSignature`'s**, so the keyword a watch carries is the
+  lean title of a cluster. A cluster that under-grouped watches for a narrower product than the
+  seller might have meant; it never watches for a broader one.

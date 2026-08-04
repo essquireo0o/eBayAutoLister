@@ -158,6 +158,56 @@ public class JackpotPlay
     public string TierNote { get; set; } = "";
     // Plain sentence: where this can be bought right now, or that nothing was found.
     public string WhereToLook { get; set; } = "";
+
+    // ── Handing the play to Deal Radar ───────────────────────────────────────
+    // Whether this play may be turned into a saved watch, decided on the server so the board and
+    // the endpoint can never disagree about it (see PlayWatchBuilder.CanWatch). The board renders
+    // the button only when this is true; the refusal is the sentence saying why it didn't.
+    public bool CanWatch { get; set; }
+    public string? WatchRefusal { get; set; }
+}
+
+/// <summary>
+/// The browser asking for one play to be kept: "nothing is for sale today — tell me when there is".
+/// Only the fields a watch is built from, not the whole play, because everything else on a row is
+/// derived and would only be re-derived (or, worse, believed) on the way back in.
+/// </summary>
+/// <remarks>
+/// The prices, the comp count and the confidence come from a roll that ran minutes ago in this same
+/// app, but they arrive over HTTP and are re-checked against
+/// <see cref="Services.PlayWatchBuilder.CanWatch"/> before anything is saved. The board hiding the
+/// button is a courtesy; the refusal is the rule.
+/// </remarks>
+public class PlayWatchRequest
+{
+    public string Product { get; set; } = "";
+    /// <summary>The lean hunting keyword — <see cref="JackpotPlay.SearchQuery"/>.</summary>
+    public string SearchQuery { get; set; } = "";
+    /// <summary>The price at or under which the flip clears the app's own jackpot bar.</summary>
+    public decimal TargetBuyPrice { get; set; }
+    public decimal MaxBuyPrice { get; set; }
+    public int SoldCompCount { get; set; }
+    public int TerapeakCompCount { get; set; }
+    public int ConfidenceScore { get; set; }
+
+    // Where to keep looking — the roll's own search settings, so the watch searches where the roll
+    // searched rather than somewhere the seller never chose.
+    public string ZipCode { get; set; } = "";
+    public int RadiusMiles { get; set; } = 40;
+    public string Sources { get; set; } = "";
+    public string CraigslistSite { get; set; } = "";
+}
+
+/// <summary>What the board is told after asking. A refusal is a sentence, never a code.</summary>
+public class PlayWatchResult
+{
+    public bool Ok { get; set; }
+    public string? Error { get; set; }
+    /// <summary>True when a watch for this same search already existed — nothing was created.</summary>
+    public bool AlreadyWatching { get; set; }
+    /// <summary>False when the background watcher is switched off, so the row can say so.</summary>
+    public bool RadarRunning { get; set; }
+    public DealWatch? Watch { get; set; }
 }
 
 // What one niche contributed to a roll, including the ones that had nothing — a sweep that says

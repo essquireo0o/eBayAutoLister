@@ -480,6 +480,7 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
             play.Tier = "no_data";
             play.TierNote = "No eBay sold history could be matched to this product.";
             play.WhereToLook = "";
+            play.WatchRefusal = "No sold history behind this — there's no price to watch for.";
             return play;
         }
 
@@ -543,6 +544,15 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
         play.Tier = tier;
         play.TierNote = note;
         play.WhereToLook = WhereToLook(play.Sources, play.MaxBuyPrice, play.TargetBuyPrice);
+
+        // Whether this play can be handed to Deal Radar and kept — decided here rather than in the
+        // browser, so the button the board draws and the endpoint behind it are one rule.
+        var (canWatch, watchRefusal) = PlayWatchBuilder.CanWatch(
+            play.SearchQuery, play.TargetBuyPrice,
+            resale.SoldCompCount + resale.TerapeakCompCount, resale.ConfidenceScore);
+        play.CanWatch = canWatch;
+        play.WatchRefusal = watchRefusal;
+
         return play;
     }
 

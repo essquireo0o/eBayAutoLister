@@ -4497,6 +4497,15 @@
   let diceData = null;
   let diceNextSeed = null;
   let diceRolling = false;
+  // The rows currently drawn, in the order they were drawn — the actions on a row need the whole
+  // play, and sorting/filtering means a row's position is not its position in diceData.plays.
+  let diceRows = [];
+  // Searches Deal Radar is already watching, so re-rolling into the same product says "already
+  // watching" instead of offering to spend a second of the twelve slots on it. Keyed the way the
+  // server compares them — see PlayWatchBuilder.SameSearch.
+  let diceWatchedSearches = new Set();
+
+  const searchKey = q => (q || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
   const DICE_TIERS = {
     jackpot: { label: '🎰 Jackpot', cls: 'jackpot' },
@@ -4506,6 +4515,8 @@
     watch:   { label: '👀 Watch — thin data', cls: 'watch' },
     pass:    { label: '✕ Pass', cls: 'pass' },
   };
+
+  const DICE_WATCHING_LABEL = '🔔 Deal Radar is watching';
 
   function bindRollTheDice() {
     // The dashboard band: one click has to produce a board, not a form to fill in.
@@ -4662,8 +4673,20 @@
       ? `Supply checked on: ${searched.join(' · ')}.`
       : 'No supply sites were searched — add a zip code to include local classifieds.');
 
+    // What Deal Radar is already looking for. Its own call, failing on its own: if it doesn't
+    // answer, the buttons still offer to create a watch and the server reports the duplicate — the
+    // wrong wording for a moment, never a second watch.
+    loadDiceWatchedSearches();
+
     renderDiceBoard();
     wrap.classList.remove('hidden');
+  }
+
+  async function loadDiceWatchedSearches() {
+    const status = await fetch('/api/radar/status').then(r => r.json()).catch(() => null);
+    if (!status) return;
+    diceWatchedSearches = new Set((status.watches || []).map(w => searchKey(w.query)));
+    renderDiceBoard();
   }
 
   // Sorting and filtering are pure views over the response already in hand — neither may re-run a
@@ -4716,16 +4739,81 @@
         : `${rows.length} of ${all.length} shown`;
     }
 
+    // Kept so a row's actions can reach the whole play: sorting and filtering mean a row's position
+    // on screen is not its position in diceData.plays.
+    diceRows = rows;
+
     board.innerHTML = rows.length
       ? rows.map(dicePlayHtml).join('')
       : all.length
         ? `<p class="opportunity-empty">${fastOnly
             ? 'Nothing on this board turns your money around inside three weeks. Untick that filter to see the slower plays — or roll again for different categories.'
-            : 'Nothing on this board is for sale anywhere right now. The target prices above are still worth watching for — or roll again for different categories.'}</p>`
+            : 'Nothing on this board is for sale anywhere right now. Untick the filter above and use “Watch for one” on the plays worth keeping — Deal Radar will say when one turns up. Or roll again for different categories.'}</p>`
         : '<p class="opportunity-empty">This roll found no product with enough sold history to stand behind. That is a real answer, not an error — roll again and the sweep moves on to different categories.</p>';
 
     board.querySelectorAll('.dice-hunt-btn').forEach(btn =>
       btn.addEventListener('click', () => huntPlayLocally(btn.dataset.query || '')));
+    board.querySelectorAll('.dice-watch-btn').forEach(btn =>
+      btn.addEventListener('click', () => watchPlay(btn)));
+  }
+
+  // Hands one play to Deal Radar and keeps it. A roll is minutes of work across four systems and
+  // the next roll throws all of it away — this is the only thing on the board that outlives it, and
+  // it is the tier the board has nothing else to offer: "nothing is for sale right now, buy under
+  // $X". The keyword and that price become a saved search with the app's own jackpot bar on it.
+  async function watchPlay(btn) {
+    const play = diceRows[Number(btn.dataset.idx)];
+    if (!play) return;
+
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    // safePost throws on a dropped connection and on an expired trial. Either way the button has to
+    // come back — left saying "Saving…" it reads as a watch that exists and doesn't.
+    let body = null;
+    try {
+      ({ body } = await safePost('/api/opportunities/watch-play', {
+        product: play.product,
+        searchQuery: play.searchQuery,
+        targetBuyPrice: play.targetBuyPrice,
+        maxBuyPrice: play.maxBuyPrice,
+        soldCompCount: play.soldCompCount,
+        terapeakCompCount: play.terapeakCompCount,
+        confidenceScore: play.confidenceScore,
+        // Where the roll looked, so the watch looks there too rather than somewhere never chosen.
+        zipCode: $('dice-zip-input')?.value.trim() || '',
+        radiusMiles: parseInt($('dice-radius-select')?.value || '40', 10),
+        sources: selectedSourceIds().join(','),
+      }));
+    } catch (e) {
+      body = { ok: false, error: errorText(e, 'That couldn\'t be saved as a watch.') };
+    }
+
+    if (!body?.ok) {
+      btn.disabled = false;
+      btn.textContent = label;
+      toast(body?.error || 'That couldn\'t be saved as a watch.', { kind: 'warning', title: 'Not watching' });
+      return;
+    }
+
+    // Remembered as well as re-labelled: re-sorting the board redraws every row from scratch, and a
+    // button that forgets on a sort offers to create the watch a second time.
+    diceWatchedSearches.add(searchKey(play.searchQuery));
+    btn.classList.add('is-watching');
+    btn.textContent = DICE_WATCHING_LABEL;
+
+    const openRadar = { label: 'Open Deal Radar', onClick: () => showRadarSection() };
+    if (body.alreadyWatching) {
+      toast(`“${body.watch.name}” was already on the radar — nothing new was created.`,
+        { kind: 'info', title: 'Already watching', action: openRadar });
+    } else if (!body.radarRunning) {
+      toast('Saved. Switch on “Watch in the background” in Deal Radar and it starts looking.',
+        { kind: 'info', title: 'One more step', action: openRadar });
+    } else {
+      toastOk(`Deal Radar will keep looking for one at ${moneyExact(play.targetBuyPrice)} or less, and ping you when one turns up.`,
+        { title: 'Watching', action: openRadar });
+    }
   }
 
   function dicePlayHtml(play, index) {
@@ -4785,6 +4873,23 @@
     // the number themselves, with no API call and no trust required.
     const soldUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(play.searchQuery || play.product)}&LH_Sold=1&LH_Complete=1`;
 
+    // Whether this play can be kept is the SERVER's answer (see PlayWatchBuilder.CanWatch) — the
+    // board never re-derives the evidence bar, or the two would drift apart and the button would
+    // start offering something the endpoint refuses.
+    const watching = diceWatchedSearches.has(searchKey(play.searchQuery));
+    const watchBtn = play.canWatch
+      ? watching
+        ? `<button class="btn btn-ghost small dice-watch-btn is-watching" type="button" disabled>${DICE_WATCHING_LABEL}</button>`
+        : `<button class="btn btn-secondary small dice-watch-btn" type="button" data-idx="${index}">🔔 Watch for one at ${moneyExact(play.targetBuyPrice)}</button>`
+      : '';
+
+    // Why not, but only on a row where watching was the only thing left to do. On a row with live
+    // supply the seller has somewhere to click, and on a thin row the tier note above already says
+    // the evidence is thin — repeating it here is noise on the rows that need it least.
+    const watchRefusal = !play.canWatch && play.watchRefusal && !(play.sources && play.sources.length)
+      ? `<span class="dice-watch-refusal">🔕 ${esc(play.watchRefusal)}</span>`
+      : '';
+
     return `
       <article class="dice-play dice-play-${tier.cls}">
         <div class="dice-play-rank">${index + 1}</div>
@@ -4808,7 +4913,9 @@
           ${sources ? `<div class="dice-sources">${sources}</div>` : ''}
           <div class="dice-play-actions">
             <button class="btn btn-secondary small dice-hunt-btn" type="button" data-query="${esc(play.searchQuery)}">📍 Hunt this locally</button>
+            ${watchBtn}
             <a class="btn btn-ghost small" href="${esc(soldUrl)}" target="_blank" rel="noopener">See the sold comps ↗</a>
+            ${watchRefusal}
           </div>
         </div>
       </article>`;

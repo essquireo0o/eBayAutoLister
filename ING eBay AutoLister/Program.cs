@@ -3213,6 +3213,41 @@ app.MapGet("/api/opportunities/roll-the-dice", async (
     }
 });
 
+// Keep one play off the board: the roll found the product and the price, Deal Radar keeps looking
+// for one. Nothing is scanned here — this is the mapping from a play to a saved search and a write
+// to the radar's own store, so a watch made this way is indistinguishable from one typed by hand
+// and is scanned, priced and rate-limited by exactly the same loop.
+app.MapPost("/api/opportunities/watch-play", (
+    PlayWatchRequest req, DealRadarStore store, ActionLog log) =>
+{
+    var (watchRequest, refusal) = PlayWatchBuilder.Build(req);
+    if (watchRequest is null)
+        return Results.Ok(new PlayWatchResult { Ok = false, Error = refusal });
+
+    var radarRunning = store.GetSettings().Enabled;
+
+    // Rolling again re-surfaces products, and a seller pressing this twice must not spend two of
+    // the twelve slots on one search. The existing watch is returned so the board can say so.
+    var existing = store.ListWatches().FirstOrDefault(w => PlayWatchBuilder.SameSearch(w.Query, watchRequest.Query));
+    if (existing is not null)
+        return Results.Ok(new PlayWatchResult { Ok = true, AlreadyWatching = true, RadarRunning = radarRunning, Watch = existing });
+
+    try
+    {
+        var watch = store.SaveWatch(watchRequest);
+        log.Add("Deal Radar", "Watch saved from Roll the Dice",
+            $"\"{watch.Name}\" — anything asking {watch.MaxAsk:C} or less for \"{watch.Query}\", " +
+            $"clearing {watch.MinNetProfit:C0} at {watch.MinRoiPercent:0}%.");
+        return Results.Ok(new PlayWatchResult { Ok = true, RadarRunning = radarRunning, Watch = watch });
+    }
+    catch (InvalidOperationException ex)
+    {
+        // The watch cap and the "deleted in another tab" case both arrive here as sentences a
+        // seller can act on — shown on the row rather than translated into a code.
+        return Results.Ok(new PlayWatchResult { Ok = false, Error = ex.Message });
+    }
+});
+
 // ── Rising-Demand / Price-Trend Radar ─────────────────────────────────────────────────────────
 // Every other pricing screen answers "what is this worth?" in the present tense. This one reads the
 // sold-comps database as a time series and answers "what is on its way up?" — the products whose

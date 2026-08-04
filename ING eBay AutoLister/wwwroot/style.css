@@ -8954,6 +8954,23 @@ td.skeleton-cell { padding: 0 !important; }
   gap: var(--s2);
   flex-wrap: wrap;
   margin-top: var(--s3);
+  align-items: center;
+}
+
+/* Already handed to Deal Radar. Reads as a state, not as a button that failed — it is the only
+   thing on this board that survives the next roll. */
+.dice-watch-btn.is-watching {
+  opacity: 1;
+  cursor: default;
+  color: var(--ok);
+  border-color: currentColor;
+}
+
+/* Why a row can't be kept, shown only where keeping it was the one thing left to do. */
+.dice-watch-refusal {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
 }
 
 /* eBay joins Craigslist and Facebook as a place supply comes from, so it needs the badge
