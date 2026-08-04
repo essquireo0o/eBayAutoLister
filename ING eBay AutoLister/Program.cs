@@ -386,6 +386,12 @@ builder.Services.AddSingleton<InventoryHealthAnalyzer>();
 // is that nobody comes back. This turns that one step into a dated ladder decided in advance, and
 // finds bundles that let a slow mover ride out with something that already sells.
 builder.Services.AddSingleton<AgingInventoryRescuer>();
+// Price Position — the one pricing screen in the app that is NOT built on sold comps. Everything
+// above prices against what buyers have paid; this prices against what the buyer is looking at
+// right now, which is the only thing that explains a listing priced perfectly against sixty days
+// of sold history and sitting eighth on a shelf of eight. Pure; the live searches are orchestrated
+// in ScanPricePositionAsync below.
+builder.Services.AddSingleton<PricePositionAnalyzer>();
 // Recover lost sales — the same pricing stack pointed at listings that ENDED without selling, the
 // one slice of a seller's inventory no other screen in the app (or in eBay Seller Hub) puts a
 // number on. Decides what to put back up and at what price, and finds the bidders who lost an
@@ -3570,6 +3576,20 @@ app.MapGet("/api/inventory/rescue", async (
     return Results.Ok(result);
 });
 
+// ── Price Position — the shelf the buyer actually sees ────────────────────────────────────────
+// Every other pricing endpoint in this file is built on SOLD comps. This one is built on LIVE
+// ones, and it is the only screen in the app that can answer why a listing priced perfectly
+// against sixty days of sold history has sat for ninety days: because eight cheaper copies of it
+// are seen first. Read-only throughout — it reads the seller's listings, searches eBay for what
+// competes with each, and writes nothing anywhere.
+app.MapGet("/api/price-position", async (
+    int? maxItems, int? minDays,
+    EbayService ebay, CostBasisStore costBasis, PricePositionAnalyzer analyzer,
+    FeeProfile feeProfile, ActionLog log, CancellationToken ct) =>
+    Results.Ok(await ScanPricePositionAsync(
+        Math.Clamp(maxItems ?? 12, 1, 40), Math.Max(0, minDays ?? 0),
+        ebay, costBasis, analyzer, feeProfile, log, ct)));
+
 // ── Money Made — the earnings tracker ─────────────────────────────────────────────────────────
 // Every other money endpoint in this file answers "what would this make?". These four answer
 // "what did it make?" — buy cost, sale price, the fee eBay actually charged, net profit, and a
@@ -4632,6 +4652,140 @@ app.MapGet("/api/promoted/categories", () => Results.Ok(new
 //     one lookup), grouped on the normalized signature Terapeak also caches on, and
 //   * pass 1 is cache-only, so anything Terapeak already knows is free; pass 2 spends the scrape
 //     budget on the listings where the most money hangs on getting the number right.
+// The live half of Price Position: read the seller's listings, and for each one read the shelf it
+// is sitting on. One eBay Browse search per distinct product — two listings of the same thing share
+// a shelf and share the call, because the seller pays for every one of these in rate limit.
+//
+// Ordered by capital at stake for the same reason the health scan is: when only part of the
+// inventory fits in one pass, the part holding the most money is the part worth reading.
+static async Task<PricePositionResult> ScanPricePositionAsync(
+    int maxItems, int minDays,
+    EbayService ebay, CostBasisStore costBasis, PricePositionAnalyzer analyzer,
+    FeeProfile fees, ActionLog log, CancellationToken ct)
+{
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var nowUtc = DateTime.UtcNow;
+    var result = new PricePositionResult();
+
+    List<EbayListingSummary> listings;
+    try
+    {
+        listings = await ebay.GetListingsAsync();
+    }
+    catch (Exception ex)
+    {
+        // Same posture as every other board that needs the seller's own listings: reported, never
+        // silently retried. Reconnecting is a decision made in Settings.
+        log.Add("Warning", "Price position scan could not read eBay listings", ex.Message);
+        return new PricePositionResult { Status = "ebay_unavailable", Error = ex.Message };
+    }
+
+    var active = listings
+        .Where(l => l.Status is "ACTIVE" or "PUBLISHED" || string.IsNullOrWhiteSpace(l.Status))
+        .Where(l => l.Price > 0 && !string.IsNullOrWhiteSpace(l.Title))
+        .ToList();
+    result.ActiveListings = active.Count;
+
+    // Read across the WHOLE account rather than the scanned slice, and before any filtering: eBay
+    // returns HitCount on some accounts and omits it on others, so the question is whether this
+    // account reports views at all. Answering it from twelve listings would flip the board's
+    // visibility verdicts on and off depending on which twelve got scanned.
+    result.ViewsReported = active.Any(l => l.HitCount > 0);
+
+    if (minDays > 0)
+        active = active.Where(l => InventoryHealthAnalyzer.DaysListed(l.StartTimeUtc, nowUtc) >= minDays).ToList();
+
+    var scanned = active
+        .OrderByDescending(l => l.Price * Math.Max(1, l.Quantity))
+        .Take(maxItems)
+        .ToList();
+    result.ItemsAnalyzed = scanned.Count;
+
+    if (scanned.Count == 0)
+    {
+        result.Status = result.ActiveListings == 0 ? "no_listings" : "ok";
+        return result;
+    }
+
+    var costs = costBasis.GetAll();
+    var shelves = new Dictionary<string, List<EbayOpportunityItem>>(StringComparer.OrdinalIgnoreCase);
+    var deadQueries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var rows = new List<PricePositionRow>();
+
+    foreach (var listing in scanned)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var query = PricePositionAnalyzer.ShelfQuery(listing.Title);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            rows.Add(analyzer.Failed(listing, "This listing's title has no searchable words in it.", nowUtc));
+            continue;
+        }
+
+        if (deadQueries.TryGetValue(query, out var alreadyFailed))
+        {
+            rows.Add(analyzer.Failed(listing, alreadyFailed, nowUtc));
+            continue;
+        }
+
+        if (!shelves.TryGetValue(query, out var shelf))
+        {
+            try
+            {
+                // Cheapest-delivered first, fixed price only, every condition. Condition is left
+                // unfiltered on purpose: a used one at half the price is not competition for a new
+                // one and the analyzer drops it, but the seller should still see that it is there.
+                shelf = await ebay.SearchEndingSoonAsync(
+                    query, minFeedback: 0, limit: 50, category: null, condition: null,
+                    minPrice: null, maxPrice: null, listingType: "FIXED_PRICE", sortOverride: "price");
+                shelves[query] = shelf;
+                result.SearchesUsed++;
+            }
+            catch (Exception ex)
+            {
+                // One dead search costs one row its answer, never the whole board — the same rule
+                // the local-supply scan runs on. Remembered by query so twelve listings of the same
+                // product do not pay for twelve failures.
+                result.SearchesFailed++;
+                deadQueries[query] = ex.Message;
+                rows.Add(analyzer.Failed(listing, ex.Message, nowUtc));
+                continue;
+            }
+        }
+
+        rows.Add(analyzer.Build(
+            listing, shelf, CostBasisStore.Find(costs, listing.ListingId, listing.Sku),
+            fees, nowUtc, result.ViewsReported));
+    }
+
+    result.Rows = PricePositionAnalyzer.Rank(rows);
+    result.Summary = PricePositionAnalyzer.Summarize(result.Rows);
+
+    // What this board does not know, in the seller's words, under it on every load. It is the
+    // shortest honest version of "these numbers were true when you pressed the button".
+    result.Honesty =
+    [
+        "This is the shelf as it looked when you pressed Refresh. Somebody can list one cheaper an hour from now.",
+        "Each shelf is the first 50 listings eBay returns, cheapest delivered first — the end of the shelf a buyer actually reads.",
+        "Price is not all eBay ranks on. Free returns, same-day dispatch, feedback and Top Rated Seller all move a listing up a shelf, and none of them are on this board.",
+    ];
+    if (!result.ViewsReported)
+        result.Honesty.Add("eBay reported no view counts for this account, so nothing here says whether a listing is being seen at all.");
+    if (result.SearchesFailed > 0)
+        result.Honesty.Add($"{result.SearchesFailed} search{(result.SearchesFailed == 1 ? "" : "es")} failed, so those listings have no position on this board rather than a good one.");
+
+    sw.Stop();
+    var s = result.Summary;
+    log.Add("Info", "Price position scan",
+        $"Active: {result.ActiveListings}; Analyzed: {result.ItemsAnalyzed} across {result.SearchesUsed} shelf search(es); " +
+        $"Priced out: {s.PricedOut} holding ${s.CapitalBehindTheShelf:0.00}; Leading: {s.Leading}; " +
+        $"Can't win: {s.CantWin}; Not being seen: {s.VisibilityBlocked}; Failed searches: {result.SearchesFailed}; " +
+        $"Duration: {sw.ElapsedMilliseconds}ms");
+
+    return result;
+}
+
 static async Task<InventoryHealthResult> ScanInventoryHealthAsync(
     int maxItems, int terapeakBudget, int minDays,
     EbayService ebay, CostBasisStore costBasis, IMarketplaceRepository marketplace, ProductNormalizer normalizer,

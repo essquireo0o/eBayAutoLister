@@ -8457,3 +8457,162 @@ deciding the same thing drift, and the drift shows up as a button the endpoint t
 - **The grouping is `JackpotHunter.ProductSignature`'s**, so the keyword a watch carries is the
   lean title of a cluster. A cluster that under-grouped watches for a narrower product than the
   seller might have meant; it never watches for a broader one.
+
+---
+
+## The eight cheaper copies the seller never saw — Price Position (autonomous session, 2026-08-04)
+
+Every pricing surface in this app runs on **sold** comps. `MarketPriceEstimator`, the Terapeak path,
+`InventoryHealthAnalyzer`, `AgingInventoryRescuer`, `WatcherOfferAdvisor`, the whole sourcing stack —
+all of them answer *"what have buyers paid for this"*, and for deciding what to **buy** that is the
+right question. It is the wrong question for deciding why something has not **sold**, because a
+listing can be priced perfectly against every sale of the last sixty days and still be eighth on a
+shelf of eight. The buyer never sees the sold history. They see the shelf.
+
+Nothing in this app, and nothing in eBay Seller Hub, has ever looked at the shelf. Seller Hub's
+Markdown Manager takes a blanket percentage off with no market data at all; Vendoo, List Perfectly
+and Crosslist are crosslisters and do not price; ZIK researches products, not the seller's own
+listings. This is the screen that opens the search a buyer opens and counts how many cheaper copies
+of the seller's own item they scroll past first.
+
+## What is actually compared
+
+**Delivered price — item plus shipping.** Not the asking price. A $180 listing with $30 shipping is
+behind three $190 ones that ship free, and comparing asking prices tells that seller they are the
+cheapest thing on the shelf while a buyer sees them fourth. It is also what eBay's cheapest-first
+sort orders on, so it is the only basis on which "you are 9th" is a fact rather than an opinion.
+
+That needed a number the app had never read: **what the seller charges the buyer for shipping**.
+`GetMyeBaySelling` returns it on most listings and omits it on some, so it is read the same way
+`HitCount` already is — opportunistically, with a separate flag for whether it was stated at all.
+A missing block is *not* free shipping. Where it is missing the row drops to comparing asking prices
+and says on the card which basis it used.
+
+## The second axis, which is the whole point
+
+Position explains a listing buyers **reject**. It explains nothing about a listing buyers never
+**reach**, and from Seller Hub those two failures look identical: no sale either way. So the card
+leads with the **blocker**, not the rank:
+
+| Blocker | What it means | Where it sends the seller |
+|---|---|---|
+| `price` | Behind the front of the shelf, and the front is affordable | The asking price that puts them first, with the take-home after it |
+| `supply` | The shelf starts under the seller's own floor | Nowhere — this is a buying problem, and cutting to match is a fast loss |
+| `visibility` | Already cheapest, and nobody is arriving | Listing Copilot, because the fix is words |
+| `none` | Nothing wrong, or nothing the board could judge | Nowhere |
+
+A listing that is already the cheapest of six and has had **six views in seventy-one days** does not
+have a price problem, and telling its owner to cut is telling them to give away margin to fix a
+title. That row is the reason this screen exists rather than being a column on an existing one.
+
+## What it refuses to count, and why each refusal costs the board a number
+
+This is the only board in the app that recommends a price **cut** on stock the seller already owns,
+and a cut is money that leaves and does not come back. Every rule below makes the reported premium
+smaller — because anything counted as competition that is not competition is a markdown recommended
+on a listing that never needed one.
+
+1. **A $1 repair service is not a competitor.** `NonItemListingDetector`, the same vocabulary that
+   already protects the buy side, applied to the sell side: a repair-evaluation listing carrying the
+   real model number sorts to the top of a cheapest-first search and, counted, reports a 20,000%
+   premium on a fairly-priced listing.
+2. **A bid in progress is not an asking price.** An auction sitting at $9 on day one of seven is not
+   a $9 competitor, and in auction-heavy categories half the shelf would be prices nobody can buy at.
+3. **A lot of ten is not a rival to one**, in either direction — `ProductNormalizer`'s quantity.
+4. **A for-parts unit is not competition for a working one.** Condition is not a tie-break, it is a
+   different product to a buyer; priced against a $40 broken one, working stock is told to sell at
+   scrap. An *unknown* condition never rejects anybody, or whole shelves empty and the board reports
+   "nobody else is selling this" about a product with forty listings.
+5. **On the delivered basis, a rival stating no shipping cost has no delivered price.** Freight and
+   local-pickup listings land here. Called free, a $900 pallet sits at the front of the shelf.
+6. **The cheapest listing on a shelf is stepped over when it is far under the rest.** The cheapest
+   thing on any shelf is routinely broken, mislabelled, or a seller with no feedback who will never
+   ship it. Below 65% of the median the board prices against the next one up and says out loud that
+   it did — chasing that price is how a good margin dies in an afternoon.
+7. **Two rivals is not a shelf.** Under three comparable listings there is no position, because
+   "you are 2nd of 2" is a sentence with no information in it and a markdown attached.
+8. **A zero from an API that reports nothing is not a zero.** eBay returns view counts on some
+   accounts and omits them on others, so whether the account reports views at all is decided once
+   across the whole account, before any filtering. With it false the board never blames visibility
+   for anything, and says so in its own footnote.
+
+Being the only one selling it is **not** a problem — it is pricing power, and the card says so
+rather than leaving a seller to read an empty shelf as a failure.
+
+## The money it will not cross
+
+`cant_win` is the verdict that justifies the whole feature's complexity. The shelf starts at $120,
+the seller paid $180, and the arithmetically correct advice — "cut to $119.99" — turns a slow
+listing into a fast loss. The floor comes from `NetProceedsCalculator`, which is the same
+calculation the listing editor quotes and the offers board negotiates against, and a test buys at
+the recommended price through that calculator to prove the two cannot drift. Where there is no cost
+basis there is no floor, so the board reports the position and names the one thing it does not know
+rather than recommending a number it cannot check.
+
+The price offered is the **asking** price, with the seller's own shipping taken back out of the
+delivered target — hand them the delivered figure to type and they land $25 over the shelf they were
+just told to lead. Beside it is the take-home **after** the cut, never the size of the cut: a board
+that led with "save the sale" and hid "for $6" would be selling somebody their own markdown.
+
+## The order, which is the other half of the ranking
+
+Dollars behind the shelf, not percent over it. A 60% premium on a $14 cable is $8; a 12% premium on
+a $1,900 miner is $228, and a seller with twenty minutes should be looking at the second one. Rows
+the board could not place sink below every row it could, because an absence of an answer is not an
+instruction — and they lose the green edge too, or "too few rivals to compare" reads as a pass.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/PricePositionAnalyzer.cs` | **new**. The comparison, all eight refusals, the two-axis blocker, the ranking. No eBay call, no store, no clock of its own |
+| `Models/PricePositionModels.cs` | **new**. `PriceRival`, `PricePositionRow`, `PricePositionSummary`, `PricePositionResult` |
+| `Models/ListingData.cs` | `EbayListingSummary.ShippingCost` / `.ShippingCostKnown` — what the buyer pays to have it shipped, which nothing in the app had ever read |
+| `Services/EbayService.cs` | Reads `ShippingServiceCost` off `GetMyeBaySelling`, opportunistically and with the stated/not-stated flag carried separately; the Trading-to-Inventory merge carries both fields across |
+| `Program.cs` | `GET /api/price-position` and `ScanPricePositionAsync`. One Browse search per distinct product — two listings of the same thing share a shelf and share the call — and one dead search costs one row its answer, never the board |
+| `wwwroot/index.html` | The screen, and the sidebar entry above Offers/Rescue/Ad Rate — the diagnosis over the three treatments; `?v=` bumps |
+| `wwwroot/app.js` | Load/render/filter, the two hand-offs, the escaping, the price box that appears only where moving is the recommendation; `?v=107` |
+| `wwwroot/style.css` | `.pp-*`; `?v=95` |
+| `Tests/PricePositionAnalyzerTests.cs` | **new**, +28: the delivered basis, all eight refusals, the floor cross-check, the shipping subtraction, both axes, the ranking, the summary |
+| `Tests/PricePositionBoardAssetTests.cs` | **new**, +27: the browser half, where every failure is silent — nav placement above the treatments, the blocker-led card, the price box's condition, the shelf on the card, `_sop=15`, escaping, the `?v=` bumps |
+| `price_position_board.png` | The board, driven in a real browser |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/..."` | **2991 passed**, 0 failed — 55 new, no pre-existing test changed or removed (baseline this session: 2936) |
+| `node --check wwwroot/app.js` | clean |
+| Driven in a real browser | **yes** — Chromium against the real `index.html`/`app.js`/`style.css`, API stubbed on a spare port because the seller's installed app owns 9332 and was left running. All five card states render, a rival titled `<img src=x onerror=alert(1)>` and a seller named `<b>evil</b>` land as text with no dialog fired, the three filters hide rows and restore the board's own order exactly, and both hand-offs open their screens. **Zero console or page errors** |
+| Mutation check | Dropping the views-known guard fails 1 test; counting auctions as rivals fails 1; ranking by percent instead of dollars fails 1. Each of the three is the test written for exactly that rule |
+
+## Two things the browser found that no test would have
+
+**A badge arguing with the line beneath it.** A shelf where three listings were found and none were
+comparable was badged **"Only one listed"** — directly above "2 other listings left out of the
+ranking". The badge now reads "Nothing comparable" whenever the search actually returned something.
+
+**A row the board could not judge, coloured like a pass.** "Too few rivals", "nothing comparable"
+and "the search failed" all arrive with no blocker, exactly like a listing that is genuinely fine —
+and all three were drawing the green edge that means "nothing wrong here", which is a claim the
+board never made. Rows with no rank now take a neutral edge.
+
+## Known limits
+
+- **The shelf is a snapshot.** It was true when Refresh was pressed and somebody can list one
+  cheaper an hour later. The screen says this in those words on every load.
+- **Fifty listings per shelf, cheapest first.** On a product with four hundred listings the board
+  reads the cheap end — which is the end a buyer reads — but it cannot report a true total.
+- **Price is not all eBay ranks on.** Free returns, same-day dispatch, feedback and Top Rated Seller
+  all move a listing up a shelf and none of them are on this board. It is a price position, not a
+  search position, and the footnote says so.
+- **View counts are dark on many accounts.** eBay omits `HitCount` for some sellers, and where it
+  does the visibility half of the diagnosis is simply absent rather than guessed at.
+- **Matching is `ProductNormalizer`'s**, so it inherits that stack's blind spots. The failure is
+  always *over*-rejection: a rival dropped for a model number that did not parse makes the shelf
+  look shorter and the seller's position better. It never invents a cheaper competitor.
+- **One Browse search per product, and no cache.** Twelve listings is up to twelve calls, and
+  pressing Refresh pays for them again. The cap is 40.
+- **Nothing here writes to eBay.** Every price on the screen is a number to consider; there is no
+  "apply" button, deliberately, on a board reading a market that moves this fast.

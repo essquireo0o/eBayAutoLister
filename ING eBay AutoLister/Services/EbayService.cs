@@ -1161,6 +1161,8 @@ public class EbayService(
                 l.StartTimeUtc = fromTrading.StartTimeUtc;
                 l.QuantitySold = fromTrading.QuantitySold;
                 l.HitCount     = fromTrading.HitCount;
+                l.ShippingCost = fromTrading.ShippingCost;
+                l.ShippingCostKnown = fromTrading.ShippingCostKnown;
                 if (string.IsNullOrWhiteSpace(l.Category)) l.Category = fromTrading.Category;
             }
             merged[l.ListingId] = l;
@@ -1289,6 +1291,20 @@ public class EbayService(
                 int hitCount = 0;
                 int.TryParse(item.Descendants(EbayNs + "HitCount").FirstOrDefault()?.Value, out hitCount);
 
+                // What the buyer pays for shipping. Read opportunistically for the same reason as
+                // HitCount: GetMyeBaySelling returns ShippingCostSummary on most listings and
+                // nothing at all on some (calculated shipping with no ship-to address, freight,
+                // local pickup). Whether it was stated is carried separately — Price Position ranks
+                // on delivered price, and a missing block treated as $0 would put a freight item at
+                // the front of the shelf.
+                decimal shippingCost = 0m;
+                var shippingKnown = false;
+                var shippingEl = item.Descendants(EbayNs + "ShippingServiceCost").FirstOrDefault();
+                if (shippingEl is not null)
+                    shippingKnown = decimal.TryParse(shippingEl.Value,
+                        System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out shippingCost);
+
                 var lastModified = item.Descendants(EbayNs + "TimeLeft").FirstOrDefault()?.Value ?? "";
 
                 results.Add(new EbayListingSummary
@@ -1309,6 +1325,8 @@ public class EbayService(
                     StartTimeUtc = startTimeUtc,
                     QuantitySold = quantitySold,
                     HitCount     = hitCount,
+                    ShippingCost = shippingKnown ? shippingCost : 0m,
+                    ShippingCostKnown = shippingKnown,
                     LastUpdated  = "",
                     Data         = new PostListingRequest
                     {

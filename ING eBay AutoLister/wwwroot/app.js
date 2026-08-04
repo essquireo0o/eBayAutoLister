@@ -934,6 +934,7 @@
     bindEarnings();
     bindTax();
     bindRestock();
+    bindPricePosition();
     bindPipeline();
     bindHomeButtons();
     bindForm();
@@ -1192,6 +1193,10 @@
     // out what they have none of, and that is a real API call. It loads once and reloads when the
     // seller asks — coming back to a tab is not asking.
     restock:     { section: 'restock-section',       open: showRestockSection },
+    // Same rule as the Restock List, and for a stronger reason: one load is the seller's live
+    // listings plus one eBay search per product on them. Coming back to a tab is not asking for
+    // a dozen searches — the Refresh button is.
+    position:    { section: 'position-section',      open: showPricePositionSection },
     radar:       { section: 'radar-section',         open: showRadarSection,
                    onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
@@ -1556,7 +1561,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'restock-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -8434,6 +8439,259 @@
         </div>
         ${cautions ? `<ul class="rs-cautions">${cautions}</ul>` : ''}
       </article>`;
+  }
+
+  // ── Price Position ────────────────────────────────────────────────────────
+  // The shelf a buyer actually sees. Three rules this screen has to keep, all of them decided in
+  // Services/PricePositionAnalyzer.cs rather than here:
+  //   * The card leads with the BLOCKER, not the rank. "7th of 9" is a fact; "four cheaper ones are
+  //     seen before yours" is the same fact with the reason the listing has not sold attached, and
+  //     the seller is reading this to decide what to do next.
+  //   * A price cut is never the answer to a listing nobody has seen. The server decides that —
+  //     the browser never re-derives it — and the visibility rows get sent to Listing Copilot
+  //     instead of being shown a number to cut to.
+  //   * Every price on this page is a number to consider. Nothing here writes to eBay, and the
+  //     screen says so rather than looking like a repricer.
+  let pricePosition = null;
+  let ppFilter = 'all';
+
+  function showPricePositionSection() {
+    hideOverlaySections();
+    $('position-section')?.classList.remove('hidden');
+    setActiveNavItem('position');
+    markWorkspaceTabOpen('position');
+    if (!pricePosition) loadPricePosition(); else renderPricePosition();
+  }
+
+  function closePricePositionSection() { closeWorkspacePage('position'); }
+
+  function bindPricePosition() {
+    on('pp-close', 'click', closePricePositionSection);
+    on('pp-home', 'click', goHome);
+    on('pp-refresh', 'click', () => loadPricePosition());
+
+    // Delegated: every row is re-rendered on load and on every change of filter.
+    $('position-section')?.addEventListener('click', e => {
+      const filter = e.target.closest?.('.pp-filter-btn');
+      if (filter) {
+        ppFilter = filter.dataset.filter || 'all';
+        renderPricePosition();
+        return;
+      }
+
+      const copilot = e.target.closest?.('.pp-to-copilot');
+      if (copilot) { navigateTo('copilot'); return; }
+
+      const offers = e.target.closest?.('.pp-to-offers');
+      if (offers) { navigateTo('offers'); return; }
+
+      const copy = e.target.closest?.('.pp-copy-price');
+      if (copy) {
+        navigator.clipboard?.writeText(copy.dataset.price || '');
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = 'Copy price'; }, 1500);
+      }
+    });
+  }
+
+  async function loadPricePosition() {
+    const btn = $('pp-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading the shelf…'; }
+    setPricePositionNotice('Reading your live listings, then the listings competing with each one. This takes a few seconds.', false);
+    try {
+      const res = await fetch('/api/price-position');
+      if (!res.ok) throw new Error('Could not read where your listings sit.');
+      pricePosition = await res.json();
+      renderPricePosition();
+    } catch (err) {
+      setPricePositionNotice(errorText(err, 'Could not read where your listings sit.'), true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+    }
+  }
+
+  function setPricePositionNotice(text, isError) {
+    const el = $('pp-notice');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+    el.classList.toggle('rs-notice-error', !!isError);
+  }
+
+  function renderPricePosition() {
+    if (!pricePosition) return;
+    const r = pricePosition;
+    const s = r.summary || {};
+    const rows = r.rows || [];
+
+    $('pp-results')?.classList.toggle('hidden', !!rows.length);
+    $('pp-board')?.classList.toggle('hidden', !rows.length);
+    $('pp-honesty')?.classList.toggle('hidden', !(r.honesty || []).length);
+
+    renderPricePositionHero(r, s, rows);
+
+    if (r.status === 'ebay_unavailable') setPricePositionNotice(r.error || 'eBay could not be read.', true);
+    else if (r.status === 'no_listings') setPricePositionNotice('You have no active listings for this board to place.', false);
+    else setPricePositionNotice('', false);
+
+    const shown = filteredPricePositionRows(rows);
+    const list = $('pp-list');
+    if (list) {
+      list.innerHTML = shown.length
+        ? shown.map(pricePositionCard).join('')
+        : '<p class="pp-empty">Nothing in your inventory matches that filter — which is the good version of this screen.</p>';
+    }
+
+    const honesty = $('pp-honesty');
+    if (honesty) honesty.innerHTML = (r.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+
+    document.querySelectorAll('.pp-filter-btn').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.filter === ppFilter));
+  }
+
+  function renderPricePositionHero(r, s, rows) {
+    setText('pp-hero-figure', money(s.capitalBehindTheShelf || 0));
+    setText('pp-hero-leading', String(s.leading || 0));
+    setText('pp-hero-unseen', String(s.visibilityBlocked || 0));
+
+    // What the seller still takes home if the priced-out listings move to the front — never the
+    // size of the cut, which is a cost, and printing it as a headline would be selling somebody
+    // their own markdown. A dash rather than $0 when no priced-out row has a cost recorded: zero
+    // there would read as "there is nothing left in these", which is not what is known.
+    setText('pp-hero-profit', s.profitStillOnTheTable != null ? money(s.profitStillOnTheTable) : '—');
+
+    let sub;
+    if (r.status === 'ebay_unavailable') sub = 'your live listings could not be read, so nothing here has a position yet';
+    else if (!rows.length) sub = 'your live listings appear here once eBay is connected';
+    else if (!s.pricedOut) sub = `nothing you listed is sitting behind a cheaper copy of itself — ${r.itemsAnalyzed} listing${r.itemsAnalyzed === 1 ? '' : 's'} checked`;
+    else if (s.worstPremiumPercent != null) sub = `${s.pricedOut} listing${s.pricedOut === 1 ? '' : 's'} behind the front of the shelf — the worst by ${Math.round(s.worstPremiumPercent)}%, ${s.worstPremiumTitle}`;
+    else sub = `${s.pricedOut} listing${s.pricedOut === 1 ? '' : 's'} behind the front of the shelf`;
+    setText('pp-hero-sub', sub);
+
+    // The "still yours at the front" figure quietly excludes any priced-out listing with no cost
+    // recorded, and a seller reading a number needs to know what is not inside it.
+    if (s.pricedOutWithoutCost > 0)
+      setText('pp-hero-label', `Listed behind cheaper copies of itself — ${s.pricedOutWithoutCost} with no cost recorded`);
+    else
+      setText('pp-hero-label', 'Listed behind cheaper copies of itself');
+
+    setText('pp-board-title', s.cantWin > 0
+      ? `${s.cantWin} of these cannot be won on price — somebody is buying them cheaper than you are`
+      : 'Most money sitting behind the front of its shelf, first');
+  }
+
+  // A filter, not a sort. The board's own order is what the money says and it never changes here.
+  function filteredPricePositionRows(rows) {
+    if (ppFilter === 'price') return rows.filter(r => r.blocker === 'price');
+    if (ppFilter === 'visibility') return rows.filter(r => r.blocker === 'visibility');
+    return rows;
+  }
+
+  const PP_BLOCKER_LABEL = {
+    price: 'Your price',
+    supply: 'What you paid',
+    visibility: 'Nobody is seeing it',
+    none: '',
+  };
+
+  function pricePositionCard(row) {
+    const badges = [];
+    if (row.rank != null && row.rivalsCounted >= 3)
+      badges.push(`<span class="pp-badge pp-badge-rank">${esc(String(row.rank))} of ${esc(String(row.rivalsCounted + 1))} on price</span>`);
+    // "Only one listed" is true when the search found nobody, and a lie when it found nine and
+    // none of them were the item. The card underneath says "2 other listings left out of the
+    // ranking", and a badge that contradicts the line below it is the screen arguing with itself.
+    if (row.verdict === 'alone')
+      badges.push(row.rivalsFound > 0
+        ? '<span class="pp-badge pp-badge-alone">Nothing comparable</span>'
+        : '<span class="pp-badge pp-badge-alone">Only one listed</span>');
+    if (row.verdict === 'thin_market') badges.push('<span class="pp-badge pp-badge-alone">Too few to compare</span>');
+    if (row.verdict === 'lookup_failed') badges.push('<span class="pp-badge pp-badge-alone">Shelf unread</span>');
+    if (PP_BLOCKER_LABEL[row.blocker]) badges.push(`<span class="pp-badge pp-badge-${esc(row.blocker)}">${esc(PP_BLOCKER_LABEL[row.blocker])}</span>`);
+
+    const stats = [];
+    stats.push(['Yours', row.basis === 'delivered'
+      ? `${moneyExact(row.myComparedPrice)} delivered`
+      : `${moneyExact(row.myPrice)} + shipping`]);
+    if (row.targetRival != null) stats.push(['Front of the shelf', moneyExact(row.targetRival)]);
+    if (row.premiumPercent != null && row.premiumPercent > 0) stats.push(['You are over by', `${row.premiumPercent.toFixed(1)}%`]);
+    if (row.medianRival != null) stats.push(['Middle of the shelf', moneyExact(row.medianRival)]);
+    // Withheld rather than shown as zero when the server could not measure it — see ViewsKnown.
+    if (row.viewsKnown) stats.push(['Seen', `${row.viewCount.toLocaleString()} time${row.viewCount === 1 ? '' : 's'}`]);
+    if (row.watchCount > 0) stats.push(['Watching', String(row.watchCount)]);
+    if (row.daysListed != null) stats.push(['Listed', `${row.daysListed} days`]);
+    if (row.hasCostBasis && row.netProfitNow != null) stats.push(['Profit at your price', moneyExact(row.netProfitNow)]);
+
+    // The one number the seller might actually type, and it is only ever offered on a row where
+    // moving is the recommendation. Never on cant_win, where the same number is a loss, and never
+    // on a visibility row, where cutting fixes nothing.
+    const offerPrice = row.blocker === 'price' && row.itemPriceToLead != null;
+    const priceBox = offerPrice ? `
+        <div class="pp-target">
+          <div class="pp-target-main">
+            <span class="pp-target-label">To be the cheapest on this shelf, ask</span>
+            <span class="pp-target-price">${esc(moneyExact(row.itemPriceToLead))}</span>
+            ${row.basis === 'delivered' && row.myShipping > 0 ? `<span class="pp-target-note">plus your ${esc(moneyExact(row.myShipping))} shipping</span>` : ''}
+          </div>
+          <div class="pp-target-side">
+            ${row.netProfitAtLeadPrice != null
+              ? `<span class="pp-target-profit ${row.netProfitAtLeadPrice > 0 ? '' : 'pp-target-profit-thin'}">${esc(moneyExact(row.netProfitAtLeadPrice))} still yours</span>`
+              : '<span class="pp-target-profit pp-target-profit-thin">no cost recorded</span>'}
+            ${row.floorPrice != null ? `<span class="pp-target-floor">your floor is ${esc(moneyExact(row.floorPrice))}</span>` : ''}
+            <button class="btn btn-ghost small pp-copy-price" type="button" data-price="${esc(String(row.itemPriceToLead))}">Copy price</button>
+          </div>
+        </div>` : '';
+
+    const rivals = (row.rivals || []).filter(v => v.counted).slice(0, 5).map(v => `
+        <li class="pp-rival">
+          <a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title)}</a>
+          <span class="pp-rival-price">${esc(moneyExact(v.deliveredPrice != null ? v.deliveredPrice : v.price))}</span>
+          <span class="pp-rival-seller">${esc(v.sellerUsername || 'seller unknown')} · ${esc(String(v.sellerFeedbackScore))}</span>
+        </li>`).join('');
+
+    // Grouped rather than listed one by one. "9 not compared" is a number the seller cannot check;
+    // "4 were a lot of 10, 3 were for parts" is the board showing its working.
+    const skipped = pricePositionSkipSummary(row.rivals || []);
+
+    const cautions = (row.cautions || []).map(c => `<li>${esc(c)}</li>`).join('');
+    const shelfUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(row.searchQuery || row.title)}&_sop=15`;
+
+    return `
+      <article class="pp-card pp-card-${esc(row.blocker)}${row.rank == null ? ' pp-card-unjudged' : ''}">
+        <div class="pp-card-head">
+          <div class="pp-card-title">
+            ${row.thumbnailUrl ? `<img class="pp-thumb" src="${esc(row.thumbnailUrl)}" alt="" loading="lazy" />` : ''}
+            <div>
+              <h4>${row.listingUrl ? `<a href="${esc(row.listingUrl)}" target="_blank" rel="noopener">${esc(row.title)}</a>` : esc(row.title)}</h4>
+              <div class="pp-badges">${badges.join('')}</div>
+            </div>
+          </div>
+          <div class="pp-card-actions">
+            ${row.blocker === 'visibility' ? '<button class="btn btn-primary small pp-to-copilot" type="button">Fix the title</button>' : ''}
+            ${row.blocker === 'price' && row.watchCount > 0 ? '<button class="btn btn-secondary small pp-to-offers" type="button">Offer the watchers</button>' : ''}
+            <a class="btn btn-ghost small" href="${esc(shelfUrl)}" target="_blank" rel="noopener">See the shelf</a>
+          </div>
+        </div>
+        <p class="pp-headline">${esc(row.headline)}</p>
+        ${priceBox}
+        <div class="pp-stats">
+          ${stats.map(([label, value]) => `<div class="pp-stat"><span class="pp-stat-label">${esc(label)}</span><span class="pp-stat-value">${esc(value)}</span></div>`).join('')}
+        </div>
+        ${rivals ? `<ul class="pp-rivals">${rivals}</ul>` : ''}
+        ${skipped ? `<p class="pp-skipped">${esc(skipped)}</p>` : ''}
+        ${cautions ? `<ul class="pp-cautions">${cautions}</ul>` : ''}
+      </article>`;
+  }
+
+  function pricePositionSkipSummary(rivals) {
+    const skipped = rivals.filter(v => !v.counted && v.skipReason);
+    if (!skipped.length) return '';
+    const counts = new Map();
+    skipped.forEach(v => counts.set(v.skipReason, (counts.get(v.skipReason) || 0) + 1));
+    const parts = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([reason, n]) => `${n} × ${reason.replace(/\.$/, '')}`);
+    return `${skipped.length} other listing${skipped.length === 1 ? '' : 's'} left out of the ranking — ${parts.join('; ')}.`;
   }
 
   // ── Deal Pipeline ─────────────────────────────────────────────────────────

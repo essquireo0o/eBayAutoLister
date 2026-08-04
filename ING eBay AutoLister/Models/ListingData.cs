@@ -389,6 +389,13 @@ public class EbayListingSummary
     public DateTime? StartTimeUtc { get; set; }
     public int QuantitySold { get; set; }
     public int HitCount { get; set; }
+    // What the BUYER pays to have it shipped — not what the label costs the seller. A buyer
+    // compares delivered prices and eBay's cheapest-first sort orders on them, so Price Position
+    // cannot rank a listing without this. Read opportunistically, same as HitCount: eBay omits
+    // the block entirely on some listings, and an unreported charge is not free shipping, so the
+    // flag is carried separately rather than letting a zero stand in for "we don't know".
+    public decimal ShippingCost { get; set; }
+    public bool ShippingCostKnown { get; set; }
     public PostListingRequest Data { get; set; } = new();
 }
 

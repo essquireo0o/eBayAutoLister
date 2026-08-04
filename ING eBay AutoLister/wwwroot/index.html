@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=94" />
+  <link rel="stylesheet" href="style.css?v=95" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -141,6 +141,13 @@
              "which is the best deal"; a seller with $500 has to answer "which SET", and the two
              answers are routinely different. Sits directly under the boards it allocates across. -->
         <button class="nav-item" type="button" data-page="budget"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Spend My Budget</button>
+        <!-- The diagnosis, and the three screens under it are the treatments. Every other pricing
+             surface in this app is built on SOLD comps — what buyers have paid — and none of them
+             can see the thing that actually decides whether a listing sells, which is how many
+             cheaper copies of it a buyer scrolls past first. It sits above Offers, Rescue and the
+             Ad Rate Advisor because sending an offer, laddering a markdown or paying for ads on a
+             listing that is 40% over the front of its shelf is spending money on the wrong problem. -->
+        <button class="nav-item" type="button" data-page="position"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Price Position</button>
         <button class="nav-item" type="button" data-page="offers"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Offers to Watchers</button>
         <button class="nav-item" type="button" data-page="rescue"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Rescue Aging Stock</button>
         <button class="nav-item" type="button" data-page="promoted"><svg class="nav-icon" aria-hidden="true"><use href="#i-inventory"/></svg>Ad Rate Advisor</button>
@@ -2059,6 +2066,98 @@
           </div>
         </div>
       </div>
+
+      <!-- ── Price Position — the shelf the buyer actually sees ──────────────────────────────
+           The only pricing screen in the app not built on sold comps. Sold comps say what buyers
+           have paid; this says what the buyer is looking at right now, next to yours. A listing
+           can be priced perfectly against sixty days of sold history and be eighth on a shelf of
+           eight, and no other screen here — or in eBay Seller Hub — will ever say so.
+
+           Two rules the page must keep, both from Services/PricePositionAnalyzer.cs:
+             * The comparison is DELIVERED price, item plus shipping, because that is what the
+               buyer pays and what eBay's cheapest-first sort orders on. Where the seller's own
+               shipping charge could not be read the row says which basis it used instead.
+             * Position explains a listing buyers reject. It explains nothing about one buyers
+               never reach — so the headline on each card is the BLOCKER, not the rank, and a
+               listing nobody has seen is never told to cut its price.
+           Backed by /api/price-position. Read-only: nothing here changes a live listing. -->
+      <section id="position-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="pp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">What the buyer sees next to yours</div>
+              <h2>🏷 Price Position</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="pp-refresh" class="btn btn-secondary small" type="button">Refresh</button>
+            <button id="pp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- The hero is capital standing BEHIND cheaper copies of itself. Not "average premium",
+               which is a statistic — this is the seller's own money, sitting in listings a buyer
+               reaches last. -->
+          <div class="er-hero pp-hero">
+            <div class="er-hero-main">
+              <p id="pp-hero-label" class="er-hero-label">Listed behind cheaper copies of itself</p>
+              <p id="pp-hero-figure" class="er-hero-figure">$0</p>
+              <p id="pp-hero-sub" class="er-hero-sub">your live listings appear here once eBay is connected</p>
+            </div>
+            <div class="er-hero-side">
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Still yours at the front</span>
+                <span id="pp-hero-profit" class="er-hero-stat-value">—</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Cheapest on the shelf</span>
+                <span id="pp-hero-leading" class="er-hero-stat-value">0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Nobody is seeing</span>
+                <span id="pp-hero-unseen" class="er-hero-stat-value">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="pp-notice" class="rs-notice hidden"></div>
+
+          <div id="pp-board" class="hidden">
+            <div class="er-chart-head pp-board-head">
+              <div>
+                <p class="eyebrow">Worked through in the order the money says</p>
+                <h3 id="pp-board-title">Most money sitting behind the front of its shelf, first</h3>
+              </div>
+              <!-- Three filters, not three sorts. The board's own order is the one that matters and
+                   never changes; these hide rows rather than re-rank them, because a seller with
+                   ten minutes wants the priced-out ones and nothing else on the screen. -->
+              <div class="pp-filter" role="group" aria-label="Show which listings">
+                <button class="pp-filter-btn active" type="button" data-filter="all">Everything</button>
+                <button class="pp-filter-btn" type="button" data-filter="price">Priced out</button>
+                <button class="pp-filter-btn" type="button" data-filter="visibility">Not being seen</button>
+              </div>
+            </div>
+            <div id="pp-list" class="pp-list"></div>
+          </div>
+
+          <div id="pp-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-inventory"/></svg></div>
+              <div class="state-title">A fair price is not the same thing as the best price on the shelf.</div>
+              <p class="state-body">Every other pricing screen here reads what buyers have <em>paid</em>. This one reads what they are <em>looking at</em>: for each of your live listings it pulls the listings competing with it right now, ranks you among them on delivered price — item plus shipping, the way a buyer compares — and says whether the thing standing between you and a sale is your price, your supplier, or the fact that nobody is finding the listing at all.</p>
+              <div class="state-actions">
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('pp-refresh')?.click()">Read the shelf</button>
+              </div>
+              <p class="state-hint">Read-only. Nothing on this screen changes a live listing — every price here is a number to consider, not one that has been applied.</p>
+            </div>
+          </div>
+
+          <div id="pp-honesty" class="inv-footnote hidden"></div>
+        </div>
+      </section>
 
       <!-- ── Offers to Watchers (full-page overlay, same shape as Inventory Health) ──
            A watcher is the warmest audience a seller gets for free. eBay's Send Offer to
@@ -5474,6 +5573,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=106"></script>
+  <script src="app.js?v=107"></script>
 </body>
 </html>

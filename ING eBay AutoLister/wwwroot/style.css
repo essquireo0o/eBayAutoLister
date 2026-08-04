@@ -15509,3 +15509,257 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   .rs-card-actions { width: 100%; }
   .rs-card-actions .btn { flex: 1; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Price Position — the shelf the buyer actually sees
+   Cards, one column, same shape as the Restock List: every row carries a
+   sentence and a list of cautions, and neither fits in a table cell.
+   The left edge is the BLOCKER rather than the rank — a listing 7th of 9
+   because nobody can find it is a different problem from one 7th of 9
+   because it is dearer, and the two should never look the same.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.pp-board-head { align-items: flex-end; }
+
+.pp-filter { display: flex; gap: var(--s1); flex-wrap: wrap; }
+
+.pp-filter-btn {
+  padding: 6px var(--s3);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.pp-filter-btn:hover { border-color: var(--gold); color: var(--ink); }
+
+.pp-filter-btn.active {
+  border-color: var(--teal-700);
+  background: var(--teal-700);
+  color: #fff;
+}
+
+.pp-list { display: flex; flex-direction: column; gap: var(--s3); }
+
+.pp-empty {
+  margin: 0;
+  padding: var(--s5);
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.pp-card {
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+/* Price is fixable this afternoon and gets the loud edge. Supply is red
+   because "cut to match them" is a loss on those rows, not a markdown.
+   Visibility is gold: the money is there, the listing is just invisible. */
+.pp-card-price      { border-left-color: var(--warning); }
+.pp-card-supply     { border-left-color: var(--danger); }
+.pp-card-visibility { border-left-color: var(--gold); }
+.pp-card-none       { border-left-color: var(--success); }
+
+/* A row with no position is not a row that passed. Too few rivals to compare,
+   nothing on the shelf that was the same item, a search that failed — all
+   three arrive with no blocker, and green on any of them reads as "this one
+   is fine", which is a claim the board did not make. */
+.pp-card-unjudged { border-left-color: var(--line-soft); }
+
+.pp-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.pp-card-title { display: flex; align-items: flex-start; gap: var(--s3); }
+
+.pp-thumb {
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+
+.pp-card-title h4 {
+  margin: 0 0 var(--s1);
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.pp-card-title h4 a { color: inherit; text-decoration: none; }
+.pp-card-title h4 a:hover { text-decoration: underline; }
+
+.pp-card-actions { display: flex; gap: var(--s2); flex-shrink: 0; align-items: center; }
+
+.pp-badges { display: flex; gap: var(--s1); flex-wrap: wrap; }
+
+.pp-badge {
+  padding: 2px var(--s2);
+  border-radius: 999px;
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.pp-badge-rank       { background: var(--card-alt);     color: var(--ink-2); }
+.pp-badge-alone      { background: var(--card-alt);     color: var(--muted); }
+.pp-badge-price      { background: var(--warning-soft); color: var(--warning); }
+.pp-badge-supply     { background: var(--danger-soft);  color: var(--danger); }
+.pp-badge-visibility { background: var(--gold-soft);    color: var(--gold-deep); }
+
+.pp-headline {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* The one number on the card the seller might actually type. It is set
+   apart from the statistics because it is the only thing here that is a
+   suggestion — and the take-home beside it is what stops it being read as
+   a race to the bottom. */
+.pp-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--gold);
+  border-radius: var(--r-md);
+  background: var(--gold-soft);
+}
+
+.pp-target-main { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+
+.pp-target-label {
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--gold-deep);
+}
+
+.pp-target-price {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--ink);
+}
+
+.pp-target-note { font-size: var(--fs-xs); color: var(--muted); }
+
+.pp-target-side { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+.pp-target-profit { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--success); }
+.pp-target-profit-thin { color: var(--muted); }
+.pp-target-floor { font-size: var(--fs-xs); color: var(--muted); }
+
+.pp-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--s3);
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.pp-stat { display: flex; flex-direction: column; gap: 2px; }
+
+.pp-stat-label {
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pp-stat-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+/* The shelf itself, cheapest first — the evidence behind the verdict. It
+   is on the card rather than behind a link because "you are 7th" is a
+   claim, and a seller should be able to check a claim about their own
+   money without leaving the screen. */
+.pp-rivals {
+  list-style: none;
+  margin: var(--s3) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.pp-rival {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  font-size: var(--fs-xs);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.pp-rival:last-child { border-bottom: 0; }
+
+.pp-rival a {
+  color: var(--ink-2);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-rival a:hover { text-decoration: underline; color: var(--teal-700); }
+.pp-rival-price { font-weight: var(--fw-semibold); color: var(--ink); }
+.pp-rival-seller { color: var(--muted); }
+
+/* Showing the working. Every listing left out of the ranking was left out
+   for a reason, and a board that silently drops half a shelf is a board
+   whose position nobody should believe. */
+.pp-skipped {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* Never folded away, same rule as the Restock List: the seller reading
+   this card is about to change a price on the strength of it. */
+.pp-cautions {
+  margin: var(--s3) 0 0;
+  padding-left: var(--s4);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.pp-cautions li { margin-top: 2px; }
+
+@media (max-width: 720px) {
+  .pp-card-actions { width: 100%; }
+  .pp-card-actions .btn { flex: 1; }
+  .pp-rival { grid-template-columns: 1fr auto; }
+  .pp-rival-seller { grid-column: 1 / -1; }
+}
