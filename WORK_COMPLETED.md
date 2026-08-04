@@ -8909,3 +8909,125 @@ the number rather than think about whether the cache needs busting.
 - **The cooldown is per app instance, not per seller.** It is a chattiness guard, not a quota.
 - **No UI for the memory.** There is no screen listing what the app has learned and no way to forget
   one row. Deleting the app database clears it, along with everything else in there.
+
+---
+
+## Ten grey bars that would not say what was in them — the listing editor (autonomous session, 2026-08-04)
+
+The Edit Listing drawer is where every listing the seller already owns gets changed. It is ten
+collapsible panels tall. Collapsed, all ten were the same grey bar: the only way to find out whether
+a listing had photos was to open Photos, and the only way to save was to scroll past all ten to the
+bottom of the form.
+
+That is the whole screen this pass is about. Nothing about what the app publishes changed.
+
+## What is on the screen now
+
+**Every panel says what is inside it.** Each `<summary>` carries a chip:
+
+| Panel | Chip |
+|---|---|
+| Title and Category | `67 / 80 · Miner Hardware` |
+| Condition | `Used - Excellent · described` |
+| Product Identifiers | `Bitmain · 2 identifiers` |
+| Item Specifics | `4 filled` |
+| Photos | `6 photos` |
+| Description | `512 characters` |
+| Pricing and Quantity | `$1,249.99 · qty 2` |
+| Shipping and Package | `31 lb 4 oz · 89101` |
+| Listing Options | `Fixed Price · 7 days` |
+
+Closing every panel now gives a one-screen summary of the listing rather than a wall of headings —
+see `listing_editor_polish.png`.
+
+**The action bar is pinned.** `.form-actions` is `position: sticky` inside whichever pane scrolls
+it, as a floating card rather than a full-bleed strip, so the drawer's own padding stays visible
+down both sides and it reads as part of the form. Save is reachable from any scroll depth.
+
+**The bar says what is still missing, and the words are buttons.** With the four blockers filled it
+reads *"The four things eBay requires are filled. $1,249.99 · 6 photos"*. With any of them empty it
+reads *"eBay won't accept this yet — still empty:"* followed by `Title` `Category` `Price` `Photos`
+as buttons: each opens the panel it lives in, scrolls it to the middle and focuses the field. The
+panel it came from is marked with a gold rule down its left edge.
+
+## The three severities, which are the whole design
+
+They are `ListingReadinessAnalyzer`'s, and mixing them up in either direction makes the chips
+worthless — a mark that fires on an opinion is a mark sellers learn to scroll past.
+
+| State | Severity | What raises it |
+|---|---|---|
+| `.is-empty`, and the panel is marked | Blocker | no title, no category, no price, no photo |
+| `.is-thin`, chip only | Warning | title under 45 chars, under 4 photos, no description, no brand, no identifier |
+| plain chip | Tip, or plain information | everything else |
+
+`EDITOR_TITLE_THIN` and `EDITOR_PHOTOS_THIN` are the analyzer's `ThinTitleLength` and
+`GoodPhotoCount`, and a test reads them off the C# constants and compares — the front of the editor
+and the pre-publish check cannot start disagreeing about what a thin title is.
+
+## What it refuses to claim
+
+The server check reads eBay's required Item Specifics for the category, which needs a Taxonomy call.
+This one never makes it. So the bar says **"the four things eBay requires are filled"** and never
+"ready to publish" — a pinned test asserts that string is absent. The distinction is the difference
+between a check a seller trusts and one that gets them a rejected publish.
+
+## What it is not allowed to touch
+
+Everything is read off the form controls; the module writes only to the chips and the bar. In
+particular it never calls `descCommitText('f')`, which merges the plain-text description tab into
+the HTML field: calling that from a refresh would edit the listing because a chip was redrawn, and
+the drawer would then report unsaved changes the seller never made. `buildPayload()` is out for the
+same reason — it calls it. Both are pinned by test.
+
+## Two things the browser found that no test would have
+
+- **Two identical gold UNSAVED pills on one screen.** The drawer header already had one. Both are
+  worth having — the header answers "is it safe to close this", the bar answers "is there anything
+  to press Save for" — so the bar's is a dot and a word in gold ink instead of a second filled pill.
+- **`input[type="url"]` and `input[type="date"]` were never in the base input rule.** Every photo
+  URL field in this editor was being drawn by the browser instead of the app: a white box with a
+  default border in the middle of a form of tinted ones. Both types added. Separately,
+  `.photo-url-list` was a wrapping flex row, which packed four URLs across and truncated every one
+  of them to `https://i.ebayimg.com/p` — the same string for all six. It is now a two-column grid,
+  one photo per line, which is what `.photo-url-row { display: contents }` and the 720px media
+  query were already written for.
+
+## Files
+
+| File | Change |
+|---|---|
+| `wwwroot/index.html` | Nine `<summary class="fp-sum">` rewrites with a `.fp-chip` slot each; `.form-actions` becomes the pinned bar with `#fa-state`, `.fa-unsaved` and `.fa-buttons`; `#draft-preview-panel` moved above the bar; `app.js?v=110`, `style.css?v=97` |
+| `wwwroot/app.js` | `initEditorOverview` / `refreshEditorOverview` / `renderEditorActionState` / `editorJumpTo` and their readers; called from startup after `initEditDrawer()` and from `openEditDrawer()` |
+| `wwwroot/style.css` | `--e3-up` in both themes; `.fp-sum` / `.fp-name` / `.fp-chip` and its two states; `.form-panel.is-incomplete`; summary hover and focus ring; `.form-actions-sticky` and its parts; `url`/`date` added to the base input rule; `.photo-url-list` regridded |
+| `ING eBay AutoLister.Tests/ListingEditorOverviewAssetTests.cs` | 14 new tests |
+| `listing_editor_polish.png` | The collapsed editor |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,064 passed**, 0 failed, 0 skipped (14 of them new) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically) | empty listing, filled listing, all panels collapsed, both scroll extremes, price cleared again, jump button, dark theme, and the New Listing overlay — **no page errors** |
+
+The installed app holds port 9332 and the app has no port override, so the drawer was driven against
+a static server rather than a dev instance. The chips, the bar and the jump are pure client state, so
+that harness exercises all of them; what it cannot exercise is opening the drawer from a real
+listing card, which is unchanged code.
+
+## Known limits
+
+- **The four blockers are checked client-side.** They are the same four, from the same thresholds,
+  and a test pins them to the C# constants — but a category whose *required Item Specifics* are
+  empty still shows a green bar here. The New Listing screen's server-backed check is the one that
+  knows about those, and this bar is worded so it never claims otherwise.
+- **The bar is not a live region.** It is rewritten on every keystroke, and a region announcing the
+  character count of a title being typed is a region that gets switched off. The same facts are on
+  the panel each field lives in.
+- **Market Research and Cross-List have no chip.** They are tools, not listing content, and there is
+  nothing about them that survives being collapsed.
+- **The New Listing overlay was not touched.** It shares `.form-panel`, so the caret override is
+  scoped to `summary.fp-sum` and a test holds it there; its own panels keep their plain headers and
+  its own server-backed readiness bar.

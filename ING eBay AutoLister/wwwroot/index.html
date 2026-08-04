@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=96" />
+  <link rel="stylesheet" href="style.css?v=97" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -4918,7 +4918,7 @@
 
         <form id="listing-form">
           <details class="form-panel" open>
-            <summary>Title and Category</summary>
+            <summary class="fp-sum"><span class="fp-name">Title and Category</span><span class="fp-chip" id="fp-title"></span></summary>
             <div class="form-grid">
               <div class="field full-width">
                 <label>Title <span class="char-count" id="title-count">0 / 80</span></label>
@@ -4944,7 +4944,7 @@
           </details>
 
           <details class="form-panel" open>
-            <summary>Condition</summary>
+            <summary class="fp-sum"><span class="fp-name">Condition</span><span class="fp-chip" id="fp-condition"></span></summary>
             <div class="form-grid">
               <div class="field">
                 <label>Condition</label>
@@ -4966,7 +4966,7 @@
           </details>
 
           <details class="form-panel" open>
-            <summary>Product Identifiers</summary>
+            <summary class="fp-sum"><span class="fp-name">Product Identifiers</span><span class="fp-chip" id="fp-ids"></span></summary>
             <div class="form-grid">
               <div class="field">
                 <label>Brand</label>
@@ -5058,19 +5058,19 @@
           </details>
 
           <details class="form-panel" open>
-            <summary>Item Specifics</summary>
+            <summary class="fp-sum"><span class="fp-name">Item Specifics</span><span class="fp-chip" id="fp-specifics"></span></summary>
             <div id="specifics-list"></div>
             <button type="button" id="btn-add-specific" class="btn btn-ghost small">Add Row</button>
           </details>
 
           <details class="form-panel" open>
-            <summary>Photos</summary>
+            <summary class="fp-sum"><span class="fp-name">Photos</span><span class="fp-chip" id="fp-photos"></span></summary>
             <div id="photo-url-list" class="photo-url-list"></div>
             <button type="button" id="btn-add-photo-url" class="btn btn-ghost small">Add Photo URL</button>
           </details>
 
           <details class="form-panel" open>
-            <summary>Description</summary>
+            <summary class="fp-sum"><span class="fp-name">Description</span><span class="fp-chip" id="fp-description"></span></summary>
             <div class="field">
               <label>Listing Description</label>
               <!-- Same three tabs as the New Listing form, driven by the same code (initDescTabs).
@@ -5094,7 +5094,7 @@
           </details>
 
           <details class="form-panel" open>
-            <summary>Pricing and Quantity</summary>
+            <summary class="fp-sum"><span class="fp-name">Pricing and Quantity</span><span class="fp-chip" id="fp-pricing"></span></summary>
             <div class="form-grid">
               <div class="field">
                 <label>Buy It Now Price (USD)</label>
@@ -5154,7 +5154,7 @@
           </details>
 
           <details class="form-panel">
-            <summary>Shipping and Package</summary>
+            <summary class="fp-sum"><span class="fp-name">Shipping and Package</span><span class="fp-chip" id="fp-shipping"></span></summary>
             <div class="form-grid">
               <div class="field">
                 <label>Package Type</label>
@@ -5227,7 +5227,7 @@
           </details>
 
           <details class="form-panel">
-            <summary>Listing Options</summary>
+            <summary class="fp-sum"><span class="fp-name">Listing Options</span><span class="fp-chip" id="fp-options"></span></summary>
             <div class="form-grid">
               <div class="field">
                 <label>Listing Format</label>
@@ -5263,14 +5263,25 @@
             </div>
           </details>
 
-          <div class="form-actions">
-            <button type="submit" id="btn-post" class="btn btn-primary btn-large">Preview Draft</button>
-            <button type="button" id="btn-create-ebay-draft" class="btn btn-secondary btn-large hidden">Create eBay Draft</button>
-            <button type="button" id="btn-update" class="btn btn-primary btn-large hidden">Save Changes</button>
-            <button type="button" id="btn-new-listing" class="btn btn-ghost hidden">New Listing</button>
-          </div>
-
+          <!-- The draft preview sits ABOVE the action bar, because the bar is pinned to the
+               bottom of the drawer: a preview rendered below it would open underneath the
+               buttons that produced it. -->
           <div id="draft-preview-panel" class="draft-preview hidden" aria-live="polite"></div>
+
+          <!-- Pinned to the bottom of the drawer's scroll. This form is ten panels long, and the
+               only way to save used to be to scroll past all of them. The left half is the state
+               of the listing itself — see refreshEditorOverview() in app.js — so the seller can
+               read what is still empty from the same place they press Save. -->
+          <div class="form-actions form-actions-sticky" id="form-actions-bar">
+            <div class="fa-state" id="fa-state"></div>
+            <span class="fa-unsaved">Unsaved</span>
+            <div class="fa-buttons">
+              <button type="submit" id="btn-post" class="btn btn-primary btn-large">Preview Draft</button>
+              <button type="button" id="btn-create-ebay-draft" class="btn btn-secondary btn-large hidden">Create eBay Draft</button>
+              <button type="button" id="btn-update" class="btn btn-primary btn-large hidden">Save Changes</button>
+              <button type="button" id="btn-new-listing" class="btn btn-ghost hidden">New Listing</button>
+            </div>
+          </div>
         </form>
       </section>
 
@@ -5573,6 +5584,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=109"></script>
+  <script src="app.js?v=110"></script>
 </body>
 </html>

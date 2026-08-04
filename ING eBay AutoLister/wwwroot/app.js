@@ -939,6 +939,7 @@
     bindHomeButtons();
     bindForm();
     initEditDrawer();
+    initEditorOverview();   // after the form has been relocated into the drawer
     bindMarketResearch();
     bindCrossListing();
     bindTakeHome('nl');
@@ -16458,6 +16459,7 @@
     // visit here) so the take-home panel opens with a real break-even instead of asking again.
     drawerListing = listing || null;
     loadCostBasisInto('f', listing);
+    refreshEditorOverview();         // the panels describe THIS listing, not the last one
     markDrawerClean();               // baseline AFTER the form has been filled
     setTimeout(() => drawer.focus(), 30);
   }
@@ -16480,6 +16482,201 @@
       try { drawerReturnFocusEl.focus({ preventScroll: true }); } catch { /* non-focusable */ }
     }
     drawerReturnFocusEl = null;
+  }
+
+  // ── Editing a listing: what is in the panels you closed ────────────────────
+  //
+  // The editor is ten collapsible panels. Collapsed, one of them said nothing at
+  // all — the seller opened Photos to find out whether there were photos, and
+  // scrolled past all ten to reach Save. Every summary now carries the state of
+  // its own panel, and the action bar is pinned to the foot of the drawer with
+  // what is still missing printed beside the button that saves it.
+  //
+  // This layer reads the form controls and writes only to the chips and the bar.
+  // It never sets a field, never calls the server and never infers a value, so
+  // it cannot change what gets published.
+  //
+  // The severities are ListingReadinessAnalyzer's, and the thresholds are its
+  // constants:
+  //   is-empty   a Blocker — title, category, price, photo. eBay's own rule.
+  //   is-thin    a Warning — short title, under four photos, no description,
+  //              no identifier, no brand. The app's opinion about what sells.
+  //   no class   a Tip, or plain information.
+  // The server check knows things this one cannot — required Item Specifics need
+  // a category lookup — which is why the bar says "the four things eBay requires
+  // are filled" and never "ready to publish".
+
+  const EDITOR_TITLE_THIN  = 45;   // ListingReadinessAnalyzer.ThinTitleLength
+  const EDITOR_PHOTOS_THIN = 4;    // ListingReadinessAnalyzer.GoodPhotoCount
+
+  // The four blockers, in the analyzer's order. `focus` is the control the seller
+  // is sent to, which for photos is the button that makes a row — there is no row
+  // to focus when the answer is "none".
+  const EDITOR_BLOCKERS = [
+    { label: 'Title',    focus: 'f-title',           filled: () => editorField('f-title') !== '' },
+    { label: 'Category', focus: 'f-category-id',     filled: () => editorField('f-category-id') !== '' },
+    { label: 'Price',    focus: 'f-price',           filled: () => editorPrice() > 0 },
+    { label: 'Photos',   focus: 'btn-add-photo-url', filled: () => editorPhotoCount() > 0 },
+  ];
+
+  function initEditorOverview() {
+    const form = $('form-section');
+    if (!form) return;
+
+    let timer = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; refreshEditorOverview(); }, 80);
+    };
+
+    // Delegated, and click as well as input: photo and specifics rows are added
+    // and removed by buttons, and a row that is removed fires no input event.
+    ['input', 'change', 'click'].forEach(evt => form.addEventListener(evt, schedule));
+
+    $('fa-state')?.addEventListener('click', e => {
+      const btn = e.target.closest('.fa-jump');
+      if (btn) editorJumpTo(btn.dataset.focus);
+    });
+
+    refreshEditorOverview();
+  }
+
+  function editorField(id) {
+    return ($(id)?.value || '').trim();
+  }
+
+  function editorPrice() {
+    return parseFloat($('f-price')?.value) || 0;
+  }
+
+  // Scoped to the editor's own containers: the New Listing overlay has photo and
+  // specifics rows of its own, and a document-wide count would add them in.
+  function editorPhotoCount() {
+    return [...document.querySelectorAll('#photo-url-list .photo-url-row input')]
+      .filter(input => input.value.trim()).length;
+  }
+
+  function editorSpecificCount() {
+    return [...document.querySelectorAll('#specifics-list .specific-row')]
+      .filter(row => (row.querySelector('input')?.value || '').trim()).length;
+  }
+
+  // The plain-text tab is only merged into the HTML field on a tab switch, so
+  // while it is open the field behind it lags what is being typed. Read the live
+  // one — and never call descCommitText() here, which would write to a field and
+  // make a listing look edited because a chip was refreshed.
+  function editorDescriptionLength() {
+    const plain = descActiveTab('f') === 'text' ? ($('f-desc-text')?.value || '') : '';
+    const text  = plain.trim() ? plain : ($('f-description')?.value || '').replace(/<[^>]*>/g, ' ');
+    return text.replace(/\s+/g, ' ').trim().length;
+  }
+
+  function setEditorChip(id, text, state) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'fp-chip' + (state ? ' ' + state : '');
+    // Only a blocker marks the panel. A mark that also fires on an opinion is a
+    // mark sellers learn to scroll past.
+    el.closest('details.form-panel')?.classList.toggle('is-incomplete', state === 'is-empty');
+  }
+
+  function refreshEditorOverview() {
+    if (!$('form-section')) return;
+
+    // Title and Category share a panel, so its chip has to answer for both.
+    const title   = editorField('f-title');
+    const catId   = editorField('f-category-id');
+    const catName = editorField('f-category');
+    setEditorChip('fp-title',
+      [title ? `${title.length} / 80` : 'no title',
+       catId ? (catName || `category ${catId}`) : 'no category'].join(' · '),
+      (!title || !catId) ? 'is-empty' : (title.length < EDITOR_TITLE_THIN ? 'is-thin' : ''));
+
+    const condition = $('f-condition');
+    const condText  = condition?.options[condition.selectedIndex]?.text || '—';
+    setEditorChip('fp-condition',
+      editorField('f-condition-desc') ? `${condText} · described` : condText, '');
+
+    const brand = editorField('f-brand');
+    const codes = ['f-mpn', 'f-upc', 'f-ean', 'f-isbn'].filter(id => editorField(id));
+    const idBits = [];
+    if (brand) idBits.push(brand);
+    if (codes.length) idBits.push(`${codes.length} identifier${codes.length === 1 ? '' : 's'}`);
+    setEditorChip('fp-ids', idBits.length ? idBits.join(' · ') : 'none set',
+      (brand && codes.length) ? '' : 'is-thin');
+
+    const specifics = editorSpecificCount();
+    setEditorChip('fp-specifics', specifics ? `${specifics} filled` : 'none', '');
+
+    const photos = editorPhotoCount();
+    setEditorChip('fp-photos',
+      photos ? `${photos} photo${photos === 1 ? '' : 's'}` : 'no photos',
+      photos === 0 ? 'is-empty' : (photos < EDITOR_PHOTOS_THIN ? 'is-thin' : ''));
+
+    const descLen = editorDescriptionLength();
+    setEditorChip('fp-description',
+      descLen ? `${descLen.toLocaleString()} characters` : 'empty', descLen ? '' : 'is-thin');
+
+    const price = editorPrice();
+    const qty   = parseInt($('f-quantity')?.value, 10) || 1;
+    const priceBits = [price > 0 ? moneyExact(price) : 'no price'];
+    if (qty > 1) priceBits.push(`qty ${qty}`);
+    if ($('f-best-offer')?.checked) priceBits.push('best offer');
+    setEditorChip('fp-pricing', priceBits.join(' · '), price > 0 ? '' : 'is-empty');
+
+    const lbs = parseFloat($('f-weight-lbs')?.value) || 0;
+    const oz  = parseFloat($('f-weight-oz')?.value) || 0;
+    const zip = editorField('f-location-zip');
+    const shipBits = [];
+    if (lbs || oz) shipBits.push(`${lbs} lb ${oz} oz`);
+    if (zip) shipBits.push(zip);
+    setEditorChip('fp-shipping', shipBits.length ? shipBits.join(' · ') : 'no weight or ZIP', '');
+
+    const format  = $('f-format');
+    const fmtText = format?.options[format.selectedIndex]?.text || '';
+    const days    = parseInt($('f-duration')?.value, 10) || 0;
+    setEditorChip('fp-options', days ? `${fmtText} · ${days} days` : fmtText, '');
+
+    renderEditorActionState();
+  }
+
+  // No aria-live on this: it is rewritten on every keystroke, and a region that
+  // announces the character count of a title being typed is a region that gets
+  // switched off. The same facts are on the panel each field lives in.
+  function renderEditorActionState() {
+    const bar = $('fa-state');
+    if (!bar) return;
+
+    const missing = EDITOR_BLOCKERS.filter(b => !b.filled());
+
+    if (missing.length === 0) {
+      const photos = editorPhotoCount();
+      bar.innerHTML =
+        '<span class="fa-dot"></span>' +
+        '<span><strong>The four things eBay requires are filled.</strong> ' +
+        `${esc(moneyExact(editorPrice()))} · ${photos} photo${photos === 1 ? '' : 's'}</span>`;
+      return;
+    }
+
+    // Each one is a button, not a word: the panel it lives in may be four screens
+    // down the form and closed.
+    bar.innerHTML =
+      '<span class="fa-dot is-empty"></span>' +
+      '<span>eBay won’t accept this yet — still empty:</span>' +
+      missing.map(b =>
+        `<button type="button" class="fa-jump" data-focus="${esc(b.focus)}">${esc(b.label)}</button>`
+      ).join('');
+  }
+
+  function editorJumpTo(id) {
+    const el = $(id);
+    if (!el) return;
+    el.closest('details')?.setAttribute('open', '');
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // Focus after the scroll settles, or the ring lands off-screen and the pane
+    // jumps a second time to catch up with it.
+    setTimeout(() => { try { el.focus({ preventScroll: true }); } catch { /* not focusable */ } }, 220);
   }
 
   function loadListingIntoForm(listing, sourceEl) {

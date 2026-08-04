@@ -239,6 +239,10 @@
   --e4: 0 4px 8px rgba(6, 27, 29, .06), 0 24px 60px rgba(6, 27, 29, .16);
   --e5: 0 8px 16px rgba(6, 27, 29, .08), 0 40px 90px rgba(6, 27, 29, .22);
   --shadow: var(--e3);
+  /* The same elevation thrown upward, for a bar pinned to the bottom of a
+     scroll. A downward shadow under a bottom-pinned bar lights it from the
+     wrong side and the content scrolling beneath it looks pasted on top. */
+  --e3-up: 0 -2px 4px rgba(6, 27, 29, .05), 0 -12px 28px rgba(6, 27, 29, .10);
   /* Gold glow for the primary action, and the inner highlight that makes a
      gold surface look like a lit edge rather than a flat swatch. */
   --glow-gold: 0 6px 18px rgba(199, 154, 54, .30);
@@ -1881,10 +1885,16 @@ label {
   font-weight: 550;
 }
 
+/* url and date were missing from this list, so every photo URL field in the
+   listing editor and all three date fields were being drawn by the browser
+   rather than by the app — white boxes with a default border, in the middle of
+   a form of tinted ones. */
 input[type="text"],
 input[type="number"],
 input[type="search"],
 input[type="password"],
+input[type="url"],
+input[type="date"],
 select,
 textarea {
   width: 100%;
@@ -1901,6 +1911,8 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 
 input[type="text"]:hover,
 input[type="number"]:hover,
+input[type="url"]:hover,
+input[type="date"]:hover,
 select:hover,
 textarea:hover { border-color: var(--line-strong); }
 
@@ -2012,11 +2024,15 @@ textarea {
   gap: 8px;
 }
 
+/* One photo per line. .photo-url-row is display:contents, so its input and its
+   remove button are the grid's own items and fall into these two columns — a
+   wrapping flex row instead packed four URLs across and truncated every one of
+   them to "https://i.ebayimg.com/p", which is the same string for all six. */
 .photo-url-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
 }
 
 .photo-url-row {
@@ -6525,6 +6541,186 @@ body.drawer-open {
 @media (prefers-reduced-motion: reduce) {
   .edit-drawer,
   .edit-drawer-overlay { transition: none; }
+}
+
+/* ── Listing editor: closed panels that still say something ──────────────────
+   The editor is ten collapsible panels. Collapsed, they used to be ten
+   identical grey bars — the seller had to open each one to find out whether
+   there were photos in it. Each summary now carries a chip with the state of
+   the panel, and the four things eBay refuses a listing without (title,
+   category, price, photo) mark their panel when they are empty.
+
+   Three chip states, and the difference between them is the whole point:
+   neutral is information, .is-thin is the app's opinion about what sells,
+   .is-empty is eBay's rule. Only .is-empty marks the panel, because a mark
+   that also fires on an opinion is a mark people learn to ignore. */
+
+/* .fp-sum only — the New Listing overlay shares .form-panel and its plain
+   summaries still need the caret pushed right by its own auto margin. */
+.form-panel > summary.fp-sum::after { margin-left: var(--s3); }
+
+.fp-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fp-chip {
+  flex: 0 0 auto;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An empty chip is a panel whose state hasn't been computed yet — no pill. */
+.fp-chip:empty { display: none; }
+
+.fp-chip.is-thin {
+  border-color: var(--warning-line);
+  background: var(--warning-tint);
+  color: var(--gold-ink);
+}
+
+.fp-chip.is-empty {
+  border-color: var(--warning-line);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: var(--fw-semibold);
+}
+
+/* The panel itself, when eBay would refuse the listing over what's inside it.
+   An inset rule rather than a border swap, so the panel does not change size
+   as the seller fills it in and shift everything below by a pixel. */
+.form-panel.is-incomplete,
+.form-panel.is-incomplete > summary {
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+.form-panel > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.form-panel > summary:hover { background: var(--soft-2); }
+.form-panel[open] > summary:hover { background: var(--line-soft); }
+
+/* ── Listing editor: the action bar that stays on screen ─────────────────────
+   Pinned to the bottom of whichever pane scrolls it — the edit drawer, or the
+   page when the form is inline. Floating card rather than a full-bleed strip:
+   the drawer's own padding stays visible down both sides, so the bar reads as
+   part of the form rather than as a second window chrome. */
+.form-actions-sticky {
+  position: sticky;
+  bottom: var(--s3);
+  z-index: 5;
+  margin-top: var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e3-up);
+  gap: var(--s4);
+}
+
+.fa-state {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: var(--lh-snug);
+}
+
+.fa-state strong {
+  color: var(--ink);
+  font-weight: var(--fw-semibold);
+}
+
+.fa-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--success-600);
+}
+
+.fa-dot.is-empty { background: var(--gold); }
+
+/* Each thing eBay is missing is a button, not a word: the panel it lives in
+   may be four screens away and closed. */
+.fa-jump {
+  padding: 2px var(--s2);
+  border: 1px solid var(--warning-line);
+  border-radius: var(--r-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-family: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--dur-1) ease, border-color var(--dur-1) ease;
+}
+
+.fa-jump:hover {
+  background: var(--gold-soft);
+  border-color: var(--gold);
+}
+
+.fa-jump:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.fa-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+/* The same fact as the drawer header's badge, at the other end of the form —
+   the header answers "is it safe to close this", the bar answers "is there
+   anything to press Save for". Quieter than the header's filled pill on
+   purpose: two identical gold pills on one screen is one of them shouting for
+   no reason. Driven entirely by the drawer's .dirty class, so there is no
+   second source of truth about whether the listing has been edited. */
+.fa-unsaved {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--gold-ink);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+}
+
+.fa-unsaved::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--gold);
+}
+
+.edit-drawer.dirty .fa-unsaved { display: inline-flex; }
+
+@media (max-width: 720px) {
+  .form-actions-sticky { padding: var(--s2) var(--s3); }
+  .fa-buttons { width: 100%; }
+  .fa-buttons .btn { flex: 1 1 auto; }
 }
 
 /* ── Market Research panel ───────────────────────────────────────────────── */
@@ -13732,6 +13928,7 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   --e3: 0 2px 4px rgba(0, 0, 0, .44), 0 12px 28px rgba(0, 0, 0, .44);
   --e4: 0 4px 8px rgba(0, 0, 0, .48), 0 24px 60px rgba(0, 0, 0, .56);
   --e5: 0 8px 16px rgba(0, 0, 0, .52), 0 40px 90px rgba(0, 0, 0, .66);
+  --e3-up: 0 -2px 4px rgba(0, 0, 0, .44), 0 -12px 28px rgba(0, 0, 0, .44);
   --inset-hi: inset 0 1px 0 rgba(246, 251, 251, .06);
   --inset-hi-strong: inset 0 1px 0 rgba(246, 251, 251, .10);
   --grad-sheen: linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, 0));
