@@ -933,6 +933,7 @@
     bindSniper();
     bindEarnings();
     bindTax();
+    bindStorePlan();
     bindRestock();
     bindPricePosition();
     bindPipeline();
@@ -1181,6 +1182,10 @@
     // imported since the last look changes the bill, and a stale bill is the one thing this screen
     // must not show.
     tax:         { section: 'tax-section',           open: showTaxSection, refresh: loadTaxPack },
+    // Not refreshed on every return: the listing count behind it is an eBay round trip, and this
+    // screen's answer moves on a scale of months, not minutes. "Recount my listings" is the button
+    // that goes back to eBay, and it is in the header where the seller can see it.
+    storeplan:   { section: 'storeplan-section',     open: showStorePlanSection },
     pipeline:    { section: 'pipeline-section',      open: showPipelineSection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
@@ -1562,7 +1567,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -8269,6 +8274,251 @@
     setText('tx-1099-figure', moneyExact(check.expectedGross || 0));
     const el = $('tx-1099');
     if (el) el.innerHTML = (check.notes || []).map(n => `<p>${esc(n)}</p>`).join('');
+  }
+
+  // ── The Store Plan ────────────────────────────────────────────────────────
+  // The third screen built on "what do you actually keep", and the only one whose answer is a single
+  // click on eBay that then pays every month for as long as the seller trades.
+  //
+  // Three rules, all of which are easy to "tidy" into their opposite:
+  //   * The hero is the ANNUAL saving. $17 a month reads as noise; $204 a year is what gets somebody
+  //     to open eBay's subscription page. The monthly figure is on the side, where it belongs.
+  //   * Every row prints its own arithmetic. The rate card lives in code and eBay changes it, so a
+  //     row a seller cannot check against eBay's fee page is a row they are right to distrust.
+  //   * This screen changes nothing on eBay, and says so on the screen rather than in a tooltip. It
+  //     is a recommendation about a subscription, and one that could start a $299/mo commitment on
+  //     its own should not exist.
+  let storePlan = null;
+  let storePlanRates = null;
+
+  function showStorePlanSection() {
+    hideOverlaySections();
+    $('storeplan-section')?.classList.remove('hidden');
+    setActiveNavItem('storeplan');
+    markWorkspaceTabOpen('storeplan');
+    if (!storePlan) loadStorePlan(); else renderStorePlan();
+  }
+
+  function closeStorePlanSection() { closeWorkspacePage('storeplan'); }
+
+  function bindStorePlan() {
+    on('sp-close', 'click', closeStorePlanSection);
+    on('sp-home', 'click', goHome);
+    on('sp-refresh', 'click', () => loadStorePlan());
+    on('sp-save', 'click', saveStorePlanSettings);
+
+    // The plan and the billing cycle are two-option choices; making the seller press Apply after
+    // picking one is a step with nothing in it. The listing box still needs Apply — re-costing on
+    // every keystroke of "1200" would flash three different answers on the way.
+    on('sp-plan', 'change', saveStorePlanSettings);
+    on('sp-billing', 'change', saveStorePlanSettings);
+    on('sp-listings', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveStorePlanSettings(); } });
+
+    on('sp-rates-toggle', 'click', () => {
+      const card = $('sp-rates-card'), btn = $('sp-rates-toggle');
+      if (!card || !btn) return;
+      const shown = !card.classList.toggle('hidden');
+      btn.textContent = shown ? 'Hide eBay\'s rate card' : 'Show eBay\'s rate card';
+      btn.setAttribute('aria-expanded', shown ? 'true' : 'false');
+      if (shown) loadStorePlanRates();
+    });
+  }
+
+  async function loadStorePlan() {
+    // The only path that asks eBay for the listing count. Everything else on this screen re-costs
+    // from the count already in hand, so changing a plan is instant and eBay is asked once.
+    try {
+      const res = await fetch('/api/store-plan');
+      if (!res.ok) throw new Error('Could not work out your store plan.');
+      storePlan = await res.json();
+      renderStorePlan();
+    } catch (err) {
+      setStorePlanNote(errorText(err, 'Could not work out your store plan.'), true);
+    }
+  }
+
+  async function loadStorePlanRates() {
+    if (storePlanRates) return;
+    try {
+      const res = await fetch('/api/store-plan/rates');
+      if (!res.ok) return;
+      storePlanRates = await res.json();
+      renderStorePlanRates();
+    } catch { /* the card is a cross-check, not the feature — a failed fetch stays quiet */ }
+  }
+
+  async function saveStorePlanSettings() {
+    const typed = num('sp-listings');
+    const body = {
+      planKey: $('sp-plan')?.value || 'none',
+      annualBilling: ($('sp-billing')?.value || 'annual') === 'annual',
+      // Zero and empty are the same gesture — "stop planning against a number I made up".
+      listingsOverride: typed !== null && typed > 0 ? Math.round(typed) : 0,
+      // What the screen already knows, so eBay is not asked again for a figure nothing changed.
+      // Null when eBay never answered: sending a 0 would have the server report a count it never
+      // measured as measured, and put the wrong footnote under the whole screen.
+      activeListings: storePlan?.listingCountMeasured ? (storePlan.activeListings ?? 0) : null,
+    };
+
+    try {
+      const res = await fetch('/api/store-plan/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text() || 'That could not be saved.');
+      storePlan = await res.json();
+      renderStorePlan();
+    } catch (err) {
+      setStorePlanNote(errorText(err, 'That could not be saved.'), true);
+    }
+  }
+
+  function setStorePlanNote(text, isError) {
+    const el = $('sp-controls-note');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('sp-note-error', !!isError);
+  }
+
+  function renderStorePlan() {
+    if (!storePlan) return;
+    const p = storePlan;
+    const known = p.listingsPerMonth > 0;
+
+    $('sp-results')?.classList.toggle('hidden', known);
+    $('sp-plans-card')?.classList.toggle('hidden', !known);
+    $('sp-detail')?.classList.toggle('hidden', !known);
+    $('sp-honesty')?.classList.toggle('hidden', !(p.honesty || []).length);
+
+    renderStorePlanControls(p);
+    renderStorePlanHero(p, known);
+
+    setText('sp-next', known ? (p.nextStep || '') : '');
+    const detail = $('sp-detail');
+    if (detail) detail.textContent = p.detail || '';
+
+    renderStorePlanBillingWin(p, known);
+
+    const honesty = $('sp-honesty');
+    if (honesty) honesty.innerHTML = (p.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+
+    if (!known) { const host = $('sp-plans'); if (host) host.innerHTML = ''; return; }
+    renderStorePlanRows(p);
+  }
+
+  function renderStorePlanControls(p) {
+    const select = $('sp-plan');
+    if (select && !select.options.length) {
+      // Built from the options the server costed, so the picker can never offer a tier the
+      // comparison below does not have a row for.
+      select.innerHTML = (p.options || [])
+        .map(o => `<option value="${esc(o.key)}">${esc(o.name)}</option>`).join('');
+    }
+    if (select && document.activeElement !== select) select.value = p.currentPlanKey || 'none';
+
+    const billing = $('sp-billing');
+    if (billing && document.activeElement !== billing) billing.value = p.billingCycle || 'annual';
+
+    const listings = $('sp-listings');
+    if (listings && document.activeElement !== listings)
+      listings.value = p.usingOverride ? p.listingsPerMonth : '';
+
+    if (p.status === 'ebay_unavailable') {
+      setStorePlanNote('eBay could not be reached, so the listing count could not be read. '
+        + 'Type how many listings you keep live and everything on this screen works from that.', true);
+      return;
+    }
+
+    setStorePlanNote('Nothing here changes anything on eBay. Switching plans is done on eBay\'s own '
+      + 'Store page — this only tells you which one to be on.', false);
+  }
+
+  function renderStorePlanHero(p, known) {
+    const worth = p.totalAnnualSaving || 0;
+
+    setText('sp-hero-label', worth > 0 ? 'Worth switching, over a year' : 'You are on the right plan');
+    setText('sp-hero-figure', moneyExact(worth));
+    setText('sp-hero-sub', p.headline || '');
+    setText('sp-hero-listings', known ? p.listingsPerMonth.toLocaleString() : '—');
+    setText('sp-hero-now', known ? `${moneyExact(p.currentMonthlyCost || 0)}/mo` : '—');
+    setText('sp-hero-best', known ? p.bestPlanName || '—' : '—');
+
+    // Gold when there is money on the table, plain when there is not. A hero that always looks
+    // urgent is one a seller stops reading.
+    $('storeplan-section')?.querySelector('.sp-hero')?.classList.toggle('sp-hero-win', worth > 0);
+  }
+
+  function renderStorePlanBillingWin(p, known) {
+    const el = $('sp-billing-win');
+    if (!el) return;
+    const show = known && (p.billingMonthlySaving || 0) > 0 && !!p.billingNote;
+    el.classList.toggle('hidden', !show);
+    if (show) el.textContent = p.billingNote;
+  }
+
+  function renderStorePlanRows(p) {
+    const host = $('sp-plans');
+    if (!host) return;
+
+    host.innerHTML = (p.options || []).map(o => {
+      const tags = [
+        o.isCurrent ? '<span class="sp-tag sp-tag-current">You are here</span>' : '',
+        o.isBest ? '<span class="sp-tag sp-tag-best">Cheapest for you</span>' : '',
+        o.annualBillingOnly ? '<span class="sp-tag sp-tag-note">Annual only</span>' : '',
+      ].join('');
+
+      // The delta is the number the seller acts on, so it is signed and stated in plain words
+      // rather than left as a bare figure they have to work out the direction of.
+      const delta = o.isCurrent
+        ? '<span class="sp-delta sp-delta-flat">what you pay today</span>'
+        : (o.monthlyDelta < 0
+          ? `<span class="sp-delta sp-delta-down">${moneyExact(Math.abs(o.monthlyDelta))} a month less</span>`
+          : (o.monthlyDelta > 0
+            ? `<span class="sp-delta sp-delta-up">${moneyExact(o.monthlyDelta)} a month more</span>`
+            : '<span class="sp-delta sp-delta-flat">the same as today</span>'));
+
+      return `
+        <div class="sp-plan${o.isCurrent ? ' is-current' : ''}${o.isBest ? ' is-best' : ''}">
+          <div class="sp-plan-head">
+            <span class="sp-plan-name">${esc(o.name)}</span>
+            ${tags}
+          </div>
+          <div class="sp-plan-cost">${moneyExact(o.monthlyCost)}<span class="sp-plan-per">/mo</span></div>
+          <div class="sp-plan-year">${moneyExact(o.annualCost)} a year</div>
+          ${delta}
+          <p class="sp-basis">${esc(o.basis)}</p>
+          <p class="sp-band">${esc(storePlanBand(o))}</p>
+          <p class="sp-unlocks">${esc(o.unlocks)}</p>
+        </div>`;
+    }).join('');
+  }
+
+  // The band is the half of this screen that keeps working after the switch: it says where the next
+  // change lands, so a seller grows into a new tier on purpose rather than finding it in a statement.
+  function storePlanBand(o) {
+    if (o.neverCheapest)
+      return 'Never the cheapest plan at any listing count — something else always beats it.';
+    if (o.cheapestTo === null || o.cheapestTo === undefined)
+      return `Cheapest from ${o.cheapestFrom.toLocaleString()} listings up, with nothing above it.`;
+    return `Cheapest between ${o.cheapestFrom.toLocaleString()} and ${o.cheapestTo.toLocaleString()} listings.`;
+  }
+
+  function renderStorePlanRates() {
+    const host = $('sp-rates');
+    if (!host || !storePlanRates) return;
+
+    host.innerHTML = (storePlanRates.tiers || []).map(t => `
+      <div class="sp-rate">
+        <span class="sp-rate-name">${esc(t.name)}</span>
+        <span class="sp-rate-cell">${t.annualBilling > 0 ? `${moneyExact(t.annualBilling)}/mo billed annually` : 'free'}</span>
+        <span class="sp-rate-cell">${t.monthlyBilling === null || t.monthlyBilling === undefined
+          ? 'annual commitment only'
+          : (t.monthlyBilling > 0 ? `${moneyExact(t.monthlyBilling)}/mo billed monthly` : 'free')}</span>
+        <span class="sp-rate-cell">${t.freeListings.toLocaleString()} free listings a month</span>
+        <span class="sp-rate-cell">${moneyExact(t.insertionFeeAfter)} each after that</span>
+      </div>`).join('')
+      + `<p class="sp-rates-note">${esc(storePlanRates.note || '')}</p>`;
   }
 
   // ── The Restock List ──────────────────────────────────────────────────────

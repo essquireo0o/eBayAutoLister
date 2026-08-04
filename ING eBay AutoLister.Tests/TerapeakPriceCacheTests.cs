@@ -15,6 +15,7 @@ namespace ING_eBay_AutoLister.Tests;
 /// against the account. A key that hits when it should miss serves one item's price for a different
 /// item, permanently, with nothing on screen saying so.
 /// </summary>
+[Collection(PooledSqliteTests.Name)]
 public class TerapeakPriceCacheTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ing-tpcache-" + Guid.NewGuid().ToString("N"));

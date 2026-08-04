@@ -4,6 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace ING_eBay_AutoLister.Tests;
 
+[Collection(PooledSqliteTests.Name)]
 public class MarketPriceEstimatorTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ing-estimator-" + Guid.NewGuid().ToString("N"));

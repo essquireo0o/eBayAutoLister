@@ -6,6 +6,7 @@ namespace ING_eBay_AutoLister.Tests;
 // The one hard requirement on this table: pressing Import twice must not double the seller's
 // earnings. The natural way to use that button is to press it again, so an import that appends
 // instead of updating would inflate the headline every single time.
+[Collection(PooledSqliteTests.Name)]
 public class EarningsStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"earnings_{Guid.NewGuid():N}.db");

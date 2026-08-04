@@ -11,6 +11,7 @@ namespace ING_eBay_AutoLister.Tests;
 // The failure mode that matters is the mirror of the earnings tracker's. There, a total that is too
 // BIG is a lie about money the seller has. Here, a total that is too SMALL is a seller who spent
 // the tax money, so every rounding that could go either way goes against them.
+[Collection(PooledSqliteTests.Name)]
 public class TaxPackCalculatorTests
 {
     private static readonly DateTimeOffset Now = new(2026, 7, 30, 12, 0, 0, TimeSpan.Zero);

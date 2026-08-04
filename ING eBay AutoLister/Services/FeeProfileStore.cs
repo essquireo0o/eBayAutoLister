@@ -1,3 +1,4 @@
+using System.Globalization;
 using ING_eBay_AutoLister.Models;
 using Microsoft.Data.Sqlite;
 
@@ -174,6 +175,65 @@ public sealed class FeeProfileStore
         return clean;
     }
 
+    // ── The Store Plan's three seller-supplied answers ───────────────────────────────────────
+    // Which eBay Store tier the seller is on, how they pay for it, and — optionally — a listing
+    // count they want to plan against instead of the one eBay reports. None of the three is
+    // derivable: eBay's APIs do not report the account's own subscription, and asking on every
+    // visit would make a screen whose whole point is one glance into a questionnaire.
+    //
+    // Same table as the tax bracket and for the same reason: FeeProfile round-trips through the
+    // Fees & Costs screen, which knows nothing about any of this, so saving fees there would
+    // quietly reset it.
+    private const string StorePlanKey = "store_plan_key";
+    private const string StorePlanBillingKey = "store_plan_annual_billing";
+    private const string StorePlanListingsKey = "store_plan_listings_override";
+
+    /// <summary>The seller's stored plan, or "no store" billed annually — what a seller who has never chosen is on.</summary>
+    public StorePlanSettings LoadStorePlan()
+    {
+        var values = ReadAll();
+        var settings = new StorePlanSettings();
+
+        if (values.TryGetValue(StorePlanKey, out var key) && StorePlanCatalog.Find(key) is not null)
+            settings.PlanKey = StorePlanCatalog.Resolve(key).Key;
+
+        if (values.TryGetValue(StorePlanBillingKey, out var billing))
+            settings.AnnualBilling = billing is "1" or "true" or "True";
+
+        // A stored 0 means "no override" rather than "plan against nothing" — an empty box and a
+        // zero in the box are the same gesture from the seller, and neither is a real listing count.
+        if (values.TryGetValue(StorePlanListingsKey, out var listings)
+            && int.TryParse(listings, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
+            && count > 0)
+            settings.ListingsOverride = Math.Min(count, StorePlanCatalog.LadderCeiling);
+
+        return settings;
+    }
+
+    /// <summary>Stores the plan and returns what was actually kept after the key was checked.</summary>
+    public StorePlanSettings SaveStorePlan(StorePlanSettings settings)
+    {
+        var clean = new StorePlanSettings
+        {
+            PlanKey = StorePlanCatalog.Resolve(settings.PlanKey).Key,
+            AnnualBilling = settings.AnnualBilling,
+            ListingsOverride = settings.ListingsOverride is int n && n > 0
+                ? Math.Min(n, StorePlanCatalog.LadderCeiling)
+                : null,
+        };
+
+        WriteValues(new Dictionary<string, string>
+        {
+            [StorePlanKey] = clean.PlanKey,
+            [StorePlanBillingKey] = clean.AnnualBilling ? "1" : "0",
+            // "0" rather than a deleted row: an older build's value must not survive a seller
+            // clearing the box, and a row that is present and zero reads back as "no override".
+            [StorePlanListingsKey] = (clean.ListingsOverride ?? 0).ToString(CultureInfo.InvariantCulture),
+        });
+
+        return clean;
+    }
+
     // ── Mapping to and from the wire shape ───────────────────────────────────────────────────
 
     public static FeeProfileView ToView(FeeProfile profile) => new()
@@ -210,6 +270,33 @@ public sealed class FeeProfileStore
         };
         profile.Sanitize();
         return profile;
+    }
+
+    /// <summary>One upsert per key inside one transaction, so a half-written setting is not a state.</summary>
+    private void WriteValues(IReadOnlyDictionary<string, string> values)
+    {
+        lock (_gate)
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var stamp = DateTimeOffset.UtcNow.ToString("O");
+
+            foreach (var (key, value) in values)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO fee_profile (key, value, updated_at) VALUES (@key, @value, @updated_at)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+                    """;
+                command.Parameters.AddWithValue("@key", key);
+                command.Parameters.AddWithValue("@value", value);
+                command.Parameters.AddWithValue("@updated_at", stamp);
+                command.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
     }
 
     private Dictionary<string, string> ReadAll()

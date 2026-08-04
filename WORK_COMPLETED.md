@@ -9129,3 +9129,160 @@ No front-end file changed, so `index.html` keeps its current `?v=`.
   `/api/photos/library*` routes are thin and unchanged, but nothing pins their JSON shape.
 - **`GetAllFolders` creates the four seed folders as a side effect of reading.** Pinned as current
   behaviour rather than changed — the UI relies on the empty folders being there to invite a shoot.
+
+## The eBay bill that arrives whether you sell anything or not — the Store Plan (autonomous session, 2026-08-04)
+
+Every money screen in this app prices a decision about an item: what to buy it for, what to list it
+at, what to accept for it. Every one of them is a forecast, and every one needs the seller to go and
+do something risky with the answer.
+
+This one prices the subscription. It is the only recurring charge in the business the app can both
+see and fix, the seller changes no listing and takes no risk acting on it, and the whole thing is
+arithmetic over three published numbers rather than a market call.
+
+## The money
+
+A fixed-price listing renews every 30 days, and **each renewal spends one of that month's
+zero-insertion-fee listings**. So the number of listings a seller keeps live *is* their monthly
+insertion bill — and that number is one this app already reads off eBay and nothing else on the
+market can see. Vendoo, List Perfectly, ZIK and Crosslist are all looking at items; none of them is
+looking at the account.
+
+Two cases, both common, both expensive, and they run in opposite directions:
+
+| Situation | What it costs now | What the screen says | Worth |
+|---|---|---|---|
+| 900 listings, no Store subscription | 650 × $0.35 = **$227.50/mo** | Basic Store, $21.95, covers 1,000 | **$2,466.60 a year** |
+| 214 listings, Basic Store bought years ago | **$21.95/mo** | You are inside the free 250 everybody gets | **$263.40 a year** |
+
+The second is the one nobody looks for. A store bought for a catalogue that has since shrunk is a
+bill for an allotment the seller is not using, and there is no moment at which eBay mentions it.
+
+There is a third, smaller and free: the same tier billed annually rather than monthly. Basic is
+$27.95 monthly and $21.95 annually — same allotment, same fees, $72 a year for committing to a plan
+the seller was staying on anyway. It is reported separately from the plan change, so a seller
+already on the right tier is never told "nothing to do" while money is still on the table.
+
+## The ladder, which is the half that keeps working after the switch
+
+Each tier reports the band of listing counts over which it is the cheapest of them all, so growing
+into the wrong plan is something the seller sees coming rather than finds in a statement:
+
+| Tier | Cheapest between |
+|---|---|
+| No store | 0 and 312 listings |
+| Basic Store | 313 and 1,152 |
+| Premium Store | 1,153 and 12,400 |
+| Anchor Store | 12,401 and 79,000 |
+| Enterprise Store | 79,001 up |
+| **Starter Store** | **never** |
+
+That last row is the finding, and it is arithmetic rather than an opinion: Starter's allotment is
+the same 250 free listings every seller already gets, so by the time its cheaper insertion fee has
+repaid the subscription, Basic's thousand-listing allotment has already won. It is the tier sellers
+buy first. Every crossover above is hand-checkable — at 312 listings the free allotment leaves 62
+chargeable at $0.35 = $21.70, a nickel under Basic's $21.95; one more listing and the store is
+cheaper forever after.
+
+Ties go to the smaller commitment. At exactly 1,152 listings Basic and Premium both cost $59.95, and
+recommending the $59.95/mo subscription on a coin toss is how a seller ends up worse off for having
+followed the advice.
+
+## What it refuses to do
+
+- **It does not model final value fees.** eBay sets those by category and publishes no per-account
+  rate. Folding a guess at them into this comparison would swing the recommendation on a number
+  nobody can audit, and the three things the tiers genuinely differ on decide the question anyway.
+- **It does not price the perks.** A storefront page is worth a lot to one seller and nothing to the
+  next. Each tier states what it unlocks and the seller values it. The one this app can speak to
+  first-hand is on the Basic row: below that tier, eBay serves the app's own Terapeak comps path a
+  subscription wall — see `TerapeakPageWall.Subscription`.
+- **It changes nothing on eBay.** There is no API to switch a subscription, and a screen that could
+  quietly start a $299/mo commitment should not exist. The screen says so in its own text and a test
+  pins that there is exactly one POST on it — the seller's own three answers.
+- **It does not count auctions.** They have their own allotments and their own fees, and the footnote
+  says so rather than letting them be silently folded in.
+- **The rate card is served in full** at `/api/store-plan/rates`, one click from the board, so a
+  seller can check every number a recommendation was made from against eBay's fee page in ten
+  seconds. A rate card in code goes stale; one nobody can see goes stale invisibly.
+
+## The three things the seller has to supply
+
+eBay's APIs do not report an account's own subscription, so the plan, the billing cycle and an
+optional "plan against this count instead" live in the `fee_profile` table beside the tax bracket —
+not on `FeeProfile`, which round-trips through the Fees & Costs screen and would quietly reset them.
+Tests hold both directions of that.
+
+The override answers the second reason to open the screen: *what should I be on if I get to 1,500?*,
+which has to be answerable without listing 600 more items first. Empty and zero are treated as the
+same gesture, and a count that did not come from eBay is never reported as though it had.
+
+## The test-suite defect this turned up
+
+Adding seven `FeeProfileStoreTests` was enough to start failing the suite in unrelated places —
+`WorkRecoveryStoreTests` and `MarketplaceRepositoryTests`, with
+`ObjectDisposedException: 'SQLitePCL.sqlite3'`, and a different victim each run.
+
+Fourteen test classes write to their own temp database and call
+`SqliteConnection.ClearAllPools()` to release the file handle before deleting it. That call is
+exactly as global as it sounds: it disposes every pooled connection **in the process**, including
+ones another test class is mid-query on. More classes calling it means more overlaps. HEAD was green
+at 3,097 tests; the same run with the new ones was red twice in a row, in two different places.
+
+They are now one xUnit collection with `DisableParallelization`, which matches the cause — a pool
+clear is a process-wide event, so the classes that fire one run one at a time. The alternative,
+clearing only the pool for the test's own connection string, was rejected: it depends on every store
+building its connection string identically to the test that cleans up after it, which is a silent
+per-class assumption that would rot. The suite goes from 15s to ~40s and stops being a coin toss.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Models/StorePlanModels.cs` | New — the tier, the costed option, the inputs, the result, the saved settings |
+| `ING eBay AutoLister/Services/StorePlanCatalog.cs` | New — eBay's published US rate card, `MonthlyCost`, `Cheapest`, and the memoized ladder |
+| `ING eBay AutoLister/Services/StorePlanOptimizer.cs` | New — costs every tier, picks one, and writes the sentences |
+| `ING eBay AutoLister/Services/FeeProfileStore.cs` | `LoadStorePlan` / `SaveStorePlan`, and a shared `WriteValues` |
+| `ING eBay AutoLister/Program.cs` | `StorePlanOptimizer` registered; `GET /api/store-plan`, `POST /api/store-plan/settings`, `GET /api/store-plan/rates` |
+| `ING eBay AutoLister/wwwroot/index.html` | Sidebar entry under Tax Pack; the `#storeplan-section` screen; `app.js?v=111`, `style.css?v=98` |
+| `ING eBay AutoLister/wwwroot/app.js` | The Store Plan module — load, save, render, the band wording and the rate card |
+| `ING eBay AutoLister/wwwroot/style.css` | `.sp-*` — the controls, the tier cards, the deltas, the rate card, and the 860px stack |
+| `ING eBay AutoLister.Tests/StorePlanOptimizerTests.cs` | New — 38 tests |
+| `ING eBay AutoLister.Tests/StorePlanAssetTests.cs` | New — 14 tests |
+| `ING eBay AutoLister.Tests/FeeProfileStoreTests.cs` | 7 new tests for the saved plan |
+| `ING eBay AutoLister.Tests/PooledSqliteTests.cs` | New — the collection the fourteen pool-clearing classes now share |
+| `store_plan_board.png` | The board at 900 listings with no store |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,161 passed**, 0 failed, 0 skipped (64 of them new; was 3,097) |
+| The same suite, re-run | green — it was red twice before the collection fix |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `/api/store-plan*` mocked) | hero, six tier cards, the "never cheapest" band, the next-step line, the rate card, a plan change, the listing override and dark theme — **no page errors** |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the three endpoints mocked in the shape the C# returns. That exercises every
+line of the render path; what it cannot exercise is the endpoints themselves, which are thin and
+covered by the service tests underneath them.
+
+## Known limits
+
+- **The listing count is every active listing, not every fixed-price one.** `GetListingsAsync` does
+  not report listing format, so an account running auctions has them counted against a fixed-price
+  allotment. The footnote says auctions are not modelled; it cannot yet say "and three of the 900
+  above are auctions".
+- **Listings created and ended inside one month are not counted.** The count is what is live at the
+  moment of asking, so a seller with high churn is charged for more than this screen shows — which
+  makes the bigger tier worth *more* than it says, never less. Stated in the footnotes.
+- **The rate card is a snapshot.** eBay changes these prices and the app cannot read them. The card
+  is served in full and every screen carries the warning, but a seller who never opens it and never
+  checks eBay could act on a stale number.
+- **Nothing feeds the store fee back into the profit figures.** `FeeProfile` still has no line for a
+  monthly subscription, so a $21.95 store is not amortised across the month's sales anywhere else in
+  the app. That is a real gap and a bigger change than this one: it would move every net-profit
+  figure on every screen.
+- **The endpoints have no tests of their own.** The optimizer, the catalogue and the settings store
+  are covered; the three routes that assemble them are thin, but nothing pins their JSON shape.

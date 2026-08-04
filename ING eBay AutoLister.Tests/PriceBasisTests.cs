@@ -18,6 +18,7 @@ namespace ING_eBay_AutoLister.Tests;
 /// median, because the weighted one is what the blend consumed — quoting the plain median beside a
 /// weight that was never applied to it would produce a trail that reads correct and doesn't add up.
 /// </summary>
+[Collection(PooledSqliteTests.Name)]
 public class PriceBasisTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ing-pricebasis-" + Guid.NewGuid().ToString("N"));

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=97" />
+  <link rel="stylesheet" href="style.css?v=98" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -101,6 +101,12 @@
              made, and how much of it was never yours. Sellers who never open it once a year are the
              ones who overpay, so it sits in the nav rather than behind a link on the earnings page. -->
         <button class="nav-item" type="button" data-page="tax"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Tax Pack</button>
+        <!-- The third of the three "what do you actually keep" screens, and the only one that costs
+             money whether the seller sells anything or not. It sits beside Money Made and the Tax
+             Pack rather than under the sourcing tools because it is not a tool — it is a bill, it
+             arrives every month, and most sellers chose their tier once at a listing count they no
+             longer have. Nothing else on this list can be fixed in one click and never revisited. -->
+        <button class="nav-item" type="button" data-page="storeplan"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Store Plan</button>
         <!-- The thread between every other screen: one flip from the forecast that justified it to
              the sale that settled it. Next to Money Made because between them they answer "what
              have I made" and "what's still out there" — the two halves of the same question. -->
@@ -4077,6 +4083,131 @@
         </div>
       </section>
 
+      <!-- The Store Plan. The third screen built on "what do you actually keep", and the only one
+           whose answer is a single click on eBay that then pays every month for as long as the
+           seller trades.
+
+           The number the whole screen turns on is how many listings the account keeps live — which
+           this app can count and no crosslisting tool can. A fixed-price listing renews every 30
+           days and each renewal spends one of the month's zero-insertion-fee listings, so that count
+           IS the monthly bill.
+
+           Two rules the design keeps:
+             * The hero is the ANNUAL saving, not the monthly bill. A $17 monthly figure reads as
+               noise; the $204 it is worth over a year is the number that gets somebody to act.
+             * Every row shows its arithmetic. The rate card is in code and eBay changes it, so a
+               row a seller cannot check is a row they are right not to trust. -->
+      <section id="storeplan-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="sp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">The eBay bill that arrives whether you sell or not</div>
+              <h2>🏪 Store Plan</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="sp-refresh" class="btn btn-secondary" type="button">Recount my listings</button>
+            <button id="sp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- The saving over a year, because that is the size of the decision. The sub-line carries
+               the instruction; the side stats carry the three facts it was worked out from. -->
+          <div class="er-hero sp-hero">
+            <div class="er-hero-main">
+              <p id="sp-hero-label" class="er-hero-label">Worth switching, over a year</p>
+              <p id="sp-hero-figure" class="er-hero-figure">$0</p>
+              <p id="sp-hero-sub" class="er-hero-sub">counting the listings you keep live…</p>
+            </div>
+            <div class="er-hero-side">
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Listings you keep live</span>
+                <span id="sp-hero-listings" class="er-hero-stat-value">—</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">You pay now</span>
+                <span id="sp-hero-now" class="er-hero-stat-value">—</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Cheapest plan</span>
+                <span id="sp-hero-best" class="er-hero-stat-value">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- eBay publishes no API for an account's own subscription, so these three are the only
+               things on the screen the seller has to supply — and they are supplied inline, next to
+               what they change, rather than on a settings page nobody would find. -->
+          <div class="sp-controls">
+            <div class="sp-field">
+              <label for="sp-plan">The plan you are on today</label>
+              <select id="sp-plan" class="sp-select"></select>
+            </div>
+            <div class="sp-field">
+              <label for="sp-billing">How you pay for it</label>
+              <select id="sp-billing" class="sp-select">
+                <option value="annual">Billed annually</option>
+                <option value="monthly">Billed monthly</option>
+              </select>
+            </div>
+            <div class="sp-field">
+              <label for="sp-listings">Plan against a different count</label>
+              <input id="sp-listings" type="number" min="0" step="10" placeholder="live count" />
+            </div>
+            <button id="sp-save" class="btn btn-primary small" type="button">Apply</button>
+          </div>
+          <p id="sp-controls-note" class="sp-note">Nothing here changes anything on eBay. Switching plans is done on eBay's own Store page — this only tells you which one to be on.</p>
+
+          <!-- The arithmetic of both sides in one paragraph, before any table. A seller who reads
+               only this line has enough to act on. -->
+          <div id="sp-detail" class="sp-detail hidden"></div>
+
+          <!-- The one saving with no trade-off attached: the same tier, billed annually. -->
+          <div id="sp-billing-win" class="sp-billing-win hidden"></div>
+
+          <div id="sp-plans-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Every tier, costed against your listings</p>
+                <h3 id="sp-plans-title">What each plan would cost you a month</h3>
+              </div>
+              <button id="sp-rates-toggle" class="btn btn-ghost small" type="button" aria-expanded="false">Show eBay's rate card</button>
+            </div>
+            <div id="sp-plans" class="sp-plans"></div>
+            <p id="sp-next" class="sp-next"></p>
+          </div>
+
+          <!-- The published rates on their own, with nothing computed from them, so the seller can
+               check the card against eBay's fee page in ten seconds. -->
+          <div id="sp-rates-card" class="viz-panel hidden">
+            <div class="viz-panel-head">
+              <div>
+                <p class="eyebrow">eBay's published US Store rates</p>
+                <h3>The numbers every figure above came from</h3>
+              </div>
+            </div>
+            <div id="sp-rates" class="sp-rates"></div>
+          </div>
+
+          <div id="sp-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">The one eBay bill you can cut without selling anything.</div>
+              <p class="state-body">Every fixed-price listing renews every 30 days, and each renewal spends one of that month's free listings. So the number of listings you keep live decides your store bill — and most sellers picked their tier once, at a listing count they no longer have. Connect eBay and this counts them for you, then prices all six tiers against that count.</p>
+              <div class="state-actions">
+                <button class="btn btn-secondary" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;settings&quot;]')?.click()">Connect eBay in Settings</button>
+              </div>
+              <p class="state-hint">Or type the number of listings you keep live in the box above — everything on this screen works from that one figure.</p>
+            </div>
+          </div>
+
+          <div id="sp-honesty" class="inv-footnote hidden"></div>
+        </div>
+      </section>
+
       <!-- The Restock List. The third screen built from the same completed sales as Money Made and
            the Tax Pack, which is why it sits beside them here even though it lives under Grow in the
            sidebar: those two say what the seller made and what they owe on it, and this one says
@@ -5584,6 +5715,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=110"></script>
+  <script src="app.js?v=111"></script>
 </body>
 </html>

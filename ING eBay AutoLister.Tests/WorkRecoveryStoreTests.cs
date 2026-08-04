@@ -6,6 +6,7 @@ namespace ING_eBay_AutoLister.Tests;
 // listing whose AI-written title, description and specifics cost real API spend and a minute or two
 // of waiting — so the cases that matter are: does it come back, does it come back only once, and does
 // it stay bounded when autosave fires every few seconds while someone types.
+[Collection(PooledSqliteTests.Name)]
 public class WorkRecoveryStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"work_recovery_{Guid.NewGuid():N}.db");

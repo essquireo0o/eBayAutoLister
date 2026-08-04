@@ -6,6 +6,7 @@ namespace ING_eBay_AutoLister.Tests;
 // This is the only guard in the app standing between a lost response and two live eBay listings for
 // one physical item — two insertion fees, two audiences, and an oversell as soon as one sells. Each
 // test below is a way that could happen.
+[Collection(PooledSqliteTests.Name)]
 public class PublishGuardTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"publish_guard_{Guid.NewGuid():N}.db");

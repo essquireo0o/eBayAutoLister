@@ -19,6 +19,7 @@ namespace ING_eBay_AutoLister.Tests;
 /// Nothing here launches a browser. Every path below is reachable from a temp session file, a temp
 /// SQLite database and a string.
 /// </summary>
+[Collection(PooledSqliteTests.Name)]
 public class TerapeakMarketServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ing-tpmarket-" + Guid.NewGuid().ToString("N"));

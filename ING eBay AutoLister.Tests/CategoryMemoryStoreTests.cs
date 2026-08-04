@@ -5,6 +5,7 @@ namespace ING_eBay_AutoLister.Tests;
 // What the app remembers about where the seller files things. Two properties matter here and
 // nothing else does: it must not grow without limit on somebody's disk, and it must never learn
 // something that would produce an unpublishable suggestion later.
+[Collection(PooledSqliteTests.Name)]
 public class CategoryMemoryStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"cat_memory_{Guid.NewGuid():N}.db");

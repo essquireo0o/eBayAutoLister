@@ -15555,6 +15555,201 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   The Store Plan — which eBay Store subscription to be on
+   Cards rather than a table, for the same reason the Restock List is: every
+   tier carries its own arithmetic and the band of listing counts it wins
+   over, and neither is the shape of a table cell. Six tiers is few enough
+   that a grid reads at a glance and no row needs to be scrolled to.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* The hero only goes gold when there is money on the table. A screen that
+   always looks urgent is one the seller stops reading. */
+.sp-hero-win { box-shadow: inset 0 0 0 1px var(--gold); }
+
+.sp-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s2);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+.sp-field { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
+
+.sp-field label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sp-note {
+  margin: 0 0 var(--s5);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.sp-note-error { color: var(--danger); }
+
+/* The arithmetic of both sides, in one paragraph, before any table. A seller
+   who reads only this line has enough to act on. */
+.sp-detail {
+  margin: 0 0 var(--s4);
+  padding: var(--s4);
+  border-left: 4px solid var(--teal-700);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+/* Gold, like every other block in this app that is money the seller has not
+   collected yet: the same plan, billed annually, for less. */
+.sp-billing-win {
+  margin: 0 0 var(--s5);
+  padding: var(--s4);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--r-sm);
+  background: var(--gold-soft);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.sp-plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: var(--s3);
+}
+
+.sp-plan {
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+}
+
+/* A tier that is neither the seller's nor the answer is context, not noise —
+   it recedes rather than disappearing, because the bands between them are
+   what tell the seller where the next change lands. */
+.sp-plan { opacity: .74; }
+.sp-plan.is-current, .sp-plan.is-best { opacity: 1; }
+
+.sp-plan.is-best {
+  border-color: var(--gold);
+  box-shadow: inset 0 0 0 1px var(--gold);
+}
+
+.sp-plan.is-current { border-color: var(--teal-700); }
+
+.sp-plan-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s2);
+}
+
+.sp-plan-name {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sp-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+.sp-tag-current { background: var(--teal-900); color: #fff; }
+.sp-tag-best { background: var(--gold); color: #1b1405; }
+.sp-tag-note { border: 1px solid var(--line); color: var(--muted); }
+
+.sp-plan-cost {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-plan-per { margin-left: 2px; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+
+.sp-plan-year { font-size: var(--fs-xs); color: var(--muted); }
+
+/* Signed and stated in words. A bare figure leaves the seller to work out
+   which direction it goes, which is the one thing this screen is for. */
+.sp-delta {
+  display: inline-block;
+  margin-top: var(--s2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.sp-delta-down { color: var(--e3-up); }
+.sp-delta-up { color: var(--danger); }
+.sp-delta-flat { color: var(--muted); font-weight: 600; }
+
+.sp-basis, .sp-band, .sp-unlocks {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.sp-band { color: var(--ink); font-weight: 600; }
+
+.sp-next {
+  margin: var(--s4) 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* The published card on its own, with nothing computed from it, so it can be
+   checked against eBay's fee page line by line. */
+.sp-rates { display: flex; flex-direction: column; gap: var(--s2); }
+
+.sp-rate {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) repeat(4, minmax(120px, 1fr));
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.sp-rate-name { font-weight: 700; color: var(--ink); font-size: var(--fs-xs); }
+.sp-rate-cell { font-variant-numeric: tabular-nums; }
+
+.sp-rates-note {
+  margin: var(--s3) 0 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* Below this the rate card's five columns are two words wide each, so it
+   stacks into a list per tier rather than shredding every line. */
+@media (max-width: 860px) {
+  .sp-rate { grid-template-columns: 1fr; gap: 2px; }
+  .sp-controls { align-items: stretch; }
+  .sp-field { min-width: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    The Restock List — what to go and buy again
    Cards rather than a table: every row carries a headline sentence and a
    list of cautions, and a table cell is the wrong shape for either. The

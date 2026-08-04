@@ -6,6 +6,7 @@ namespace ING_eBay_AutoLister.Tests;
 // The one hard requirement on this table: pressing "Track" twice on the same local post must not
 // produce two cards. A duplicate deal duplicates its capital at risk and its projected profit into
 // every total on the board, which is how a pipeline starts lying about how much money is out.
+[Collection(PooledSqliteTests.Name)]
 public class DealStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"deals_{Guid.NewGuid():N}.db");

@@ -5,6 +5,7 @@ namespace ING_eBay_AutoLister.Tests;
 // Cost basis is the one number in the profit calculation that eBay cannot supply, so losing it
 // silently — on a relist, or on a save that collides with an existing row — would quietly turn
 // every break-even check back into a guess.
+[Collection(PooledSqliteTests.Name)]
 public class CostBasisStoreTests : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"cost_basis_{Guid.NewGuid():N}.db");

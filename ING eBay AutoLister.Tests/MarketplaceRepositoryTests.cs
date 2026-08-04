@@ -74,6 +74,7 @@ public sealed class MarketplaceRepositoryFixture : IDisposable
     }
 }
 
+[Collection(PooledSqliteTests.Name)]
 public class MarketplaceRepositoryTests : IClassFixture<MarketplaceRepositoryFixture>
 {
     private readonly MarketplaceRepositoryFixture _fixture;
