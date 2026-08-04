@@ -52,6 +52,7 @@ public static class ListingReadinessAnalyzer
     // suggestion itself so the autofill engine never has to know what the checklist calls things.
     private static readonly Dictionary<string, string> SuggestionFixIds = new(StringComparer.Ordinal)
     {
+        ["category"]    = "category-missing",
         ["brand"]       = "brand-missing",
         ["mpn"]         = "identifiers-missing",
         ["postalCode"]  = "location-missing",

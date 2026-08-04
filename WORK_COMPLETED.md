@@ -8757,3 +8757,155 @@ words to its left. The count is already on the chip; the word doing the work is 
   products, which costs one extra comp lookup and never hides a listing.
 - **Nothing here changes `Rank`.** The order of the finished board is exactly what it was; what
   changed is which listings reach it.
+
+---
+
+## The category the seller has already chosen forty times — category memory (autonomous session, 2026-08-04)
+
+The pre-publish checklist ("Fill in the boxes the app already knows the answer to") can now answer
+brand, part number, ZIP, packed weight, box size and package class from one button. It could never
+answer **category**, and category is the field that costs the most to leave blank:
+
+- it is a **blocker** — eBay will not publish without one;
+- it is the **gate on the rest of the check** — required Item Specifics are defined *per category*,
+  so a blank category means the app cannot say what else the listing needs either. `aspectStatus`
+  comes back `no_category` and the Item Specifics panel reads "Pick a category and eBay's required
+  Item Specifics appear here";
+- and it was **pure retyping**. A seller who has listed forty Antminers has made this exact decision
+  forty times. The forty-first listing still opened on an empty search box.
+
+## What it reads
+
+Two sources, in a fixed order, behind `CategoryHinter`:
+
+1. **The seller's own history.** Every successful publish and every accepted draft records the title
+   and the category eBay took it under (`CategoryMemoryStore`). `CategorySuggester` reads a new title
+   back against that record.
+2. **eBay's taxonomy**, `get_category_suggestions`, only when history has nothing.
+
+The order is not negotiable. History is a record of decisions this seller made about items this
+seller actually sells; eBay's suggestion is a guess made from a string by something that has never
+seen their inventory. Where the two disagree on a title the seller has listed before, the seller is
+right.
+
+## The matching, which is the whole feature
+
+Titles are cut into significant words. Filler that appears in every listing title is dropped
+outright — `new`, `sealed`, `lot`, `free shipping`, `tested`, `rare` — because counting it would
+make "New Sealed Lot — Free Fast Shipping" match everything the seller has ever listed.
+
+What survives is weighted by how much it says about what the thing *is*:
+
+| Token | Weight | Why |
+|---|---|---|
+| `s19j`, `rtx4090`, `ka3` — letters and digits | 3 | a model number; two titles sharing one are the same product line |
+| `3090`, `840` — bare numbers, 3+ digits | 2 | a capacity or a size: real evidence, weaker |
+| `bitmain`, `mirrorless` — plain words | 1 | a word |
+
+The score is **how much of the new title the old one covers**, measured against the new title on
+purpose: a past listing with twenty words in it should not be punished for carrying detail the new
+one lacks. Per category, the **closest** past title decides — not the sum — so a seller with two
+hundred miner listings and four camera listings still gets a camera category when they type one.
+
+## The four refusals
+
+Every one of these returns *silence*, and silence costs nothing: the form behaves exactly as it did
+before. A wrong answer costs a listing filed in the wrong aisle with the wrong required specifics
+hanging off it, which the seller never sees explained.
+
+1. **One word in common is not evidence.** "Apple iPhone 15 Pro Max" against a past "Apple Watch
+   Series 8" shares `apple` and nothing else — below `MinSharedWeight`, so nothing is offered.
+2. **A coin flip is not an answer.** Two categories within `UsableLead` of each other means the
+   seller themselves has filed items like this both ways. Picking one for them would be the app
+   inventing a decision that was never made.
+3. **A category the seller already picked is never suggested over.** The rule the whole autofill
+   engine rests on, and the browser refuses again on the way in — a result rendered a moment before
+   the seller typed is stale by the time the button is pressed.
+4. **eBay's guess is never offered at full confidence** and is marked `IsEstimate`, the same as an
+   estimated shipping weight. The seller's own past choice is a reading and is not marked.
+
+## What the seller sees
+
+The `category-missing` blocker stops being a row that says "Pick a category" and becomes a row that
+says **Use "Miners" — where you put 6 listings like this**, quoting one of their own past titles
+back at them so the suggestion is checkable rather than an assertion. The same offer is swept into
+the existing **"Fill in N things"** button, whose note now leads with what the category unlocks.
+
+Applying it finishes the way picking from the dropdown does — the name moves onto the chip, the
+search box goes back to being a search box — and the `change` on the hidden ID re-runs the check, so
+eBay's required Item Specifics arrive by themselves and the fill button comes back carrying them.
+
+## Two decisions that only show up under a real keyboard
+
+**A category is answered by its hidden ID, not by the box beside it.** That box is a search field.
+Testing it the way every other field is tested — "does it already have something in it?" — would
+refuse to fill a category for a seller who had typed two letters and given up, which is exactly the
+seller this is for.
+
+**The taxonomy call is rate-limited, not just cached.** The readiness check fires 600ms after every
+pause in typing, and a title being typed is a *different title* each time — so a per-title cache
+alone still buys one eBay call per pause, all the way to the end of the sentence. A 3-second
+`LookupCooldown` turns that into one call per pause in the typing. Skipping is free: the check runs
+again on the next edit, and by then the title is closer to what the seller meant.
+
+## What gets remembered, and what does not
+
+Only publishes and drafts eBay **accepted**. A category typed into a draft that was then abandoned
+is not a decision. The reconciled path — a publish whose confirmation was lost and which was later
+found live — deliberately records nothing: the app never saw that pairing confirmed.
+
+Rows collapse on the sorted significant words of the title, so forty listings of one model are one
+row with a count of forty. A non-numeric category ID is never learned (it would teach the app to
+suggest something unpublishable), a blank display name never overwrites one already known, and the
+table is capped at 500 rows and pruned oldest-first — this is a convenience and is not allowed to
+grow into a file on the seller's disk.
+
+## Files
+
+| File | Change |
+|---|---|
+| `Models/CategoryMemoryModels.cs` | **new** — `CategoryUse`, `CategoryMatch` |
+| `Services/CategorySuggester.cs` | **new** — tokenizing, weighting, ranking, and the refusals. Pure/static |
+| `Services/CategoryMemoryStore.cs` | **new** — `listing_category_memory` table; remember, read, prune |
+| `Services/CategoryHinter.cs` | **new** — history first, eBay second; TTL cache + lookup cooldown |
+| `Services/ListingAutofill.cs` | `Suggest` takes a `CategoryMatch?` and emits the `category` offer first |
+| `Services/ListingReadinessAnalyzer.cs` | `category` → the `category-missing` finding |
+| `Program.cs` | DI for both new singletons; readiness endpoint asks for a hint only when the field is empty; publish and draft-create record what eBay took |
+| `wwwroot/app.js` | applying a category offer; the chip's name reaches the server; fill-row wording |
+| `wwwroot/index.html` | `app.js?v=109` |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 warnings (both the pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…csproj"` | **3,050 passed**, 0 failed |
+| New tests | `CategorySuggesterTests` (17), `CategoryMemoryStoreTests` (9), plus category cases in `ListingAutofillTests`, `ListingReadinessAnalyzerTests` and `ListingFillAssetTests` |
+
+**Not verified in a browser.** Port 9332 was held by the installed app (`C:\Program Files\ING
+Mining\ING AutoLister\AutoListerB1.exe`, PID 24052) and there is no port override, so a dev build
+could not be run alongside it. It was left running, untouched.
+
+**One flaky run, unrelated.** A single test pass failed twice — inside `DealRadarStore.RecordRun`
+and in `LocalSourceChipAssetTests` — immediately after a rebuild. The radar failure was a SQLite
+exception thrown from the store rather than an assertion, on a temp database this change never
+touches. Four consecutive full runs since are green.
+`LocalSourceChipAssetTests.The_asset_versions_were_bumped` was pinned to `app.js?v=108` exactly; it
+now asserts *at or past* that version, because a pinned cache-buster teaches the next person to edit
+the number rather than think about whether the cache needs busting.
+
+## Known limits
+
+- **The first listing of something new still gets nothing from history**, by definition. eBay's
+  suggestion covers that case, and only when the app is connected.
+- **The matcher reads words, not meaning.** Two products that share a brand and a family but belong
+  in different categories — a phone and its case, a console and its controller — can score above
+  `UsableMatch` on brand and family words alone. The lead test catches this only once the seller has
+  filed both ways at least once.
+- **Nothing is written back when the app corrects a category on the way out.** `EbayService` still
+  overrides some categories by keyword at publish time; what is remembered is the seller's own
+  choice, so a title whose category is always overridden will keep being suggested and keep being
+  overridden — the same outcome, reached the same way.
+- **The cooldown is per app instance, not per seller.** It is a chattiness guard, not a quota.
+- **No UI for the memory.** There is no screen listing what the app has learned and no way to forget
+  one row. Deleting the app database clears it, along with everything else in there.

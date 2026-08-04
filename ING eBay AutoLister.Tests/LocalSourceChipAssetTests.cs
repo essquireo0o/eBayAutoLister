@@ -113,8 +113,21 @@ public class LocalSourceChipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=108", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=96", Html, StringComparison.Ordinal);
+        // At or past the version that shipped these chips, not pinned to it. Pinning made every
+        // later change to app.js fail here, which teaches the next person to edit this number
+        // rather than to think about whether the cache needs busting.
+        Assert.True(AssetVersion(Html, "app.js") >= 108, "app.js cache-buster went backwards");
+        Assert.True(AssetVersion(Html, "style.css") >= 96, "style.css cache-buster went backwards");
+    }
+
+    private static int AssetVersion(string html, string file)
+    {
+        var marker = file + "?v=";
+        var at = html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, file + " is no longer cache-busted at all");
+        var digits = new string(html[(at + marker.Length)..].TakeWhile(char.IsDigit).ToArray());
+        Assert.True(digits.Length > 0, file + "?v= carries no version number");
+        return int.Parse(digits);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

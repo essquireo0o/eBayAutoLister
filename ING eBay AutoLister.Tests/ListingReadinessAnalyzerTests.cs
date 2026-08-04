@@ -343,6 +343,26 @@ public class ListingReadinessAnalyzerTests
     }
 
     [Fact]
+    public void The_blocker_that_holds_up_every_other_check_can_now_carry_its_own_answer()
+    {
+        // A missing category is not just one finding. It is the finding that stops eBay being
+        // asked what else this listing needs, because required Item Specifics are defined per
+        // category — so it is the one worth being able to answer without leaving the checklist.
+        var listing = Complete();
+        listing.CategoryId = "";
+
+        var r = ListingReadinessAnalyzer.Analyze(listing, [], "no_category", "", null,
+            [Offer("category", "Miners")]);
+
+        var fix = Assert.Single(r.Fixes, f => f.Id == "category-missing");
+        Assert.Equal(FixSeverity.Blocker, fix.Severity);
+        Assert.NotNull(fix.Suggestion);
+        Assert.Equal("Miners", fix.Suggestion.Display);
+        Assert.True(fix.AutoFixable);
+        Assert.Equal(1, r.FillableFieldCount);
+    }
+
+    [Fact]
     public void An_offer_for_a_field_that_is_not_missing_is_dropped_rather_than_kept()
     {
         // The checks above are the only place that decides a field is empty. An offer that

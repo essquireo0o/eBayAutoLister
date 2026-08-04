@@ -47,14 +47,50 @@ public static class ListingAutofill
     /// <param name="identity">Parsed from the seller's own title — null when it couldn't be read.</param>
     /// <param name="package">The estimator's answer for this item; null skips the shipping fields.</param>
     /// <param name="defaultPostalCode">The seller's saved location, blank when they have none.</param>
+    /// <param name="category">Where the seller has filed items like this before; null when their
+    /// history and eBay both had nothing to say.</param>
     public static List<FieldSuggestion> Suggest(
         ListingData listing,
         ProductIdentity? identity = null,
         PackageSpec? package = null,
-        string defaultPostalCode = "")
+        string defaultPostalCode = "",
+        CategoryMatch? category = null)
     {
         var outp = new List<FieldSuggestion>();
         if (listing is null) return outp;
+
+        // ── Category ──────────────────────────────────────────────────────────────────────────
+        // First in the list because it is first on the form, and because it is the only empty
+        // field that stops the rest of the check happening at all: eBay defines required Item
+        // Specifics per category, so until this is answered the app cannot say what else is
+        // missing. Filling it turns one blocker into a list the seller can finish.
+        //
+        // Two boxes, together. The visible one is a search field the seller types into and the
+        // hidden one carries the ID that publishes; writing the name without the ID leaves a
+        // category that looks chosen and publishes as nothing.
+        if (string.IsNullOrWhiteSpace(listing.CategoryId) &&
+            category is not null &&
+            !string.IsNullOrWhiteSpace(category.CategoryId))
+        {
+            var display = string.IsNullOrWhiteSpace(category.CategoryName)
+                ? "Category " + category.CategoryId
+                : category.CategoryName;
+            outp.Add(new FieldSuggestion
+            {
+                Field = "category", Label = "Category", Display = display,
+                Source = category.Source,
+                Confidence = category.Confidence is High or Medium ? category.Confidence : Medium,
+                // The seller's own past choice is a reading. eBay's guess about a title is not —
+                // it is marked, because a category decides which searches the listing appears in.
+                IsEstimate = category.TimesUsed == 0,
+                FieldId = "nl-category",
+                Set =
+                {
+                    ["nl-category"]    = display,
+                    ["nl-category-id"] = category.CategoryId,
+                },
+            });
+        }
 
         // ── Brand ─────────────────────────────────────────────────────────────────────────────
         // Read out of the title, not inferred: the extractor only returns a brand it recognises

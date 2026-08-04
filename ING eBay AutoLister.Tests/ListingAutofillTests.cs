@@ -252,6 +252,109 @@ public class ListingAutofillTests
         Assert.True(ListingAutofill.Rank("MAILING_BOX") > ListingAutofill.Rank("PACKAGE_THICK_ENVELOPE"));
     }
 
+    // ── The category ──────────────────────────────────────────────────────────────────────────
+    //
+    // The one blocker on the readiness list the app could never answer, and the one whose absence
+    // stopped the rest of the check happening at all — eBay defines required Item Specifics per
+    // category, so an empty category means nothing below it can be checked either.
+
+    private static CategoryMatch Miners(string confidence = ListingAutofill.High, int timesUsed = 5) => new()
+    {
+        CategoryId = "179171",
+        CategoryName = "Miners",
+        Confidence = confidence,
+        Source = "where you put 5 listings like this",
+        TimesUsed = timesUsed,
+        Score = 0.9,
+    };
+
+    [Fact]
+    public void The_category_fills_the_name_and_the_id_that_publishes_together()
+    {
+        // Two boxes: the one the seller searches in, and the hidden one carrying the ID. Writing
+        // the name alone leaves a category that looks chosen and publishes as nothing.
+        var listing = Draft();
+        listing.CategoryId = "";
+
+        var s = Field(ListingAutofill.Suggest(listing, null, null, "", Miners()), "category");
+
+        Assert.NotNull(s);
+        Assert.Equal("Miners", s.Display);
+        Assert.Equal("nl-category", s.FieldId);
+        Assert.Equal("Miners", s.Set["nl-category"]);
+        Assert.Equal("179171", s.Set["nl-category-id"]);
+        Assert.Equal(ListingAutofill.High, s.Confidence);
+        Assert.NotEqual("", s.Source);
+    }
+
+    [Fact]
+    public void A_category_the_seller_already_picked_is_never_suggested_over()
+    {
+        // The rule the whole engine rests on. The seller chose 175673; the app does not get a vote.
+        var listing = Draft();
+        Assert.Equal("175673", listing.CategoryId);
+
+        Assert.Null(Field(ListingAutofill.Suggest(listing, null, null, "", Miners()), "category"));
+    }
+
+    [Fact]
+    public void The_category_is_offered_first_because_it_is_asked_for_first()
+    {
+        // It is the top field on the form and the only one holding up the rest of the check.
+        var listing = Draft();
+        listing.CategoryId = "";
+
+        var all = ListingAutofill.Suggest(listing, Identities.Extract(listing.Title),
+                                          Packages.EstimateFromListing(listing), "89044", Miners());
+
+        Assert.Equal("category", all[0].Field);
+    }
+
+    [Fact]
+    public void The_sellers_own_past_choice_is_a_reading_and_eBays_guess_is_marked_as_one()
+    {
+        var listing = Draft();
+        listing.CategoryId = "";
+
+        var mine = Field(ListingAutofill.Suggest(listing, null, null, "", Miners()), "category");
+        Assert.NotNull(mine);
+        Assert.False(mine.IsEstimate);
+
+        // TimesUsed of zero means nobody here has listed one before — this came from eBay reading
+        // the same string the app did, and a category decides which searches the listing is in.
+        var theirs = Field(ListingAutofill.Suggest(listing, null, null, "",
+            CategorySuggester.FromEbay("179171", "Miners")), "category");
+        Assert.NotNull(theirs);
+        Assert.True(theirs.IsEstimate);
+        Assert.Equal(ListingAutofill.Medium, theirs.Confidence);
+    }
+
+    [Fact]
+    public void A_category_with_no_name_still_publishes_and_says_so()
+    {
+        // Rows recorded before the display name was carried through have an ID and nothing else.
+        // The ID is what eBay needs; the seller still has to be shown something readable.
+        var listing = Draft();
+        listing.CategoryId = "";
+        var match = Miners();
+        match.CategoryName = "";
+
+        var s = Field(ListingAutofill.Suggest(listing, null, null, "", match), "category");
+
+        Assert.NotNull(s);
+        Assert.Equal("Category 179171", s.Display);
+        Assert.Equal("179171", s.Set["nl-category-id"]);
+    }
+
+    [Fact]
+    public void No_category_hint_leaves_the_form_exactly_as_it_was()
+    {
+        var listing = Draft();
+        listing.CategoryId = "";
+
+        Assert.Null(Field(ListingAutofill.Suggest(listing, null, null, "", null), "category"));
+    }
+
     [Fact]
     public void Weight_splits_into_whole_pounds_and_ounces()
     {

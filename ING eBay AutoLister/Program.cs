@@ -381,6 +381,12 @@ builder.Services.AddSingleton<SourcingBudgetOptimizer>();
 // break-even-checked one.
 builder.Services.AddSingleton<CostBasisStore>();
 builder.Services.AddSingleton<InventoryHealthAnalyzer>();
+// Category memory — the one blocker on the pre-publish checklist the app could never answer. Every
+// successful publish records which category eBay accepted for that title; CategorySuggester reads
+// a new title back against that record so the fortieth listing of the same model does not open on
+// a blank category box. CategoryHinter puts the seller's own history in front of eBay's guess.
+builder.Services.AddSingleton<CategoryMemoryStore>();
+builder.Services.AddSingleton<CategoryHinter>();
 // Aging-inventory rescue — the step after a repricing suggestion. InventoryHealthAnalyzer caps a
 // markdown at one revision and tells the seller to come back; the whole failure mode of dead stock
 // is that nobody comes back. This turns that one step into a dated ladder decided in advance, and
@@ -8230,7 +8236,8 @@ app.MapPost("/api/listing/search-terms", async (
 // it couldn't check rather than implying everything passed.
 app.MapPost("/api/listing/readiness", async (
     ReadinessRequest req, EbayService ebay, CredentialsStore store,
-    ProductIdentityExtractor identity, PackageEstimator packages, ActionLog log) =>
+    ProductIdentityExtractor identity, PackageEstimator packages, CategoryHinter categories,
+    ActionLog log) =>
 {
     var aspectStatus  = "ok";
     var aspectMessage = "";
@@ -8289,11 +8296,23 @@ app.MapPost("/api/listing/readiness", async (
     // prices shipping with, so the box quoted on the deal that bought this item and the box on
     // the listing that sells it are the same box. Never throws into the check: a readiness pass
     // that fails because an offer couldn't be built has got in the way of listing.
+    //
+    // The category is asked for separately because it is the one offer that needs more than the
+    // draft in front of it: it is answered from what the seller has published before, and only
+    // then from eBay. Asked only when the field is actually empty — the point of the whole
+    // engine is that it never suggests over a decision the seller has already made.
+    CategoryMatch? categoryHint = null;
+    if (string.IsNullOrWhiteSpace(req.CategoryId))
+    {
+        try { categoryHint = await categories.SuggestAsync(req.Title, askEbay: !req.SkipAspects); }
+        catch (Exception ex) { log.Add("Warning", "Readiness: category hint failed", ex.Message); }
+    }
+
     List<FieldSuggestion> suggestions = [];
     try
     {
         var zip = store.GetPublicFields().DefaultPostalCode;
-        suggestions = ListingAutofill.Suggest(req, parsed, packages.EstimateFromListing(req), zip);
+        suggestions = ListingAutofill.Suggest(req, parsed, packages.EstimateFromListing(req), zip, categoryHint);
     }
     catch (Exception ex) { log.Add("Warning", "Readiness: autofill suggestions failed", ex.Message); }
 
@@ -8387,7 +8406,8 @@ app.MapPost("/api/listing/seller-hub-draft", async (PostListingRequest req, Ebay
     }
 });
 
-app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay, ActionLog log) =>
+app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay,
+    CategoryMemoryStore categoryMemory, ActionLog log) =>
 {
     var titlePreview = (req.Title ?? "").Trim();
     if (titlePreview.Length > 60) titlePreview = titlePreview[..60] + "…";
@@ -8397,6 +8417,9 @@ app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay
     {
         var offerId = await ebay.CreateListingAsync(req, req.EbayToken);
         log.Add("Info", "Create Draft: succeeded", $"OfferId: {offerId}");
+        // eBay took this title in this category. Remembered so the next listing like it opens with
+        // the category already chosen — see CategoryMemoryStore.
+        categoryMemory.Remember(req.Title, req.CategoryId, req.Category);
         return Results.Ok(new
         {
             ok = true,
@@ -8445,7 +8468,8 @@ app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay
 // one physical item: two insertion fees, two audiences, and an oversell the moment one sells. So on
 // exactly those failures the app looks at the account before it says anything.
 app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService ebay, ActionLog log,
-    CredentialsStore store, LicenseService license, PublishGuard guard) =>
+    CredentialsStore store, LicenseService license, PublishGuard guard,
+    CategoryMemoryStore categoryMemory) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -8489,6 +8513,10 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
     {
         var result = await ebay.PublishListingAsync(req);
         guard.Succeeded(fingerprint, req.WorkKey, result.ListingId);
+        // A live listing is the seller's category decision, proven. Recorded here and nowhere else
+        // on this path: a publish that failed teaches nothing, and a reconciled one below went out
+        // under a category the app never saw confirmed.
+        categoryMemory.Remember(req.Title, req.CategoryId, req.Category);
 
         var listingUrl = !string.IsNullOrEmpty(result.ListingId)
             ? $"https://www.ebay.com/itm/{result.ListingId}"

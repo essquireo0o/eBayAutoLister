@@ -18265,7 +18265,11 @@
     return {
       title: $('nl-title')?.value || '',
       subtitle: $('nl-subtitle')?.value || '',
-      category: $('nl-category')?.value || '',
+      // Once a category is chosen the search box is emptied and the name moves to the chip beside
+      // it, so reading the input alone sent a blank name on every finished listing. The chip is
+      // read as the fallback: the ID is what publishes, but the name is what gets remembered and
+      // shown back the next time an item like this is listed.
+      category: $('nl-category')?.value || nlSelectedCategoryName(),
       categoryId: $('nl-category-id')?.value || '',
       secondaryCategoryId: $('nl-secondary-category-id')?.value || '',
       condition: $('nl-condition')?.value || 'USED_EXCELLENT',
@@ -18934,14 +18938,36 @@
     // field here that is a correction rather than a gap, and the server only offers it when the
     // current choice is too small for the box.
     const isCorrection = s.field === 'packageType';
-    if (!isCorrection && targets.some(([el]) => String(el.value || '').trim() && parseFloat(el.value) !== 0)) return false;
+
+    // The category is answered by its hidden ID, not by the box beside it. That box is a search
+    // field, and half-typed search text left in it is not a chosen category — testing it the way
+    // every other field is tested would refuse to fill a category that was never picked.
+    const isCategory = s.field === 'category';
+
+    if (isCategory) {
+      if (String($('nl-category-id')?.value || '').trim()) return false;
+    }
+    else if (!isCorrection && targets.some(([el]) => String(el.value || '').trim() && parseFloat(el.value) !== 0)) return false;
 
     targets.forEach(([el, value]) => {
       el.value = value;
       el.classList.add('asp-just-filled');
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
+
+    // Same finishing move the dropdown makes: the name moves onto the chip and the search box goes
+    // back to being a search box. Without it the category reads as typed-but-unpicked, which is
+    // the state the seller has just been saved from.
+    if (isCategory) nlSyncCategoryDisplay();
     return true;
+  }
+
+  // The chosen category's display name, read from the chip the picker puts it on.
+  function nlSelectedCategoryName() {
+    if (!$('nl-category-id')?.value) return '';
+    const chip = $('nl-cat-selected');
+    if (!chip || chip.hidden) return '';
+    return ($('nl-cat-selected-name')?.textContent || '').trim();
   }
 
   // One click from "not ready" to as ready as the app can make it: every listing field it has a
@@ -18964,7 +18990,8 @@
     const parts = [];
     if (labels.length) parts.push(labels.join(', '));
     if (aspects) parts.push(aspects + ' item specific' + (aspects === 1 ? '' : 's') + ' from eBay’s list');
-    addActivity('Listing filled in', parts.join(' · ') + ' — from your own title, your saved settings and the packing estimate');
+    addActivity('Listing filled in', parts.join(' · ')
+      + ' — from your own title, where you filed items like this before, your saved settings and the packing estimate');
     nlRunReadiness(true);
   }
 
@@ -19067,11 +19094,18 @@
 
     btn.textContent = `Fill in ${total} thing${total === 1 ? '' : 's'}`;
     if (note) {
-      const estimated = (r.fieldSuggestions || [])
-        .some(s => s.isEstimate && (s.confidence === 'high' || s.confidence === 'medium'));
-      note.textContent = estimated
-        ? 'From your title, your saved settings and an estimated packing weight — nothing you already typed is touched.'
-        : 'From your own title and saved settings — nothing you already typed is touched.';
+      const confident = (r.fieldSuggestions || [])
+        .filter(s => s.confidence === 'high' || s.confidence === 'medium');
+      const estimated = confident.some(s => s.isEstimate);
+      // The category is worth naming when it is in the pile. It is the one blocker on this list
+      // the app could never answer before, and it is the field that decides which Item Specifics
+      // eBay then asks for — so the seller should know that is what the button is about to do.
+      const category = confident.some(s => s.field === 'category');
+      note.textContent = category
+        ? 'Including the category — filling it in is what lets eBay say which Item Specifics this listing needs. Nothing you already typed is touched.'
+        : estimated
+          ? 'From your title, your saved settings and an estimated packing weight — nothing you already typed is touched.'
+          : 'From your own title and saved settings — nothing you already typed is touched.';
     }
   }
 

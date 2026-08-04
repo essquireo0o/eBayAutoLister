@@ -83,6 +83,49 @@ public class ListingFillAssetTests
         }
     }
 
+    // ── The category ──────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void A_filled_category_writes_the_id_that_publishes_not_just_the_name()
+    {
+        // The visible box is a search field; the hidden one carries the ID eBay lists against.
+        // Both ids have to exist for the offer's two-box write to land.
+        Assert.Contains("id=\"nl-category\"", Html, StringComparison.Ordinal);
+        Assert.Contains("id=\"nl-category-id\"", Html, StringComparison.Ordinal);
+        Assert.Contains("const isCategory = s.field === 'category';", Js, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_category_counts_as_answered_by_its_id_and_not_by_the_search_box_beside_it()
+    {
+        // Half-typed search text is not a chosen category. Testing the visible box the way every
+        // other field is tested would refuse to fill a category that was never picked — which is
+        // exactly the seller this is for.
+        Assert.Contains("if (String($('nl-category-id')?.value || '').trim()) return false;",
+                        Js, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Filling_a_category_finishes_the_way_picking_one_from_the_list_does()
+    {
+        // The name moves onto the chip and the search box goes back to being a search box.
+        // Without this the category reads as typed-but-unpicked, which is the state the seller
+        // has just been saved from.
+        Assert.Contains("if (isCategory) nlSyncCategoryDisplay();", Js, StringComparison.Ordinal);
+        Assert.Contains("function nlSyncCategoryDisplay(", Js, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_chosen_categorys_name_reaches_the_server_so_it_can_be_remembered()
+    {
+        // The picker empties the search input and moves the name to the chip, so reading the
+        // input alone sent a blank name on every finished listing — and a blank name is what
+        // turns tomorrow's suggestion into "Category 179171".
+        Assert.Contains("category: $('nl-category')?.value || nlSelectedCategoryName()",
+                        Js, StringComparison.Ordinal);
+        Assert.Contains("function nlSelectedCategoryName(", Js, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_fill_row_is_hidden_again_when_the_check_could_not_answer()
     {
