@@ -15335,3 +15335,160 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   .pb-src { grid-template-columns: 1fr auto; }
   .pb-factor { grid-template-columns: 1fr; gap: 2px; padding: var(--s2) 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The Restock List — what to go and buy again
+   Cards rather than a table: every row carries a headline sentence and a
+   list of cautions, and a table cell is the wrong shape for either. The
+   whole board is one column so the ranking reads top to bottom — this is
+   a shopping list, and a grid invites the eye to shop it sideways.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.rs-notice {
+  margin: 0 0 var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--warning-line);
+  border-radius: var(--r-md);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.rs-notice-error {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.rs-board-head { align-items: flex-end; }
+
+.rs-sort { display: flex; gap: var(--s1); flex-wrap: wrap; }
+
+.rs-sort-btn {
+  padding: 6px var(--s3);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.rs-sort-btn:hover { border-color: var(--gold); color: var(--ink); }
+
+.rs-sort-btn.active {
+  border-color: var(--teal-700);
+  background: var(--teal-700);
+  color: #fff;
+}
+
+.rs-list { display: flex; flex-direction: column; gap: var(--s3); }
+
+.rs-card {
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--teal-700);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--e1);
+}
+
+/* The stop list earns a red edge. It is the only list here that is telling
+   the seller to do less of something, and it should not look like the
+   shopping list with different words in it. */
+.rs-card-stop { border-left-color: var(--danger); }
+.rs-card-needs_cost { border-left-color: var(--warning); }
+.rs-card-watch { border-left-color: var(--line-soft); }
+
+.rs-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.rs-card-title { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+.rs-card-title h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.rs-card-actions { display: flex; gap: var(--s2); flex-shrink: 0; }
+
+.rs-badges { display: flex; gap: var(--s1); flex-wrap: wrap; }
+
+.rs-badge {
+  padding: 2px var(--s2);
+  border-radius: 999px;
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+/* "None listed" is the one badge that is an instruction, so it is the one
+   that is loud. Everything else on a card states; this one asks. */
+.rs-badge-out   { background: var(--gold-soft);    color: var(--gold-deep); }
+.rs-badge-live  { background: var(--success-soft); color: var(--success); }
+.rs-badge-stop  { background: var(--danger-soft);  color: var(--danger); }
+.rs-badge-cost  { background: var(--warning-soft); color: var(--warning); }
+
+.rs-headline {
+  margin: var(--s2) 0 0;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.rs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: var(--s3);
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.rs-stat { display: flex; flex-direction: column; gap: 2px; }
+
+.rs-stat-label {
+  font-size: var(--fs-3xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rs-stat-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+/* Cautions are never folded away behind a "more" link. The seller reading
+   this card is about to spend money on what it recommends. */
+.rs-cautions {
+  margin: var(--s3) 0 0;
+  padding-left: var(--s4);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.rs-cautions li { margin-top: 2px; }
+
+/* The two quiet lists — one sale each, or no cost recorded. They are
+   reference, not recommendations, so they sit back a shade. */
+.rs-list-quiet .rs-card { box-shadow: none; background: var(--card-alt); }
+
+@media (max-width: 720px) {
+  .rs-card-actions { width: 100%; }
+  .rs-card-actions .btn { flex: 1; }
+}

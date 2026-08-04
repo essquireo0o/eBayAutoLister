@@ -3773,6 +3773,59 @@ static TaxPackResult BuildTaxPack(
     return tax.Build(computed, feeProfile, incomeRatePercent, year, DateTimeOffset.Now);
 }
 
+// ── The Restock List — what to go and buy again ───────────────────────────────────────────────
+// Every sourcing board in this app starts at the market and asks "is this worth buying". This one
+// starts at the seller's own till roll and asks "what should I be looking FOR" — a different
+// question, and the one they actually ask on a Saturday morning with cash in hand.
+//
+// Reuses the earnings arithmetic wholesale: the same flips, the same cost table, the same fee
+// profile, run through EarningsCalculator exactly as Money Made and the Tax Pack do. A restock
+// recommendation that disagreed with the earnings screen about what a sale made would be worse than
+// no recommendation at all.
+//
+// One optional eBay read, for one question: is any of this actually listed right now. It fails on
+// its own — the ranking is the seller's history and does not need eBay to be up — and when it fails
+// the board says so instead of quietly reporting everything as in stock.
+app.MapGet("/api/restock", async (
+    EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator, FeeProfile feeProfile,
+    EbayService ebay, ActionLog log) =>
+{
+    // One read of the cost table for the whole set, and it is read for two things: the cost that
+    // decides whether a sale counts as profit at all, and the purchase date that turns a margin
+    // into a speed.
+    var costs = costBasis.GetAll();
+    var sales = store.GetAll()
+        .Select(flip =>
+        {
+            var basis = CostBasisStore.Find(costs, flip.ListingId, flip.Sku);
+            return new RestockSale
+            {
+                Sale = calculator.Compute(flip, basis, feeProfile),
+                AcquiredUtc = basis?.AcquiredUtc,
+            };
+        })
+        .ToList();
+
+    List<EbayListingSummary>? active = null;
+    string? stockNote = null;
+    try
+    {
+        active = await ebay.GetListingsAsync();
+    }
+    catch (Exception ex)
+    {
+        // Not connected, or the token expired. The board is still worth every penny without it —
+        // it just can't tell the seller which of these they have none of.
+        log.Add("Warning", "Restock list could not read your live listings", ex.Message);
+        stockNote = "Your live eBay listings could not be read, so this board can't say which of these you currently have none of. Everything else on it is your own sales history and is unaffected.";
+    }
+
+    // Local time, not UTC: "sold 3 days ago" has to mean the days the seller has lived through.
+    var result = RestockAnalyzer.Analyze(sales, active, DateTimeOffset.Now);
+    result.StockNote = stockNote;
+    return Results.Ok(result);
+});
+
 // ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────
 // Everything above answers one question about one moment. This carries a single flip end to end:
 // the forecast that justified buying it, the cash that actually left, the listing it went into,

@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ING_eBay_AutoLister.Tests;
 
 /// <summary>
@@ -149,8 +151,19 @@ public class KeywordGapAssetTests
     {
         // wwwroot files are embedded resources served with a long cache. A seller running the old
         // app.js against the new endpoint gets a button that is not there.
-        Assert.Contains("app.js?v=104", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=92", Html, StringComparison.Ordinal);
+        //
+        // Asserted as "at least", not "exactly": every later feature that touches these files bumps
+        // the same two numbers, and pinning them to this feature's values makes every one of those
+        // sessions fail a test about a screen it never opened.
+        Assert.True(AssetVersion("app.js") >= 104, "app.js must be versioned past the build that shipped without the keyword panel");
+        Assert.True(AssetVersion("style.css") >= 92, "style.css must be versioned past the build that shipped without the keyword panel");
+    }
+
+    private static int AssetVersion(string file)
+    {
+        var match = Regex.Match(Html, Regex.Escape(file) + @"\?v=(\d+)");
+        Assert.True(match.Success, $"index.html no longer versions {file}");
+        return int.Parse(match.Groups[1].Value);
     }
 
     private static string ReadAsset(string name) =>

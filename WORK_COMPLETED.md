@@ -8234,3 +8234,118 @@ The working tree held `SearchTermMiner.cs`, `SearchTermModels.cs` and a one-meth
 no UI and no tests. Rather than start something new beside it, this session took it end to end: found
 and fixed the sliced-sentence defect in its selection, wired it to eBay through an endpoint, gave it
 the panel under the title box, and pinned the whole path with 43 tests.
+
+---
+
+## The till roll, read as a shopping list — the Restock List (autonomous session, 2026-08-04)
+
+Every sourcing board this app has starts at the market. Roll the Dice sweeps categories, the
+Opportunity Finder searches a keyword, Deal Radar watches feeds, Snap & Source prices the thing
+already in the seller's hand. All four answer **"is this worth buying"** — and none of them answers
+the question a reseller actually asks on a Saturday morning with $600 and a van, which is **"what do
+I go looking for"**. That is a question about the seller, not about the market, and the evidence for
+it has been sitting in the app unread since the earnings tracker shipped.
+
+A product the seller has sold four times is the only product on eBay whose demand, price, shipping
+cost, condition and buyer they have first-hand proof of. Nothing in the app had ever looked at that.
+
+## The ranking, which is the whole feature
+
+The obvious key is total profit, and it is wrong. It puts the one $900 pallet flip above the $60 part
+that sells twice a month, and sends the seller looking for another pallet. The ranking is **profit
+per month** — average profit per unit times how fast that product actually moves — because a shopping
+list is about what can be done *again* next weekend. In the tests, a line making $250 a unit outranks
+one making $600 a unit, and it is the right answer: the first one sells four times as often.
+
+Underneath that sits the figure most sellers never compute: **return on cash as a yearly rate**,
+using how long the money was actually tied up. $40 on a $10 buy held twelve days and $200 on a $900
+buy held five months are not remotely the same business. It is shown only where the seller recorded a
+purchase date — a holding period cannot be guessed from a sale date, and an invented one would make
+the sharpest number on the board the most misleading. The list re-orders by it on one click, because
+a seller with unlimited weekends and a seller with $400 want different lines.
+
+## What it refuses to do
+
+Four refusals, each of which makes the board's numbers smaller:
+
+1. **A sale with no recorded cost is never profit.** Not zero — nothing. Those lines get their own
+   list with the proceeds behind them, because entering one number is the cheapest honesty available.
+2. **One sale is not a pattern, and there is no arithmetic that makes it one.** Single-sale lines are
+   shown, labelled, and never ranked — and they carry **no rate at all**. The one-month floor turns
+   one sale into exactly "1.0 a month", which would have printed *$1,700 a month* on the same card
+   that says one sale is not a pattern. Caught in the browser, not in a test.
+3. **A rate is never measured over less than a month, and never over the wrong window.** Four sales
+   span three gaps, not four; dividing four by the first-to-last span invents a third of a sale a
+   month, worst on exactly the thin histories where the ranking is most fragile. The window is
+   extended by one average gap, which is the same as dividing by the gaps.
+4. **Being sold out is not evidence against a product.** A live listing nobody buys is; an empty
+   shelf isn't. Treating them the same would bury exactly the lines this screen exists to surface —
+   so the "none of these has sold in 90 days" caution only fires on stock that is actually listed.
+
+## The stop list
+
+The most valuable block on the page, and it is second rather than last: products that sold at a loss,
+and products that keep coming back. A line that sells briskly at a loss is the most expensive thing a
+reseller can own, and it looks like the best line on the board until somebody works out the margin.
+Two returns and a 25% return rate is a stop; one return in three is a caution, because everything
+returns sometimes and a stricter rule would empty the list.
+
+## The loop closes
+
+Every row hands its search term to the Opportunity Finder in one click — a product the seller has
+proved they can sell, given to the board that finds one to buy. The stop list has no such button:
+a card headed "stop buying" with a "find one to buy" on it is the screen arguing with itself.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/RestockAnalyzer.cs` | **new**. The whole analysis. Pure and static — no eBay call, no database, no clock of its own |
+| `Models/RestockModels.cs` | **new**. `RestockSale` (an earnings row plus its purchase date), `RestockLine`, `RestockResult`, `RestockSummary` |
+| `Services/AuctionSniperAnalyzer.cs` | `LeanestTitle` made public — two screens clustering the same sold titles must pick the same one out of a cluster, or they search for different things |
+| `Program.cs` | `GET /api/restock`. Reuses `EarningsCalculator` wholesale, so a row here can never disagree with Money Made about what a sale made. One optional eBay read, failing on its own and named in the answer when it does |
+| `wwwroot/index.html` | The screen, and the sidebar entry under Grow; `?v=` bumps |
+| `wwwroot/app.js` | Load/render/sort, the hand-off to the Opportunity Finder, the two "no figure rather than a made-up one" guards; `?v=105` |
+| `wwwroot/style.css` | `.rs-*`; `?v=93` |
+| `Tests/RestockAnalyzerTests.cs` | **new**, +26: the ranking, all four refusals, the window arithmetic, quantity, returns, the stock read and its absence |
+| `Tests/RestockBoardAssetTests.cs` | **new**, +15: the browser half, where every failure is silent — tab registration, the hero's two states, list order, the hand-off, escaping, the `?v=` bumps |
+| `Tests/KeywordGapAssetTests.cs` | Its `?v=` assertion was an exact match on 104/92, so every later feature touching those files fails a test about a screen it never opened. Changed to "at least" |
+| `restock_board.png` | The board, driven in a real browser |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2907 passed**, 0 failed — 41 new, no pre-existing test removed (baseline this session: 2864) |
+| `node --check wwwroot/app.js` | clean |
+| Driven in a real browser | **yes** — Chromium against the real `index.html`/`app.js`/`style.css`, with the API stubbed on a spare port because the seller's installed app owns 9332 and was left running. All four lists render, the hero's two states are right, all three sort orders re-order, "Find one to buy" opens the Opportunity Finder with the term in the box, **zero console or page errors** |
+| Mutation check | Removing the gap correction fails 1 test; counting refunded orders as sales fails 4. Removing the "only when something is listed" guard on the slow-shelf caution failed **nothing** — a real hole, now closed by a test that fails on exactly that removal |
+
+## Two things the browser found that no test would have
+
+**A rate invented from one sale.** The watch card read "$1,700 a month" directly above "one sale is
+not a pattern". The floor that stops two sales in three days reading as twenty a month was, at one
+sale, manufacturing a rate out of a single event. `SalesPerMonth` and `ProfitPerMonth` are now
+withheld below two orders, and the card shows no rate rather than a made-up one.
+
+**"Find one to buy" on the stop list.** Rendered for every row, including the ones headed *stop
+buying*.
+
+## Known limits
+
+- **The eBay listings read is all-or-nothing.** One call, one failure mode: either the board knows
+  what is in stock or it says it doesn't. There is no partial state, and no cache — pressing Refresh
+  pays for the call again.
+- **Grouping is `JackpotHunter.ProductSignature`'s**, so it inherits that function's blind spots: a
+  two-character model designator ("Roomba i7") does not cluster, and those sales stay as separate
+  single-sale lines. The failure is always *under*-grouping, which under-ranks a real product; it
+  never merges two products into one line and recommends the average.
+- **A relisted item counts as one active listing per relist.** The stock count is listings, not
+  distinct products, so "3 listed" can be one item relisted three times. It only ever affects the
+  wording of a caution, never a ranking.
+- **Return on cash is dark for most sellers.** It needs a purchase date on the cost basis row, which
+  only the Deal Pipeline writes. The board says nothing rather than estimating one.
+- **The recommendation is about the past.** It knows what has sold for this seller before. It does not
+  know that a supply dried up, a model was discontinued or a price halved last week — which the
+  screen says, in those words, at the bottom of every load.

@@ -524,7 +524,9 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
     // The shortest title that still says enough to price against — sold titles for one product run
     // from "Dyson V11" to "🔥DYSON V11 TORQUE DRIVE FREE SHIP🔥", and the lean one makes the better
     // search term. Same rule JackpotHunter uses when it picks a title out of a comp cluster.
-    private static string LeanestTitle(List<string> titles)
+    // Public because the Restock List clusters the same sold titles for the same reason, and two
+    // screens picking a different title out of one cluster would search for two different things.
+    public static string LeanestTitle(List<string> titles)
     {
         var usable = titles
             .Where(t => !string.IsNullOrWhiteSpace(t))

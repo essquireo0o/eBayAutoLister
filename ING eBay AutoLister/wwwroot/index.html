@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=92" />
+  <link rel="stylesheet" href="style.css?v=93" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -116,6 +116,11 @@
              already in the seller's hand. It sits first in Grow because it is the one that has to
              be found in three seconds on a phone. -->
         <button class="nav-item" type="button" data-page="snap"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>Snap &amp; Source</button>
+        <!-- The only board in Grow that isn't looking at the market. Every other one answers "is
+             this worth buying" about something it found; this one answers "what should I be looking
+             FOR", out of the seller's own completed sales — and that question comes first, which is
+             why it sits directly under the screen they use with the item already in their hand. -->
+        <button class="nav-item" type="button" data-page="restock"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Restock List</button>
         <!-- The only screen in the app that works when nobody is looking at it. Every other
              sourcing board is a button someone has to remember to press; this one is that same
              scan, saved with a profit bar on it, running on its own. It sits first in Grow
@@ -3970,6 +3975,124 @@
         </div>
       </section>
 
+      <!-- The Restock List. The third screen built from the same completed sales as Money Made and
+           the Tax Pack, which is why it sits beside them here even though it lives under Grow in the
+           sidebar: those two say what the seller made and what they owe on it, and this one says
+           what to go and buy with the rest.
+
+           Every other sourcing board in the app starts at the market. This one starts at the till
+           roll, and the ranking is money per MONTH rather than money — a $70 part that sells twice a
+           month is a better thing to go looking for than a $300 flip that happened once, and every
+           board that sorts by profit says the opposite. See Services/RestockAnalyzer.cs. -->
+      <section id="restock-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="rs-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Buy what you have already proved you can sell</div>
+              <h2>🔁 Restock List</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="rs-refresh" class="btn btn-secondary small" type="button">Refresh</button>
+            <button id="rs-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+
+          <!-- The hero is money the seller is NOT making, and it is the only figure here that is an
+               instruction: these are lines they have already proved sell, with nothing listed. -->
+          <div class="er-hero rs-hero">
+            <div class="er-hero-main">
+              <p id="rs-hero-label" class="er-hero-label">Sitting idle — proven lines with nothing listed</p>
+              <p id="rs-hero-figure" class="er-hero-figure">$0</p>
+              <p id="rs-hero-sub" class="er-hero-sub">your sales appear here on their own once eBay is connected</p>
+            </div>
+            <div class="er-hero-side">
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Proven lines earn</span>
+                <span id="rs-hero-proven" class="er-hero-stat-value">$0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Products ranked</span>
+                <span id="rs-hero-lines" class="er-hero-stat-value">0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Cash to restock them</span>
+                <span id="rs-hero-cash" class="er-hero-stat-value">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="rs-notice" class="rs-notice hidden"></div>
+
+          <div id="rs-board" class="hidden">
+            <div class="er-chart-head rs-board-head">
+              <div>
+                <p class="eyebrow">Go and buy these</p>
+                <h3 id="rs-board-title">Ranked by what each one earns you a month</h3>
+              </div>
+              <!-- Two orders, because a seller with unlimited weekends wants the most money and a
+                   seller with $400 wants the fastest cash back. They are routinely different lines. -->
+              <div class="rs-sort" role="group" aria-label="Rank the list by">
+                <button class="rs-sort-btn active" type="button" data-sort="month">Money a month</button>
+                <button class="rs-sort-btn" type="button" data-sort="cash">Return on cash</button>
+                <button class="rs-sort-btn" type="button" data-sort="unit">Profit per unit</button>
+              </div>
+            </div>
+            <div id="rs-list" class="rs-list"></div>
+          </div>
+
+          <!-- The stop list is second, not last. It is the most valuable thing on the page: the
+               money already spent on something that sells at a loss or comes straight back. -->
+          <div id="rs-stop-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Don't buy these again</p>
+                <h3>What lost money or came back</h3>
+              </div>
+            </div>
+            <div id="rs-stop" class="rs-list rs-list-stop"></div>
+          </div>
+
+          <div id="rs-cost-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">One number each, and these join the ranking</p>
+                <h3 id="rs-cost-title">Sold, with no record of what they cost</h3>
+              </div>
+              <button class="btn btn-secondary small" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;earnings&quot;]')?.click()">Enter costs on Money Made</button>
+            </div>
+            <div id="rs-cost" class="rs-list rs-list-quiet"></div>
+          </div>
+
+          <div id="rs-watch-card" class="er-chart-card hidden">
+            <div class="er-chart-head">
+              <div>
+                <p class="eyebrow">Real, but not proved</p>
+                <h3>Sold once, or sold well a long time ago</h3>
+              </div>
+            </div>
+            <div id="rs-watch" class="rs-list rs-list-quiet"></div>
+          </div>
+
+          <div id="rs-results" class="inv-results">
+            <div class="state">
+              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
+              <div class="state-title">The best thing to go and buy is something you have already sold.</div>
+              <p class="state-body">This reads your completed sales — the fee eBay actually charged, the cost you actually paid — groups them into products, and ranks them by what each one earns you a month. It also tells you which ones to stop buying, and which you have none of right now.</p>
+              <div class="state-actions">
+                <button class="btn btn-secondary" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;earnings&quot;]')?.click()">Go to Money Made</button>
+              </div>
+              <p class="state-hint">Nothing here is a market forecast. Every figure is a sale you already made.</p>
+            </div>
+          </div>
+
+          <div id="rs-honesty" class="inv-footnote hidden"></div>
+        </div>
+      </section>
+
       <!-- The Deal Pipeline. Every other money screen in the app is a snapshot of one moment; this
            is the thread between them, carrying one flip from the sourcing forecast that justified
            buying it to the sale in Money Made that settled it.
@@ -5348,6 +5471,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=104"></script>
+  <script src="app.js?v=105"></script>
 </body>
 </html>

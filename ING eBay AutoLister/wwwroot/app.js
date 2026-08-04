@@ -933,6 +933,7 @@
     bindSniper();
     bindEarnings();
     bindTax();
+    bindRestock();
     bindPipeline();
     bindHomeButtons();
     bindForm();
@@ -1187,6 +1188,10 @@
     // The one page that is doing something whether or not it is open. onShow/onHide only control
     // how often it re-reads itself — the scanning happens in the server either way.
     snap:        { section: 'snap-section',          open: showSnapSection },
+    // No refresh hook, unlike the Tax Pack: this one reads the seller's live eBay listings to work
+    // out what they have none of, and that is a real API call. It loads once and reloads when the
+    // seller asks — coming back to a tab is not asking.
+    restock:     { section: 'restock-section',       open: showRestockSection },
     radar:       { section: 'radar-section',         open: showRadarSection,
                    onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
@@ -1551,7 +1556,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'restock-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -8109,6 +8114,219 @@
     setText('tx-1099-figure', moneyExact(check.expectedGross || 0));
     const el = $('tx-1099');
     if (el) el.innerHTML = (check.notes || []).map(n => `<p>${esc(n)}</p>`).join('');
+  }
+
+  // ── The Restock List ──────────────────────────────────────────────────────
+  // Money Made says what the seller earned. This says what to go and buy with it, out of the same
+  // completed sales — so a row here can always be traced back to sales on that screen.
+  //
+  // Three rules the screen has to keep, all of them from RestockAnalyzer:
+  //   * The hero is money NOT being made. Proven lines with nothing listed is the one figure here
+  //     that is an instruction, and it is the reason a seller opens this on a Saturday morning.
+  //   * A caution is never netted off a headline. "$180 a month" and "one of the four came back"
+  //     are both true and they go on the same card, because the seller is about to spend money.
+  //   * Nothing here is a market forecast, and the screen says so rather than looking like one.
+  //     Every figure is a sale that already happened, and prices move.
+  let restock = null;
+  let restockSort = 'month';
+
+  function showRestockSection() {
+    hideOverlaySections();
+    $('restock-section')?.classList.remove('hidden');
+    setActiveNavItem('restock');
+    markWorkspaceTabOpen('restock');
+    if (!restock) loadRestock(); else renderRestock();
+  }
+
+  function closeRestockSection() { closeWorkspacePage('restock'); }
+
+  function bindRestock() {
+    on('rs-close', 'click', closeRestockSection);
+    on('rs-home', 'click', goHome);
+    on('rs-refresh', 'click', () => loadRestock());
+
+    // Delegated: every row on this board is re-rendered on load and on every change of order.
+    $('restock-section')?.addEventListener('click', e => {
+      const sort = e.target.closest?.('.rs-sort-btn');
+      if (sort) {
+        restockSort = sort.dataset.sort || 'month';
+        renderRestock();
+        return;
+      }
+
+      const hunt = e.target.closest?.('.rs-hunt');
+      if (hunt) { huntForRestockLine(hunt.dataset.query || ''); return; }
+
+      const copy = e.target.closest?.('.rs-copy');
+      if (copy) {
+        navigator.clipboard?.writeText(copy.dataset.query || '');
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = 'Copy search'; }, 1500);
+      }
+    });
+  }
+
+  // The whole point of the board in one click: a line the seller has proved they can sell, handed
+  // to the screen that finds one to buy. The search waits a tick because navigateTo() opens the
+  // Opportunity Finder on the next hashchange — searching now would run against a hidden page.
+  function huntForRestockLine(query) {
+    if (!query) return;
+    navigateTo('opportunity');
+    setTimeout(() => {
+      const input = $('opp-search-input');
+      if (!input) return;
+      input.value = query;
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      findOpportunities();
+    }, 80);
+  }
+
+  async function loadRestock() {
+    const btn = $('rs-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading your sales…'; }
+    try {
+      const res = await fetch('/api/restock');
+      if (!res.ok) throw new Error('Could not build your restock list.');
+      restock = await res.json();
+      renderRestock();
+    } catch (err) {
+      setRestockNotice(errorText(err, 'Could not build your restock list.'), true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+    }
+  }
+
+  function setRestockNotice(text, isError) {
+    const el = $('rs-notice');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+    el.classList.toggle('rs-notice-error', !!isError);
+  }
+
+  function renderRestock() {
+    if (!restock) return;
+    const r = restock;
+    const s = r.summary || {};
+    const ranked = r.restock || [];
+    const has = (r.status !== 'no_sales') && (ranked.length || (r.stop || []).length || (r.needsCost || []).length || (r.watch || []).length);
+
+    $('rs-results')?.classList.toggle('hidden', !!has);
+    $('rs-board')?.classList.toggle('hidden', !ranked.length);
+    $('rs-stop-card')?.classList.toggle('hidden', !(r.stop || []).length);
+    $('rs-cost-card')?.classList.toggle('hidden', !(r.needsCost || []).length);
+    $('rs-watch-card')?.classList.toggle('hidden', !(r.watch || []).length);
+    $('rs-honesty')?.classList.toggle('hidden', !(r.honesty || []).length);
+
+    renderRestockHero(r, s, ranked);
+    setRestockNotice(r.stockNote || '', false);
+
+    const list = $('rs-list');
+    if (list) list.innerHTML = sortedRestockLines(ranked).map(restockCard).join('');
+
+    const stop = $('rs-stop');
+    if (stop) stop.innerHTML = (r.stop || []).map(restockCard).join('');
+
+    const cost = $('rs-cost');
+    if (cost) cost.innerHTML = (r.needsCost || []).map(restockCard).join('');
+    setText('rs-cost-title', (r.needsCost || []).length === 1
+      ? 'One product sold with no record of what it cost'
+      : `${(r.needsCost || []).length} products sold with no record of what they cost`);
+
+    const watch = $('rs-watch');
+    if (watch) watch.innerHTML = (r.watch || []).map(restockCard).join('');
+
+    const honesty = $('rs-honesty');
+    if (honesty) honesty.innerHTML = (r.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+
+    document.querySelectorAll('.rs-sort-btn').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.sort === restockSort));
+  }
+
+  function renderRestockHero(r, s, ranked) {
+    const idle = s.monthlyProfitOffTheShelf || 0;
+    const soldOut = s.soldOutLines || 0;
+
+    // The hero only claims idle money when the live listings were actually read. With eBay down
+    // the honest headline is what the proven lines earn, not a zero that reads like "nothing to do".
+    const stockKnown = r.stockStatus === 'read';
+    setText('rs-hero-figure', money(stockKnown ? idle : (s.provenMonthlyProfit || 0)));
+    setText('rs-hero-proven', money(s.provenMonthlyProfit || 0));
+    setText('rs-hero-lines', String(s.rankedLines || 0));
+    setText('rs-hero-cash', s.cashToRestockSoldOut ? money(s.cashToRestockSoldOut) : '—');
+
+    setText('rs-hero-label', stockKnown ? 'Sitting idle — proven lines with nothing listed' : 'Your proven lines earn, a month');
+
+    let sub;
+    if (!ranked.length && r.status === 'no_sales') sub = 'your sales appear here on their own once eBay is connected';
+    else if (!ranked.length) sub = 'nothing has sold twice yet, so nothing is ranked — the lists below say what is there';
+    else if (!stockKnown) sub = 'your live listings could not be read, so this board can\'t say which of these you have none of';
+    else if (soldOut) sub = `${soldOut} product${soldOut === 1 ? '' : 's'} you have sold before, and have none of right now`;
+    else sub = 'everything you have proved sells is listed — nothing is sitting idle';
+    setText('rs-hero-sub', sub);
+
+    if (s.topLineTitle && s.topLineShareOfProfitPercent >= 50 && ranked.length > 1)
+      setText('rs-board-title', `${Math.round(s.topLineShareOfProfitPercent)}% of this comes from one product — ${s.topLineTitle}`);
+    else
+      setText('rs-board-title', 'Ranked by what each one earns you a month');
+  }
+
+  // Sorting is a display choice, so it happens here rather than costing a round trip. The server's
+  // own order is money per month; the other two re-order the same ranked lines and never add one.
+  function sortedRestockLines(lines) {
+    const copy = lines.slice();
+    if (restockSort === 'cash') return copy.sort((a, b) => (b.annualReturnOnCashPercent ?? -1) - (a.annualReturnOnCashPercent ?? -1));
+    if (restockSort === 'unit') return copy.sort((a, b) => (b.averageProfitPerUnit ?? 0) - (a.averageProfitPerUnit ?? 0));
+    return copy.sort((a, b) => (b.profitPerMonth ?? 0) - (a.profitPerMonth ?? 0));
+  }
+
+  function restockCard(line) {
+    const badges = [];
+    if (line.soldOut && line.verdict === 'restock') badges.push('<span class="rs-badge rs-badge-out">None listed</span>');
+    else if (line.activeListings > 0) badges.push(`<span class="rs-badge rs-badge-live">${line.activeListings} listed</span>`);
+    if (line.verdict === 'stop') badges.push('<span class="rs-badge rs-badge-stop">Stop buying</span>');
+    if (line.verdict === 'needs_cost') badges.push('<span class="rs-badge rs-badge-cost">Needs a cost</span>');
+
+    const stats = [];
+    if (line.profitPerMonth != null) stats.push(['A month', moneyExact(line.profitPerMonth)]);
+    if (line.averageProfitPerUnit != null) stats.push(['Profit each', moneyExact(line.averageProfitPerUnit)]);
+    // Zero means "no rate can be measured", not "sells nothing" — one sale has no rate, and
+    // printing 1.0 a month beside "one sale is not a pattern" would contradict the card.
+    if (line.salesPerMonth > 0) stats.push(['Sells', `${line.salesPerMonth.toFixed(1)} a month`]);
+    if (line.averageUnitCost != null) stats.push(['You paid', moneyExact(line.averageUnitCost)]);
+    if (line.roiPercent != null) stats.push(['Return', `${Math.round(line.roiPercent)}%`]);
+    // Only ever shown when the seller recorded when they bought it — see RestockAnalyzer.
+    if (line.annualReturnOnCashPercent != null) stats.push(['Cash back', `${Math.round(line.annualReturnOnCashPercent).toLocaleString()}% a year`]);
+    if (line.medianDaysHeld != null) stats.push(['Held', `${line.medianDaysHeld} days`]);
+    stats.push(['Sold', `${line.unitsSold} in total`]);
+    stats.push(['Last one', line.daysSinceLastSale === 0 ? 'today' : `${line.daysSinceLastSale} days ago`]);
+    if (line.proceedsAwaitingCost > 0 && line.verdict === 'needs_cost') stats.push(['Proceeds', moneyExact(line.proceedsAwaitingCost)]);
+
+    const cautions = (line.cautions || []).map(c => `<li>${esc(c)}</li>`).join('');
+
+    // "Find one to buy" belongs only on a line the board is recommending. On the stop list it would
+    // offer to go and buy more of the thing the card is telling the seller to stop buying, and on a
+    // line with no cost recorded nothing here knows yet whether buying another is a good idea.
+    const hunt = line.verdict === 'restock' || line.verdict === 'watch';
+
+    return `
+      <article class="rs-card rs-card-${esc(line.verdict)}">
+        <div class="rs-card-head">
+          <div class="rs-card-title">
+            <h4>${esc(line.title)}</h4>
+            <div class="rs-badges">${badges.join('')}</div>
+          </div>
+          <div class="rs-card-actions">
+            ${hunt ? `<button class="btn btn-primary small rs-hunt" type="button" data-query="${esc(line.searchQuery)}">Find one to buy</button>` : ''}
+            <button class="btn btn-ghost small rs-copy" type="button" data-query="${esc(line.searchQuery)}">Copy search</button>
+          </div>
+        </div>
+        <p class="rs-headline">${esc(line.headline)}</p>
+        <div class="rs-stats">
+          ${stats.map(([label, value]) => `<div class="rs-stat"><span class="rs-stat-label">${esc(label)}</span><span class="rs-stat-value">${esc(value)}</span></div>`).join('')}
+        </div>
+        ${cautions ? `<ul class="rs-cautions">${cautions}</ul>` : ''}
+      </article>`;
   }
 
   // ── Deal Pipeline ─────────────────────────────────────────────────────────
