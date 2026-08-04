@@ -90,27 +90,39 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
     }
 
     // Given a listing's model and/or title, return the representative photos from the best-matching
-    // model folder that actually HAS photos. Null when nothing matches — the UI then prompts the
-    // seller to add photos for this model once, after which every future unit reuses them.
+    // model folder that actually HAS photos. Null when nothing matches, or when two models fit
+    // equally well — the UI then prompts the seller to add photos for this model once, after which
+    // every future unit reuses them. A wrong match is worse than no match here: these photos go out
+    // under a line telling the buyer they represent the unit being shipped.
     public RepresentativeMatch? ResolveForListing(string? model, string? title)
     {
         var folders = GetAllFolders().Where(f => f.ImageCount > 0).ToList();
         if (folders.Count == 0) return null;
 
-        var hay = Norm($"{model} {title}");
-        if (hay.Length == 0) return null;
+        // Whole words, not substrings. A folder keyed "S19_95TH" holds photos of a 95TH machine; a
+        // substring test would let its "s19" claim an "S19j Pro" listing and put the wrong unit's
+        // photos under a line that promises they represent what ships.
+        var hayTokens = Norm($"{model} {title}")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        if (hayTokens.Count == 0) return null;
 
         PhotoFolderSummary? best = null;
         var bestScore = 0;
+        var ambiguous = false;
         foreach (var f in folders)
         {
             var keyTokens = Norm(f.ModelKey).Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (keyTokens.Length == 0) continue;
             // Token overlap between the folder key and the listing's model/title.
-            var score = keyTokens.Count(t => hay.Contains(t));
-            if (score > bestScore) { bestScore = score; best = f; }
+            var score = keyTokens.Count(hayTokens.Contains);
+            if (score > bestScore) { bestScore = score; best = f; ambiguous = false; }
+            else if (score == bestScore && score > 0) ambiguous = true;
         }
-        if (best is null || bestScore == 0) return null;
+        // Two models fitting equally well means the title has not said which one this is — "Antminer
+        // S19" fits the 95TH and the 110TH folder alike. Guessing ships one hashrate's photos on the
+        // other's listing; no match asks the seller instead, which is what the UI is already for.
+        if (best is null || bestScore == 0 || ambiguous) return null;
         return new RepresentativeMatch(best.ModelKey, ListPhotoUrls(best.ModelKey), RepresentativeDisclosure);
     }
 

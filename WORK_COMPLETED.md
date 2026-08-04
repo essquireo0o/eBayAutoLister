@@ -9031,3 +9031,101 @@ listing card, which is unchanged code.
 - **The New Listing overlay was not touched.** It shares `.form-panel`, so the caret override is
   scoped to `summary.fp-sum` and a test holds it there; its own panels keep their plain headers and
   its own server-backed readiness bar.
+
+## The photo that says it is the unit you will receive — the representative-photo library (autonomous session, 2026-08-04)
+
+`PhotoLibrary` is the service that turns "photograph every unit" into "photograph every model once".
+The seller shoots their real stock for a model, those photos live in a folder under `photos/`, and
+every identical used unit listed afterwards reuses them with a disclosure line appended to the
+description. It is behind six endpoints and it had **no tests at all** — 158 lines deciding which
+photos go on which listing, with nothing holding any of it.
+
+That is what this pass is: 33 tests, and the two defects writing them turned up.
+
+## What the tests are actually about
+
+Three things have to hold or the feature is not worth having, and each is a different kind of cost.
+
+| Promise | What it costs when it breaks |
+|---|---|
+| The same model buckets to the same folder however it was typed | The photos are never found again; the shortcut saves nobody anything |
+| A listing is never handed **another model's** photos | Not-as-described: the sale, the fees, and a defect on the account |
+| No model key or file name reaches outside `photos/` | A delete endpoint that takes seller input and reaches the disk |
+
+The middle one is the sharp one. These photos go out under a line that tells the buyer they
+represent the unit being shipped. That line is what makes reusing a photo acceptable in the first
+place — and it is a lie the moment the match is wrong.
+
+## The two defects
+
+Both were in `ResolveForListing`, and both put a different machine's photos on a listing.
+
+**A folder key matched a word it was only part of.** The scan was `hay.Contains(t)` — a substring
+test against the whole normalised title. The folder `S19_95TH` contributes the token `s19`, and
+`"antminer s19j pro"` contains `s19`. So a 95TH machine's photos scored a hit on an **S19j Pro**
+listing, and with no better-scoring folder they were the photos that went out. Now the title is
+split into tokens and matched whole: `s19` is not `s19j`.
+
+**A tie was broken by folder name.** `if (score > bestScore)` keeps the first folder seen, and
+folders arrive in name order. A listing that said only "Antminer S19" scored exactly 1 against
+`S19_95TH` and exactly 1 against `S19_110TH` — the title has genuinely not said which machine this
+is — and the seller silently got `S19_110TH`, because `1` sorts before `9`. It now returns no match.
+Two models fitting equally well is not a match to pick between; it is the UI's existing "add photos
+for this model" prompt, which is the honest answer.
+
+Both tests fail against the old service (verified by reverting it and re-running: 31 passed,
+2 failed) and pass against the new one.
+
+## What the other 31 pin
+
+- **Bucketing.** Brand+Model and brand+title reach the same key for the same machine; `Used`,
+  `ASIC`, `Bitcoin` and `Miner` do not split a model into two buckets; case and punctuation do not;
+  a title with the hashrate, PSU and shipping tacked on still buckets with the short one, because
+  the key stops at four tokens. Nothing to go on gives `misc` rather than an empty path — an empty
+  key is a write into `photos/` itself.
+- **Safety.** `../../escaped` as a model key creates `photos/escaped` and *not* a sibling of
+  `photos/`; a photo saved under a climbing key lands inside; an empty key throws rather than
+  writing to the root; delete refuses a non-image, refuses a file that is not there, and cannot
+  reach `../L7/keeper.jpg` from the `S19j_Pro` folder.
+- **What reaches a listing.** Only image extensions — a `receipts.pdf` or a `thumbs.db` in the
+  folder would be a broken image in a live gallery, and an inflated folder count reads as "photos
+  done" on a model that has none. Order is fixed, because the first photo is the one buyers see in
+  search results and it has to be the same on every unit.
+- **Saving.** An extension the library will not serve back is stored as `png`, so an upload the
+  seller watched succeed is not one they can never see again; `.JPG` is `.jpg`.
+- **The disclosure**, pinned to both halves of what it claims: the photo stands in for the unit,
+  and the unit was individually tested.
+- **The loop end to end**: derive a key, save a photo under it, list the next identical unit, get
+  the photos back.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Services/PhotoLibrary.cs` | `ResolveForListing` matches whole tokens and refuses ambiguous ties; comments say why |
+| `ING eBay AutoLister.Tests/PhotoLibraryTests.cs` | New — 33 tests |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,097 passed**, 0 failed, 0 skipped (33 of them new; was 3,064) |
+| Both new match-safety tests re-run against the unmodified service | **2 failed**, as they must |
+
+No front-end file changed, so `index.html` keeps its current `?v=`.
+
+## Known limits
+
+- **Matching is still token overlap, not a model catalogue.** It now refuses the two ways it was
+  getting the answer wrong, but a folder whose key shares one real token with an unrelated title
+  and has no competition is still a match. The disclosure covers a *representative* unit, not a
+  different product, so the honest ceiling here is a per-model catalogue the seller confirms once.
+- **A refused tie is silent.** `ResolveForListing` returns `null` for "two models fit equally well"
+  and for "nothing fits", and the endpoint reports both as `matched: false`. The seller is prompted
+  to add photos either way, which is right, but "your title does not say which S19 this is" is the
+  more useful sentence and it is not available to say yet.
+- **The endpoints themselves are still untested.** These are service-level tests; the six
+  `/api/photos/library*` routes are thin and unchanged, but nothing pins their JSON shape.
+- **`GetAllFolders` creates the four seed folders as a side effect of reading.** Pinned as current
+  behaviour rather than changed — the UI relies on the empty folders being there to invite a shoot.
