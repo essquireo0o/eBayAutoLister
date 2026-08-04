@@ -8096,3 +8096,141 @@ building, with no tests behind any of it. Rather than start something new beside
 verified it against the existing suite (green at 2779), then pinned all four failures and the new
 recovery UI with 42 tests, mutation-checked the sharpest of them, and committed the whole thing as
 one change. Nothing in the app half was rewritten.
+
+---
+
+## The words that were never in the title — reading the market instead of the listing (autonomous session, 2026-08-04)
+
+Every title tool this app has ever had works from the seller's own listing. `ListingCopilot.AuditTitle`
+counts its characters, strikes its filler and shouts at its ALL CAPS; `CopilotSeoJob` pays Claude to
+rewrite it. Both can only ever rearrange words that are already there — and the reason a listing gets
+no views is nearly always **a word that was never in it**. eBay's 80 characters are the only free
+keyword space a seller has, and a listing that uses 44 of them is not a listing with a tidy title; it
+is a listing with 36 characters of unbought advertising.
+
+Nothing in the app knew what the competition was called. That is the gap this fills, and it is the
+thing ZIK Analytics charges a monthly fee for.
+
+## What it reads
+
+Two corpora, both eBay's own, neither of them Terapeak and neither of them a guess about the ranking
+algorithm:
+
+- **Ranked** — Browse API under Best Match, top 50 for the search this item is in. Not a theory about
+  what eBay rewards; the output of the thing itself. A word in 31 of the top 50 is a word eBay is
+  rewarding for this search *today*.
+- **Sold** — Marketplace Insights, 90 days. Smaller, slower, worth more per row: ranking is attention,
+  selling is money. It is approval-gated on most accounts, so it is attempted, its absence is
+  **named in the answer**, and the ranked half carries the report.
+
+The search is not the title. The Browse API ANDs the words together, so an 80-character title matches
+itself and nothing else — which returns an empty market and a report cheerfully claiming the title is
+already perfect. `BuildQuery` takes the part number where there is one (minus eBay's own "Does Not
+Apply", which is on thousands of listings and returns thousands of unrelated ones) and otherwise the
+first six words that carry meaning.
+
+## What comes back
+
+**The words, with their counts.** "Bitcoin — 10 of 10 top results, 3 of 3 sold" is a reason to retype
+a title. "Recommended keyword" is a brand of advice, and a seller cannot tell a good one from a bad
+one without the number. Both counts travel separately; they are never blended into a score.
+
+**A title.** The seller's own, with the strongest missing terms appended until 80 characters run out.
+Nothing they wrote is removed, reordered or reworded — applying it cannot lose a word they chose on
+purpose, and a term that would push past 80 is dropped rather than squeezed in, because eBay does not
+truncate the *suggestion*, it truncates whatever the seller had at the end.
+
+**The empty Item Specifics, answered.** For each one the seller left blank, the value those same
+titles agree on — but only ever a value from **eBay's own published list** for that aspect, so the
+worst case is a legal value that doesn't fit rather than a value that fails the publish. Required
+first, since those are the ones that stop a publish rather than merely a search.
+
+## The three rules that make the counts mean anything
+
+The uncommitted miner in the tree offered `s19 pro power`, `pro power supply`, `power supply bitcoin`,
+`supply bitcoin miner` — four findings that are one sentence sliced four ways. That is not a bug in
+the corpus; it is what an eBay search *is*. The top 50 results for one item are near-copies of each
+other, so **every** window of a common title scores the same 100%. Three rules now stand between that
+and the seller:
+
+1. **One seller, one vote.** A listing relisted six times comes back six times under the same title
+   and clears every threshold here on volume alone. Both corpora are deduplicated first, separately —
+   a title that both ranks and sold is two facts, not one.
+2. **A phrase offered as an addition must be entirely new.** "Pro Power" is a real 100% phrase in a
+   corpus of Antminer power supplies, and appending it to a title that already says *Pro* spends two
+   of the eighty characters saying it twice.
+3. **No two reported terms may share a word.** Strongest first, longer phrase winning a tie because a
+   phrase carries word order and a word does not. Without this, applying the list writes "supply" and
+   "bitcoin" into the title twice each.
+
+And `MaxTermWords` went 3 to 2. A third word almost never adds a search anybody types; it adds a
+longer slice of one competitor's sentence and charges three characters for it.
+
+Measured on a realistic ten-listing corpus, the answer is now `Bitcoin · ASIC · 110TH · Bitmain · BTC ·
+PSU · SHA-256 · Machine · Working · Tested`, each with its two counts, and a built title landing on
+exactly 80 characters.
+
+## What it refuses to say
+
+Everything is **offered**. Nothing here knows what the item is; it knows what the item's neighbours
+are called, and a seller who ticks "Bluetooth" onto a title for a thing with no Bluetooth has bought
+themselves a not-as-described case. So every term is a chip with its evidence beside it, every
+specific is a button, the panel says in as many words that these are *the competition's words, not
+facts about your item*, and a value is never written over an answer the seller already gave.
+
+There is also a list of words this will not put in a seller's mouth however the counts fall: shipping
+and speed promises, price hype, and eBay's own banned title decoration. Every one is a claim about the
+*transaction* rather than the item, every one is cheap to tick and expensive to get wrong — and they
+are reliably the most common words in any corpus of eBay titles, so without the list they would top
+every answer this feature ever gives.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/SearchTermMiner.cs` | The miner. Pure and static — no eBay call, no clock, no database. Rewrote the selection: relist dedupe, all-new-phrase rule, disjoint terms, `MaxTermWords` 3 to 2 |
+| `Models/SearchTermModels.cs` | Request, `SearchTerm` (both counts, both totals, share, `InYourTitle`), `MarketSpecificSuggestion`, `SearchTermReport` |
+| `Services/AspectMatcher.cs` | `CanInfer` made public, so market-derived specifics obey the same refusal list — a country of origin read off a competitor's title is exactly the legal claim that list exists to refuse, and it is *worse* from that source |
+| `Program.cs` | `POST /api/listing/search-terms` — two eBay calls, each failing independently, plus the category's aspect list; says in words which corpus it got |
+| `wwwroot/index.html` | The panel, under the title it is about; `?v=` bumps |
+| `wwwroot/app.js` | Run/render/apply, the 80-character refusal, the never-overwrite check, `cssEscape` for aspect names with apostrophes in them; `?v=104` |
+| `wwwroot/style.css` | `.kw-*`; `?v=92` |
+| `Tests/SearchTermMinerTests.cs` | **new**, +30: the thresholds, the refusal list, the three selection rules, the built title's ceiling, the query, and the specifics — including that a split market says nothing and a legal claim is never read off a stranger's listing |
+| `Tests/KeywordGapAssetTests.cs` | **new**, +13: the browser half, where every failure is silent — the wiring, the panel's position beside the title, the 80-char refusal, the never-overwrite check, the outage message, and the `?v=` bumps |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/…"` | **2864 passed**, 0 failed — 43 new, no pre-existing test changed or removed (baseline this session: 2821) |
+| `node --check wwwroot/app.js` | clean |
+| Mutation check | Removing the disjointness rule fails 2 tests; removing the relist dedupe fails 1; removing the all-new-phrase rule fails 1. Each of the three rules is pinned by a test that bites on exactly its removal. |
+
+## Known limits
+
+- **Not driven in a browser.** The client half is pinned by asset tests and `node --check` only. The
+  chips, the built title and the specifics rows have not been watched happening against a live eBay.
+- **The sold half is dark on most accounts.** Marketplace Insights is Limited Release. The report says
+  so rather than showing a silent zero, but for most sellers this reads ranked titles only — which is
+  the larger corpus anyway, and the weaker signal.
+- **Two eBay calls per press, uncached.** Explicitly button-triggered for that reason; readiness
+  re-runs per keystroke and costs nothing, this does not. Pressing it twice pays twice.
+- **The seller's own listing is not excluded from the corpus.** If it is live and ranks for its own
+  search, its words land in *Shared* rather than *Missing*, so the effect is a slightly generous
+  "already earned" list, never a false suggestion.
+- **A homogeneous corpus makes some phrase choices arbitrary.** Where "power supply" and "supply
+  bitcoin" both sit at 100% there is no signal in the counts to prefer either; the disjointness rule
+  guarantees the *set* is non-overlapping and covers the market's words, not that it picked the
+  prettiest phrasing. Real corpora are not that uniform.
+- **Nothing is applied automatically, by design.** A seller who presses the button and reads nothing
+  gets nothing — which is the correct outcome for a feature whose words are claims about an item it
+  cannot see.
+
+## Provenance
+
+The working tree held `SearchTermMiner.cs`, `SearchTermModels.cs` and a one-method change to
+`AspectMatcher.cs` when this session opened — uncommitted, unreferenced by anything, with no endpoint,
+no UI and no tests. Rather than start something new beside it, this session took it end to end: found
+and fixed the sliced-sentence defect in its selection, wired it to eBay through an endpoint, gave it
+the panel under the title box, and pinned the whole path with 43 tests.

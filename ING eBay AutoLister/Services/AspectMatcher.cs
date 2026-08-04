@@ -280,6 +280,12 @@ public static partial class AspectMatcher
         "manufacturerwarranty",
     };
 
+    // Whether an aspect may be answered by anything other than the seller typing it. Public so the
+    // market-derived suggestions in SearchTermMiner obey the same refusal list — a country of
+    // origin read off a competitor's title is exactly the legal claim this list exists to refuse,
+    // and it would be worse from that source, not better.
+    public static bool CanInfer(string? aspectName) => !NeverInfer.Contains(NormalizeName(aspectName));
+
     public static Suggestion? Suggest(CategoryAspect aspect, ListingFacts facts)
     {
         var norm = NormalizeName(aspect.Name);

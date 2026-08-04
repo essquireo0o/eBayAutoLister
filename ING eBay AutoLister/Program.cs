@@ -7846,6 +7846,121 @@ app.MapGet("/api/ebay/category-aspects", async (string? categoryId, EbayService 
     }
 });
 
+// What the market calls this thing — the words the listings eBay ranks above this one use, and
+// this one doesn't.
+//
+// Every other title tool in the app works from the seller's own listing: audit it, tidy it, rewrite
+// it. All of that can only rearrange words that are already there, and the reason a listing gets no
+// views is nearly always a word that was never in it. So this reads the competition instead, and
+// answers with counts rather than opinions.
+//
+// Two eBay calls, both already in the app and neither of them Terapeak:
+//
+//   Browse, Best Match  — the top 50 results for the search this item is in. Not a theory about
+//                         eBay's ranking; the ranking's own output.
+//   Marketplace Insights — the titles of listings that actually sold. Approval-gated on most
+//                         accounts, so it is attempted and its absence reported, never fatal.
+//
+// Explicitly asked for, never on a keystroke: readiness re-runs per edit and costs nothing, this
+// costs two eBay calls and a couple of seconds.
+app.MapPost("/api/listing/search-terms", async (
+    SearchTermRequest req, EbayService ebay, CredentialsStore store, ActionLog log) =>
+{
+    var query = SearchTermMiner.BuildQuery(req.Title, req.Brand, req.Mpn);
+    if (string.IsNullOrWhiteSpace(query))
+        return Results.Ok(new SearchTermReport
+        {
+            Status   = "bad_input",
+            Query    = "",
+            Headline = "Write a title first",
+            Message  = "This works by searching eBay for what you've written and reading the listings that come back, so it needs a few words to search with.",
+        });
+
+    // The corpus. Both halves are optional and the report says which one it got — an answer built
+    // on ranked titles alone is a different claim from one that also saw what sold, and a seller
+    // reading percentages deserves to know which they are looking at.
+    List<string> rankedTitles = [];
+    List<string> soldTitles   = [];
+    var rankedFailed = false;
+    var soldFailed   = false;
+
+    try
+    {
+        var ranked = await ebay.SearchEndingSoonAsync(
+            query, minFeedback: 0, limit: 50, listingType: "BOTH",
+            sortOverride: EbayScanFilters.BestMatch);
+        rankedTitles = ranked.Select(i => i.Title).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+    }
+    catch (Exception ex)
+    {
+        rankedFailed = true;
+        log.Add("Warning", "Search terms: ranked search failed", ex.Message);
+    }
+
+    try
+    {
+        var sold = await ebay.SearchSoldCompsAsync(query, daysBack: 90);
+        soldTitles = sold.Items.Select(i => i.Title).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+    }
+    catch (Exception ex)
+    {
+        // Marketplace Insights is a Limited Release API and answers 403 for accounts that were
+        // never approved for it. That is the common case, not a fault, so it costs a log line and
+        // the ranked half carries the answer.
+        soldFailed = true;
+        log.Add("Info", "Search terms: sold titles unavailable", ex.Message);
+    }
+
+    var report = SearchTermMiner.Mine(req.Title, rankedTitles, soldTitles, query);
+
+    report.SourceLabel = (report.RankedTotal, report.SoldTotal) switch
+    {
+        (0, 0) => rankedFailed ? "eBay didn't answer the search." : "Nothing came back for this search.",
+        (> 0, 0) => $"{report.RankedTotal} listings eBay ranks first for “{query}”"
+                    + (soldFailed ? " — sold titles need eBay's Marketplace Insights access, which this account doesn't have." : "."),
+        (0, > 0) => $"{report.SoldTotal} listings that sold for “{query}”.",
+        _        => $"{report.RankedTotal} listings eBay ranks first for “{query}”, and {report.SoldTotal} that sold.",
+    };
+
+    // Item Specifics, read off the same titles and checked against eBay's own list of legal values
+    // for the field. Needs a category — without one there is no list to check against, and a value
+    // that isn't on eBay's list fails the publish instead of improving the search.
+    if (string.IsNullOrWhiteSpace(req.CategoryId))
+    {
+        report.AspectStatus  = "no_category";
+        report.AspectMessage = "Pick a category and the empty Item Specifics get filled from these listings too.";
+    }
+    else if (string.IsNullOrWhiteSpace(store.GetUserToken()))
+    {
+        report.AspectStatus  = "not_connected";
+        report.AspectMessage = "Connect eBay to read this category's Item Specifics.";
+    }
+    else
+    {
+        try
+        {
+            var aspects = await ebay.GetCategoryAspectsAsync(req.CategoryId);
+            report.Specifics = SearchTermMiner.SuggestSpecifics(
+                aspects, req.ItemSpecifics, [.. rankedTitles, .. soldTitles]);
+            if (report.Specifics.Count == 0)
+            {
+                report.AspectStatus  = "none";
+                report.AspectMessage = aspects.Count == 0
+                    ? "eBay lists no Item Specifics for this category."
+                    : "These listings don't agree on a value for any specific you've left empty.";
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Search terms: aspect lookup failed", ex.Message);
+            report.AspectStatus  = "error";
+            report.AspectMessage = "eBay didn't answer the Item Specifics lookup: " + ex.Message;
+        }
+    }
+
+    return Results.Ok(report);
+});
+
 // Score the whole draft. The aspect lookup is one part of it, so a listing is still scored on
 // title, photos, identifiers and description when eBay can't be reached — and says which half
 // it couldn't check rather than implying everything passed.

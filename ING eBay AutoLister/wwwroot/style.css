@@ -7984,6 +7984,168 @@ td.skeleton-cell { padding: 0 !important; }
    to look different from one the seller entered. Hence the coloured left rail
    on required rows and the dashed, clickable suggestion chip. ------------- */
 
+/* --- Keyword gap: the words the competing listings use, under the title box. Every chip is a
+   button because every one of them is a claim the seller has to agree to; the counts beside the
+   word are what makes agreeing possible. ---------------------------------------------------- */
+
+.kw-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+}
+
+.kw-free { font-size: var(--fs-xs); color: var(--muted); }
+
+.kw-panel {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--soft);
+}
+
+.kw-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.kw-headline { font-size: var(--fs-sm); font-weight: 700; color: var(--ink-2); }
+.kw-source   { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; }
+
+.kw-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  padding: var(--s1);
+  flex-shrink: 0;
+}
+.kw-close:hover { color: var(--ink-2); }
+
+.kw-message {
+  margin-top: var(--s2);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.kw-label {
+  margin: var(--s3) 0 var(--s2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--ink-2);
+}
+.kw-hint  { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.kw-count { font-weight: 400; color: var(--muted); }
+
+.kw-chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
+.kw-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--card);
+  font: inherit;
+  text-align: left;
+}
+.kw-chip.is-add  { cursor: pointer; border-style: dashed; border-color: var(--info-line); }
+.kw-chip.is-add:hover:not(:disabled) { background: var(--info-soft); border-style: solid; }
+.kw-chip.is-have { border-color: var(--success-line); background: var(--success-soft); }
+.kw-chip.is-added,
+.kw-chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+  border-style: solid;
+}
+
+.kw-chip-term { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.kw-chip-why  { font-size: var(--fs-2xs); color: var(--muted); white-space: nowrap; }
+
+.kw-suggest {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.kw-suggest-title {
+  padding: var(--s2);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.kw-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+}
+.kw-suggest-note { font-size: var(--fs-xs); color: var(--muted); }
+
+.kw-specifics { display: flex; flex-direction: column; gap: var(--s2); margin-bottom: var(--s2); }
+
+.kw-spec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-soft);
+  background: var(--card);
+}
+.kw-spec.is-required { border-left: 3px solid var(--danger); }
+
+.kw-spec-main { min-width: 0; }
+.kw-spec-name { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.kw-spec-why  { font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; }
+.kw-spec-use  { flex-shrink: 0; }
+
+.kw-spec-pill {
+  display: inline-block;
+  margin-left: var(--s1);
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  white-space: nowrap;
+}
+.kw-spec-pill.is-required { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-line); }
+.kw-spec-pill.is-rec      { background: var(--info-soft);   color: var(--info);   border: 1px solid var(--info-line); }
+
+.kw-shared { margin-top: var(--s3); }
+.kw-shared > summary {
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin-bottom: var(--s2);
+}
+
+.kw-caveat {
+  margin: var(--s3) 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .asp-head {
   display: flex;
   align-items: flex-start;

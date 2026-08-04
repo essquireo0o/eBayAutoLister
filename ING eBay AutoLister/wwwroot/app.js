@@ -16502,6 +16502,7 @@
     on('nl-ai-modify-input', 'keydown', e => { if (e.key === 'Enter') nlAiModify(); });
 
     initListingReadiness();
+    initKeywordGap();
 
     on('nl-btn-publish', 'click', () => nlSubmit('publish'));
 
@@ -16639,6 +16640,7 @@
     if ($('nl-duration-wrap')) $('nl-duration-wrap').style.display = 'none';
     if ($('nl-specifics-list')) $('nl-specifics-list').innerHTML = '';
     nlResetReadiness();
+    nlResetKeywordGap();
     nlClearAllPhotoSlots();
     // Empty description, back on the text tab (the default)
     descSetHtml('nl', '');
@@ -18001,6 +18003,290 @@
       addActivity('Item Specifics filled', applied + ' filled from the listing’s own title, description and identifier fields');
       nlRunReadiness(true);
     }
+  }
+
+  // ── Keyword gap: the words the competition uses ──────────────────
+  //
+  // Everything above works from the seller's own listing. This is the one thing in the editor that
+  // reads the market: POST /api/listing/search-terms searches eBay for what the seller has written,
+  // counts the words in the listings Best Match puts on top and in the ones that sold, and hands
+  // back the ones this title is missing with their counts attached.
+  //
+  // Nothing is written without a click, and the reason is not politeness. The app does not know
+  // what the item is — it knows what the item's neighbours are called. "Bluetooth" ticked onto a
+  // title for a thing with no Bluetooth is a not-as-described case, so every term is an offer with
+  // its evidence beside it and the seller is the one who knows.
+
+  let nlKwState   = null;
+  let nlKwRunning = false;
+
+  function initKeywordGap() {
+    on('nl-kw-run', 'click', nlRunKeywordGap);
+    on('nl-kw-close', 'click', () => { const p = $('nl-kw-panel'); if (p) p.hidden = true; });
+    on('nl-kw-apply', 'click', nlApplySuggestedTitle);
+    on('nl-kw-fill-specifics', 'click', () => nlFillMarketSpecifics(true));
+
+    // The free-character count is live even before anything is searched: 80 characters is the only
+    // free keyword space eBay gives a seller, and the commonest mistake is not spending it.
+    on('nl-title', 'input', nlRenderFreeChars);
+    nlRenderFreeChars();
+  }
+
+  function nlResetKeywordGap() {
+    nlKwState = null;
+    const panel = $('nl-kw-panel');
+    if (panel) panel.hidden = true;
+    const btn = $('nl-kw-run');
+    if (btn) { btn.disabled = false; btn.textContent = 'Find the words buyers search'; }
+    nlRenderFreeChars();
+  }
+
+  function nlRenderFreeChars() {
+    const el = $('nl-kw-free');
+    if (!el) return;
+    const len  = ($('nl-title')?.value || '').trim().length;
+    const free = Math.max(0, 80 - len);
+    // Nothing to say about a title that is already full, or about an empty one — the character
+    // counter beside the label covers those, and a second line saying the same thing is noise.
+    el.hidden = len === 0 || free === 0;
+    el.textContent = free + ' characters of free keyword space unused';
+  }
+
+  async function nlRunKeywordGap() {
+    if (nlKwRunning) return;
+    const title = ($('nl-title')?.value || '').trim();
+    const btn   = $('nl-kw-run');
+
+    if (!title) {
+      nlKwRender({
+        status: 'bad_input',
+        headline: 'Write a title first',
+        message: 'This searches eBay for what you have written and reads the listings that come back, so it needs a few words to search with.',
+      });
+      return;
+    }
+
+    nlKwRunning = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading eBay…'; }
+
+    try {
+      const res = await fetch('/api/listing/search-terms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          categoryId:    $('nl-category-id')?.value || '',
+          brand:         $('nl-brand')?.value || '',
+          mpn:           $('nl-mpn')?.value || '',
+          itemSpecifics: nlCollectAspectValues(),
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      nlKwRender(await res.json());
+    } catch (err) {
+      // Two eBay calls behind this, either of which can be down. A keyword tool that fails must
+      // read as "not now", not as "your title is fine".
+      nlKwRender({
+        status: 'error',
+        headline: 'Couldn’t read eBay just now',
+        message: 'The search didn’t come back, so nothing is claimed about your title either way. Try again in a moment — listing still works.',
+      });
+    } finally {
+      nlKwRunning = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'Find the words buyers search'; }
+    }
+  }
+
+  function nlKwRender(r) {
+    nlKwState = r;
+    const panel = $('nl-kw-panel');
+    if (!panel) return;
+    panel.hidden = false;
+
+    const set = (id, text) => { const el = $(id); if (el) el.textContent = text || ''; };
+    set('nl-kw-headline', r.headline);
+    set('nl-kw-source', r.sourceLabel);
+
+    const msg = $('nl-kw-message');
+    if (msg) { msg.textContent = r.message || ''; msg.hidden = !r.message; }
+
+    const missing = r.missing || [];
+    const shared  = r.shared  || [];
+
+    const missWrap = $('nl-kw-missing-wrap');
+    const missBox  = $('nl-kw-missing');
+    if (missBox) {
+      missBox.innerHTML = '';
+      missing.forEach(t => missBox.appendChild(nlKwChip(t, true)));
+    }
+    if (missWrap) missWrap.hidden = missing.length === 0;
+
+    const sharedWrap = $('nl-kw-shared-wrap');
+    const sharedBox  = $('nl-kw-shared');
+    if (sharedBox) {
+      sharedBox.innerHTML = '';
+      shared.forEach(t => sharedBox.appendChild(nlKwChip(t, false)));
+    }
+    if (sharedWrap) sharedWrap.hidden = shared.length === 0;
+    set('nl-kw-shared-count', shared.length ? '(' + shared.length + ')' : '');
+
+    // The one-click title. Only offered when the server built one that differs from what is in
+    // the box — the seller may already have applied it, or typed past it.
+    const sugWrap = $('nl-kw-suggest-wrap');
+    const built   = r.suggestedTitle || '';
+    const current = ($('nl-title')?.value || '').trim();
+    const showSug = built.length > 0 && built !== current && (r.addedTerms || []).length > 0;
+    if (sugWrap) sugWrap.hidden = !showSug;
+    if (showSug) {
+      set('nl-kw-suggest-title', built);
+      const added = r.addedTerms || [];
+      set('nl-kw-suggest-note',
+        `Adds ${added.length} word${added.length === 1 ? '' : 's'} — ${built.length} of 80 characters. Nothing you wrote is removed.`);
+    }
+
+    nlKwRenderSpecifics(r);
+  }
+
+  function nlKwChip(t, clickable) {
+    const el = document.createElement(clickable ? 'button' : 'span');
+    if (clickable) el.type = 'button';
+    el.className = 'kw-chip' + (clickable ? ' is-add' : ' is-have');
+
+    // The counts are the whole argument. "31 of 50 top results" is a reason to add a word;
+    // "recommended keyword" is a brand of advice nobody should act on.
+    const evidence = [];
+    if (t.rankedTotal > 0) evidence.push(`${t.rankedCount} of ${t.rankedTotal} top results`);
+    if (t.soldTotal   > 0) evidence.push(`${t.soldCount} of ${t.soldTotal} sold`);
+    const why = evidence.join(' · ');
+
+    el.innerHTML = `<span class="kw-chip-term">${esc(t.term)}</span>` +
+                   `<span class="kw-chip-why">${esc(why)}</span>`;
+    el.title = why;
+
+    if (clickable) el.addEventListener('click', () => nlAddTerm(t.term, el));
+    return el;
+  }
+
+  // Appends one term, and only if it fits. eBay truncates past 80 characters, so a word that
+  // pushes the title over is a word that never gets indexed — and it would have shoved the
+  // seller's own last word out to do it.
+  function nlAddTerm(term, chip) {
+    const input = $('nl-title');
+    if (!input) return;
+    const current = (input.value || '').trim();
+    const next    = current ? current + ' ' + term : term;
+    if (next.length > 80) {
+      addActivity('Title is full', `“${term}” doesn’t fit in eBay’s 80 characters — take a word out first, or drop a less common one.`);
+      return;
+    }
+    input.value = next;
+    input.dispatchEvent(new Event('input',  { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    if (chip) { chip.disabled = true; chip.classList.add('is-added'); }
+    nlRenderFreeChars();
+  }
+
+  function nlApplySuggestedTitle() {
+    const built = nlKwState?.suggestedTitle || '';
+    const input = $('nl-title');
+    if (!built || !input) return;
+    input.value = built;
+    input.dispatchEvent(new Event('input',  { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    nlRenderFreeChars();
+    const added = nlKwState?.addedTerms || [];
+    addActivity('Title widened',
+      added.length + ' word' + (added.length === 1 ? '' : 's') +
+      ' the listings above yours use: ' + added.join(', '));
+    // Every missing chip is now in the title. Re-asking is a second pair of eBay calls for an
+    // answer whose whole content is "you applied it", so the panel just reflects what happened.
+    document.querySelectorAll('#nl-kw-missing .kw-chip').forEach(c => {
+      c.disabled = true; c.classList.add('is-added');
+    });
+    const sugWrap = $('nl-kw-suggest-wrap'); if (sugWrap) sugWrap.hidden = true;
+  }
+
+  // ── Item Specifics, read off the same listings ───────────────────
+
+  function nlKwRenderSpecifics(r) {
+    const wrap = $('nl-kw-specifics-wrap');
+    const box  = $('nl-kw-specifics');
+    const list = r.specifics || [];
+    if (!wrap || !box) return;
+
+    box.innerHTML = '';
+    // A suggestion whose field isn't on screen can't be filled, and offering it would be a button
+    // that does nothing. That happens when the category changed after the search was run.
+    const usable = list.filter(s => !!nlSpecificField(s.name));
+    wrap.hidden = usable.length === 0;
+    if (usable.length === 0) return;
+
+    usable.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'kw-spec' + (s.required ? ' is-required' : '');
+      const pill = s.required
+        ? '<span class="kw-spec-pill is-required">eBay requires this</span>'
+        : s.recommended ? '<span class="kw-spec-pill is-rec">Buyers filter by this</span>' : '';
+      row.innerHTML =
+        `<div class="kw-spec-main"><span class="kw-spec-name">${esc(s.name)}</span> ${pill}
+           <div class="kw-spec-why">${s.agreeCount} of the ${s.voteCount} listings that named one said “${esc(s.value)}”</div></div>`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-ghost small kw-spec-use';
+      btn.textContent = 'Use “' + s.value + '”';
+      btn.addEventListener('click', () => {
+        if (nlWriteSpecific(s)) { btn.disabled = true; btn.textContent = 'Filled'; }
+        nlRunReadiness(true);
+      });
+      row.appendChild(btn);
+      box.appendChild(row);
+    });
+  }
+
+  function nlSpecificField(name) {
+    return document.querySelector(`#nl-aspects-panel [data-aspect-name="${cssEscape(name)}"]`);
+  }
+
+  // Attribute-selector quoting. An aspect name is eBay's, not ours — "Manufacturer's Part Number"
+  // has an apostrophe in it, and a name with a quote in it would otherwise end the selector early
+  // and throw, taking the whole panel with it.
+  function cssEscape(s) {
+    return String(s == null ? '' : s).replace(/["\\]/g, '\\$&');
+  }
+
+  // Never over the top of an answer the seller gave. The server only offers a value for a field it
+  // saw empty, and this refuses again on the way in: a panel rendered before the seller typed must
+  // not undo the typing.
+  function nlWriteSpecific(s) {
+    const el = nlSpecificField(s.name);
+    if (!el) return false;
+    if (String(el.value || '').trim()) return false;
+    el.value = s.value;
+    el.classList.add('asp-just-filled');
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  function nlFillMarketSpecifics(announce) {
+    const list = nlKwState?.specifics || [];
+    let filled = 0;
+    const names = [];
+    list.forEach(s => { if (nlWriteSpecific(s)) { filled++; names.push(s.name); } });
+    if (!filled) return 0;
+    if (announce) {
+      addActivity('Item Specifics filled from the market',
+        names.join(', ') + ' — taken from what the listings ranking for this search agree on');
+    }
+    // The buttons on the rows that just landed would otherwise still read "Use".
+    nlKwRenderSpecifics(nlKwState || {});
+    document.querySelectorAll('#nl-kw-specifics .kw-spec-use').forEach(b => {
+      const row  = b.closest('.kw-spec');
+      const name = row?.querySelector('.kw-spec-name')?.textContent || '';
+      const el   = nlSpecificField(name);
+      if (el && String(el.value || '').trim()) { b.disabled = true; b.textContent = 'Filled'; }
+    });
+    nlRunReadiness(true);
+    return filled;
   }
 
   // ── Filling the listing's own fields ─────────────────────────────

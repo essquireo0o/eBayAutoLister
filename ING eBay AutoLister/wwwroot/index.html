@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=91" />
+  <link rel="stylesheet" href="style.css?v=92" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -780,6 +780,58 @@
                     <div class="field full-width">
                       <label>Title <span class="char-count" id="nl-title-count">0 / 80</span></label>
                       <input id="nl-title" type="text" maxlength="80" placeholder="Keyword-rich listing title" />
+
+                      <!-- The words the listings ranked above this one use. Read off eBay's own
+                           Best Match results and its sold record, offered with their counts, and
+                           never written into the title without a click. -->
+                      <div class="kw-wrap">
+                        <button type="button" id="nl-kw-run" class="btn btn-ghost small">
+                          Find the words buyers search
+                        </button>
+                        <span class="kw-free" id="nl-kw-free" hidden></span>
+                      </div>
+
+                      <div id="nl-kw-panel" class="kw-panel" hidden>
+                        <div class="kw-head">
+                          <div>
+                            <div class="kw-headline" id="nl-kw-headline"></div>
+                            <div class="kw-source" id="nl-kw-source"></div>
+                          </div>
+                          <button type="button" id="nl-kw-close" class="kw-close" title="Close">✕</button>
+                        </div>
+
+                        <div class="kw-message" id="nl-kw-message" hidden></div>
+
+                        <div id="nl-kw-missing-wrap" hidden>
+                          <p class="kw-label">Missing from your title <span class="kw-hint">— click one to add it</span></p>
+                          <div id="nl-kw-missing" class="kw-chips"></div>
+                        </div>
+
+                        <div id="nl-kw-suggest-wrap" class="kw-suggest" hidden>
+                          <p class="kw-label">Your title with the top words added</p>
+                          <div class="kw-suggest-title" id="nl-kw-suggest-title"></div>
+                          <div class="kw-suggest-row">
+                            <button type="button" id="nl-kw-apply" class="btn btn-primary small">Use this title</button>
+                            <span class="kw-suggest-note" id="nl-kw-suggest-note"></span>
+                          </div>
+                        </div>
+
+                        <div id="nl-kw-specifics-wrap" hidden>
+                          <p class="kw-label">Item Specifics these listings agree on <span class="kw-hint">— from eBay's own list of values</span></p>
+                          <div id="nl-kw-specifics" class="kw-specifics"></div>
+                          <button type="button" id="nl-kw-fill-specifics" class="btn btn-ghost small">Fill them all in</button>
+                        </div>
+
+                        <details id="nl-kw-shared-wrap" class="kw-shared" hidden>
+                          <summary>Words you already have <span id="nl-kw-shared-count" class="kw-count"></span></summary>
+                          <div id="nl-kw-shared" class="kw-chips"></div>
+                        </details>
+
+                        <p class="kw-caveat">
+                          These are the words your competition uses, not facts about your item.
+                          Add only what is true of what you're selling.
+                        </p>
+                      </div>
                     </div>
                     <div class="field full-width">
                       <label>Subtitle <span class="char-count" id="nl-subtitle-count">0 / 55</span></label>
@@ -5296,6 +5348,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=103"></script>
+  <script src="app.js?v=104"></script>
 </body>
 </html>
