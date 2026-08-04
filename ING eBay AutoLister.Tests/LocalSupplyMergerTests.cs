@@ -178,4 +178,88 @@ public class LocalSupplyMergerTests
     [Fact]
     public void TakeBalanced_ZeroCap_TakesNothing() =>
         Assert.Empty(LocalSupplyMerger.TakeBalanced([Item("craigslist", "1", 10m)], 0));
+
+    // ── Sharing it across products, not just across sites ──────────────────────
+    // The cap is spent per listing; the money behind it — one sold-comp lookup, at most one Terapeak
+    // scrape — is spent per product. Cheapest-first with no notion of a product lets the cheapest
+    // thing on the board take the whole budget in duplicates.
+
+    [Fact]
+    public void TakeBalanced_TenPostsOfOneCheapThing_DoNotEatTheWholeCap()
+    {
+        var listings = Enumerable.Range(1, 10)
+            .Select(i => Item("craigslist", $"c{i}", 20m + i, "iPhone 11 64GB"))
+            .Concat(Enumerable.Range(1, 5)
+                .Select(i => Item("craigslist", $"p{i}", 400m + i, $"MacBook Pro {i}")))
+            .ToList();
+
+        var taken = LocalSupplyMerger.TakeBalanced(listings, 6, l => l.Title);
+
+        // Six slots, six distinct things to find a price for — rather than six copies of the one
+        // price the scan would have learned from the first row.
+        Assert.Equal(6, taken.Select(t => t.Title).Distinct().Count());
+        // And the cheapest product still leads: it is one of the six, just not all of them.
+        Assert.Equal("iPhone 11 64GB", taken[0].Title);
+    }
+
+    // Once every product on a site has been reached, the leftover slots go back to the duplicates —
+    // a second post of the same thing is a second chance to buy it, and often the cheaper one.
+    [Fact]
+    public void TakeBalanced_CapBiggerThanTheProductCount_StillTakesTheDuplicates()
+    {
+        var taken = LocalSupplyMerger.TakeBalanced(
+            [Item("craigslist", "1", 300m, "Antminer S19"),
+             Item("craigslist", "2", 100m, "Antminer S19"),
+             Item("craigslist", "3", 900m, "Whatsminer M30")],
+            10, l => l.Title);
+
+        Assert.Equal(3, taken.Count);
+        // Cheapest copy of the cheapest product, then the other product, then the leftover copy.
+        Assert.Equal(["100", "900", "300"], taken.Select(i => i.Price?.ToString("0")));
+    }
+
+    // Two sites selling the same thing are still two sites: the round-robin across sources runs
+    // first, so neither loses its turn to the other's duplicates.
+    [Fact]
+    public void TakeBalanced_ProductRotationDoesNotCostASiteItsShare()
+    {
+        var craigslist = Enumerable.Range(1, 20).Select(i => Item("craigslist", i.ToString(), i, "Antminer S19"));
+        var facebook = Enumerable.Range(1, 3).Select(i => Item("facebook", i.ToString(), 500m + i, $"Whatsminer M{i}"));
+
+        var taken = LocalSupplyMerger.TakeBalanced(craigslist.Concat(facebook), 6, l => l.Title);
+
+        Assert.Equal(6, taken.Count);
+        Assert.Equal(3, taken.Count(i => i.Source == "facebook"));
+    }
+
+    // A title the key selector can't read is not evidence that two listings are the same thing.
+    // Collapsing the unkeyable ones into one queue would ration exactly the listings the app
+    // understands least, and those are disproportionately the odd, mispriced, profitable ones.
+    [Fact]
+    public void TakeBalanced_ListingsWithNoProductKey_AreEachTheirOwnProduct()
+    {
+        // Three posts of one known product, and three the normalizer could make nothing of.
+        var taken = LocalSupplyMerger.TakeBalanced(
+            [Item("craigslist", "1", 10m, "Antminer S19"),
+             Item("craigslist", "2", 11m, "Antminer S19"),
+             Item("craigslist", "3", 12m, "Antminer S19"),
+             Item("craigslist", "4", 100m, "?a"), Item("craigslist", "5", 200m, "?b"),
+             Item("craigslist", "6", 300m, "?c")],
+            4, l => l.Title.StartsWith('?') ? "" : l.Title);
+
+        // Collapsed into one "unkeyed" product they'd be rationed one per pass and two of them
+        // would lose their slot to a second and third copy of the Antminer.
+        Assert.Equal(["10", "100", "200", "300"], taken.Select(i => i.Price?.ToString("0")));
+    }
+
+    // No key selector is the behaviour this had before products entered into it, and the plain
+    // local search still calls it that way.
+    [Fact]
+    public void TakeBalanced_WithNoProductKey_IsStillPlainCheapestFirst()
+    {
+        var taken = LocalSupplyMerger.TakeBalanced(
+            [Item("craigslist", "1", 900m), Item("craigslist", "2", 100m), Item("craigslist", "3", 300m)], 2);
+
+        Assert.Equal(["100", "300"], taken.Select(i => i.Price?.ToString("0")));
+    }
 }

@@ -5374,6 +5374,10 @@ textarea {
   padding: 4px 8px;
 }
 .local-source-chip strong { color: var(--ink); }
+/* The money half of a chip on the goldmine board — what that site is actually worth, as opposed to
+   how many rows it returned. Carries the same colour as the board's own headline figures so the two
+   read as one claim rather than as two different kinds of number. */
+.local-source-chip strong.local-chip-money { color: var(--gold-ink); }
 .local-source-chip-off { background: var(--warning-tint); }
 .local-source-chip-err { display: block; color: var(--warning-600); margin-top: 2px; }
 

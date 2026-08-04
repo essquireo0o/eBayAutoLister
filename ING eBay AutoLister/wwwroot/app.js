@@ -2596,15 +2596,40 @@
   // sources in one table, "24 results" alone hides that a site failed silently. Each chip that
   // describes a fixable state carries the button that fixes it, so the seller never has to work
   // out from a sentence which of three things to click.
-  function renderSourceOutcomes(sources) {
+  // What this site was worth once the board was built, rather than what its search returned. Only
+  // the goldmine board fills these in — a plain local search prices nothing, so it passes
+  // withProfit false and the chip stays the count it always was.
+  //
+  // "12 priced" beside "48 results" is the sentence that stops a seller unticking the site that was
+  // paying: the gap is the analysis cap, not the site, and saying "more were found than could be
+  // priced" is the difference between a limit and a failure.
+  function sourceYieldHtml(s) {
+    const bits = [];
+    // Said only when it differs from the count beside it. "6 results · 6 priced" is the same fact
+    // twice, and a number that appears whether or not it means anything stops being read at all —
+    // which is exactly the number that has to be noticed on the site that WAS cut short.
+    if (s.analyzed && s.analyzed !== s.count) bits.push(`only ${s.analyzed} priced`);
+    // Zero profitable is worth saying out loud. A chip that goes quiet when a site earns nothing
+    // reads as though the site was never in the ranking at all.
+    bits.push(s.profitableCount
+      ? `<strong class="local-chip-money">${s.profitableCount} worth buying · ${money(s.potentialProfit)}</strong>`
+      : s.ranked ? 'none worth buying' : '');
+    return bits.filter(Boolean).join(' · ');
+  }
+
+  function renderSourceOutcomes(sources, options = {}) {
     const el = $('local-source-status');
     if (!el) return;
     if (!sources || !sources.length) { el.innerHTML = ''; return; }
 
+    const withProfit = options.withProfit === true;
+
     el.innerHTML = sources.map(s => {
       const ok = s.status === 'ok';
+      const yield_ = withProfit && ok ? sourceYieldHtml(s) : '';
       const detail = ok && s.count
-        ? `${s.count} result${s.count === 1 ? '' : 's'}${s.scopeLabel ? ` · ${esc(s.scopeLabel)}` : ''}`
+        ? `${s.count} result${s.count === 1 ? '' : 's'}${s.scopeLabel ? ` · ${esc(s.scopeLabel)}` : ''}` +
+          (yield_ ? ` · ${yield_}` : '')
         : ok ? 'no results'
         : s.status === 'not_connected' ? 'connect required'
         : s.status === 'session_expired' ? 'session expired'
@@ -3280,7 +3305,8 @@
     const wrap = $('fb-arb-results');
     if (!wrap) return;
 
-    renderSourceOutcomes(data.sources);
+    // With the money each site is responsible for, which the plain local search has no way to know.
+    renderSourceOutcomes(data.sources, { withProfit: true });
     if (handleLocalNonResult(data)) return;
     // What the scan actually covered, from the sources that ran — not from the form, which may
     // have moved since.
@@ -3321,6 +3347,22 @@
       // own headline next to the total, which says nothing about when any of it arrives.
       data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
       `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
+      // Which site to open first next weekend — the decision a sourcing seller repeats more often
+      // than any other, and one no single row can answer. Only said when there is more than one
+      // site in the ranking: "best site: Craigslist" with Craigslist the only site searched is a
+      // sentence with no information in it.
+      data.bestSourceLabel && (data.sources || []).filter(s => s.status === 'ok' && s.count).length > 1
+        ? `most of it on <strong class="fb-arb-hit">${esc(data.bestSourceLabel)}</strong>`
+        : '',
+      // A site the cap cut short is a site with more on it, and that reads nothing like a site with
+      // nothing on it. Named rather than counted: the fix is per site — search that one on its own.
+      (() => {
+        const capped = (data.sources || []).filter(s => s.status === 'ok' && s.capped);
+        return capped.length
+          ? `more found on ${capped.map(s => esc(s.label)).join(' + ')} than this scan could price — ` +
+            'search that site on its own to reach the rest'
+          : '';
+      })(),
       // The buy side, said plainly: this is the money that costs nothing to earn. Framed as a
       // ceiling, because nobody accepts every opening offer.
       data.negotiationUpside > 0

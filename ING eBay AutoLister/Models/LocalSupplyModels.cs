@@ -186,6 +186,32 @@ public class LocalSupplySourceOutcome
     public bool Retryable { get; set; }
     public string FixAction { get; set; } = "";
 
+    // ── What became of this site's listings, past the search ─────────────────
+    // Count above is what the SEARCH returned, and until these existed that was the last thing said
+    // about a source. Everything after the search — the not-the-item screen, the shared analysis
+    // cap, the pricing — drops rows silently and per source, so a chip reading "Craigslist · 48
+    // results" over a board with two Craigslist rows on it looked like the site being useless when
+    // it was usually the cap. These are the four numbers that make the chip honest, and they only
+    // mean anything on the arbitrage board: a plain local search prices nothing, so it leaves them
+    // at zero. Filled by Services/LocalSupplyAttribution.cs.
+
+    // Listings from this site the scan actually priced — after the screen and after the cap.
+    public int Analyzed { get; set; }
+    // Rows from this site on the ranked board. Differs from Analyzed only where a listing had no
+    // title to group on.
+    public int Ranked { get; set; }
+    // Of those, the ones that make money after fees. The number that decides whether this site is
+    // worth ticking next Saturday.
+    public int ProfitableCount { get; set; }
+    // What those profitable rows would make between them — this site's share of the board's own
+    // TotalPotentialProfit, and the same upper bound rather than a forecast.
+    public decimal PotentialProfit { get; set; }
+    // True when the analysis cap cut this site short: it returned more usable listings than the
+    // scan had slots for. Said out loud because it is the difference between "there was nothing
+    // else here" and "we stopped looking" — and the second one has a fix (raise the cap, or search
+    // one site at a time) that the first one doesn't.
+    public bool Capped { get; set; }
+
     public static LocalSupplySourceOutcome From(LocalSupplySearchResult r) => new()
     {
         Id = r.SourceId, Label = r.SourceLabel, Status = r.Status, Count = r.Count,

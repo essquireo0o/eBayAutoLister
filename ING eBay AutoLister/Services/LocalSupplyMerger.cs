@@ -87,25 +87,93 @@ public static class LocalSupplyMerger
     /// list would spend the whole budget on one site and report the other as having no local
     /// supply. Round-robin gives every site the seller picked a fair share of the same cap.
     /// </summary>
-    public static List<LocalSupplyListing> TakeBalanced(IEnumerable<LocalSupplyListing> items, int max)
+    /// <param name="productKey">
+    /// The product signature two differently-worded posts for the same thing share — the same key
+    /// <see cref="LocalArbitrageAnalyzer.GroupByProduct"/> is about to group on. Optional, and null
+    /// means every listing counts as its own product, which is the behaviour this method had before
+    /// the parameter existed.
+    ///
+    /// <para>
+    /// It matters because the cap is spent on listings while the money is spent per <b>product</b>:
+    /// one sold-comps lookup and at most one Terapeak scrape, however many posts are selling that
+    /// thing. Cheapest-first with no notion of a product hands a search for "iphone 13" thirty slots
+    /// and lets ten near-identical posts of the cheapest one take a third of them — thirty listings
+    /// in, six products priced, and the $400 post that flips for $900 never looked at because it was
+    /// thirty-first cheapest. Rotating products within each site spends every slot on something the
+    /// board doesn't already know the price of.
+    /// </para>
+    /// </param>
+    public static List<LocalSupplyListing> TakeBalanced(
+        IEnumerable<LocalSupplyListing> items, int max, Func<LocalSupplyListing, string>? productKey = null)
     {
         if (max <= 0) return [];
 
         var bySource = items
             .GroupBy(i => i.Source, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new Queue<LocalSupplyListing>(g.OrderBy(i => i.IsFree ? 0m : i.Price ?? decimal.MaxValue)))
+            .Select(g => ProductQueues(g, productKey))
             .ToList();
 
         var taken = new List<LocalSupplyListing>();
-        while (taken.Count < max && bySource.Any(q => q.Count > 0))
+        while (taken.Count < max && bySource.Any(s => s.Any(q => q.Count > 0)))
         {
-            foreach (var queue in bySource)
+            foreach (var source in bySource)
             {
-                if (queue.Count == 0 || taken.Count >= max) continue;
-                taken.Add(queue.Dequeue());
+                // One listing per product per pass, so a site with one product and forty posts of it
+                // contributes its cheapest post now and the other thirty-nine only once every other
+                // product on that site has had a turn.
+                foreach (var product in source)
+                {
+                    if (product.Count == 0 || taken.Count >= max) continue;
+                    taken.Add(product.Dequeue());
+                }
+                if (taken.Count >= max) break;
             }
         }
 
         return taken;
+    }
+
+    /// <summary>
+    /// One site's listings as a queue per product, products in cheapest-first order and each
+    /// product's own posts likewise — so the first pass over a site is its cheapest copy of every
+    /// distinct thing it is selling, cheapest thing first.
+    /// </summary>
+    private static List<Queue<LocalSupplyListing>> ProductQueues(
+        IEnumerable<LocalSupplyListing> listings, Func<LocalSupplyListing, string>? productKey)
+    {
+        static decimal Cost(LocalSupplyListing l) => l.IsFree ? 0m : l.Price ?? decimal.MaxValue;
+
+        var ordered = listings.OrderBy(Cost).ToList();
+        if (productKey is null)
+            return [new Queue<LocalSupplyListing>(ordered)];
+
+        // Built by walking `ordered` and appending, so the queues come out cheapest-product-first
+        // as well as cheapest-listing-first within each.
+        var queues = new List<Queue<LocalSupplyListing>>();
+        var byKey = new Dictionary<string, Queue<LocalSupplyListing>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var listing in ordered)
+        {
+            // A key the selector couldn't build is not evidence that two listings are the same
+            // thing, so each of those rows gets its own queue rather than collapsing into one that
+            // would then be rationed as if it were a single product — which would ration exactly
+            // the listings the app understands least. Same rule, and the same reason, as
+            // GroupByProduct's own fallback.
+            if (productKey(listing) is not { Length: > 0 } key)
+            {
+                queues.Add(new Queue<LocalSupplyListing>([listing]));
+                continue;
+            }
+
+            if (!byKey.TryGetValue(key, out var queue))
+            {
+                queue = new Queue<LocalSupplyListing>();
+                byKey[key] = queue;
+                queues.Add(queue);
+            }
+            queue.Enqueue(listing);
+        }
+
+        return queues;
     }
 }

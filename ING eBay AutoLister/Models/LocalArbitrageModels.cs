@@ -203,8 +203,17 @@ public class LocalArbitrageResult
     public string SearchUrl { get; set; } = "";
     public string? Error { get; set; }
 
-    // What each site contributed, including the ones that couldn't answer and why.
+    // What each site contributed, including the ones that couldn't answer and why. On this board
+    // they also carry what became of their listings past the search — analyzed, ranked, and the
+    // money each site is responsible for. See Services/LocalSupplyAttribution.cs.
     public List<LocalSupplySourceOutcome> Sources { get; set; } = [];
+
+    // The site holding the most profit on this board, or empty when nothing on it is profitable.
+    // Ranked on money and not on rows: one $340 flip beats nine $6 ones, and which site to open
+    // first next weekend is the decision a sourcing seller repeats more often than any other.
+    // Never a recommendation among losers — see LocalSupplyAttribution.BestEarner.
+    public string BestSourceId { get; set; } = "";
+    public string BestSourceLabel { get; set; } = "";
 
     // ── What was searched for, and what came back ────────────────────────────
     // The category the seller pointed the scan at — "anything" unless they picked one. Echoed back

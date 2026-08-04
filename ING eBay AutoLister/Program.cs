@@ -5191,23 +5191,28 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         var goods = screened.Where(i => !NonItemListingDetector.IsNotTheItem(i.Title)).ToList();
         result.NotTheItemCount = screened.Count - goods.Count;
 
-        // A listing with no parseable price has no cost basis, so there is no profit to compute for
-        // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
-        // out across sources rather than applied to one flat cheapest-first list, which would spend
-        // the whole budget on whichever site returned the most rows.
-        var priceable = LocalSupplyMerger.TakeBalanced(goods, maxItems);
-        result.ItemsAnalyzed = priceable.Count;
-
         // The normalized brand/model/spec signature, which is also Terapeak's cache key — so two
         // differently-worded tiles for the same product share both the group and the cached scrape.
         // On a vehicle the identity is the year, make and model, and the generic product signature
         // cannot see any of them: it keys a classifieds title on the brand, which would put a 2011
         // Tundra and a 2003 Camry in one group and price them off one lookup. Everything else keys
         // exactly as it always has. See VehicleTitleParser.GroupKey.
-        var groups = LocalArbitrageAnalyzer.GroupByProduct(
-            priceable, l => VehicleTitleParser.GroupKey(l.Vehicle) is { Length: > 0 } key
+        string ProductKey(LocalSupplyListing l) =>
+            VehicleTitleParser.GroupKey(l.Vehicle) is { Length: > 0 } key
                 ? key
-                : TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title)));
+                : TerapeakMarketService.BuildCacheKey(normalizer.Normalize(l.Title));
+
+        // A listing with no parseable price has no cost basis, so there is no profit to compute for
+        // it. "Free" is kept — it's the best possible cost basis, not a missing one. The cap is shared
+        // out across sources rather than applied to one flat cheapest-first list, which would spend
+        // the whole budget on whichever site returned the most rows — and, within a site, across
+        // PRODUCTS, because the same key that groups them below is what a comp lookup and a Terapeak
+        // scrape are actually spent per. Ten posts of one phone are one price to find out; letting
+        // them take ten of thirty slots buys the seller nine rows they already knew the answer to.
+        var priceable = LocalSupplyMerger.TakeBalanced(goods, maxItems, ProductKey);
+        result.ItemsAnalyzed = priceable.Count;
+
+        var groups = LocalArbitrageAnalyzer.GroupByProduct(priceable, ProductKey);
         result.ProductsPriced = groups.Count;
 
         async Task<ResalePricing> PriceAsync(LocalArbitrageGroup group, bool allowScrape)
@@ -5270,6 +5275,19 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             .ToList();
 
         result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);
+
+        // What each site was actually worth, not just what it returned. The chips reported search
+        // counts and nothing else, so a seller looking at "Craigslist · 48" above a board with two
+        // Craigslist rows on it could only guess whether the site is junk, whether the cap cut it
+        // short, or whether nothing there could be priced — and the wrong guess unticks the site
+        // that was paying. Attributed here, once the board exists, rather than counted along the way.
+        LocalSupplyAttribution.Apply(result.Sources, goods, priceable, result.Items);
+        if (LocalSupplyAttribution.BestEarner(result.Sources) is { } best)
+        {
+            result.BestSourceId = best.Id;
+            result.BestSourceLabel = best.Label;
+        }
+
         // What kinds of thing this board is made of, for the category filter above the table. A scan
         // for "anything" routinely comes back as six categories in one ranking, and until it says so
         // a seller filtering for the truck has to read every row.
@@ -5394,7 +5412,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     sw.Stop();
     log.Add("Info", "Local arbitrage scan",
         $"\"{q}\" in {wanted.Label} within {result.RadiusMiles} mi{(string.IsNullOrWhiteSpace(zip) ? "" : $" of {zip}")} " +
-        $"on {string.Join(" + ", sources.Select(s => s.Id))}; " +
+        // Per site, all the way through, because "the scan found 48 and ranked 11" says nothing
+        // about which site to tick next time — and a site showing up capped every run is the one
+        // signal that the cap is set too low for how this seller searches.
+        $"on {string.Join(" + ", result.Sources.Select(s => $"{s.Id}[{s.Status}] {s.Count} found/{s.Analyzed} priced/" +
+            $"{s.ProfitableCount} profitable/{s.PotentialProfit:C}{(s.Capped ? " (capped)" : "")}"))}; " +
         $"Valued by hand (no comp source for the category): {result.ManualValuationCount}; " +
         $"Local listings: {result.LocalListingsFound}; Analyzed: {result.ItemsAnalyzed} across " +
         $"{result.ProductsPriced} product(s); Terapeak scrapes: {result.TerapeakScrapesUsed}; " +

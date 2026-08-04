@@ -8616,3 +8616,144 @@ board never made. Rows with no rank now take a neutral edge.
   pressing Refresh pays for them again. The cap is 40.
 - **Nothing here writes to eBay.** Every price on the screen is a number to consider; there is no
   "apply" button, deliberately, on a board reading a market that moves this fast.
+
+---
+
+## Which of the two sites was actually paying — per-source accountability, and a cap spent on products (autonomous session, 2026-08-04)
+
+The multi-source local-sourcing stack (§10–12) reports a chip per site above the goldmine board.
+Every one of those chips reported what the site's **search** returned, and then said nothing else —
+while between the search and the ranked table sit four filters that drop rows silently and
+*unevenly across sites*: listings with no price, `NonItemListingDetector`, the shared analysis cap,
+and pricing that finds no comps.
+
+So the screen routinely read **"Craigslist · 48 results · Facebook Marketplace · 6 results"** above
+a table of eleven rows, and nothing on it said which site those eleven came from, which site the
+money was on, or why 48 became a handful. Every reading of that is a guess, and the expensive guess
+is the one where the seller unticks the site that was paying.
+
+## The cap was spent on listings; the money is spent per product
+
+`LocalSupplyMerger.TakeBalanced` shared the cap round-robin across **sites**, cheapest-first within
+each — and knew nothing about what a product is. The pipeline it feeds does: `GroupByProduct` runs
+immediately after it, and everything expensive downstream is **per group** — one sold-comps lookup,
+at most one Terapeak scrape, however many posts are selling that thing.
+
+A search for "iphone 13" on a busy board returns thirty posts of the cheapest one. Those thirty took
+thirty of the thirty slots; six products came out the other side; and the $400 post that flips for
+$900 was never looked at because it was thirty-first cheapest. The endpoint's own comment already
+claimed the cap was there because "the comp lookups are per-product" — the code had never done that.
+
+The cap now rotates across **products within each site**, under the same round-robin across sites:
+
+| | Before | After |
+|---|---|---|
+| Across sites | round-robin | round-robin (unchanged) |
+| Within a site | cheapest listing first | cheapest listing of each product, cheapest product first |
+| Second copy of a product | competes with every other listing on price | waits until every other product on that site has had a turn |
+| Cap bigger than the product count | — | leftover slots go back to the duplicates; a second post of the same thing is a second chance to buy it, often cheaper |
+
+It degenerates exactly to the old behaviour when every listing is its own product, and the key is
+literally the one `GroupByProduct` is about to use — passed in as `ProductKey`, so the cap and the
+grouping cannot drift apart. `TakeBalanced`'s key selector is optional and null still means "every
+listing is its own product": the plain local search prices nothing and calls it that way.
+
+**A key the normalizer couldn't build is not evidence that two listings are the same thing.**
+Unkeyable rows each get their own queue rather than collapsing into one, which would have rationed
+exactly the listings the app understands least — and those are disproportionately the odd,
+mispriced, profitable ones.
+
+## What a chip is now allowed to claim
+
+`LocalSupplySourceOutcome` carries four figures past the search, filled by the new
+`LocalSupplyAttribution` — arithmetic over lists the caller already has, rather than a counter
+threaded through the pipeline for four call sites to remember to increment:
+
+| Field | What it answers |
+|---|---|
+| `Analyzed` | how many of this site's listings were actually priced |
+| `Ranked` | how many rows on the board are its |
+| `ProfitableCount` / `PotentialProfit` | how many of those make money, and how much |
+| `Capped` | whether the site had more to offer than the scan had slots for |
+
+And `LocalArbitrageResult.BestSourceId` / `.BestSourceLabel` — the site holding the most money on
+this board.
+
+### The four refusals
+
+1. **A losing row is not money a site made.** `PotentialProfit` sums only `NetProfit > 0`, the same
+   rule as the board's own `TotalPotentialProfit`, so a site can be busy and still report $0.
+2. **Screening is not the cap.** `Capped` compares against what survived the not-the-item screen,
+   not against what the search returned. A site whose junk was filtered gets no "we stopped looking"
+   note — that note points at a limit, and pointing a seller at a limit that was never reached is
+   how a real cause goes unlooked-for.
+3. **A site that never answered gets zeroes and no badge.** A "capped" reading on a disconnected
+   Facebook would be the app blaming its own cap for a login.
+4. **`BestEarner` names nobody when nothing is profitable.** The least bad site among losers reads
+   as a recommendation to go and buy from it. And it ranks on **money, not rows**: one $340 flip
+   beats nine $6 ones, and the seller's Saturday is finite.
+
+## On screen
+
+- Chips on the goldmine board gain `only 12 priced · 2 worth buying · $181`. The plain local search
+  passes `withProfit` false and its chips are exactly what they were — it prices nothing, so
+  claiming a yield there would be inventing one.
+- The summary gains **"most of it on Facebook Marketplace"**, withheld when only one site answered
+  ("best site: Craigslist" with Craigslist the only site searched is a sentence with no information
+  in it and an implied comparison that never happened).
+- And **"more found on Craigslist than this scan could price — search that site on its own to reach
+  the rest"**. Named rather than counted, because the fix is per site.
+- The scan's log line now carries `found/priced/profitable/$ (capped)` per site, which is the one
+  place a cap that is habitually too low for how this seller searches becomes visible.
+
+## Files
+
+| File | What |
+|---|---|
+| `Services/LocalSupplyAttribution.cs` | **new**. `Apply` (the four figures, the four refusals) and `BestEarner`. Pure |
+| `Services/LocalSupplyMerger.cs` | `TakeBalanced` takes an optional product key and rotates across products within each site; `ProductQueues` |
+| `Models/LocalSupplyModels.cs` | `Analyzed` / `Ranked` / `ProfitableCount` / `PotentialProfit` / `Capped` on `LocalSupplySourceOutcome` |
+| `Models/LocalArbitrageModels.cs` | `BestSourceId` / `BestSourceLabel` |
+| `Program.cs` | `ProductKey` extracted and shared by the cap and the grouping; `LocalSupplyAttribution.Apply` after the rank; per-source figures in the scan log |
+| `wwwroot/app.js` | `sourceYieldHtml`, `renderSourceOutcomes(sources, { withProfit })`, the best-site and capped lines; `?v=108` |
+| `wwwroot/style.css` | `.local-source-chip strong.local-chip-money`; `?v=96` |
+| `Tests/LocalSupplyAttributionTests.cs` | **new**, +10 |
+| `Tests/LocalSourceChipAssetTests.cs` | **new**, +8 — the browser half, where every failure is silent |
+| `Tests/LocalSupplyMergerTests.cs` | +5 for the product-aware cap; no existing case changed |
+| `local_source_chips.png` | The board, driven in a real browser |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **succeeded**, 0 errors, 2 warnings (pre-existing `NU1903`) |
+| `dotnet test "ING eBay AutoLister.Tests/..."` | **3014 passed**, 0 failed — 23 new, no pre-existing test changed or removed (baseline this session: 2991) |
+| `node --check wwwroot/app.js` | clean |
+| Driven in a real browser | **yes** — Chromium against the real `index.html`/`app.js`/`style.css`, API stubbed on a spare port because the seller's installed app owns 9332. Both chips render their yield, the best-site and capped lines land, the plain local search's chips carry no profit half, a source labelled `<img src=x onerror=alert(1)>` renders as text with **zero `<img>` elements created and no dialog fired**. **Zero console or page errors** |
+| Mutation check | Ranking `BestEarner` on row count instead of money fails 1; `Capped` as "anything was usable" fails 2; draining a product before rotating fails 6. Each is the test written for that rule |
+
+## Two things the browser found that no test would have
+
+**A number that appeared whether or not it meant anything.** The Facebook chip read
+"6 results · 6 priced" — the same fact twice. A figure printed on every chip stops being read, and
+the one chip where it matters is the site that was cut short. It is now said only when it differs
+from the count beside it, and reads "only 12 priced".
+
+**"12 priced of more found"**, which was the phrasing before, argues with the "48 results" three
+words to its left. The count is already on the chip; the word doing the work is "only".
+
+## Known limits
+
+- **`Capped` is about this scan, not about the site.** Ticking one site, or raising `maxItems` (the
+  endpoint clamps it to 60), reaches further. There is deliberately no auto-raise: the cap exists
+  because each product past it is a real sold-comps lookup.
+- **Attribution is by source id.** A source that reported different ids for the same site across two
+  runs would split its own figures; nothing in the registry does that today.
+- **`PotentialProfit` is the board's own upper bound, per site** — every profitable row bought and
+  flipped. It is not a forecast, and it inherits every caveat the board's `TotalPotentialProfit`
+  already carries.
+- **The product key is `ProductNormalizer`'s**, so the cap inherits that stack's blind spots. The
+  failure is over-separation: two posts of one thing that key differently are rationed as two
+  products, which costs one extra comp lookup and never hides a listing.
+- **Nothing here changes `Rank`.** The order of the finished board is exactly what it was; what
+  changed is which listings reach it.
