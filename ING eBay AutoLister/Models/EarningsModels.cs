@@ -61,6 +61,13 @@ public sealed class FlipRecord
     /// </summary>
     public decimal? UnitCost { get; set; }
 
+    /// <summary>
+    /// When the seller last said what this sale cost, through the app rather than through an
+    /// import. Only meaningful for a zero cost: it is the difference between "this was free and
+    /// I know it" and "nothing has been entered yet", which a bare 0 cannot express.
+    /// </summary>
+    public DateTimeOffset? CostConfirmedUtc { get; set; }
+
     /// <summary>Money refunded to the buyer. A partial refund reduces revenue; a full one voids the sale.</summary>
     public decimal RefundedAmount { get; set; }
 
@@ -119,6 +126,22 @@ public sealed class FlipProfit
 
     /// <summary>True when this sale is counted in the headline totals.</summary>
     public bool CountsTowardProfit => NetProfit.HasValue && Status == "paid";
+
+    /// <summary>
+    /// True when the seller still has to say what this sale cost them — either nothing is
+    /// recorded at all, or the cost is $0.00 and nobody has confirmed that is real.
+    /// </summary>
+    /// <remarks>
+    /// A zero used to count as an answer, which is how 21 of this seller's 60 sales dropped off
+    /// the "waiting on a cost" list while being counted as pure profit: eBay imports arrive at
+    /// $0.00 for anything that shipped free, and $0.00 reads as "recorded" to every check that
+    /// only asks whether a number exists. A genuinely free item is a real case — a bundled
+    /// accessory, something thrown in with a lot — so a zero the seller typed themselves is
+    /// respected and stops asking, via <see cref="FlipRecord.CostConfirmedUtc"/>.
+    /// </remarks>
+    public bool NeedsCost =>
+        Status == "paid" &&
+        (!NetProfit.HasValue || (CostOfGoods is 0m && Flip.CostConfirmedUtc is null));
 }
 
 /// <summary>One bucket of the profit-over-time chart.</summary>

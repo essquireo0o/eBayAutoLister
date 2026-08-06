@@ -3736,6 +3736,11 @@ app.MapPost("/api/earnings/cost", (
         flip.UnitCost = req.UnitCost.Value;
     }
 
+    // The seller has now answered, even if the answer was zero. A genuinely free item — a bundled
+    // accessory, something thrown in with a lot — must stop being asked about, and a bare 0 in
+    // UnitCost cannot say the difference between "free" and "nobody has typed anything".
+    flip.CostConfirmedUtc = DateTimeOffset.UtcNow;
+
     if (req.ShippingCost.HasValue) flip.ShippingCost = req.ShippingCost.Value;
     if (req.OtherCosts.HasValue) flip.OtherCosts = req.OtherCosts.Value;
 

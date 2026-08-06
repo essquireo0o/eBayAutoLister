@@ -182,9 +182,11 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
         summary.FeesMeasured = Round(live.Where(f => f.FeesAreActual).Sum(f => f.Fees));
         summary.SalesWithMeasuredFees = live.Count(f => f.FeesAreActual);
 
-        var awaiting = live.Where(f => !f.NetProfit.HasValue).ToList();
+        // "Needs a cost" rather than "has no number": a $0.00 cost counted as an answer, so
+        // imported free-shipping lines silently left the list and were booked as pure profit.
+        var awaiting = live.Where(f => f.NeedsCost).ToList();
         summary.SalesAwaitingCost = awaiting.Count;
-        summary.ProceedsAwaitingCost = Round(awaiting.Sum(f => f.NetProceeds));
+        summary.ProceedsAwaitingCost = Round(awaiting.Where(f => !f.NetProfit.HasValue).Sum(f => f.NetProceeds));
 
         var monthStart = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, now.Offset);
         var lastMonthStart = monthStart.AddMonths(-1);
@@ -273,7 +275,7 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
                 NetProfit = Round(counted.Where(f => Local(f, now) >= start && Local(f, now) < end).Sum(f => f.NetProfit ?? 0m)),
                 GrossRevenue = Round(inMonth.Sum(f => f.GrossRevenue)),
                 Sales = inMonth.Count,
-                SalesAwaitingCost = inMonth.Count(f => !f.NetProfit.HasValue),
+                SalesAwaitingCost = inMonth.Count(f => f.NeedsCost),
                 IsCurrentMonth = i == 0,
             });
         }

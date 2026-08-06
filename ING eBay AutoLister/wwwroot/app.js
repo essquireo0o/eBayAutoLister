@@ -7666,11 +7666,33 @@
     if (!pending.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
 
     el.classList.remove('hidden');
+
+    // Two kinds of row land here and they are not the same claim. One has no cost at all and is
+    // genuinely missing from the totals. The other is recorded at $0.00 — usually an eBay import
+    // of something that shipped free — and IS in the totals, counted as pure profit. Saying
+    // "isn't counted above" over a list containing both would be false for half of it.
+    const uncounted = pending.filter(f => f.netProfit == null);
+    const zeroCost = pending.filter(f => f.netProfit != null);
+    const title = uncounted.length
+      ? `${moneyExact(s.proceedsAwaitingCost || 0)} after fees isn't counted above`
+      : `${zeroCost.length} sale${zeroCost.length === 1 ? '' : 's'} counted as pure profit`;
+    const sub = [
+      uncounted.length
+        ? `${uncounted.length} sale${uncounted.length === 1 ? ' has' : 's have'} no record of what you paid. Type the cost and the profit lands in your total.`
+        : '',
+      zeroCost.length
+        ? `${zeroCost.length} sale${zeroCost.length === 1 ? ' is' : 's are'} recorded at $0.00, so ${zeroCost.length === 1 ? 'it is' : 'they are'} being counted as if the goods were free — type what ${zeroCost.length === 1 ? 'it' : 'they'} actually cost, or save $0.00 to confirm ${zeroCost.length === 1 ? 'it was' : 'they were'} free and stop being asked.`
+        : '',
+      pending.length < s.salesAwaitingCost
+        ? `Showing the ${pending.length} biggest; the rest appear as you work through these.`
+        : '',
+    ].filter(Boolean).join(' ');
+
     el.innerHTML = `
       <div class="er-awaiting-head">
         <div>
-          <p class="er-awaiting-title">${moneyExact(s.proceedsAwaitingCost || 0)} after fees isn't counted above</p>
-          <p class="er-awaiting-sub">${s.salesAwaitingCost} sale${s.salesAwaitingCost === 1 ? '' : 's'} with no record of what you paid. Type the cost and the profit lands in your total — it also gives Inventory Health a real break-even floor on the next one.${pending.length < s.salesAwaitingCost ? ` Showing the ${pending.length} biggest; the rest appear as you work through these.` : ''}</p>
+          <p class="er-awaiting-title">${title}</p>
+          <p class="er-awaiting-sub">${sub}</p>
         </div>
       </div>
       <div class="er-awaiting-list">
@@ -7678,7 +7700,7 @@
           <div class="er-awaiting-row">
             <div class="er-row-main">
               <span class="er-row-title" title="${esc(f.title)}">${esc(f.title)}</span>
-              <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)} · ${moneyExact(f.netProceeds || 0)} after fees${f.quantity > 1 ? ` · ${f.quantity} units` : ''}</span>
+              <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)} · ${moneyExact(f.netProceeds || 0)} after fees${f.quantity > 1 ? ` · ${f.quantity} units` : ''}${f.netProfit != null ? ' · <span class="er-row-flag">counted at $0.00 cost</span>' : ''}</span>
             </div>
             <div class="er-cost-entry">
               <label class="er-cost-label" for="er-cost-${f.id}">You paid ($ each)</label>
