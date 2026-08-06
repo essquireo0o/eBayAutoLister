@@ -16159,3 +16159,26 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   .pp-rival { grid-template-columns: 1fr auto; }
   .pp-rival-seller { grid-column: 1 / -1; }
 }
+
+/* The every-sale table's editable cost cell. Sized and aligned like the plain number it
+   replaced, so a table of 60 rows still reads as figures rather than as a form. It only
+   announces itself as editable on hover/focus — the column is scanned far more often than
+   it is typed into. */
+.er-cost-cell {
+  width: 6.5rem;
+  padding: 2px 6px;
+  text-align: right;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.er-cost-cell::placeholder { color: var(--muted, #7e8b98); }
+.er-cost-cell:hover { border-color: var(--line, #242c34); }
+.er-cost-cell:focus {
+  outline: none;
+  background: var(--raised, #171d23);
+  border-color: var(--accent, #63b39b);
+}

@@ -7187,8 +7187,42 @@
         const box = $('earnings-section').querySelector(`.er-cost-input[data-id="${e.target.dataset.id}"]`);
         saveFlipCost(e.target.dataset.id, box?.value);
       }
+      // The every-sale table's own cost cell. Until this existed, a cost could only be typed in
+      // the awaiting-cost panel, and that panel only lists sales with NO cost — so a sale
+      // recorded at $0.00 (every free-shipping accessory eBay imports that way) dropped off it
+      // permanently, counted as pure profit, with nothing on screen to correct it. A cost typed
+      // wrong once was equally unreachable.
+      if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-cell')) {
+        e.preventDefault();
+        saveCostCell(e.target);
+      }
       if (e.key === 'Escape' && !$('er-log-modal')?.classList.contains('hidden')) closeFlipLogger();
     });
+    // Leaving the cell saves it too: a seller who types a figure and clicks the next row has
+    // said what they paid just as clearly as one who pressed Enter.
+    $('earnings-section')?.addEventListener('focusout', e => {
+      if (e.target?.classList?.contains('er-cost-cell')) saveCostCell(e.target);
+    }, true);
+  }
+
+  // Accepts either a dollar amount ("180", "180.00") or a keep-percentage ("40%"), because a
+  // dropshipper never paid a unit cost — they keep a share and the supplier takes the rest. One
+  // box rather than two columns: the % form is rare enough per row that a second input on all 60
+  // rows would cost more space than it earns.
+  function saveCostCell(input) {
+    const id = input.dataset.id;
+    const raw = (input.value || '').trim();
+    if (!id || raw === '') return;
+    if (input.dataset.saving === raw) return;   // focusout after Enter would save the same value twice
+    input.dataset.saving = raw;
+
+    let value = raw;
+    if (raw.endsWith('%')) {
+      const cost = costFromKeepPct(Number(input.dataset.unitgross), raw.slice(0, -1));
+      if (cost === null) { setEarningsStatus('That percentage needs a sale price to work from.'); return; }
+      value = String(cost);
+    }
+    saveFlipCost(id, value);
   }
 
   function toggleDisclosure(panelId, buttonId, closedLabel, openLabel) {
@@ -7609,7 +7643,10 @@
             <td class="er-cell-item" title="${esc(f.title)}${caveats ? ' — ' + esc(caveats) : ''}">${esc(f.title)}${f.quantity > 1 ? ` <span class="er-muted">×${f.quantity}</span>` : ''}${f.status !== 'paid' ? ` <span class="er-chip">${esc(f.status)}</span>` : ''}</td>
             <td class="num">${moneyExact(f.grossRevenue || 0)}</td>
             <td class="num" title="${f.feesAreActual ? "eBay's own figure for this sale" : 'Estimated from your fee settings — eBay did not report a fee'}">${moneyExact(f.fees || 0)}${f.feesAreActual ? '' : ' <span class="er-muted">est</span>'}</td>
-            <td class="num">${f.costOfGoods != null ? moneyExact(f.costOfGoods) : '<span class="er-muted">—</span>'}</td>
+            <td class="num"><input class="er-cost-cell" data-id="${f.id}" data-unitgross="${unitGross(f)}"
+                   type="text" inputmode="decimal" value="${f.costOfGoods != null ? Number(f.costOfGoods).toFixed(2) : ''}"
+                   placeholder="—" aria-label="What you paid for ${esc(f.title)}"
+                   title="What you paid, per unit. Type a dollar amount, or a percentage like 40% for the share of the sale you keep. Enter to save." /></td>
             <td class="num${(f.netProfit || 0) < 0 ? ' er-negative' : ''}">${netCell}</td>
             <td>${f.source === 'ebay' ? 'eBay' : 'You'}</td>
             <td class="num"><button class="er-flip-delete" data-id="${f.id}" data-title="${esc(f.title)}" type="button" title="Stop counting this sale" aria-label="Remove ${esc(f.title)} from earnings">✕</button></td>
