@@ -273,9 +273,6 @@
     // A dead Facebook session is only ever fixed by the person, in a browser — so it gets the
     // button that opens one rather than a Retry that would fail the same way every time.
     'connect-facebook': { label: 'Reconnect Facebook', run: () => facebookConnect() },
-    // Same story for Terapeak: eBay stopped accepting the saved session, and only a real sign-in
-    // in a real browser replaces it. Retry would be handed the same sign-in page every time.
-    'connect-terapeak': { label: 'Reconnect Terapeak', run: () => terapeakConnect() },
   };
 
   // The eBay sign-in button lives in more than one place depending on which screen is open, so the
@@ -955,7 +952,6 @@
     // The checklist's extras row now carries live Connect buttons, so their state has to be known
     // on the dashboard and not only once Settings is opened. Not awaited: neither button's state
     // blocks anything else on the page, and a slow status check shouldn't hold up the listings.
-    loadTerapeakStatus();
     loadFacebookStatus();
     await checkLicenseStatus();
     await checkTrialStatus();
@@ -1599,7 +1595,6 @@
     renderConnectionsPanel();
     await refreshRequiredState();
     await loadSettingsStatus();
-    await loadTerapeakStatus();
     await loadFacebookStatus();
   }
 
@@ -1677,113 +1672,6 @@
     if (!chip) return;
     chip.textContent = on ? onText : offText;
     chip.classList.toggle('is-on', !!on);
-  }
-
-  const TERAPEAK_BANNERS = [
-    ['pg-terapeak-status', 'pg-terapeak-connect', 'pg-terapeak-disconnect'],
-    ['opp-terapeak-status', 'opp-terapeak-connect', 'opp-terapeak-disconnect'],
-    ['setup-terapeak-status', 'setup-terapeak-connect', 'setup-terapeak-disconnect'],
-  ];
-
-  // There is no auto-connect and no background scraping — unattended, continuous automated
-  // access to Terapeak/Seller Hub is against eBay's User Agreement. Connecting is always a
-  // person clicking the button below and logging into eBay themselves in the browser window
-  // that opens (which is also the only way to clear a captcha/security challenge if eBay shows
-  // one). Both Settings and the Opportunity Finder banner carry the same connect/disconnect
-  // controls so a session can be (re)established from wherever the user notices it's needed.
-  function paintTerapeakBanner(statusEl, connectBtn, disconnectBtn, data) {
-    if (!statusEl) return;
-    if (data.loginInProgress) {
-      // The window is genuinely open whenever this shows; the common failure is that it opened
-      // behind everything, so say where to look instead of leaving "connecting…" to look stuck.
-      statusEl.textContent = 'Connecting to Terapeak — log into eBay in the browser window that opened. Don\'t see it? Alt+Tab, or check the taskbar for the login window.';
-      connectBtn?.classList.remove('hidden');
-      if (connectBtn) connectBtn.disabled = true;
-      disconnectBtn?.classList.add('hidden');
-    } else if (data.connected) {
-      // "Connected" and "checked against eBay" are different claims, and only the second one is
-      // worth anything. A session that was saved but could not be exercised — a bot check, a page
-      // that never rendered — says so here rather than promising data it may not be able to fetch.
-      statusEl.textContent = data.verified === false
-        ? `⚠ Session saved, but not confirmed: ${data.verificationDetail || 'eBay did not serve the research page when it was tested.'}`
-        : '✓ Connected — checked against eBay\'s research page, so sold-comp lookups will use real Terapeak data.';
-      connectBtn?.classList.add('hidden');
-      disconnectBtn?.classList.remove('hidden');
-    } else {
-      // A login that died and a login that was never made are different sentences with different
-      // buttons. Telling someone whose session expired that they are "not connected" reads as the
-      // app having forgotten what they set up, and sends them hunting for a setting instead of
-      // pressing the one button that fixes it.
-      statusEl.textContent = data.lastError
-        ? `Terapeak connect failed: ${data.lastError}`
-        : data.needsReconnect
-          ? `${data.reason || 'The saved Terapeak login is no longer accepted by eBay.'} Click Reconnect to sign in again.`
-          : 'Not connected — sold comps fall back to the sold-comps database and research links. Click Connect to log in.';
-      connectBtn?.classList.remove('hidden');
-      if (connectBtn) {
-        connectBtn.disabled = false;
-        // The three copies of this button are labelled differently in the markup ("Connect
-        // Terapeak →" and friends), so the original is kept and only its first word swapped —
-        // overwriting the whole label would strip the product name off two of them.
-        if (!connectBtn.dataset.connectLabel) connectBtn.dataset.connectLabel = connectBtn.textContent;
-        connectBtn.textContent = data.needsReconnect
-          ? connectBtn.dataset.connectLabel.replace(/^Connect\b/, 'Reconnect')
-          : connectBtn.dataset.connectLabel;
-      }
-      disconnectBtn?.classList.add('hidden');
-    }
-  }
-
-  async function loadTerapeakStatus() {
-    try {
-      const data = await fetch('/api/terapeak/status').then(r => r.json());
-      TERAPEAK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
-        paintTerapeakBanner($(statusId), $(connectId), $(disconnectId), data));
-      setConnectState('pg-terapeak-state', data.connected, 'Connected', 'Not connected');
-      // Step 3 on the dashboard checklist. No -btn id for this prefix, so markSetupStep only
-      // flips the row and its number to a tick — the Connect/Disconnect pair is already being
-      // shown or hidden by paintTerapeakBanner above.
-      markSetupStep('step3', data.connected, 'Connected');
-      const row3 = $('step3-row');
-      if (row3) row3.dataset.known = '1';
-      refreshChecklistVisibility();
-    } catch (err) {
-      TERAPEAK_BANNERS.forEach(([statusId]) => {
-        const el = $(statusId);
-        if (el) el.textContent = `Unable to check Terapeak status: ${errorText(err)}`;
-      });
-    }
-  }
-
-  async function terapeakConnect(e) {
-    const btn = e?.currentTarget || $('pg-terapeak-connect');
-    try {
-      btn.disabled = true;
-      const data = await fetch('/api/terapeak/connect', { method: 'POST' }).then(r => r.json());
-      TERAPEAK_BANNERS.forEach(([statusId]) => {
-        const el = $(statusId);
-        if (el) el.textContent = data.message || 'Opening browser…';
-      });
-      // Poll status every few seconds until the login window closes (saved or cancelled)
-      const poll = setInterval(async () => {
-        const s = await fetch('/api/terapeak/status').then(r => r.json()).catch(() => null);
-        if (s && !s.loginInProgress) {
-          clearInterval(poll);
-          await loadTerapeakStatus();
-        }
-      }, 3000);
-    } catch (err) {
-      TERAPEAK_BANNERS.forEach(([statusId]) => {
-        const el = $(statusId);
-        if (el) el.textContent = `Connect failed: ${errorText(err)}`;
-      });
-      btn.disabled = false;
-    }
-  }
-
-  async function terapeakDisconnect() {
-    await fetch('/api/terapeak/disconnect', { method: 'POST' }).catch(() => {});
-    await loadTerapeakStatus();
   }
 
   // ── Facebook Marketplace (local sourcing) ────────────────────────────────
@@ -1945,11 +1833,6 @@
       human: 'Sign in to Facebook in the window that opens.',
       // Without Node/Playwright, Connect cannot work at all and the doctor's own
       // next action is "install Node" — offering the button anyway is a dead end.
-      unavailableIn: ['NotConfigured'],
-    },
-    {
-      key: 'terapeak', match: /terapeak/i, label: 'Connect Terapeak', run: terapeakConnect,
-      human: 'Sign in to eBay in the window that opens.',
       unavailableIn: ['NotConfigured'],
     },
     // There is no per-connection endpoint, so this re-runs the doctor. The comps
@@ -2131,7 +2014,7 @@
       const fix = CONNECTION_FIXES.find(f => f.key === btn.dataset.cdFix);
       if (!fix) return;
       if (fix.human) markConnectionRowWaiting(fix);
-      // Called with no event on purpose: terapeakConnect/facebookConnect fall
+      // Called with no event on purpose: facebookConnect falls
       // back to their own Settings buttons, which are on this same page and are
       // the ones that should show "connecting…" — the row above has already been
       // replaced by then.
@@ -2786,12 +2669,9 @@
   };
 
   // Which sold-comps database answered. Named on every row rather than left to "eBay data":
-  // "hosted comps + Terapeak" is a materially stronger claim than either alone, and a seller
-  // deciding whether to drive somewhere is entitled to know which one the price came from.
+  // a seller deciding whether to drive somewhere is entitled to know where the price came from.
   const ARB_SOURCES = {
     hosted_comps: 'sold-comps DB',
-    terapeak: 'Terapeak',
-    'hosted_comps+terapeak': 'sold-comps DB + Terapeak',
   };
 
   // How long the money stays spent, in one cell. Server-side tiers (DaysToCashEstimator) so the
@@ -3431,8 +3311,7 @@
     $('fb-arb-summary').innerHTML =
       scanned +
       `<div class="fb-arb-sources">Priced ${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} against sold comps` +
-      `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} of them re-checked live on Terapeak` : ''}` +
-      `${data.terapeakConnected ? '' : ' · Terapeak not connected — sold-comps database only'}.` +
+      `.` +
       `${estimates ? ` <strong class="fb-arb-estimate-flag">${estimates} row${estimates === 1 ? ' is an estimate' : 's are estimates'}</strong>` +
         ` — too few matching sold comps to trust, so the ROI and margin on ${estimates === 1 ? 'it' : 'them'} are dimmed rather than shown as real rates.` : ''}</div>`;
 
@@ -3748,8 +3627,7 @@
           // The count that priced it leads, with the count the search returned behind it — they are
           // routinely very different, and only the first one backs the money columns.
           compsCell(row),
-          row.terapeakCompCount ? `${row.terapeakCompCount} Terapeak` : '',
-          // Which sold-comps database answered, named rather than implied.
+              // Which sold-comps database answered, named rather than implied.
           ARB_SOURCES[row.resaleSource] || '',
           row.confidenceLevel ? esc(row.confidenceLevel) : '',
           row.liquidityLevel ? esc(row.liquidityLevel) : '',
@@ -4685,10 +4563,9 @@
       `<div class="fb-arb-sources">Mined ${data.compsScanned.toLocaleString()} sold comps → ` +
       `${data.productsConsidered} product${data.productsConsidered === 1 ? '' : 's'} worth a look → ` +
       `${data.productsPriced} priced against real comps → ${data.productsSourced} checked for supply` +
-      `${data.terapeakScrapesUsed ? `, ${data.terapeakScrapesUsed} re-checked live on Terapeak` : ''}. ` +
+      `. ` +
       `${data.productsDropped ? `${data.productsDropped} dropped — too little sold history, or two reads of it that disagreed. ` : ''}` +
       `${data.supplyRejected ? `${data.supplyRejected} cheap listing${data.supplyRejected === 1 ? '' : 's'} rejected as parts or accessories rather than the product. ` : ''}` +
-      `${data.terapeakConnected ? '' : 'Terapeak not connected — sold-comps database only. '}` +
       `Roll #${data.seed} · ${data.rollsToCoverEverything} rolls covers all ${data.nichesInUniverse} categories.</div>`;
 
     const warn = $('dice-warning');
@@ -4900,7 +4777,6 @@
 
     const evidence = [
       `${play.soldCompCount} sold comp${play.soldCompCount === 1 ? '' : 's'}`,
-      play.terapeakCompCount ? `${play.terapeakCompCount} Terapeak` : '',
       play.confidenceLevel ? esc(play.confidenceLevel) : '',
       play.liquidityLevel ? esc(play.liquidityLevel) : '',
       play.estimatedMonthlySales > 0 ? `~${Math.round(play.estimatedMonthlySales)} sold/month` : '',
@@ -5025,7 +4901,6 @@
     $('opportunity-section')?.classList.remove('hidden');
     setActiveNavItem('opportunity');
     markWorkspaceTabOpen('opportunity');
-    loadTerapeakStatus();
     loadFacebookStatus();
     // Also loaded on its own, not only off the back of the Facebook status call: Craigslist is
     // searchable whether or not that call succeeds.
@@ -5233,7 +5108,6 @@
     setInvStatus(
       `${invScan.itemsAnalyzed} of ${invScan.activeListings} active listings, ` +
       `${invScan.productsPriced} distinct product${invScan.productsPriced === 1 ? '' : 's'} priced` +
-      (invScan.terapeakScrapesUsed ? `, ${invScan.terapeakScrapesUsed} Terapeak lookup${invScan.terapeakScrapesUsed === 1 ? '' : 's'}` : '') +
       (s.unknownAgeCount ? ` · ${s.unknownAgeCount} with no start date reported by eBay` : ''));
   }
 
@@ -13931,8 +13805,6 @@
     OPP_RANGE_FILTERS.forEach(([id]) => on(id, 'input', applyOpportunityFilters));
     on('opp-sort-select', 'change', applyOpportunityFilters);
     on('opp-close', 'click', closeOpportunitySection);
-    on('opp-terapeak-connect', 'click', terapeakConnect);
-    on('opp-terapeak-disconnect', 'click', terapeakDisconnect);
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && !$('opportunity-section')?.classList.contains('hidden')) closeOpportunitySection();
     });
@@ -15121,10 +14993,8 @@
       setTimeout(() => focusSettingsCard('pg-imggen-card'), 400);
     });
     // The same two logins as the Settings strips, connected from where people first look for
-    // them. paintTerapeakBanner/paintFacebookBanner drive all three copies off one status call,
+    // them. paintFacebookBanner drives both copies off one status call,
     // so connecting here leaves Settings and the Opportunity Finder already correct.
-    on('setup-terapeak-connect', 'click', terapeakConnect);
-    on('setup-terapeak-disconnect', 'click', terapeakDisconnect);
     on('setup-facebook-connect', 'click', facebookConnect);
     on('setup-facebook-disconnect', 'click', facebookDisconnect);
     on('pg-open-required', 'click', () => openSetupAt(hasAnthropicKey ? 'policies' : 'key'));
@@ -16169,13 +16039,6 @@
 
     on('btn-mr-sold', 'click', runSoldResearch);
 
-    on('btn-mr-terapeak', 'click', () => {
-      const { q } = buildResearchQuery();
-      if (!q) return setResearchStatus('Add a title, brand, MPN or UPC first.', 'empty');
-      const url = lastResearch?.terapeakUrl ||
-        'https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=60&keywords=' + encodeURIComponent(q);
-      window.open(url, '_blank', 'noopener');
-    });
 
     on('btn-mr-active', 'click', () => {
       const { q } = buildResearchQuery();
@@ -16218,18 +16081,6 @@
   // sign-in in a real browser — so it gets the button that opens one rather than a Retry that
   // would be handed the same sign-in page every time. Appended after the status text rather than
   // replacing it, so the sentence explaining what happened stays on screen beside the button.
-  function offerTerapeakReconnect() {
-    const el = $('mr-status');
-    if (!el || el.querySelector('[data-mr-reconnect]')) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-secondary small';
-    btn.dataset.mrReconnect = '1';
-    btn.textContent = 'Reconnect Terapeak';
-    btn.addEventListener('click', () => { btn.disabled = true; terapeakConnect(); });
-    el.appendChild(document.createTextNode(' '));
-    el.appendChild(btn);
-  }
 
   // Median is the anchor rather than the mean: a couple of parts-only or
   // mislabelled comps skew an average badly on low sold counts.
@@ -16292,10 +16143,9 @@
       setResearchStatus(
         d.dataNote ||
         (d.source === 'none'
-          ? 'No comparable sales available. Terapeak may not be connected (Settings → Terapeak), or eBay has not approved sold-data access for this account. Use the buttons above to research manually.'
+          ? 'No comparable sales available for this query — eBay may not have approved sold-data access for this account. Use the buttons above to research manually.'
           : 'No comparable sold listings found for this query.'),
         'empty');
-      if (d.needsReconnect) offerTerapeakReconnect();
       return;
     }
 
@@ -16306,14 +16156,13 @@
     // depending on which one produced it — the server names the source, so nothing here has to
     // guess from a slug.
     const srcLabel = d.sourceLabel ||
-      { terapeak: 'Terapeak', marketplace_insights: 'eBay Insights', hosted_comps: 'Sold-comps database', none: 'Links only' }[d.source] ||
+      { marketplace_insights: 'eBay Insights', hosted_comps: 'Sold-comps database', none: 'Links only' }[d.source] ||
       d.source || '—';
 
     // A source that answered does not mean every source did. When Terapeak dropped out and the
     // sold-comps database caught the fall, the numbers are real but they are not the ones the
     // seller thinks they are looking at, so the swap is stated rather than silently absorbed.
     setResearchStatus(d.dataNote ? `${d.dataNote} Showing ${srcLabel} instead.` : '', d.dataNote ? 'empty' : '');
-    if (d.needsReconnect) offerTerapeakReconnect();
     setText('mr-avg',    money(d.average));
     setText('mr-median', money(d.median));
     setText('mr-min',    money(d.min));
@@ -18173,8 +18022,7 @@
           if (s.connected) {
             $('nl-sold-comps-connect')?.classList.add('hidden');
             if (msg) msg.textContent = '';
-            loadTerapeakStatus();
-          } else if (msg) {
+                  } else if (msg) {
             msg.textContent = s.lastError || 'Login was not completed. Try again.';
           }
         }
@@ -20799,8 +20647,6 @@
     on('pg-imggen-mode', 'change', e => applyPgImggenVisibility(e.target.value));
     on('pg-imggen-save', 'click', savePgImggen);
     on('pg-imggen-test', 'click', testPgImggenConnection);
-    on('pg-terapeak-connect', 'click', terapeakConnect);
-    on('pg-terapeak-disconnect', 'click', terapeakDisconnect);
     on('pg-imggen-guide', 'click', openImageGenSetup);
     on('pg-imggen-load-models', 'click', () => {
       const endpoint = $('pg-imggen-endpoint')?.value.trim();

@@ -2903,7 +2903,7 @@ textarea {
 .nl-sold-comps-title-text { font-weight: 800; color: #fff; font-size: var(--fs-lg); letter-spacing: .01em; }
 .nl-sold-comps-summary-text { font-weight: 700; color: #fff; letter-spacing: .01em; margin-left: auto; }
 
-/* Connect-to-Terapeak prompt — a self-contained card shown until a session exists. */
+/* Connect prompt — a self-contained card shown until a session exists. */
 .nl-sold-comps-connect {
   display: flex;
   flex-direction: column;
@@ -4820,7 +4820,7 @@ textarea {
   .new-listing-overlay { left: 0; }
 }
 
-.opp-terapeak-banner {
+.opp-connect-banner {
   display: flex;
   align-items: center;
   gap: var(--s3);
@@ -4834,9 +4834,9 @@ textarea {
   font-weight: 600;
 }
 
-.opp-terapeak-icon { font-size: var(--fs-md); }
+.opp-connect-icon { font-size: var(--fs-md); }
 
-.opp-terapeak-status {
+.opp-connect-status {
   flex: 1;
   color: var(--text-muted, var(--muted));
 }

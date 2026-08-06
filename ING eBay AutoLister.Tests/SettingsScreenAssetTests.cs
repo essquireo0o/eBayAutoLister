@@ -40,8 +40,9 @@ public class SettingsScreenAssetTests
         "pg-imggen-card", "pg-imggen-state", "pg-imggen-mode", "pg-imggen-endpoint-wrap",
         "pg-imggen-endpoint", "pg-imggen-model-wrap", "pg-imggen-model", "pg-imggen-load-models",
         "pg-image-prompt", "pg-imggen-save", "pg-imggen-test", "pg-imggen-msg", "pg-imggen-guide",
-        // saved-session connections
-        "pg-terapeak-state", "pg-terapeak-connect", "pg-terapeak-disconnect", "pg-terapeak-status",
+        // saved-session connections. Terapeak's four controls used to sit here; the card was
+        // removed because connecting could no longer succeed — eBay stopped accepting the saved
+        // research session — and a button that cannot work is worse than no button.
         "pg-facebook-state", "pg-facebook-connect", "pg-facebook-disconnect", "pg-facebook-status",
         // fees & costs — every one of these is a term in a profit calculation
         "pg-fee-fvf", "pg-fee-fixed", "pg-fee-promoted", "pg-fee-payment", "pg-fee-shipping",

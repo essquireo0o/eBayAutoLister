@@ -297,21 +297,6 @@
               <button id="step2-btn" class="btn btn-primary" type="button">Log into eBay →</button>
             </div>
 
-            <!-- Steps 3 and 4: the two logins, as steps rather than as a footnote.
-                 They are numbered because that is where people look for them, and
-                 tagged Optional because neither one blocks listing. The status line
-                 IS the step copy — paintTerapeakBanner/paintFacebookBanner write it,
-                 the same call that paints the Settings and Opportunity-Finder strips,
-                 so all three copies of these controls always agree. -->
-            <div id="step3-row" class="setup-step setup-step--optional">
-              <div id="step3-icon" class="setup-step-num">3</div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Connect Terapeak sold comps <span class="setup-tag">Optional</span></div>
-                <div class="setup-step-copy" id="setup-terapeak-status">Checking Terapeak connection…</div>
-              </div>
-              <button id="setup-terapeak-connect" class="btn btn-primary" type="button">Connect Terapeak →</button>
-              <button id="setup-terapeak-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
-            </div>
 
             <div id="step4-row" class="setup-step setup-step--optional">
               <div id="step4-icon" class="setup-step-num">4</div>
@@ -684,22 +669,8 @@
             <div class="nl-sold-comps-head">
               <span class="nl-sold-comps-glyph">📊</span>
               <span class="nl-sold-comps-title-text">Sold Price Research</span>
-              <a id="nl-sold-comps-terapeak" class="nl-sold-comps-link hidden" href="#" target="_blank" rel="noopener">Terapeak Research ↗</a>
               <a id="nl-sold-comps-link" class="nl-sold-comps-link nl-sold-comps-link-secondary hidden" href="#" target="_blank" rel="noopener">Plain Sold Search ↗</a>
               <span id="nl-sold-comps-summary" class="nl-sold-comps-summary-text"></span>
-            </div>
-            <!-- Shown until a Terapeak session is connected — clicking Connect opens the eBay
-                 login (see terapeakConnect). Hidden automatically once sold data is available. -->
-            <div id="nl-sold-comps-connect" class="nl-sold-comps-connect">
-              <div class="nl-sold-comps-connect-card">
-                <span class="nl-sold-comps-connect-icon">📈</span>
-                <div class="nl-sold-comps-connect-copy">
-                  <strong>See real sold prices as you list</strong>
-                  <span class="nl-sold-comps-connect-text">Connect Terapeak to pull live sold comps — average, median, and your last 7 sales — right inside the editor.</span>
-                </div>
-                <button id="nl-sold-comps-connect-btn" class="nl-sold-comps-connect-btn" type="button">Connect to Terapeak</button>
-              </div>
-              <span id="nl-sold-comps-connect-msg" class="nl-sold-comps-connect-msg"></span>
             </div>
             <div id="nl-sold-comps-stats" class="nl-sold-comps-stats hidden">
               <div class="nl-sold-comps-stat"><span class="nl-sold-comps-stat-val" id="nl-sold-comps-stat-avg">$0</span><span class="nl-sold-comps-stat-label">Average</span></div>
@@ -1239,12 +1210,6 @@
         </div>
 
         <div class="opportunity-overlay-body">
-          <div id="opp-terapeak-banner" class="opp-terapeak-banner">
-            <span class="opp-terapeak-icon">🔗</span>
-            <span id="opp-terapeak-status" class="opp-terapeak-status">Checking Terapeak connection…</span>
-            <button id="opp-terapeak-connect" class="btn btn-primary small hidden" type="button">Connect Terapeak</button>
-            <button id="opp-terapeak-disconnect" class="btn btn-secondary small hidden" type="button">Disconnect</button>
-          </div>
 
           <!-- Roll the Dice — first panel in the finder on purpose: everything below it needs the
                seller to already know what they're looking for, and this is the one that doesn't. -->
@@ -1312,8 +1277,7 @@
               </div>
               <div id="dice-board" class="dice-board"></div>
               <p class="fb-arb-footnote">
-                Resale prices are real eBay sold comps (the sold-comps database, blended with Terapeak
-                where both have data) — never asking prices. Profit subtracts eBay's standard final
+                Resale prices are real eBay sold comps from the sold-comps database — never asking prices. Profit subtracts eBay's standard final
                 value fee and the shipping the comps show buyers paying. <strong>Max to pay</strong> is
                 the price where the flip breaks even; <strong>target</strong> is what it takes to clear
                 $75 net at 75% ROI — the same bar Local Deals calls a goldmine.
@@ -1442,9 +1406,9 @@
               <div id="local-source-picker" class="local-source-picker">Loading sources…</div>
             </div>
 
-            <div id="fb-connect-banner" class="opp-terapeak-banner fb-connect-banner">
-              <span class="opp-terapeak-icon">🔗</span>
-              <span id="fb-connect-status" class="opp-terapeak-status">Checking Facebook connection…</span>
+            <div id="fb-connect-banner" class="opp-connect-banner fb-connect-banner">
+              <span class="opp-connect-icon">🔗</span>
+              <span id="fb-connect-status" class="opp-connect-status">Checking Facebook connection…</span>
               <button id="fb-connect-btn" class="btn btn-primary small hidden" type="button">Connect Facebook</button>
               <button id="fb-disconnect-btn" class="btn btn-secondary small hidden" type="button">Disconnect</button>
             </div>
@@ -1489,7 +1453,7 @@
               </div>
               <button id="fb-search-btn" class="btn btn-secondary opp-search-submit" type="button">📍 Search Local</button>
               <!-- The paid-for version of the same search: every result priced against sold
-                   comps + Terapeak and ranked by profit. Its own button because it costs a
+                   sold comps and ranked by profit. Its own button because it costs a
                    comp lookup per product (see /api/local/arbitrage). -->
               <button id="fb-arb-btn" class="btn btn-primary opp-search-submit" type="button">💰 Find Goldmines</button>
             </div>
@@ -1671,8 +1635,7 @@
                 it puts the flips that recycle your money fastest at the top, which is usually not the
                 same row as the biggest margin. Products with no dated sold history show a dash rather
                 than a guess.
-                Resale prices are real eBay sold comps (sold-comps database blended with Terapeak where
-                both have data), not asking prices. Profit subtracts eBay's standard final value fee and
+                Resale prices are real eBay sold comps from the sold-comps database, not asking prices. Profit subtracts eBay's standard final value fee and
                 any shipping the comps show buyers paying — it does <strong>not</strong> include your
                 drive, your time, or the risk that a used local item isn't what the photo says. Verify
                 condition in person before buying. Craigslist filters by distance on its own end and
@@ -1949,7 +1912,7 @@
       <!-- ── Inventory Health (full-page overlay, like Opportunity Finder) ──
            Every other screen in this app looks forward at inventory the seller hasn't bought yet.
            This one looks backward at what they already own: each live listing priced against the
-           same sold-comps + Terapeak stack, checked against what they paid, and given a price that
+           same sold-comps stack, checked against what they paid, and given a price that
            both moves it and clears cost. Backed by /api/inventory/health. -->
       <section id="inventory-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
@@ -3105,7 +3068,7 @@
             would blank itself exactly when you want to know what you missed. <strong>Prices and stock change;
             check the listing before you drive.</strong> The radar reads each site once per scan, one scan at a
             time, and never signs into anything on a schedule: Facebook is only read when you've already
-            connected it, and Terapeak is never scraped unattended. Nothing is alerted on twice.
+            connected it. Nothing is alerted on twice.
           </p>
         </div>
       </section>
@@ -3446,8 +3409,7 @@
             how many sold comps priced it — a green badge needs real sold history behind it, and a row
             priced off one loose sale says so instead of shouting. Nothing here can see a cracked screen,
             a missing charger or a counterfeit, so a photo verdict is a price on what the app thinks it
-            is: read the name before you trust the number. Terapeak is never scraped here — that means
-            a browser page load, and this screen exists to answer before the seller gets bored.
+            is: read the name before you trust the number.
           </p>
         </div>
       </section>
@@ -3738,8 +3700,7 @@
           </div>
 
           <p class="inv-footnote">
-            Resale prices come from real sold comps (the sold-comps database, plus Terapeak when it's
-            connected) and use the <strong>quick-sale</strong> figure, because a lot gets liquidated, not
+            Resale prices come from real sold comps in the sold-comps database and use the <strong>quick-sale</strong> figure, because a lot gets liquidated, not
             held out for the top price. Fees use the same profit model as the rest of the app — eBay
             publishes no per-account fee API. Recovery rates by grade are industry starting points shown
             above and editable; your own experience of a supplier beats them. Not modelled: your time,
@@ -4595,7 +4556,7 @@
           <p class="settings-card-copy">
             Tests each connection for real, right now, and says exactly what's wrong with any that are
             down — a dead sign-in, a refused key and a host that didn't answer all need different fixes.
-            Allow up to a minute: it opens a browser for the saved Facebook and Terapeak logins.
+            Allow up to a minute: it opens a browser for the saved Facebook login.
           </p>
           <div id="cd-rows" class="cd-rows" aria-live="polite"></div>
         </div>
@@ -4634,7 +4595,7 @@
              Image generation used to sit at the top of the setup modal, above the
              key that makes the app run, which read as something you had to deal
              with before you could list anything. It is a connect strip now — the
-             same shape as Terapeak and Facebook, in the row of things you add
+             same shape as Facebook, in the row of things you add
              when you want them and never before. -->
         <div id="pg-optional-group" class="settings-group">
         <p class="settings-optional-eyebrow">Optional — add any of these later, in any order</p>
@@ -4689,25 +4650,9 @@
           </p>
         </div>
 
-        <!-- Terapeak — real sold-comp data via a saved logged-in session (no public API exists) -->
-        <div class="setup-section settings-card connect-card" id="pg-terapeak-card">
-          <div class="connect-card-head">
-            <h3>Terapeak sold comps <span class="connect-tag">Optional</span></h3>
-            <span id="pg-terapeak-state" class="connect-state">Not connected</span>
-          </div>
-          <p class="settings-card-copy">
-            eBay doesn't offer a Terapeak API, so this logs into eBay once in a real browser window and saves that
-            session locally to read real sold-price data for Auto-Fill. Your eBay password is never seen or stored by this app.
-          </p>
-          <div class="settings-card-foot imggen-test-row">
-            <button id="pg-terapeak-connect" class="btn btn-primary" type="button">Connect Terapeak</button>
-            <button id="pg-terapeak-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
-            <span id="pg-terapeak-status" class="sd-test-msg">Not connected — sold comps will show links only.</span>
-          </div>
-        </div>
 
         <!-- Facebook Marketplace — local sourcing supply, same saved-session approach as
-             Terapeak because Facebook has no public search API either. -->
+             the same way, because Facebook has no public search API. -->
         <div class="setup-section settings-card connect-card" id="pg-facebook-card">
           <div class="connect-card-head">
             <h3>Facebook Marketplace <span class="connect-tag">Optional</span></h3>
@@ -5122,15 +5067,13 @@
             </div>
           </details>
 
-          <!-- Market Research — reuses /api/sold-comps (Terapeak session first, then
-               Marketplace Insights, then research deep links). Query is built from the
+          <!-- Market Research — reuses /api/sold-comps (Marketplace Insights, then research deep links). Query is built from the
                strongest identifier available: UPC/EAN/ISBN/MPN, then Brand+Model, then title. -->
           <details class="form-panel" id="mr-panel">
             <summary>Market Research</summary>
             <div class="mr-wrap">
               <div class="mr-actions">
                 <button type="button" id="btn-mr-sold" class="btn btn-primary small">Research Sold Prices</button>
-                <button type="button" id="btn-mr-terapeak" class="btn btn-secondary small">Open in Terapeak</button>
                 <button type="button" id="btn-mr-active" class="btn btn-secondary small">Compare Active Listings</button>
                 <button type="button" id="btn-mr-finder" class="btn btn-ghost small">Open Opportunity Finder</button>
               </div>
@@ -5554,7 +5497,7 @@
            strips on the Settings page, so nothing optional can be mistaken for a
            step that has to be finished before the app works. -->
       <p class="setup-optional-note">
-        Optional extras — AI photo generation, Terapeak sold comps and Facebook Marketplace — set up
+        Optional extras — AI photo generation and Facebook Marketplace — set up
         separately on the <button id="setup-goto-optional" class="link-btn" type="button">Settings page</button>.
         None of them are needed to list.
       </p>
@@ -5715,6 +5658,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=111"></script>
+  <script src="app.js?v=112"></script>
 </body>
 </html>
