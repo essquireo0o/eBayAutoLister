@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -309,12 +310,44 @@ public sealed class MarketplaceRepository(
         }
 
         command.Parameters.AddWithValue("@sqlLimit", SqlCandidateLimit);
-        command.CommandText = $"""
-            SELECT ItemId, Title, Price, Shipping, Condition, Seller, SoldDate, ItemUrl, ImageUrl, RawJson
-            FROM {ExternalMarketplaceDb.SoldListingsTable}
-            WHERE {string.Join(" AND ", where)}
-            LIMIT @sqlLimit;
-            """;
+
+        // `Title LIKE '%word%'` cannot use an index — a leading wildcard defeats the B-tree —
+        // so every lookup scanned the whole table. Common words hid it (LIMIT fills early and
+        // returns in 0.04s), but a rare term scanned all 900k rows / 2 GB: measured 3.50s for
+        // "s21e xp hydro" and 4.05s for "whatsminer m66s". Rare is exactly what a specific
+        // model number is, so the slow path was the one that mattered most.
+        //
+        // SoldTitles is an FTS5 index over Title (built by BitData/build_title_fts.py and kept
+        // current by triggers). The same searches return in under a millisecond through it.
+        // When it is absent — an older comps DB, or the hosted copy — this falls back to the
+        // LIKE query unchanged, so nothing depends on the index existing.
+        if (await FtsAvailableAsync(connection, ct) && importantWords.Count > 0)
+        {
+            // FTS matches whole words where LIKE matched substrings, so each word gets a
+            // prefix wildcard: "s19*" still finds "S19j", which "%s19%" did.
+            var terms = string.Join(" ", importantWords
+                .Select(w => "\"" + w.Replace("\"", "") + "\"*"));
+            command.Parameters.AddWithValue("@fts", terms);
+            var extra = where.Skip(1).ToList();   // keep price/condition filters, drop the LIKE
+            var tail = extra.Count > 0 ? " AND " + string.Join(" AND ", extra) : "";
+            command.CommandText = $"""
+                SELECT l.ItemId, l.Title, l.Price, l.Shipping, l.Condition, l.Seller,
+                       l.SoldDate, l.ItemUrl, l.ImageUrl, l.RawJson
+                FROM {FtsTable} f
+                JOIN {ExternalMarketplaceDb.SoldListingsTable} l ON l.rowid = f.rowid
+                WHERE {FtsTable} MATCH @fts{tail}
+                LIMIT @sqlLimit;
+                """;
+        }
+        else
+        {
+            command.CommandText = $"""
+                SELECT ItemId, Title, Price, Shipping, Condition, Seller, SoldDate, ItemUrl, ImageUrl, RawJson
+                FROM {ExternalMarketplaceDb.SoldListingsTable}
+                WHERE {string.Join(" AND ", where)}
+                LIMIT @sqlLimit;
+                """;
+        }
 
         var rows = new List<CandidateRow>();
         using var reader = await command.ExecuteReaderAsync(ct);
@@ -399,6 +432,39 @@ public sealed class MarketplaceRepository(
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         return DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
+    }
+
+    /// <summary>The FTS5 index over Title, when the comps database has one.</summary>
+    private const string FtsTable = "SoldTitles";
+
+    // Cached per database file, not per process: asking sqlite_master on every pricing lookup
+    // would put a query in front of the query we are trying to speed up, but a single shared
+    // flag would be wrong the moment a second comps database is opened — the local file has the
+    // index and a hosted or older copy may not, and whichever was seen first would decide for
+    // both. Keyed on DataSource so each file answers for itself.
+    private static readonly ConcurrentDictionary<string, bool> FtsByDatabase = new(StringComparer.OrdinalIgnoreCase);
+
+    private static async Task<bool> FtsAvailableAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var key = connection.DataSource ?? "";
+        if (FtsByDatabase.TryGetValue(key, out var cached)) return cached;
+
+        bool available;
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name;";
+            command.Parameters.AddWithValue("@name", FtsTable);
+            available = await command.ExecuteScalarAsync(ct) is not null;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            available = false;   // any doubt at all -> the LIKE path, which always works
+        }
+        FtsByDatabase[key] = available;
+        return available;
     }
 
     private static async Task<bool> TableExistsAsync(SqliteConnection connection, CancellationToken ct)
