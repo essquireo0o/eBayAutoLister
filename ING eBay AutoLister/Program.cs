@@ -804,9 +804,16 @@ app.MapGet("/api/setup/fields", (CredentialsStore store) => Results.Ok(store.Get
 
 // A partial save: the body carries only the fields the screen that posted it owns, and anything
 // absent is left as it was (see CredentialsPatch).
-app.MapPost("/api/setup/save", (CredentialsPatch body, CredentialsStore store) =>
+app.MapPost("/api/setup/save", (CredentialsPatch body, CredentialsStore store, OnboardingStore onboarding) =>
 {
     store.Save(body);
+
+    // A new key makes the last verdict a statement about a key that is no longer here. Forgetting
+    // it is the only honest option — a seller who fixes a rejected key must not be told it is still
+    // rejected, and one who replaces a working key must not be told the new one works.
+    if (!string.IsNullOrWhiteSpace(body.AnthropicApiKey))
+        onboarding.RecordKeyCheck(AiKeyCheck.Untested);
+
     return Results.Ok(store.GetStatus());
 });
 
@@ -832,6 +839,22 @@ static OnboardingProgress.Plan BuildOnboardingPlan(CredentialsStore store, Onboa
 
 app.MapGet("/api/onboarding", (CredentialsStore store, OnboardingStore onboarding) =>
     Results.Ok(BuildOnboardingPlan(store, onboarding)));
+
+// The one call in this section that leaves the machine. Everything above reads local state; this
+// asks Anthropic the question a saved key cannot answer — does it work, and can the account behind
+// it pay for a request — so that step 1 stops ticking green over a key that will fail at the first
+// analysis, five minutes and three screens later. See AiKeyCheck.
+app.MapPost("/api/ai-key/check", async (ClaudeService claude, CredentialsStore store, OnboardingStore onboarding) =>
+{
+    var verdict = await claude.CheckKeyAsync();
+
+    // Only an answer about the key is recorded. "Could not reach Anthropic" is an answer about the
+    // moment, and writing it down would take a green tick off a key this app has watched work.
+    if (verdict.State != AiKeyCheck.Unreachable)
+        onboarding.RecordKeyCheck(verdict.State, verdict.CheckedAt);
+
+    return Results.Ok(new { verdict, plan = BuildOnboardingPlan(store, onboarding) });
+});
 
 // Recorded server-side rather than in localStorage: this is the flag that stops a first-run screen
 // reappearing, and a seller who clears their browser data should not be greeted as a new install.

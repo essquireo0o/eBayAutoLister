@@ -182,6 +182,121 @@ public class OnboardingAssetTests
             StringComparison.Ordinal);
     }
 
+    // ── The key check ────────────────────────────────────────────────────────
+    //
+    // Nothing in C# renders the settings modal either, so nothing in C# notices when the one
+    // control that can tell a seller their key is wrong quietly stops being on the page.
+
+    [Fact]
+    public void TheKeyFieldHasAWayToFindOutWhetherTheKeyWorks()
+    {
+        var card = Between(Html, "id=\"setup-req-key\"", "</section>");
+
+        Assert.Contains("id=\"btn-test-ai-key\"", card, StringComparison.Ordinal);
+        Assert.Contains("id=\"ai-key-check-msg\"", card, StringComparison.Ordinal);
+        Assert.Contains("id=\"ai-key-check-link\"", card, StringComparison.Ordinal);
+        // Wired, and to the endpoint that exists.
+        Assert.Contains("on('btn-test-ai-key', 'click',", Js, StringComparison.Ordinal);
+        Assert.Contains("'/api/ai-key/check'", Js, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SavingAKeyChecksIt()
+    {
+        // The one moment the seller is looking at the key field, and the one second in which a
+        // typo is still obvious. Leaving it to a button nobody presses wastes the check.
+        var save = Between(Js, "async function saveSetup()", "async function ");
+        Assert.Contains("checkAiKey(", save, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryStateTheServerCanReturnHasSomewhereToLandInTheUi()
+    {
+        var table = Between(Js, "const AI_KEY_UI = {", "};");
+
+        foreach (var state in AiKeyCheck.All)
+        {
+            // Quoted or bare — 'no-credit' needs quotes, the rest do not.
+            Assert.True(table.Contains($"{state}:", StringComparison.Ordinal)
+                     || table.Contains($"'{state}':", StringComparison.Ordinal),
+                $"the front end has no row for the '{state}' verdict");
+        }
+    }
+
+    [Fact]
+    public void OnlyTheStatesTheServerCallsDefinitiveAreTreatedAsBadInTheUi()
+    {
+        var table = Between(Js, "const AI_KEY_UI = {", "};");
+
+        // The load-bearing agreement. A front end that reddens the panel on "unreachable" turns
+        // a train tunnel into "your key is wrong"; one that doesn't redden on "no-credit" leaves
+        // the seller with a green tick over an account that cannot pay for a request.
+        foreach (var line in table.Split('\n'))
+        {
+            var name = line.Trim().Split(':')[0].Trim('\'', ' ');
+            if (!AiKeyCheck.All.Contains(name)) continue;
+            var badInUi = line.Contains("bad: true", StringComparison.Ordinal);
+            Assert.Equal(AiKeyCheck.IsDefinitive(name), badInUi);
+        }
+    }
+
+    [Fact]
+    public void ARejectedKeyHasARowToExplainItselfIn()
+    {
+        var row = Between(Html, "id=\"step1-row\"", "id=\"step2-row\"");
+
+        Assert.Contains("id=\"step1-copy\"", row, StringComparison.Ordinal);
+        Assert.Contains("id=\"step1-problem\"", row, StringComparison.Ordinal);
+        Assert.Contains("id=\"step1-problem-text\"", row, StringComparison.Ordinal);
+        Assert.Contains("id=\"step1-problem-link\"", row, StringComparison.Ordinal);
+        // Hidden until there is a problem — an empty red line under step 1 on a healthy install
+        // is a warning about nothing.
+        Assert.Contains("class=\"setup-step-problem hidden\"", row, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AProblemOnStepOneTakesTheTickBackOff()
+    {
+        // markSetupStep has usually already ticked the row from local state by the time the
+        // server's answer lands. "A key is saved" is true and is not the claim the row is making.
+        var paint = Between(Js, "function paintStep1Problem(step) {", "\n  }");
+
+        Assert.Contains("markSetupStep('step1', false", paint, StringComparison.Ordinal);
+        Assert.Contains("is-problem", paint, StringComparison.Ordinal);
+        Assert.Contains("step.fixLink", paint, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheProblemStatesHaveSomewhereToLandInTheStylesheet()
+    {
+        Assert.Contains(".setup-step.is-problem", Css, StringComparison.Ordinal);
+        Assert.Contains(".setup-step-problem", Css, StringComparison.Ordinal);
+        Assert.Contains(".setup-req.is-problem", Css, StringComparison.Ordinal);
+        Assert.Contains(".ai-key-check", Css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheLinksTheUiOffersAreTheOnesTheServerWouldHaveSent()
+    {
+        var links = Between(Js, "const AI_KEY_LINKS = {", "};");
+
+        // A "no credit" verdict that links to the API keys page sends the seller to re-paste a
+        // key that was never the problem.
+        Assert.Contains(AiKeyCheck.Describe(AiKeyCheck.Rejected).Link, links, StringComparison.Ordinal);
+        Assert.Contains(AiKeyCheck.Describe(AiKeyCheck.NoCredit).Link, links, StringComparison.Ordinal);
+        Assert.NotEqual(AiKeyCheck.Describe(AiKeyCheck.Rejected).Link,
+                        AiKeyCheck.Describe(AiKeyCheck.NoCredit).Link);
+    }
+
+    [Fact]
+    public void TheDashboardChipDoesNotCallARejectedKeySaved()
+    {
+        var chips = Between(Js, "function renderDashStatus() {", "\n  }");
+
+        Assert.Contains("aiKeyIsBroken()", chips, StringComparison.Ordinal);
+        Assert.Contains("Claude key rejected", chips, StringComparison.Ordinal);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static string Between(string source, string from, string to)

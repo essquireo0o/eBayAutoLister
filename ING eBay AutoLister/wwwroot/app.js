@@ -17652,6 +17652,10 @@
     paintRequiredPill('pg-required-key',      'pg-required-key-state',      hasAnthropicKey,     'Saved', 'Needed');
     paintRequiredPill('pg-required-policies', 'pg-required-policies-state', hasBusinessPolicies, 'Chosen', 'Needed');
 
+    // Painted after the pill above, on purpose: "Saved" is what the file says and "Rejected" is
+    // what Anthropic says, and when the two disagree the one that stops the app working wins.
+    paintAiKeyState();
+
     updateSetupChecklist(hasAnthropicKey, isConnected, hasBusinessPolicies);
   }
 
@@ -17670,6 +17674,122 @@
       const status = await fetch('/api/setup/status').then(r => r.json());
       renderRequiredState(!!status.hasAnthropicKey, !!status.hasBusinessPolicies);
     } catch { /* leave the last known state up rather than blanking it */ }
+  }
+
+  // ── Does the Claude key actually work? ─────────────────────────────────────
+  //
+  // A saved key and a working key are different claims, and until now the app only ever made the
+  // first one. The three ways a pasted key fails — a character lost in the copy, a key that has
+  // been deleted since, an account with no credit on it — all save exactly as cleanly as a good
+  // one, so the tester gets a green tick, spends five minutes on the next two steps, and meets the
+  // real problem at the first analysis. One tiny Anthropic call settles it in a second.
+  //
+  // The last verdict is the server's (it survives a restart, and the dashboard is painted from it
+  // on every load); this variable is only the copy this page is currently showing.
+
+  let aiKeyState = 'untested';
+
+  const AI_KEY_UI = {
+    works:        { text: '✓ Anthropic accepted this key.',                      cls: 'ok',    pill: 'Works',    bad: false },
+    rejected:     { text: '✗ Anthropic rejected this key.',                      cls: 'error', pill: 'Rejected', bad: true  },
+    'no-credit':  { text: '✗ The key is fine — the account has no credit.',      cls: 'error', pill: 'No credit', bad: true },
+    missing:      { text: 'No key saved yet — paste one above and save.',        cls: 'error', pill: 'Needed',   bad: true  },
+    unreachable:  { text: 'Couldn’t reach Anthropic. This says nothing about the key — try again in a moment.',
+                    cls: '', pill: '', bad: false },
+    untested:     { text: '', cls: '', pill: '', bad: false },
+  };
+
+  // Where the seller goes to fix each one. A "no credit" verdict that links to the API keys page
+  // sends them to re-paste a key that was never the problem.
+  const AI_KEY_LINKS = {
+    rejected:    { href: 'https://console.anthropic.com/settings/keys',    label: 'console.anthropic.com → API keys ↗' },
+    missing:     { href: 'https://console.anthropic.com/settings/keys',    label: 'console.anthropic.com → API keys ↗' },
+    'no-credit': { href: 'https://console.anthropic.com/settings/billing', label: 'console.anthropic.com → Billing ↗' },
+  };
+
+  function aiKeyIsBroken() {
+    return hasAnthropicKey && !!AI_KEY_UI[aiKeyState]?.bad;
+  }
+
+  /** Paints the settings card from whatever the last verdict was. Safe to call at any time. */
+  function paintAiKeyState() {
+    const ui = AI_KEY_UI[aiKeyState] || AI_KEY_UI.untested;
+    const broken = aiKeyIsBroken();
+
+    const msg = $('ai-key-check-msg');
+    if (msg && msg.dataset.busy !== '1') {
+      msg.textContent = ui.text;
+      msg.className = `sd-test-msg ${ui.cls}`;
+    }
+
+    const link = $('ai-key-check-link');
+    if (link) {
+      const target = AI_KEY_LINKS[aiKeyState];
+      // Only offered when there is something to go and do. A permanent link under a working key is
+      // an invitation to change the one setting that is already right.
+      if (target && (broken || aiKeyState === 'missing')) {
+        link.href = target.href;
+        link.textContent = target.label;
+        link.classList.remove('hidden');
+      } else {
+        link.classList.add('hidden');
+      }
+    }
+
+    // The pill said "Saved" whatever Anthropic thought of the key. It now says what Anthropic
+    // thought — but only when that is a real answer; an untested key is still just saved.
+    const pill = $('setup-req-key-state');
+    if (pill && hasAnthropicKey && ui.pill) {
+      pill.textContent = ui.bad ? ui.pill : `✓ ${ui.pill}`;
+      pill.classList.toggle('is-done', !ui.bad);
+    }
+    // A card cannot be both finished and broken. Dropping `is-done` here rather than leaving the
+    // stylesheet to settle it means the green never depends on which rule was written last.
+    ['setup-req-key', 'pg-required-key'].forEach(id => {
+      const card = $(id);
+      if (!card) return;
+      card.classList.toggle('is-problem', broken);
+      if (broken) card.classList.remove('is-done');
+    });
+  }
+
+  /**
+   * Asks the server to ask Anthropic. Records the answer on the way through, so the dashboard is
+   * still right after a restart, and repaints both the modal and the checklist from the plan the
+   * same call returns.
+   */
+  async function checkAiKey({ announce = false } = {}) {
+    const msg = $('ai-key-check-msg');
+    const btn = $('btn-test-ai-key');
+    if (msg) { msg.dataset.busy = '1'; msg.textContent = 'Asking Anthropic…'; msg.className = 'sd-test-msg'; }
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/ai-key/check', { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      aiKeyState = body?.verdict?.state || 'untested';
+      if (msg) delete msg.dataset.busy;
+      paintAiKeyState();
+      if (body?.plan) renderOnboarding(body.plan);
+      // Worth an activity line either way: a rejected key is the single most likely reason a
+      // first session goes nowhere, and the log is where a tester looks when it does.
+      if (announce && body?.verdict) {
+        addActivity(body.verdict.ok ? 'Claude key checked' : 'Claude key problem',
+          `${body.verdict.headline} ${body.verdict.whatToDo}`);
+      }
+      return body?.verdict || null;
+    } catch (err) {
+      // A failed round trip to our own server says nothing about the key either.
+      if (msg) {
+        delete msg.dataset.busy;
+        msg.textContent = `Could not run the check: ${errorText(err)}`;
+        msg.className = 'sd-test-msg error';
+      }
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   // ── Fees & Costs (Settings) ────────────────────────────────────────────────
@@ -17870,6 +17990,10 @@
     // An API key is a long opaque string that is easy to paste twice or mistype the end of, and
     // it saves masked, so there has to be a way to look at what you typed. Toggling the input
     // type keeps the value and the label, and aria-pressed says which state the button is in.
+    // Anthropic is the only party that can answer "does this key work". Pressing this is also the
+    // one way to clear a stale "rejected" after the seller has fixed the key.
+    on('btn-test-ai-key', 'click', () => checkAiKey({ announce: true }));
+
     on('s-anthropic-reveal', 'click', () => {
       const input = $('s-anthropic-key');
       const btn   = $('s-anthropic-reveal');
@@ -18036,7 +18160,15 @@
         $('s-anthropic-key').value = '';
         $('s-anthropic-key').placeholder = '(saved — leave blank to keep)';
       }
+      // The server forgot the old verdict the moment this key landed, so the page must not keep
+      // showing it while the new key is checked.
+      if (body.anthropicApiKey) aiKeyState = 'untested';
       renderRequiredState(!!status.hasAnthropicKey, !!status.hasBusinessPolicies);
+
+      // Checked here rather than left to a button nobody presses. This is the one moment the
+      // seller is looking at the key field, and the one second in which a typo is still obvious.
+      // Not awaited: the eBay half of this save is what the Save button is really about.
+      if (body.anthropicApiKey) checkAiKey({ announce: true });
 
       const hasEbayCreds = status.hasEbayClientId && status.hasEbayClientSecret;
       if (!hasEbayCreds) {
@@ -19977,8 +20109,14 @@
     // until policies were chosen — the same nag the seller asked to be rid of, in a second place.
     setDashChip('dash-chip-ebay', isConnected,
       'eBay connected', 'eBay not connected');
-    setDashChip('dash-chip-ai', hasAnthropicKey,
-      'Claude key saved', 'Claude key needed');
+    // "Saved" was the only thing this chip could ever say. A key Anthropic has refused is saved
+    // too, and a green chip over it is the app agreeing with a setup that cannot work.
+    const keyOk = hasAnthropicKey && !aiKeyIsBroken();
+    setDashChip('dash-chip-ai', keyOk,
+      aiKeyState === 'works' ? 'Claude key works' : 'Claude key saved',
+      aiKeyState === 'rejected'  ? 'Claude key rejected'
+      : aiKeyState === 'no-credit' ? 'Claude account has no credit'
+      : 'Claude key needed');
   }
 
   function setDashChip(id, on, onText, offText) {
@@ -20030,10 +20168,22 @@
       bar.setAttribute('aria-valuemax', String(total));
     }
 
+    // What Anthropic last said about the key. Read before the rows are painted, because it decides
+    // whether step 1 is allowed to be ticked at all.
+    if (plan.aiKeyState) {
+      aiKeyState = plan.aiKeyState;
+      paintAiKeyState();
+    }
+
     plan.steps.forEach(step => {
       const prefix = ONBOARD_ROWS[step.id];
       const row = $(`${prefix}-row`);
       if (!row) return;
+
+      // Step 1 is painted locally the instant a key is saved — but only the server knows whether
+      // that key works, and a step that says "✓ Key saved" over a key Anthropic has refused is the
+      // exact lie this check exists to stop. So a problem, and only a problem, overrides it here.
+      if (prefix === 'step1') paintStep1Problem(step);
 
       // Steps 1 and 2 belong to updateSetupChecklist, which paints them the instant a key is saved
       // or eBay answers — with the right button labels ("✓ Key saved", "✓ Connected"). Repainting
@@ -20057,6 +20207,37 @@
     refreshChecklistVisibility();
 
     if (plan.showWelcome) openWelcome();
+  }
+
+  /**
+   * Step 1's second line: empty on a healthy install, and on a broken one the sentence that says
+   * which of the two failures happened plus where to fix it.
+   *
+   * It also takes the tick back off the row. markSetupStep('step1', true) has usually already run
+   * from local state by the time this does — "a key is saved" is true, and it is not the claim the
+   * row was making.
+   */
+  function paintStep1Problem(step) {
+    const problem = step?.problem || '';
+    const box  = $('step1-problem');
+    const text = $('step1-problem-text');
+    const link = $('step1-problem-link');
+
+    if (text) text.textContent = problem;
+    box?.classList.toggle('hidden', !problem);
+    $('step1-row')?.classList.toggle('is-problem', !!problem);
+
+    if (link) {
+      if (problem && step.fixLink) {
+        link.href = step.fixLink;
+        link.textContent = `${step.fixLinkLabel || step.fixLink} ↗`;
+        link.classList.remove('hidden');
+      } else {
+        link.classList.add('hidden');
+      }
+    }
+
+    if (problem) markSetupStep('step1', false, 'Key saved');
   }
 
   // Server step id → the row prefix markSetupStep already understands.

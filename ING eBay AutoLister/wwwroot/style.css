@@ -4408,6 +4408,11 @@ textarea {
   background: var(--card);
 }
 .setup-req.is-done { border-color: var(--success-line); }
+/* Saved, and refused by Anthropic. The card that holds the field is where the fix happens, so it
+   is the card that carries the warning — a red line on the dashboard and a neutral settings box
+   sends the seller looking for the problem in the wrong place. */
+.setup-req.is-problem { border-color: var(--danger-line); background: var(--danger-tint); }
+.setup-req.is-problem .setup-req-num { background: var(--danger); color: var(--danger-tint); }
 
 .setup-req-head {
   display: flex;
@@ -4464,6 +4469,17 @@ textarea {
   background: var(--soft-2);
   color: var(--brand-ink);
 }
+
+/* "Test key" and whatever Anthropic said about it, on one line under the field it is about. */
+.ai-key-check {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.ai-key-check .btn { flex-shrink: 0; }
+.ai-key-check .sd-test-msg { flex: 1; min-width: 180px; }
 
 .setup-policy-manual {
   margin-top: 12px;
@@ -8154,6 +8170,26 @@ td.skeleton-cell { padding: 0 !important; }
   box-shadow: 0 0 0 3px rgba(199, 154, 54, .14);
 }
 .setup-step.is-next .setup-step-num { background: var(--gold); color: var(--teal-800); }
+
+/* A step that looks finished and is not. Only step 1 can be in this state, and only when
+   Anthropic has told the app in so many words that the saved key will not work — so it outranks
+   the gold "do this next" ring: this is not the next thing to do, it is the thing already done
+   wrong. The row keeps its full opacity (unlike .is-done) because it still needs reading. */
+.setup-step.is-problem {
+  border-color: var(--danger-line);
+  background: var(--danger-tint);
+  opacity: 1;
+}
+.setup-step.is-problem .setup-step-num { background: var(--danger); color: var(--danger-tint); }
+
+.setup-step-problem {
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  font-weight: 600;
+}
+.setup-step-problem .link-ext { margin-left: 6px; font-weight: 650; }
 
 /* The three steps past setup. Not a lighter weight than the two logins — they
    are the ones that show what the app is for — but visibly a different kind of

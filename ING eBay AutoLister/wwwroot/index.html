@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=125" />
+  <link rel="stylesheet" href="style.css?v=126" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -300,7 +300,15 @@
               <div id="step1-icon" class="setup-step-num">1</div>
               <div class="setup-step-body">
                 <div class="setup-step-title">Enter your Claude (Anthropic) API key</div>
-                <div class="setup-step-copy">This is the AI. It reads your product photo and fills in the title, description, price and category. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a> — about $5 covers hundreds of listings.</div>
+                <div class="setup-step-copy" id="step1-copy">This is the AI. It reads your product photo and fills in the title, description, price and category. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a> — about $5 covers hundreds of listings.</div>
+                <!-- Only ever filled in when the server has proof the saved key does not work:
+                     Anthropic refused it, or the account has no credit. A step that looks finished
+                     and is not is worse than one that is plainly unfinished, so the row loses its
+                     tick and says which of the two it is. -->
+                <div class="setup-step-problem hidden" id="step1-problem">
+                  <span id="step1-problem-text"></span>
+                  <a id="step1-problem-link" class="link-ext hidden" target="_blank" rel="noopener noreferrer" href="https://console.anthropic.com/settings/keys"></a>
+                </div>
               </div>
               <button id="step1-btn" class="btn btn-primary" type="button">Enter Key →</button>
             </div>
@@ -5958,6 +5966,16 @@
             <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" class="link-ext">console.anthropic.com → API keys ↗</a>
             — sign in, click <em>Create key</em>, copy it, paste it here. It starts with <code>sk-ant-</code>, and about $5 of credit covers hundreds of listings.
           </p>
+
+          <!-- Saving a key proves nothing: a key with a character lost in the paste, a revoked key
+               and a key on an account with no credit all save exactly as cleanly as a working one,
+               and the seller finds out several screens later. This asks Anthropic instead. One
+               token of Haiku — a fraction of a cent — answers all three at once. -->
+          <div class="ai-key-check">
+            <button id="btn-test-ai-key" class="btn btn-secondary" type="button">Test key</button>
+            <span id="ai-key-check-msg" class="sd-test-msg"></span>
+            <a id="ai-key-check-link" class="link-ext hidden" target="_blank" rel="noopener noreferrer" href="https://console.anthropic.com/settings/keys"></a>
+          </div>
         </div>
       </section>
 
@@ -6177,6 +6195,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=142"></script>
+  <script src="app.js?v=143"></script>
 </body>
 </html>

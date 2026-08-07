@@ -354,8 +354,8 @@ public class WhatsNotRoomAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=142", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=125", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=143", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=126", Html, StringComparison.Ordinal);
     }
 
     private static string ReadAsset(string name) =>

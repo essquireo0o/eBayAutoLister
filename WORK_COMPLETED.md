@@ -13874,3 +13874,124 @@ that say what the app is for, permanently.
 - **Nothing measures whether it worked.** There is no funnel, no telemetry and no way to know from
   here how many testers reach step 5. The five steps are a hypothesis about what the first five
   minutes should be, argued from what the app does, not from data about what testers do.
+
+---
+
+# Ask Anthropic whether the key works, before the tester spends five minutes on the rest
+
+## The question this answers
+
+Step 1 of the getting-started path ticked green when a key was **saved**. Saving a key is not
+evidence of anything. The three ways a pasted key fails —
+
+- a character lost in the copy,
+- a key that has since been revoked,
+- and much the most likely on day one, a brand-new Anthropic account with a valid key and no credit
+  on it —
+
+all save exactly as cleanly as a working one. So the tester got a green tick, went on to spend five
+minutes on steps 2-5, and met the real failure at the first analysis: a different screen, a
+different message, and no obvious connection to the field that caused it. The failure translator
+explains it well when it gets there; the problem is that it gets there three screens too late.
+
+Now the app asks. One tiny model call — Haiku, `MaxTokens = 1`, the word "hi", a small fraction of a
+cent — answers all three questions at once, because to Anthropic they are one question:
+authenticate the key, bill the account, return a token.
+
+## What each answer is allowed to do
+
+The load-bearing distinction is not "did the check succeed" but "does this answer say anything about
+the key". `AiKeyCheck.Verdict.Definitive` carries it, and only a definitive verdict may untick a step
+or turn a chip red:
+
+| Anthropic said | State | Untick step 1? | Where the seller is sent |
+|---|---|---|---|
+| answered | `works` | no — ticked, with the date | nowhere; nothing to do |
+| `authentication_error` / 401 | `rejected` | **yes** | console → API keys |
+| credit balance / billing / 402 | `no-credit` | **yes** | console → **Billing** |
+| no key saved | `missing` | n/a (nothing to untick) | console → API keys |
+| rate limit, overload, 5xx, timeout, network, anything unrecognised | `unreachable` | **no** | nowhere |
+
+A rate limit actually *proves* the key authenticated. A timeout proves nothing at all. Neither may
+take a green tick off a key that has been working — a tester on a train must not be told their key
+is wrong. Unrecognised failures land in `unreachable` for the same reason: guessing "rejected" from
+an error nobody has seen before sends a seller to re-paste a key that was fine.
+
+The classification is `FailureTranslator`'s, not a second copy of Anthropic's error strings. There is
+one place in this app that knows what an `authentication_error` looks like.
+
+## Where it says it
+
+- **Settings → the key card.** A **Test key** button, the verdict beside it, and — only when there is
+  something to go and do — a link to the page that does it. `no-credit` links to Billing, not to the
+  keys page: telling that seller to re-copy their key wastes their evening.
+- **On save.** Checked automatically the moment a key is saved, which is the one second in which a
+  typo is still obvious and the one moment the seller is looking at the field. Left to a button
+  nobody presses, the check is worth nothing.
+- **The dashboard checklist.** Step 1 loses its tick, turns red, and carries the sentence plus the
+  link. The panel headline becomes *"Your Claude key isn't working yet"* and the sub-line the short
+  form — the row below already has the paragraph, and printing it twice on one screen makes both
+  copies read as boilerplate.
+- **The hero chip.** "Claude key saved" was true of a rejected key too. It now reads "Claude key
+  works", "Claude key rejected" or "Claude account has no credit".
+
+## What it refuses to do
+
+- **It never guesses.** Only `rejected`, `no-credit` and `missing` are recorded; `unreachable` is
+  discarded rather than written over a verdict that means something.
+- **It does not retry.** Deliberately outside `ResilientCall`: everywhere else a retry saves the
+  seller's work from a blip, but here it means watching a spinner through three attempts to be told
+  what the first one already knew — and the two failures worth retrying are the two this reports as
+  "ask again later" anyway. 30 seconds, once.
+- **It does not keep a stale verdict.** Saving a new key clears the old one server-side: the previous
+  answer was about a key that is no longer there, and a seller who fixes a rejected key must not
+  still be told it is rejected.
+- **It does not untick anything that was earned.** A seller whose key expires after a month has still
+  priced, written and published. Only step 1 is in question.
+- **An install that never runs the check behaves exactly as before.** `untested` is the default and
+  ticks step 1 off a saved key, which is what every existing install does today.
+- **It checks Haiku, and the listing paths run Fable and Opus.** In practice a key Anthropic
+  authenticates and bills works for all of them; an account with per-model restrictions would pass
+  here and fail at the first analysis, where the translator explains it.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/AiKeyCheck.cs` | **New** — the six states, what each one means, what to do about it and where. Pure, and driven off `FailureTranslator` rather than its own copy of Anthropic's error strings |
+| `ING eBay AutoLister/Services/ClaudeService.cs` | `CheckKeyAsync` — one Haiku token, 30s, no retry, translated on the way out |
+| `ING eBay AutoLister/Services/OnboardingStore.cs` | A `note` column (migrated in, failure-tolerant), `RecordKeyCheck` (last write wins, unlike `Reach`), `KeyCheck()`, and the state on `Facts` |
+| `ING eBay AutoLister/Services/OnboardingProgress.cs` | `Facts.AiKeyState`/`AiKeyCheckedAt`, `Step.Problem`/`FixLink`/`FixLinkLabel`, `Plan.AiKeyState`; step 1 and `SetupComplete` now mean "the key works" |
+| `ING eBay AutoLister/Program.cs` | `POST /api/ai-key/check`; `/api/setup/save` forgets the verdict when a new key lands |
+| `ING eBay AutoLister/wwwroot/index.html` | Test-key row on the key card, `step1-copy` / `step1-problem` on the checklist row; `app.js?v=143`, `style.css?v=126` |
+| `ING eBay AutoLister/wwwroot/app.js` | `checkAiKey`, `paintAiKeyState`, `paintStep1Problem`, `AI_KEY_UI` / `AI_KEY_LINKS`; the save path checks a new key; the dash chip reads the verdict |
+| `ING eBay AutoLister/wwwroot/style.css` | `.setup-step.is-problem`, `.setup-step-problem`, `.setup-req.is-problem`, `.ai-key-check` |
+| `ING eBay AutoLister.Tests/AiKeyCheckTests.cs` | **New**, 12 tests — every Anthropic answer, which are definitive, and that the two ways of asking agree |
+| `ING eBay AutoLister.Tests/OnboardingProgressTests.cs` | +11 — a broken key unticks step 1 and says which failure; an unproven one changes nothing |
+| `ING eBay AutoLister.Tests/OnboardingStoreTests.cs` | +8 — persistence, last-write-wins, clearing, and the column migration over a pre-existing database |
+| `ING eBay AutoLister.Tests/OnboardingAssetTests.cs` | +8 — holds the front end's state table to the server's: exactly the states the server calls definitive are the states the UI reddens |
+| Eleven `WhatsNot*AssetTests.cs` | Re-pinned asset versions |
+| `aikey_rejected.png`, `aikey_settings.png`, `aikey_narrow.png` | The checklist, the settings card, and the panel at 900px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,777 passed**, 0 failed, 0 skipped (44 new) |
+| Real browser (Playwright, `wwwroot` served statically, every `/api/onboarding` answer and every verdict **serialised out of the real `OnboardingProgress` and `AiKeyCheck`** rather than hand-written) | **43 checks, all passed, 0 JS errors.** Fresh install: unchanged — step 1 unticked, no red, the server's own headline. Rejected: step 1 loses its tick, turns red, carries the server's sentence character-for-character and links to the keys page; headline *"Your Claude key isn't working yet"*, sub the short form, `1 of 5`, chip "Claude key rejected" and off. The settings card opened from that row is red, its pill reads `Rejected`, and its link is the keys page. No credit: the same machinery, the words *"the key is fine"*, and the link points at **Billing** instead. Works: ticked, no red anywhere, pill `✓ Works`, chip "Claude key works", and **no fix link offered**. Unreachable: **step 1 still ticked, no red, chip still positive** — the case that matters most. Pressing **Test key** POSTs `/api/ai-key/check` and repaints both the modal and the checklist behind it from the answer. At 900px the row overflowed the panel by **-25px** |
+
+## Known limits
+
+- **It proves the key, not the whole app.** Haiku authenticating does not prove Fable 5 access, and
+  an org under zero data retention would pass this check and still fail every Fable 5 call.
+- **A verdict is a snapshot.** A key revoked an hour after it was tested still shows green until
+  something asks again. Nothing re-checks on a schedule, and a real analysis failing with
+  `AiKeyRejected` does **not** yet write the verdict back — the evidence is right there in
+  `FailureTranslator`'s answer and this does not read it.
+- **The check costs a real API call.** Trivially small, but it is Anthropic's meter, so it runs on
+  save and on the button and nowhere else — never on page load.
+- **`missing` is recorded but can never be seen.** With no key saved, step 1 is already outstanding
+  and the row has nothing to add.
+- **Nothing measures whether it helps.** Same as the path it sits on: no funnel, no telemetry, and no
+  way to know from here how many testers were saved a wasted evening by it.

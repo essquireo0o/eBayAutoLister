@@ -169,6 +169,68 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
     }
 
     /// <summary>
+    /// A key check has to answer while the seller is still looking at the field they typed into.
+    /// Four minutes is right for writing a listing and wrong for one token.
+    /// </summary>
+    private static readonly TimeSpan KeyCheckTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Asks Anthropic whether a key actually works, and turns the answer into something to do.
+    /// </summary>
+    /// <param name="candidateKey">
+    /// A key to test without saving it, or null to test the one already saved.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The smallest real request there is: Haiku, one token of output, the word "hi". It costs a
+    /// small fraction of a cent, and it is a genuine end-to-end proof — the key authenticated, the
+    /// account could be billed, and a model answered. Nothing short of a real call proves that; a
+    /// key that merely <em>looks</em> like <c>sk-ant-…</c> is exactly the key that fails later.
+    /// </para>
+    /// <para>
+    /// Deliberately outside <see cref="ResilientCall"/>. Everywhere else a retry saves the seller's
+    /// work from a blip; here a retry means a person watching a spinner for three attempts to be
+    /// told what the first attempt already knew — and the two failures worth retrying (rate limit,
+    /// overload) are the two this returns as "ask again later" anyway.
+    /// </para>
+    /// <para>
+    /// It checks Haiku, and the listing paths run Fable and Opus. In practice a key that Anthropic
+    /// authenticates and bills works for all of them, so the gap this leaves is narrow — an account
+    /// with per-model restrictions would pass here and fail at the first analysis, where the
+    /// failure translator explains it.
+    /// </para>
+    /// </remarks>
+    public async Task<AiKeyCheck.Verdict> CheckKeyAsync(string? candidateKey = null, CancellationToken cancellationToken = default)
+    {
+        var key = string.IsNullOrWhiteSpace(candidateKey) ? creds.Get().AnthropicApiKey : candidateKey.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+            return AiKeyCheck.Describe(AiKeyCheck.Missing, DateTimeOffset.UtcNow);
+
+        try
+        {
+            var client = new AnthropicClient(key);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(KeyCheckTimeout);
+
+            await client.Messages.GetClaudeMessageAsync(new MessageParameters
+            {
+                Model     = "claude-haiku-4-5-20251001",
+                MaxTokens = 1,
+                Messages  = [new() { Role = RoleType.User, Content = [new TextContent { Text = "hi" }] }]
+            }, timeout.Token);
+
+            log.Add("Info", "Claude key checked", "Anthropic accepted the key and answered.");
+            return AiKeyCheck.Working();
+        }
+        catch (Exception ex)
+        {
+            var verdict = AiKeyCheck.FromFailure(FailureTranslator.Translate(ex, FailureDomain.Ai));
+            log.Add(verdict.Definitive ? "Error" : "Warning", "Claude key check failed", verdict.Headline);
+            return verdict;
+        }
+    }
+
+    /// <summary>
     /// Sends one request to the model and parses the reply, retrying transient failures.
     /// </summary>
     /// <remarks>
