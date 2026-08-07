@@ -99,6 +99,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // comp lookup ran against", and on a live show those two stopped being the same thing the
         // moment the auction wording started being taken out of it.
         var resale = analysis is null ? null : ResalePricing.From(analysis, terms.Query);
+
+        // Which way the price has been going. Read off the SAME comps the resale figure above came
+        // from — no second lookup, nothing extra to wait for — and recomputed on a re-price rather
+        // than carried, so a card priced from held comps says exactly what the fresh one said.
+        // The only thing on this card allowed to take money off the ceiling; see LiveTrend for the
+        // two guards on that and for why a climb is never allowed to add any.
+        var trend = LiveTrend.Read(analysis?.AllSoldComparables, now);
         var shipping = Math.Max(0m, request.ShippingCost ?? 0m);
         var feePercent = SanitizeBuyerFee(request.BuyerFeePercent);
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
@@ -115,6 +122,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             Units = units,
             Item = item,
             Search = terms,
+            Trend = trend,
             PricedAs = resale?.LookupTitle ?? terms.Query,
             CategoryLabel = category?.Label ?? "",
             CurrentBid = bid,
@@ -158,15 +166,23 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             return card;
         }
 
+        // The price the rest of this method spends. Identical to `resale` — the same object, not a
+        // copy of it — unless the trend read found a confirmed, material fall that survived both of
+        // its guards, in which case the three prices the ceiling is built from are scaled to what
+        // these have actually been fetching lately. Everything the comps DESCRIBE stays as it was:
+        // the middle-half spread, the comp table, the sell-through and the confidence are records
+        // of sales that really happened, and scaling those would be inventing sales nobody made.
+        var bidAgainst = LiveTrend.Discount(resale, trend);
+
         // The resale price is the LOT's, because the bid it is measured against is the lot's — one
         // hammer buys all of them. The spread, the median and the quick-sale figure stay per unit:
         // those are descriptions of the sold comps, which are sales of one of the thing, and
         // multiplying a percentile by three would be inventing a lot that nobody sold.
-        var perUnitResale = resale.ExpectedSale ?? resale.Median;
+        var perUnitResale = bidAgainst.ExpectedSale ?? bidAgainst.Median;
         units.ResalePerUnit = perUnitResale;
         card.ResalePrice = perUnitResale is decimal each ? Math.Round(each * count, 2) : null;
-        card.MedianPrice = resale.Median;
-        card.QuickSalePrice = resale.QuickSale;
+        card.MedianPrice = bidAgainst.Median;
+        card.QuickSalePrice = bidAgainst.QuickSale;
 
         // The money. Every figure below is one subtraction away from this: net profit falls exactly
         // one dollar for every dollar of landed cost, which is what makes the ceiling arithmetic
@@ -177,7 +193,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // the handling — is already charged inside this break-even by ProfitCalculator, and what
         // the floor is left standing for is the hour of finding it and deciding, which happens once
         // for the whole lot however many things are in it.
-        var breakEvenPerUnit = hunter.BreakEvenBuyPrice(resale, fees);
+        var breakEvenPerUnit = hunter.BreakEvenBuyPrice(bidAgainst, fees);
         var breakEvenAllIn = Math.Round(breakEvenPerUnit * count, 2);
         var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(breakEvenAllIn, shipping, target, feePercent);
 
@@ -200,7 +216,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
 
         if (card.BidWasKnown)
         {
-            var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
+            var expected = bidAgainst.ExpectedSale is > 0 ? bidAgainst.ExpectedSale!.Value : bidAgainst.Median!.Value;
             // The landed cost is the lot's — one bid, one premium, one shipment — and it is divided
             // across the units so the calculator prices each unit's own sale. Quantity then puts
             // the lot back together, which is what keeps the ROI on a lot of three identical to the
@@ -208,9 +224,9 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             var profit = profitCalc.Calculate(
                 supplierUnitCost: Math.Round(card.LandedCostNow / count, 2), quantity: count,
                 expectedSalePrice: expected,
-                quickSalePrice: resale.QuickSale ?? expected,
-                buyerPaidShipping: resale.AvgCompShipping, fees: fees,
-                actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
+                quickSalePrice: bidAgainst.QuickSale ?? expected,
+                buyerPaidShipping: bidAgainst.AvgCompShipping, fees: fees,
+                actualShippingCostOverride: bidAgainst.AvgCompShipping > 0 ? bidAgainst.AvgCompShipping : null);
 
             card.ProfitNow = count > 1 ? profit.TotalPotentialProfit : profit.NetProfitPerUnit;
             card.RoiNow = profit.RoiPercent;
@@ -219,14 +235,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             card.EstimatedShipCost = Math.Round(profit.FulfilmentCostTotal * count, 2);
         }
 
-        ApplySpeed(card, resale);
+        ApplySpeed(card, bidAgainst);
 
         // What N of them costs in TIME. The only price this screen charges for a multi-unit lot:
         // no haircut is taken off the resale figure, because a "multi-unit discount" is a number
         // nobody measured, while the queue behind the first sale is measurable from the same
         // sell-through data already on the card.
         var (months, daysAll, absorption) = LiveLotSize.Absorption(
-            count, resale.EstimatedMonthlySales, card.DaysToSell);
+            count, bidAgainst.EstimatedMonthlySales, card.DaysToSell);
         units.MonthsToClear = months;
         units.DaysToSellAll = daysAll;
         units.AbsorptionNote = absorption;
@@ -235,7 +251,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.Call = call;
         card.CallLabel = label;
         card.Reason = reason;
-        card.Warnings.AddRange(Warnings(card, resale));
+        card.Warnings.AddRange(Warnings(card, bidAgainst));
         AttachOwnRecord(card, own);
         card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
         // Last, because it restates what everything above decided. Both exits set it, so no card
@@ -485,6 +501,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // different thing, and that is the one fact on this card that changes what all the others
         // mean. See LiveSearchQuery.Widen for the trade it is reporting.
         if (LiveSearchQuery.WidenedWarning(card.Search) is { Length: > 0 } widened) warnings.Add(widened);
+
+        // Then which way the price has been going, for the same reason and in the same place: it is
+        // not a fact about the money below, it is a fact about what the money below MEANS. A ceiling
+        // priced off a median that includes six weeks of higher sales is a real ceiling for a price
+        // that has since stopped being paid. See LiveTrend.
+        if (card.Trend is { Warning.Length: > 0 } trend) warnings.Add(trend.Warning);
 
         // The lot warnings come first. Everything under them is a number that means something
         // different depending on whether this is one thing or five, and a seller who reads the

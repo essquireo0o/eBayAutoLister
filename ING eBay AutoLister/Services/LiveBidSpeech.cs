@@ -49,7 +49,33 @@ public static class LiveBidSpeech
         if (card.Call == LiveBidCalls.NoData)
             return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.", YourOwnRecord(card));
 
-        return Join(Headline(card), HowMany(card), WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+        return Join(Headline(card), HowMany(card), WhichWayItsGoing(card),
+            WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+    }
+
+    /// <summary>
+    /// That the sold price has been moving, said third — after the badge and the unit count, before
+    /// any figure it changes the meaning of.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately silent on most cards. It speaks in exactly one case: the one where the trend
+    /// actually took money off the ceiling, so the badge the seller just heard is lower than the
+    /// comps under it would suggest and they are owed the reason. A steady item, a climbing one, a
+    /// fall too thin to price against and one with no dated history all say nothing here — a line
+    /// that grew a clause for every reading would stop being glanceable, which is the only thing it
+    /// is for. The card's own trend strip carries the rest.
+    /// </para>
+    /// <para>
+    /// It never states the cut as a new price. The ceiling in the badge is already the cut one, and
+    /// a second dollar figure in a spoken line is a second number to mishear.
+    /// </para>
+    /// </remarks>
+    private static string WhichWayItsGoing(LiveBidCard card)
+    {
+        if (card.Trend is not { Discounted: true } trend) return "";
+
+        return $"Prices are sliding — ceiling already cut {Math.Round(trend.CutPercent):0}% for it.";
     }
 
     /// <summary>

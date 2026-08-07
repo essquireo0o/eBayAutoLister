@@ -135,6 +135,13 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveLotUnits Units { get; set; } = new();
 
+    /// <summary>
+    /// Which way the sold price has been moving, and whether that moved the ceiling. Never null —
+    /// a card that only mentions the trend when it found one is a card whose silence means both
+    /// "steady" and "never looked". See <see cref="Services.LiveTrend"/>.
+    /// </summary>
+    public LiveTrendRead Trend { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }
@@ -381,6 +388,96 @@ public static class LiveSearchDropKinds
     public const string Decoration = "decoration";
     /// <summary>Cut to find any sold history at all. See <see cref="Services.LiveSearchQuery.Widen"/>.</summary>
     public const string Widened = "widened";
+}
+
+/// <summary>
+/// Which way this item's sold price has been moving, and what that was allowed to do to the
+/// ceiling. See <see cref="Services.LiveTrend"/> for the measurement and the two guards on it.
+/// </summary>
+/// <remarks>
+/// Present on every card, including the ones the comps could not support a reading for. The price
+/// on this card is a claim about tonight built out of sales from the last two months, and a screen
+/// that only mentioned the direction of travel when it happened to find one would leave the seller
+/// unable to tell "these are holding their price" from "nobody looked".
+/// </remarks>
+public sealed class LiveTrendRead
+{
+    /// <summary>False when the comps could not support a reading at all. Every figure below is then
+    /// zero and the ceiling is the untouched one.</summary>
+    public bool Readable { get; set; }
+
+    /// <summary>falling | rising | steady | stopped | unknown — what the card colours and labels
+    /// off. Coarser than <see cref="Signal"/> on purpose: this is read in about a second.</summary>
+    public string Direction { get; set; } = LiveTrendDirections.Unknown;
+
+    /// <summary>The measurement's own vocabulary, unchanged: rising_demand | price_climbing |
+    /// supply_squeeze | demand_building | cooling | steady | unreadable.</summary>
+    public string Signal { get; set; } = "unreadable";
+
+    /// <summary>confirmed | tentative | unreadable. A cut needs confirmed.</summary>
+    public string Reliability { get; set; } = "unreadable";
+
+    /// <summary>The move in one glanceable phrase — "Sold prices down 22% — $180 → $140 median".</summary>
+    public string Headline { get; set; } = "";
+
+    /// <summary>The measurement's own sentence, including its caveats. Never rewritten here.</summary>
+    public string Note { get; set; } = "";
+
+    /// <summary>What this read did or did not do to the ceiling, said on every readable card.</summary>
+    public string MoneyNote { get; set; } = "";
+
+    /// <summary>Set only when the direction of travel belongs above the money on the card, in
+    /// <see cref="LiveBidCard.Warnings"/>. Empty on a steady or unreadable item.</summary>
+    public string Warning { get; set; } = "";
+
+    // ── The measurement ──────────────────────────────────────────────────────
+    /// <summary>Length of each of the two windows compared. The read spans twice this.</summary>
+    public int WindowDays { get; set; }
+    public decimal? PriceChangePercent { get; set; }
+    public decimal RecentMedian { get; set; }
+    public decimal PriorMedian { get; set; }
+    public int RecentSold { get; set; }
+    public int PriorSold { get; set; }
+    public int TotalCompCount { get; set; }
+    public int DatedCompCount { get; set; }
+    /// <summary>Theil–Sen slope in dollars a month across every dated sale — the second opinion
+    /// that can refuse a cut the two window medians asked for.</summary>
+    public decimal? SlopePerMonth { get; set; }
+
+    // ── The money ────────────────────────────────────────────────────────────
+    /// <summary>What the ceiling's resale price was multiplied by. Exactly 1 unless a confirmed,
+    /// material fall survived both guards — and never above 1, whatever the climb.</summary>
+    public decimal ResaleMultiplier { get; set; } = 1m;
+
+    /// <summary>True when that multiplier is below 1 and the ceiling really was cut.</summary>
+    public bool Discounted { get; set; }
+
+    /// <summary>The cut as a percentage, for the badge on the strip.</summary>
+    public decimal CutPercent { get; set; }
+
+    /// <summary>True when the measured fall was deeper than
+    /// <see cref="Services.LiveTrend.MaxHaircutPercent"/> and the cut was held at it.</summary>
+    public bool Floored { get; set; }
+}
+
+/// <summary>The four directions a live card reports. Spelled once so the strip, the tests and the
+/// CSS agree.</summary>
+/// <remarks>
+/// There is deliberately no "stopped selling". It is the reading a bidder would most want, and it
+/// is the one thing a single comp lookup cannot honestly produce: an item whose sales have dried up
+/// and a comps database that has stopped being ingested look identical from inside one product.
+/// <see cref="Services.LiveTrend.SoloCorpus"/> refuses both rather than guessing which.
+/// </remarks>
+public static class LiveTrendDirections
+{
+    /// <summary>Selling for materially less than a window ago.</summary>
+    public const string Falling = "falling";
+    /// <summary>Selling for materially more. Never raises the ceiling.</summary>
+    public const string Rising = "rising";
+    /// <summary>No material move in either direction.</summary>
+    public const string Steady = "steady";
+    /// <summary>Not enough dated sold history on both sides of the window to say anything.</summary>
+    public const string Unknown = "unknown";
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

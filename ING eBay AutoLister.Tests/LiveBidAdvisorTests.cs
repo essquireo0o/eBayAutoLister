@@ -1001,4 +1001,136 @@ public class LiveBidAdvisorTests
         Assert.DoesNotContain("RESERVE", card.SoldSearchUrl, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Antminer", card.SoldSearchUrl, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ── Which way the price has been going ────────────────────────────────────
+    // The card has always said how OLD its evidence was and never which way it was moving. A median
+    // across two months is the right price for an item that has held it and an overstatement for one
+    // that has been sliding since — and the difference is paid in cash, in seconds, at a hammer.
+
+    /// <summary>
+    /// The comps the trend is read from are the comps the price came from. No second lookup, no
+    /// second clock, and — because the whole set is held with the analysis — the same reading on a
+    /// re-price as on the fresh card.
+    /// </summary>
+    private static MarketAnalysisResult WithTrend(decimal recent, decimal prior, decimal? expected = 200m)
+    {
+        var analysis = Analysis(expected: expected);
+        var recentDays = new[] { 3, 8, 14, 20, 27 };
+        var priorDays = new[] { 33, 39, 45, 51, 57 };
+
+        analysis.AllSoldComparables = recentDays
+            .Select((d, i) => (Days: d, Price: recent + (2 - i)))
+            .Concat(priorDays.Select((d, i) => (Days: d, Price: prior + (2 - i))))
+            .Select(x => new MarketplaceComparableResult
+            {
+                ItemId = $"t{x.Days}", Title = Product, SoldPrice = x.Price, TotalPrice = x.Price,
+                SoldDate = Now.AddDays(-x.Days), Quantity = 1,
+            })
+            .ToList();
+
+        return analysis;
+    }
+
+    [Fact]
+    public void A_confirmed_slide_lowers_the_ceiling_the_card_prints()
+    {
+        var steady = Card(WithTrend(recent: 200m, prior: 202m));
+        var sliding = Card(WithTrend(recent: 140m, prior: 200m));
+
+        Assert.True(sliding.Trend.Discounted);
+        Assert.Equal(LiveTrendDirections.Falling, sliding.Trend.Direction);
+
+        // The ceiling really moved, and it moved DOWN. This is the whole feature.
+        Assert.True(sliding.MaxBid < steady.MaxBid);
+        Assert.True(sliding.BreakEvenBid < steady.BreakEvenBid);
+        Assert.Equal(140m, sliding.ResalePrice);
+    }
+
+    /// <summary>
+    /// The one number the haircut is allowed to move is the price the ceiling is built from.
+    /// Everything the comps DESCRIBE — the middle-half spread, the comp table, the sell-through, the
+    /// confidence — is a record of sales that really happened, and scaling those would be inventing
+    /// sales nobody made.
+    /// </summary>
+    [Fact]
+    public void The_haircut_moves_the_price_and_never_the_evidence()
+    {
+        var steady = Card(WithTrend(recent: 200m, prior: 202m));
+        var sliding = Card(WithTrend(recent: 140m, prior: 200m));
+
+        Assert.Equal(steady.PriceLow, sliding.PriceLow);
+        Assert.Equal(steady.PriceHigh, sliding.PriceHigh);
+        Assert.Equal(steady.CompCount, sliding.CompCount);
+        Assert.Equal(steady.ConfidenceScore, sliding.ConfidenceScore);
+        Assert.Equal(steady.EvidenceTier, sliding.EvidenceTier);
+        Assert.Equal(steady.SellThroughRate, sliding.SellThroughRate);
+        Assert.Equal(steady.Comps.Count, sliding.Comps.Count);
+    }
+
+    [Fact]
+    public void A_climbing_item_is_priced_exactly_as_if_nothing_had_been_read()
+    {
+        var blind = Card(Analysis());                              // no comps carried, nothing to read
+        var climbing = Card(WithTrend(recent: 200m, prior: 140m));
+
+        Assert.Equal(LiveTrendDirections.Rising, climbing.Trend.Direction);
+        Assert.Equal(blind.MaxBid, climbing.MaxBid);
+        Assert.Equal(blind.ResalePrice, climbing.ResalePrice);
+    }
+
+    /// <summary>
+    /// Above the money, with the widened-search warning, because both are facts about what the
+    /// numbers underneath them MEAN rather than facts about the money itself.
+    /// </summary>
+    [Fact]
+    public void The_slide_is_warned_about_before_anything_it_changes_the_meaning_of()
+    {
+        var card = Card(WithTrend(recent: 140m, prior: 200m), quantity: 3);
+
+        Assert.Contains("selling for less", card.Warnings[0], StringComparison.OrdinalIgnoreCase);
+        // And before the lot warning, which is the next-most-surprising thing on the card.
+        Assert.Contains(card.Warnings, w => w.Contains("3 units", StringComparison.OrdinalIgnoreCase));
+        Assert.True(card.Warnings.FindIndex(w => w.Contains("3 units", StringComparison.OrdinalIgnoreCase)) > 0);
+    }
+
+    [Fact]
+    public void A_card_with_nothing_to_read_says_so_rather_than_saying_nothing()
+    {
+        var card = Card(Analysis());
+
+        Assert.False(card.Trend.Readable);
+        Assert.Equal(LiveTrendDirections.Unknown, card.Trend.Direction);
+        Assert.NotEqual("", card.Trend.Headline);
+        Assert.NotEqual("", card.Trend.MoneyNote);
+        Assert.DoesNotContain(card.Warnings, w => w.Contains("selling for less", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The spoken line is glanced at, not studied, so it speaks in exactly one case: the one where
+    /// the badge the seller just heard is lower than the comps under it suggest.
+    /// </summary>
+    [Fact]
+    public void The_spoken_line_mentions_the_cut_and_nothing_else_about_the_trend()
+    {
+        Assert.Contains("sliding", Card(WithTrend(140m, 200m)).Say, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sliding", Card(WithTrend(200m, 140m)).Say, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sliding", Card(WithTrend(200m, 202m)).Say, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sliding", Card(Analysis()).Say, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The lot arithmetic is unchanged by the cut: the ceiling for three is three times the ceiling
+    /// for one, at whatever price the trend left standing. Two features that each multiply are how
+    /// a lot of three ends up priced at nine.
+    /// </summary>
+    [Fact]
+    public void The_cut_and_the_unit_count_do_not_multiply_each_other()
+    {
+        var one = Card(WithTrend(recent: 140m, prior: 200m));
+        var three = Card(WithTrend(recent: 140m, prior: 200m), quantity: 3);
+
+        Assert.Equal(140m, one.ResalePrice);
+        Assert.Equal(420m, three.ResalePrice);
+        Assert.Equal(140m, three.Units.ResalePerUnit);
+    }
 }

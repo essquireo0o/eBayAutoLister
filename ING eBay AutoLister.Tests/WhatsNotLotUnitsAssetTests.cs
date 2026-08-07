@@ -42,7 +42,12 @@ public class WhatsNotLotUnitsAssetTests
     [Fact]
     public void The_lot_ceiling_is_the_same_ceiling_function_as_every_other_screens()
     {
-        Assert.Contains("hunter.BreakEvenBuyPrice(resale, fees)", Advisor, StringComparison.Ordinal);
+        // Pinned to the CALL rather than to the name of the variable handed to it. What this test
+        // is about is that the live card has no break-even of its own — which stays true when the
+        // resale figure passed in has been through LiveTrend's haircut, and would be broken by any
+        // arithmetic here that reconstructed one.
+        Assert.Contains("hunter.BreakEvenBuyPrice(", Advisor, StringComparison.Ordinal);
+        Assert.Equal(1, Occurrences(Advisor, "BreakEvenBuyPrice("));
         Assert.DoesNotContain("SolidProfit * count", Advisor, StringComparison.Ordinal);
         Assert.DoesNotContain("SolidProfit * units", Advisor, StringComparison.Ordinal);
     }
@@ -286,6 +291,15 @@ public class WhatsNotLotUnitsAssetTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
+
+    private static int Occurrences(string source, string needle)
+    {
+        var count = 0;
+        for (var i = source.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+                 i = source.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
 
     private static string Section(string text, string from, string to)
     {

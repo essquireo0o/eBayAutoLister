@@ -10553,6 +10553,32 @@
           </button>` : ''}
       </div>` : '';
 
+    // ── Which way the price has been going ─────────────────────────────────────
+    // Every figure below is a claim about tonight made out of sales from the last
+    // two months, and until now the card said how OLD that evidence was without
+    // ever saying which way it was moving. A median across the whole window is the
+    // right price for an item that has held it and an overstatement for one that
+    // has been sliding since — and on a live feed the difference is paid in cash,
+    // in about eight seconds, with no chance to re-read the comps afterwards.
+    //
+    // Rendered on every card, for the same reason as the search strip: a block that
+    // only appears when the app found a trend is a block whose absence means both
+    // "these are holding their price" and "nothing looked". Every sentence on it is
+    // the server's (Services/LiveTrend.cs) — nothing here measures or divides
+    // anything, including the cut, which arrives already computed.
+    const t = c.trend || {};
+    const trendStrip = t.headline ? `
+      <div class="wn-trend wn-trend-${esc(t.direction || 'unknown')}${t.discounted ? ' wn-trend-cut' : ''}">
+        <div class="wn-trend-line">
+          <span class="wn-trend-label">Last ${t.windowDays} days</span>
+          <strong class="wn-trend-headline">${esc(t.headline)}</strong>
+          ${t.discounted ? `<span class="wn-trend-tag">ceiling cut ${t.cutPercent}%</span>` : ''}
+          ${t.readable && t.reliability === 'tentative' ? '<span class="wn-trend-tag wn-trend-tag-soft">tentative</span>' : ''}
+        </div>
+        ${t.moneyNote ? `<p class="wn-trend-money">${esc(t.moneyNote)}</p>` : ''}
+        ${t.readable && t.note ? `<p class="wn-trend-note">${esc(t.note)}</p>` : ''}
+      </div>` : '';
+
     // ── How many things is this ────────────────────────────────────────────────
     // Sold comps are per unit everywhere in this app, so every figure on this card
     // is a per-unit figure until the lot's own name says otherwise. When it does,
@@ -10681,6 +10707,7 @@
         </div>
       </div>
       ${searchStrip}
+      ${trendStrip}
       ${unitsStrip}
       ${ladder}
       ${meter}
@@ -10688,8 +10715,12 @@
       ${won}
       <div class="wn-stats">
         ${wnStat(u.isLot ? `eBay resale · all ${u.count}` : 'eBay resale', money2(c.resalePrice),
-          u.isLot ? `${u.count} × ${money2(u.resalePerUnit)} each`
-                  : (c.medianPrice ? `median ${money(c.medianPrice)}` : ''))}
+          (u.isLot ? `${u.count} × ${money2(u.resalePerUnit)} each`
+                   : (c.medianPrice ? `median ${money(c.medianPrice)}` : '')) +
+          // Said on the tile as well as in the strip. This is the one figure on the card
+          // the haircut actually moved, and a resale price quietly 22% lower than the comp
+          // table under it is exactly the sort of thing a seller re-reads and distrusts.
+          (t.discounted ? ` · cut ${t.cutPercent}% for the slide` : ''))}
         ${wnStat('Middle half of sales', spread, u.isLot ? 'per unit — where one of these lands' : 'where these actually land')}
         ${wnStat('Sell-through', sellThrough, c.sellThroughLabel || '')}
         ${wnStat(u.isLot ? `Sells in · all ${u.count}` : 'Sells in',

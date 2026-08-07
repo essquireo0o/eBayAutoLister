@@ -7847,6 +7847,10 @@ static async Task<MarketAnalysisResult> AnalyzeProductAsync(
         Identity = target, PriceEstimate = priceEstimate, SellThrough = sellThrough, Competition = competition,
         Profit = profit, Stability = stability,
         TopSoldComparables = localComparables.OrderByDescending(c => c.MatchScore).Take(5).ToList(),
+        // The same rows, uncut. Nothing here re-reads anything — the whole set is already in hand,
+        // and a reading that needs the time series rather than the five best matches (LiveTrend)
+        // would otherwise have to spend a second lookup to get back what this method just threw away.
+        AllSoldComparables = localComparables,
         Sources = new SourceBreakdown
         {
             LocalComparableCount = localComparables.Count,

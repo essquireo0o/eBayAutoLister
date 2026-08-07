@@ -264,5 +264,16 @@ public class MarketAnalysisResult
     public PriceStability Stability { get; set; } = new();
     public List<string> Warnings { get; set; } = [];
     public List<MarketplaceComparableResult> TopSoldComparables { get; set; } = [];
+
+    // Every comp the lookup returned, not just the five best-matching ones the screens show. Kept
+    // for the readings that need the whole set rather than a sample: a price TREND is a time series,
+    // and five rows chosen by match score are not one — they are five rows that happen to sit
+    // wherever their sale dates fell. See Services/LiveTrend.cs.
+    //
+    // Server-side only. The five above are what a UI has room for, and shipping twenty rows on every
+    // analysis to a browser that renders five would grow every response on every board for nothing.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<MarketplaceComparableResult> AllSoldComparables { get; set; } = [];
+
     public SourceBreakdown Sources { get; set; } = new();
 }

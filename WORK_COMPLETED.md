@@ -11456,3 +11456,179 @@ overrule and the narrow layout, but not the cleaning underneath it — which is 
 - **Nothing cleans the name the seller's OWN record is matched on.** `ReadOwnTrackRecord` still
   runs on the typed name, so a decorated lot name may fail to find the seller's own sales of the
   same product while the market comps find plenty.
+
+---
+
+# The card said how old its evidence was. It never said which way it was going
+
+## The question this answers
+
+Eight sessions have improved what the live card knows about an item: what it searched for, how many
+of the thing are in the lot, what the seller's own book says, what the photo shows. Every one of
+them made the **evidence** better. This one is about the evidence's **direction of travel**, which
+the card has never mentioned and which decides whether the ceiling on it is a price or a memory.
+
+The resale figure behind every number on that card is a median across sold comps spanning up to two
+months. The card has always said how old they are:
+
+> *The most recent matching sale was 3 days ago, and these 10 sales span 54 days.*
+
+That sentence is true of an item holding its price and true of one that has slid 30% since the older
+half of those comps were written — and only one of them is worth $46 a unit. On a live feed the
+difference is paid in cash, in about eight seconds, on a purchase that cannot be undone, and it only
+shows up weeks later when the thing sells for less than the card promised.
+
+The strip is on every card now:
+
+> **LAST 30 DAYS** **Sold prices down 30% — $200 → $140 median** `CEILING CUT 30%`
+> The ceiling below is priced 30% under the whole sold history, at what these have actually been
+> fetching for the last 30 days.
+> *Softening: 30% down ($200 → $140 median), 5 → 5 sales. Trend line across every dated sale: -$58 a month.*
+
+The ceiling under it really is lower. That is the feature; everything else here is the argument about
+when it is allowed to be.
+
+## Reuse, not reinvention
+
+Nothing here measures anything. The measurement is the Trend Radar's, unchanged.
+
+| Borrowed | From |
+|---|---|
+| The two-window comparison, the Theil–Sen slope, the dispersion guard, the dated-coverage floor | `PriceTrendAnalyzer.Measure` — the same function the Trend Radar board runs |
+| The bar a price move has to clear | `PriceTrendAnalyzer.ClimbingPricePercent`, deliberately the same figure in both directions |
+| "The trend contributes a ratio, never a replacement" | The radar's own rule for applying a trend to an estimator's price, followed in the other direction |
+| The break-even, the ceiling, the sell-through, the badge, the spread | Untouched. `hunter.BreakEvenBuyPrice` is simply handed a different price |
+| The comps | The ones already in hand. **No second lookup** — the endpoint still reads eBay at most twice, and a test says so |
+
+## The asymmetry the whole thing is built around
+
+**A confirmed slide cuts the ceiling. A confirmed climb does not raise it.**
+
+That reads like an oversight, so it is pinned by two tests and it is the first thing the file
+explains. It is what the two mistakes cost:
+
+| | What it costs |
+|---|---|
+| Refusing to raise a ceiling on a climbing item | A lot the seller could have won. Invisible, and there is another one in four minutes |
+| Failing to cut a ceiling on a sliding item | Real cash, on a purchase with no undo, discovered weeks later |
+
+The Trend Radar is allowed to price a climb because it is shopping with a week to decide. This screen
+has seconds and one hammer, and bidding up on a price that has not happened yet is paying for it
+twice.
+
+## The two gates on a cut
+
+A haircut that fires wrongly talks a seller out of a good lot, which is the failure mode that gets a
+feature switched off. So a cut needs **two independent readings to agree**:
+
+- The two window medians must have fallen by at least the material bar (8%), on a reading the
+  measurement calls **confirmed** — four sales each side, no wide or widening dispersion.
+- The **Theil–Sen line across every dated sale** must not be pointing up. When the two disagree, the
+  ceiling is left alone and the card prints the disagreement, because a fall that rests on where a
+  window boundary happened to land is not a fall.
+
+A fall that is real but too thin to price against still gets said, in the warning list, above the
+money — it is a reason to open the comps, not a number. And the cut is floored at 35%: past there
+the reading has stopped being a price move and started being a change of what is in the cluster.
+
+## The one thing it refuses to say, which is the thing a bidder most wants to hear
+
+"These have stopped selling." It is the loudest signal in the data and it cannot be produced honestly
+from one lookup: an item whose demand dried up and a comps database that stopped being ingested look
+**identical** from inside a single product. This project's comps arrive from a scraper with fragile
+session cookies, so the second one is not hypothetical — when it stalls, every product on earth shows
+no recent sales.
+
+The Trend Radar can tell the difference because it has a whole scan to compare against. This has one
+search. So when the newest matching sale is older than the window, nothing is read at all and the
+strip says why. There is no `stopped` direction for it to have been reported as — a test asserts the
+constant does not exist, because a state the code cannot honestly reach is a state that gets added
+back by somebody reading the CSS.
+
+For the same reason `SoloCorpus` leaves the velocity baseline **null**. The radar divides the
+scan-wide change in volume out of each product's; handed one product's own comps that baseline is the
+product itself, and nothing could ever be selling faster than usual. So the card reports "5 → 5
+sales" and claims nothing about how that compares to the rest of the market. It cannot know.
+
+## What the cut is allowed to touch
+
+Only the three prices the ceiling is built out of — expected sale, median, quick sale. The middle-half
+spread, the comp table, the sell-through rate, the comp count and the confidence score are all records
+of sales that really happened, and scaling those would be inventing sales nobody made. That is why the
+card can show $140 resale over a $170–$240 spread: both are true, and the strip is what explains the
+gap.
+
+`LiveTrend.Discount` returns the **same object** when there is nothing to cut — so "a card with no
+trend read is priced by exactly the arithmetic it was priced by before this existed" is a property of
+the code rather than a claim about it, and `Assert.Same` says so.
+
+## The link that would have failed silently
+
+`AnalyzeProductAsync` had been throwing away fifteen of the twenty comps it fetched, keeping the five
+best-matching for the screens. Five rows chosen by match score are not a time series — they are five
+rows that happen to sit wherever their sale dates fell. So the analysis now carries the whole set as
+well, `[JsonIgnore]`d, because twenty extra rows on every analysis shipped to every board that renders
+five of them is a cost paid across the app for one strip on one screen.
+
+Had that link broken, every card would have read as "not enough dated sales" forever and the screen
+would have looked exactly the same. It has its own test.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+The trend is read inside `LiveBidAdvisor.Build` rather than at the endpoint, so a card re-priced
+against held comps re-runs the same reading over the same rows — a trend computed once and carried on
+the quote would be a number the fresh card and the re-priced one could disagree about.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveTrend.cs` | New — the single-product corpus, the wording, the two gates, the floor and the haircut |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveTrendRead`, `LiveTrendDirections`; `LiveBidCard.Trend` |
+| `ING eBay AutoLister/Models/MarketAnalysisModels.cs` | `AllSoldComparables`, server-side only |
+| `ING eBay AutoLister/Program.cs` | The full comp set carried out of `AnalyzeProductAsync` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read, the discounted price the money is spent from, and the warning above the lot warnings |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | One clause, spoken only when the trend actually moved the ceiling |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=129`, `style.css?v=112` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, and the cut named on the one tile it moved |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-trend-*` — quiet by default, red only when the ceiling moved, folded at 620px |
+| `ING eBay AutoLister.Tests/LiveTrendTests.cs` | New — 18 tests, most of them refusals |
+| `ING eBay AutoLister.Tests/WhatsNotTrendAssetTests.cs` | New — 17 tests holding the five links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 7 new tests on what the card does with the read |
+| `ING eBay AutoLister.Tests/WhatsNotLotUnitsAssetTests.cs` | One pin loosened from a variable name to the call it is actually about |
+| `whatsnot_trend_cut.png`, `whatsnot_trend_rising.png`, `whatsnot_trend_blind.png`, `whatsnot_trend_narrow.png` | The four states, and the cut card at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,022 passed**, 0 failed, 0 skipped (42 new; the previous commit was 3,980) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `/api/whatsnot/bid` mocked in the shape the C# returns) | All four states rendered from the same card shape: the cut card with the red edge, the `CEILING CUT 30%` tag and the warning **first** in the list; the climbing card with the green headline, no tag, no warning and the **untouched** ceiling; the tentative fall with the grey `tentative` tag, no cut and the warning still said; and the unreadable card carrying only its headline and money note. The strip sat between the search strip and the ladder in every one. The resale tile read `$140.00 / median $147 · cut 30% for the slide`. At 560px `.wn-trend` overflowed by **0px**. The only console errors were the pre-existing `X-Frame-Options` refusal from the embedded Whatnot frame. |
+
+## Known limits
+
+- **It has never been run against the real comps API.** Every reading here is exercised against
+  hand-built comp sets and the screen against mocks. The first real cut on a real lot is still the
+  first real evidence.
+- **Twenty comps is a thin time series.** The lookup behind this card returns at most twenty rows,
+  chosen by match score rather than by date, and the window pair was shortened to 30 days partly to
+  fit inside what those twenty typically span. Most cards will read as unreadable, which is honest
+  and is also a lot of silence. Raising the cap would change the price on **every** screen in the
+  app, so it was not touched.
+- **A cut and a widened search stack.** A card whose search was widened to three words is already
+  pricing a ballpark; a trend read off those same ballpark comps can then cut the ballpark. Both say
+  so, in that order, at the top of the warning list — but nothing refuses the combination.
+- **The freshness refusal is a blunt instrument.** An item that genuinely stopped selling gets the
+  same silence as a stalled database. That is the right trade with one lookup, and it means the
+  single most valuable signal on this card is the one it will not print.
+- **The comp table under a cut card is the uncut evidence.** Every sale in the window is listed,
+  including the dearer ones from before the slide, and the seller who opens it will find comps above
+  the resale price the ceiling was built on. The strip says so; nothing sorts or splits the table.
+- **Nothing reads the trend on the seller's OWN record.** `OwnTrackRecord` still reports what they
+  got for one last time without asking whether that was before or after the market moved.

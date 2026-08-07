@@ -16817,6 +16817,94 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   cursor: pointer;
 }
 
+/* ── Which way the sold price has been going ──────────────────────────────────
+   Directly under the search strip, and for the same reason it is there: both are
+   facts about what the numbers below MEAN rather than facts about the money.
+
+   Quiet by default. A steady item and an unreadable one are the common cases and
+   neither is worth a colour, so the only edges that appear are the two that change
+   the decision: a fall that took money off the ceiling, and sales that stopped. */
+.wn-trend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* A slide that moved the money. The one state on this strip the seller has to see
+   without reading it, because the ceiling above it is already lower for it. */
+.wn-trend-cut {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+/* Falling, but not by enough or not firmly enough to have cut anything. Worth a
+   glance, deliberately not worth an alarm — the ceiling below it is untouched. */
+.wn-trend-falling {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+.wn-trend-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-trend-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-trend-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-trend-falling .wn-trend-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-trend-cut .wn-trend-headline {
+  color: var(--danger, #d46a6a);
+}
+.wn-trend-rising .wn-trend-headline {
+  color: var(--success, #43c08f);
+}
+.wn-trend-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(212, 106, 106, .16);
+  color: var(--danger, #d46a6a);
+}
+/* "Tentative" is a hedge on a reading, not a warning about money — it never earns
+   the red the cut wears. */
+.wn-trend-tag-soft {
+  background: rgba(139, 147, 167, .16);
+  color: var(--text-dim, #8b93a7);
+}
+/* What the read did, or did not do, to the ceiling. Said on every readable card,
+   so this is the line that is normally the whole block. */
+.wn-trend-money {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text, #d8dce6);
+}
+/* The measurement's own sentence, caveats and all. Dimmer than the money line
+   above it: it is the working, and the working is for the seller who doubts. */
+.wn-trend-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 /* ── How many things is this ──────────────────────────────────────────────────
    Between the badge and the ladder, because it is what every number under it is a
    number ABOUT: a ceiling for three miners looks exactly like a ceiling for one.
@@ -17573,6 +17661,12 @@ p.wn-units-refused {
      share. Below that the label sits above the query rather than pushing it into a
      one-word column. */
   .wn-search-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* Same trade on the trend strip: "LAST 30 DAYS" and "$180 → $140 median" do not
+     both fit, and the headline is the half worth the width. */
+  .wn-trend-line {
     flex-direction: column;
     gap: 1px;
   }
