@@ -8207,6 +8207,150 @@ td.skeleton-cell { padding: 0 !important; }
 .setup-checklist.is-complete { border-top-color: var(--success); }
 .setup-checklist.is-complete .setup-eyebrow { color: var(--success); }
 
+/* ── The getting-started rail ────────────────────────────────────────
+   The same panel, carried onto the screen the step actually happens on. Pinned to
+   the bottom of the main column rather than the whole viewport, so it never covers
+   the sidebar the seller navigates with, and never covers the header of the screen
+   it is talking about. */
+.onboard-coach {
+  position: fixed;
+  left: var(--sidebar-w);
+  right: 0;
+  bottom: 0;
+  /* Above the feature screens and below the modals. Eighteen of the app's views render
+     through .opportunity-overlay, which is fixed, opaque and z-index 900 — a rail below
+     that is invisible on exactly the screens it exists for. Above 1000 and it would sit
+     over the settings modal its own "Enter Key →" button opens. */
+  z-index: 950;
+  padding: 0 var(--s6) var(--s4);
+  /* The gutter around the card is not a target — a full-width invisible strip along
+     the bottom of the app would swallow clicks meant for the screen behind it. */
+  pointer-events: none;
+  animation: coach-in var(--dur-2) var(--ease);
+}
+.onboard-coach.hidden { display: none; }
+
+.onboard-coach-inner {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s4);
+  padding: var(--s4) var(--s6) var(--s4) var(--s4);
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--gold);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--e4);
+}
+
+/* The same numbered bead as the checklist row this line came from, so the two read
+   as one thing in two places rather than as two features saying similar words. */
+.onboard-coach-bead {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--teal-800);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  line-height: 1;
+}
+
+.onboard-coach-body { flex: 1; min-width: 0; }
+
+.onboard-coach-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.onboard-coach-title {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+
+.onboard-coach-copy {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.onboard-coach-copy:empty { display: none; }
+
+/* What earns the tick, in the smallest type on the card. It is reassurance rather
+   than instruction — the seller only goes looking for it when the row has not
+   ticked and they think it should have. */
+.onboard-coach-proof {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  opacity: .85;
+}
+.onboard-coach-proof:empty { display: none; }
+
+.onboard-coach-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding-top: 2px;
+}
+
+.onboard-coach-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.onboard-coach-dismiss:hover { background: var(--soft-2); color: var(--ink); }
+
+/* A step just ticked. The one moment the app has proof it did something for the
+   seller, so it gets the success colour and the bead the checklist gives a done row. */
+.onboard-coach.is-win .onboard-coach-inner { border-top-color: var(--success); }
+.onboard-coach.is-win .onboard-coach-bead { background: var(--success); color: var(--success-tint); }
+.onboard-coach.is-win .onboard-coach-eyebrow { color: var(--success); }
+
+@keyframes coach-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The sidebar stops being a column here and the feature screens take the full width
+   with it, so the rail has to let go of the same gutter they do — otherwise it sits
+   three hundred pixels in from a left edge that no longer belongs to anything. */
+@media (max-width: 1120px) {
+  .onboard-coach { left: 0; }
+}
+
+@media (max-width: 900px) {
+  .onboard-coach { padding: 0 var(--s4) var(--s3); }
+  .onboard-coach-inner { flex-wrap: wrap; }
+  .onboard-coach-actions { width: 100%; justify-content: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboard-coach { animation: none; }
+}
+
 /* ── The first run ───────────────────────────────────────────────────
    Wider than the settings modal and set in prose, because it is the one screen
    in the app that is read rather than used. */

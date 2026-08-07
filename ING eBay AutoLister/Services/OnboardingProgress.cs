@@ -105,6 +105,21 @@ public static class OnboardingProgress
     /// </param>
     /// <param name="FixLink">Where to go to fix <paramref name="Problem"/>, or empty.</param>
     /// <param name="FixLinkLabel">What to call that link.</param>
+    /// <param name="Page">
+    /// The screen this step is done on, derived from <paramref name="Action"/>. Empty means "not one
+    /// screen" — the two logins are a modal and a top-bar button, and they block every screen in the
+    /// app equally, so the rail carries them everywhere rather than on one page.
+    /// </param>
+    /// <param name="Here">
+    /// What to do <em>on that screen</em>, in the imperative. <paramref name="Why"/> sells the step
+    /// from the dashboard; this one is read by someone already standing on the page, looking at
+    /// thirty controls, and it has to name the one to touch.
+    /// </param>
+    /// <param name="Proof">
+    /// What will tick it. Nothing here is ticked by the seller claiming it, which is only a virtue
+    /// if the seller can find out what the app is watching for — otherwise a row that stays unticked
+    /// after they did the thing reads as a broken checklist rather than as a step not finished.
+    /// </param>
     public sealed record Step(
         string Id,
         int Number,
@@ -117,7 +132,10 @@ public static class OnboardingProgress
         string Note,
         string Problem = "",
         string FixLink = "",
-        string FixLinkLabel = "");
+        string FixLinkLabel = "",
+        string Page = "",
+        string Here = "",
+        string Proof = "");
 
     /// <param name="PercentComplete">Required steps only. The optional extras never move this bar.</param>
     /// <param name="SetupComplete">
@@ -202,6 +220,9 @@ public static class OnboardingProgress
                 "This is the AI. It reads your photo and writes the title, item specifics, description and a "
                     + "suggested price. A key costs about $5 of credit and that covers hundreds of listings.",
                 "Enter Key →", "key",
+                "Nothing on this screen can reach the AI until there's a key behind it — that's the part "
+                    + "that reads the photo and writes the listing. Settings → Claude API key, about a minute.",
+                "Ticks once the key is saved and Anthropic answers a test call on it.",
                 keyDone, keyNote,
                 keyBroken ? $"{keyVerdict.Headline} {keyVerdict.WhatToDo}" : "",
                 keyBroken ? keyVerdict.Link : "",
@@ -212,6 +233,9 @@ public static class OnboardingProgress
                 "Your own account, so the app can read what you already have listed, publish new listings, and "
                     + "later import what each one actually sold for.",
                 "Log into eBay →", "ebay",
+                "This works against your own eBay account, so it needs you signed in. One sign-in, and "
+                    + "nothing goes live until you press publish yourself.",
+                "Ticks once eBay answers a real Sell API call on the sign-in it gave us.",
                 ebayDone, ebayNote,
                 ebayBroken ? $"{ebayVerdict.Headline} {ebayVerdict.WhatToDo}" : ""),
 
@@ -221,6 +245,10 @@ public static class OnboardingProgress
                     + "shows what the same thing has actually sold for — minus eBay's cut, the label and the "
                     + "box, so the number on screen is what you would keep.",
                 "Find Goldmines →", "page:opportunity",
+                "Type anything you own — or are thinking of buying — into the search box and run it. What "
+                    + "comes back is what the same thing has actually sold for, and what you'd keep after "
+                    + "eBay's cut, the label and the box.",
+                "Ticks the first time a search comes back with at least one real sold comparable.",
                 facts.PricedAt is not null, Stamp("Priced against sold comps", facts.PricedAt)),
 
             Make("written", 4,
@@ -228,6 +256,9 @@ public static class OnboardingProgress
                 "A photo or a product name goes in and a finished listing comes out — title, item specifics, "
                     + "description, category and price. This is the hour per listing you stop spending.",
                 "Start a draft →", "page:ai",
+                "Drop in a photo — or paste a product name, or a link to one — and let the AI read it. What "
+                    + "comes back is a finished listing, with every field still yours to change.",
+                "Ticks the first time an analysis comes back with a draft.",
                 facts.WrittenAt is not null, Stamp("The AI wrote your first listing", facts.WrittenAt)),
 
             Make("published", 5,
@@ -235,6 +266,9 @@ public static class OnboardingProgress
                 "The whole loop, end to end. From the moment it is live the app tracks what it cost you, what "
                     + "it sells for and what you actually kept.",
                 "Open a draft →", "page:ai",
+                "Open the draft the AI wrote, check the price and the photos, then publish. Nothing is sent "
+                    + "to eBay until you press it, and you can publish as a draft on eBay's side first.",
+                "Ticks the first time eBay comes back with a live listing id.",
                 facts.PublishedAt is not null, Stamp("Published to eBay", facts.PublishedAt)),
         };
 
@@ -287,10 +321,18 @@ public static class OnboardingProgress
     }
 
     private static Step Make(string id, int number, string title, string why,
-        string actionLabel, string action, bool done, string note,
+        string actionLabel, string action, string here, string proof, bool done, string note,
         string problem = "", string fixLink = "", string fixLinkLabel = "") =>
         new(id, number, title, why, actionLabel, action, done, done ? "done" : "later", note,
-            problem, fixLink, fixLinkLabel);
+            problem, fixLink, fixLinkLabel,
+            // The screen is the action, parsed once here rather than by the front end guessing at
+            // a token it already has to resolve. `key` and `ebay` have no page and are meant not to.
+            Page: action.StartsWith(PagePrefix, StringComparison.Ordinal) ? action[PagePrefix.Length..] : "",
+            Here: here,
+            Proof: proof);
+
+    /// <summary>The <c>page:x</c> form of <see cref="Step.Action"/>, in one place.</summary>
+    private const string PagePrefix = "page:";
 
     private static string Headline(int done, bool setupComplete, bool flipComplete) =>
         flipComplete    ? "That's the whole loop — you've done it once."

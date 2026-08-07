@@ -1310,6 +1310,9 @@
     tab.loaded = true;
     syncWorkspaceHash(tab.page);
     renderWorkspaceTabs();
+    // Which screen the seller is on decides what the getting-started rail says, and whether it
+    // says anything at all.
+    refreshCoach();
     // The screen is on the page by now whichever branch put it there, so one
     // call covers both the first open and every return to an already-loaded tab.
     playEnter($(def.section));
@@ -1329,6 +1332,7 @@
     }
     syncWorkspaceHash(page);
     renderWorkspaceTabs();
+    refreshCoach();
   }
 
   // The URL follows the active tab so a reload lands back on it. replaceState fires no
@@ -18135,6 +18139,18 @@
     // server can re-point a step at a different screen without a matching change here.
     document.querySelectorAll('[data-onboard-action]').forEach(btn =>
       btn.addEventListener('click', () => runOnboardAction(btn.dataset.onboardAction)));
+    // The rail that carries the same steps onto the other screens. Its button runs the same tokens
+    // as the rows above, but the token changes as the seller moves, so it is read at click time
+    // rather than baked into the markup.
+    on('coach-go', 'click', () => runOnboardAction(coachAction));
+    on('coach-checklist', 'click', () => {
+      navigateTo('dashboard');
+      setTimeout(() => $('setup-checklist')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+    });
+    // Hidden for this run of the app only. The panel's own ✕ is the permanent one and is recorded
+    // on the server; a rail that a tester silenced on Tuesday while chasing something else should
+    // be back on Wednesday, still with two steps to go.
+    on('coach-dismiss', 'click', () => { coachHiddenForSession = true; refreshCoach(); });
     // The first-run screen. "Set it up" goes where step 1 goes — a welcome that ends on the
     // dashboard the seller was already looking at has told them nothing about where to start.
     on('welcome-start', 'click', () => { closeWelcome(); openSetupAt('key'); });
@@ -20280,6 +20296,11 @@
     const checklist = $('setup-checklist');
     if (!checklist || !plan || !Array.isArray(plan.steps)) return;
 
+    // Read against the previous plan before it is replaced: this is the only place in the app that
+    // can tell "already true when you opened it" from "you just did that".
+    noteEarnedSteps(plan);
+    onboardPlan = plan;
+
     setText('setup-title', plan.headline || '');
     setText('setup-sub', plan.sub || '');
 
@@ -20338,6 +20359,8 @@
     else delete checklist.dataset.dismissed;
     checklist.classList.toggle('is-complete', !!plan.firstFlipComplete);
     refreshChecklistVisibility();
+    // The same five steps, on whichever screen the seller is standing on.
+    refreshCoach();
 
     if (plan.showWelcome) openWelcome();
   }
@@ -20453,6 +20476,125 @@
   function closeWelcome() {
     welcomeShown = true;
     $('welcome-overlay')?.classList.add('hidden');
+  }
+
+  // ── The rail that follows the tester onto the screen ──────────────────────
+  // The checklist is on the dashboard; the three steps that show what the app is *for* happen on
+  // other screens. So pressing "Find Goldmines" handed a first-day tester a page of thirty
+  // controls with the instruction left behind on the page they came from, and the commonest way to
+  // lose a beta tester is to give them the right screen and no idea which part of it is the point.
+  //
+  // Two densities. On the step's own screen the rail is the instruction — which control to touch,
+  // and what will tick the step. Anywhere else it is one line and the button that goes there. The
+  // two logins have no screen of their own and block every screen equally, so they show wherever
+  // the seller is standing, which is also the answer to the other first-day question: why is
+  // nothing on this page working.
+
+  let onboardPlan = null;          // the last plan the server sent
+  let coachHiddenForSession = false;
+  let coachWin = null;             // a step that ticked while the seller was watching
+  let coachWinTimer = 0;
+  let coachPollTimer = 0;
+  let coachAction = '';            // what the rail's button runs, in runOnboardAction's tokens
+
+  /** The page the seller is actually looking at. The Dashboard is the floor, so it is the default. */
+  function activeWorkspacePage() {
+    return workspaceTabs.find(t => t.id === activeWorkspaceTabId)?.page || 'dashboard';
+  }
+
+  /**
+   * A step that was not done last time we looked and is now — the first sold-comp search, the
+   * first draft, the first live listing. That is the payoff the whole panel is built around, and
+   * it happens on a screen the dashboard cannot see, so it is said here or nowhere.
+   *
+   * The first plan of a session proves nothing: everything true on it was already true when the
+   * app opened, and treating that as a win congratulates a seller of six weeks on every launch.
+   */
+  function noteEarnedSteps(plan) {
+    if (!Array.isArray(onboardPlan?.steps) || !Array.isArray(plan?.steps)) return;
+    const before = new Map(onboardPlan.steps.map(s => [s.id, !!s.done]));
+    const won = plan.steps.find(s => s.done && before.get(s.id) === false);
+    if (!won) return;
+
+    coachWin = won;
+    clearTimeout(coachWinTimer);
+    // Long enough to read and be believed, short enough that it does not become furniture.
+    coachWinTimer = setTimeout(() => { coachWin = null; refreshCoach(); }, 14000);
+  }
+
+  function refreshCoach() {
+    const rail = $('onboard-coach');
+    if (!rail) return;
+
+    const plan = onboardPlan;
+    const next = Array.isArray(plan?.steps) ? plan.steps.find(s => s.id === plan.nextStepId) : null;
+    const page = activeWorkspacePage();
+
+    // Never on the Dashboard — the checklist itself is on that page, and a second copy of the same
+    // five steps pinned over the top of it is noise. Never after the panel was dismissed, and never
+    // once the five are done: this is scaffolding, and scaffolding that stays is a defect.
+    const show = !!plan && !plan.dismissed && !plan.firstFlipComplete && !coachHiddenForSession
+      && page !== 'dashboard' && !!(coachWin || next);
+
+    rail.classList.toggle('hidden', !show);
+    if (!show) { syncCoachPolling(false); return; }
+
+    if (coachWin) {
+      const win = coachWin;
+      setText('coach-bead', '✓');
+      setText('coach-eyebrow', `Step ${win.number} of ${plan.total} — done`);
+      setText('coach-title', win.note || `${win.title}. Done.`);
+      setText('coach-copy', next ? `Next: ${lowerFirst(next.title)}.` : '');
+      setText('coach-proof', '');
+      setCoachButton(next?.actionLabel || '', next?.action || '');
+      rail.classList.add('is-win');
+      // Nothing left to find out for the next fourteen seconds.
+      syncCoachPolling(false);
+      return;
+    }
+
+    rail.classList.remove('is-win');
+    // `page` empty means the step has no screen of its own — the two logins — and those belong
+    // wherever the seller is.
+    const here = !next.page || next.page === page;
+    setText('coach-bead', String(next.number));
+    setText('coach-eyebrow', `Step ${next.number} of ${plan.total}`);
+    setText('coach-title', next.title);
+    setText('coach-copy', here ? next.here : '');
+    setText('coach-proof', here ? next.proof : '');
+    // A "Find Goldmines →" button on the Goldmines screen points at the page the seller is already
+    // standing on. The two logins keep theirs everywhere, because pressing it is the whole step.
+    setCoachButton(here && next.page ? '' : next.actionLabel, next.action);
+    syncCoachPolling(true);
+  }
+
+  function setCoachButton(label, action) {
+    const btn = $('coach-go');
+    if (!btn) return;
+    coachAction = action || '';
+    btn.textContent = label || '';
+    btn.classList.toggle('hidden', !label || !coachAction);
+  }
+
+  /**
+   * Keeps the rail honest about a step earned elsewhere on the screen it is watching.
+   *
+   * The three earned steps are earned from a dozen call sites — a comp lookup from the Opportunity
+   * Finder, the Lot Analyzer or the live-bid board; a draft from a photo, a paste or a URL; a
+   * publish from three screens — and the server already watches every one of them. Threading a
+   * refresh through all of them is a dozen chances to miss one; asking the one endpoint that knows
+   * is one. It runs only while the rail is on screen with a step still open, stops the moment it
+   * isn't, and skips a hidden tab. /api/onboarding is a read of one small local table: no eBay
+   * call, no Anthropic call, nothing that costs the seller anything.
+   */
+  function syncCoachPolling(on) {
+    if (on && !coachPollTimer)
+      coachPollTimer = setInterval(() => { if (!document.hidden) loadOnboarding(); }, 15000);
+    else if (!on && coachPollTimer) { clearInterval(coachPollTimer); coachPollTimer = 0; }
+  }
+
+  function lowerFirst(s) {
+    return typeof s === 'string' && s ? s.charAt(0).toLowerCase() + s.slice(1) : '';
   }
 
   function markSetupStep(prefix, done, doneLabel) {

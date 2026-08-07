@@ -268,8 +268,8 @@ public class WhatsNotGateAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=144", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=127", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=145", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=128", Html, StringComparison.Ordinal);
     }
 
     // ── The line ─────────────────────────────────────────────────────────────────────────────

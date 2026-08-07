@@ -14134,3 +14134,135 @@ and the line changes nothing.
   and the sentence covers both by naming the window that has to come back.
 - **Nothing measures whether it helps.** Same as the path it sits on: no funnel, no telemetry, and no
   way to know from here how many testers were saved a wasted evening by it.
+
+---
+
+# The checklist follows the tester onto the screen
+
+## The gap
+
+The path runs past setup into the flip — price it, let the AI write it, publish it — and all three of
+those happen somewhere other than where the path is written. The checklist lives on the Dashboard.
+"Find Goldmines →" opens the Opportunity Finder: the Roll the Dice panel, the Supplier File Analyzer,
+the eBay Scanner and its eight filters, with a sidebar of thirty features down the left.
+
+The instruction stayed behind on the page they came from. A first-day tester arrived on exactly the
+right screen with no idea which part of it was the point, and the two ways that ends are both bad:
+they poke at the loudest control on the page, or they go back. Neither ticks step 3, so the panel
+keeps asking for something they have already tried to do.
+
+The step also never said what would tick it. Every one of the three is earned from evidence rather
+than from the seller claiming it — which is the right rule, and is only a virtue if the seller can
+find out what the app is watching for. Otherwise a row still unticked after they did the thing reads
+as a broken checklist rather than as a step not finished.
+
+## What was added
+
+Two fields on the step, and a rail that carries them.
+
+`Step.Here` is what to do **on that screen**, in the imperative. `Why` sells the step from the
+Dashboard; `Here` is read by someone already standing on the page, and it names the one control to
+touch. `Step.Proof` is what will tick it. `Step.Page` is parsed from the action the button already
+carried, so the rail and the button can never point at different screens.
+
+The rail reads at two densities:
+
+- **On the step's own screen** it is the instruction — the numbered bead, `Here`, and `Proof` in the
+  smallest type on the card. No button: "Find Goldmines →" on the Goldmines screen points at the page
+  the seller is already standing on.
+- **Anywhere else** it is one line and the way there — the step's title and its own button.
+
+The two logins have no screen of their own and block every screen equally, so they show wherever the
+seller is. That is also the answer to the other first-day question — *why is nothing on this page
+working* — asked on the page where it is being asked.
+
+## What it refuses to do
+
+- **Never on the Dashboard.** The checklist itself is on that page. A second copy of the same five
+  steps pinned over the top of it is noise.
+- **Never after the panel was dismissed**, and never once the five are done. This is scaffolding, and
+  scaffolding that stays is a defect.
+- **Never a claim the server has not made.** Every word is a field off `/api/onboarding`. The rail
+  computes nothing about progress.
+- **Its ✕ is not the panel's ✕.** The panel's is recorded on the server and is final; the rail's
+  silences one run of the app. A tester who waved it away on Tuesday while chasing something else has
+  it back on Wednesday, still with two steps to go.
+
+## The win
+
+A step that was not done last time the plan was read and is now — the first sold-comp search, the
+first draft, the first live listing — takes the rail for fourteen seconds, in the success colour, with
+the next step teed up in the button. All three of those happen on a screen the Dashboard cannot see,
+so this is the only place they can be said out loud.
+
+The comparison is against the previous plan, read before it is replaced, and **the first plan of a
+session proves nothing**: everything true on it was already true when the app opened. Without that,
+every launch congratulates a seller of six weeks on work they did in July.
+
+## Why it polls, and what that costs
+
+The three earned steps are earned from a dozen call sites the rail does not own — a comp lookup from
+the Opportunity Finder, the Lot Analyzer or the live-bid board; a draft from a photo, a paste or a
+URL; a publish from three screens. Threading a refresh through all of them is a dozen chances to miss
+one. The server already watches every one, so the rail asks the one endpoint that knows.
+
+Bounded on every side: only while the rail is on screen with a step still open, stopped the moment it
+is hidden, dismissed, complete or showing a win, and skipped for a hidden tab. `/api/onboarding` is a
+read of one small local table — no eBay call, no Anthropic call, nothing that costs the seller
+anything.
+
+## The bug the browser found
+
+The rail was invisible on every screen it exists for. Eighteen of the app's views render through
+`.opportunity-overlay`, which is fixed, opaque and `z-index: 900`; the rail was at 300, so it painted
+behind them — Playwright reported it "visible" and then could not click its ✕, because an earnings
+stat tile three hundred pixels away was taking the press. It sits at 950 now: over the screens, under
+the modals, because its own "Enter Key →" opens one. A test compares the three numbers rather than
+pinning any of them.
+
+Second, at 1120px the sidebar stops being a column and the feature screens release the gutter with
+`left: 0`. The rail was still holding `left: var(--sidebar-w)`, floating three hundred pixels in from
+a left edge that no longer belonged to anything. It now releases it at the same breakpoint, and the
+test reads that breakpoint out of the stylesheet rather than believing a number typed twice.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/OnboardingProgress.cs` | `Step.Here`, `Step.Proof`, `Step.Page` (parsed from `Action`, so the two cannot drift); the five instructions and the five proofs |
+| `ING eBay AutoLister/wwwroot/index.html` | The `#onboard-coach` rail; `app.js?v=145`, `style.css?v=128` |
+| `ING eBay AutoLister/wwwroot/app.js` | `refreshCoach`, `noteEarnedSteps`, `syncCoachPolling`, `setCoachButton`, `activeWorkspacePage`; `renderOnboarding` now keeps the last plan; the workspace tab switch re-asks |
+| `ING eBay AutoLister/wwwroot/style.css` | `.onboard-coach*` — the rail, its win state, its stacking, and the breakpoint where it lets go of the sidebar gutter |
+| `ING eBay AutoLister.Tests/OnboardingCoachTests.cs` | **New**, 17 tests — every step has an instruction and a proof, every screen it points at is one the workspace can open, the rail is on the page and written from every field, it stacks over the screens and under the modals, it keeps quiet where it would be noise, it follows the seller between screens, the win is read before the plan is replaced, it only asks while on screen, every button is wired, and the two ✕s mean different things |
+| Eleven `WhatsNot*AssetTests.cs` | Re-pinned asset versions |
+| `coach_on_the_screen.png`, `coach_elsewhere.png`, `coach_dashboard_quiet.png`, `coach_narrow.png`, `coach_win.png` | The instruction, the one-liner, the silence on the Dashboard, 1024px, and the win |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,854 passed**, 0 failed, 0 skipped |
+| Real browser (Playwright, against the running app on 9332, whose live plan had steps 1-2 done and `priced` next) | **0 JS errors.** Dashboard: rail hidden. Opportunity Finder: visible, "STEP 3 OF 5", the title, the `Here` sentence and the `Proof` line all straight off the server, and **no button** — the seller is already there. Money Made: visible, one line, "Find Goldmines →" shown. At 1024px the rail's left edge measured **0px**, matching the screens. The ✕ hid it |
+
+The win state in `coach_win.png` is painted by hand in the DOM. Only a real first sold-comp search can
+put the rail there, and running one would have marked step 3 done on the seller's own install — so
+that screenshot proves the styling and the shape of the copy, and the tests prove what puts it there.
+
+## Known limits
+
+- **The win is only seen if the seller is looking.** It is compared against the previous plan held in
+  this page's memory, so a step earned and then a reload shows a ticked row and no celebration.
+- **Up to fifteen seconds late.** The rail asks on a timer rather than being told, so a tick can lag
+  the search that earned it. On the screen that earned it, that is the gap between pressing a button
+  and being congratulated for it.
+- **One rail, one step.** It only ever speaks for the single next step. A seller who has skipped ahead
+  — drafted before pricing — is still told about pricing, because that is what the path says comes
+  next.
+- **It has no idea whether the screen is working.** It says what to do on the Opportunity Finder
+  whether or not the comps behind it have anything to say. A blank result and a wrong instruction look
+  the same from here.
+- **`Here` is written for the screen as it is today.** Nothing holds the sentence to the controls it
+  names — the test proves the *page* exists, not that the search box still does.
+- **Still nothing measures whether it helps.** No funnel, no telemetry, no way to know from here how
+  many testers found step 3 because of it.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=127" />
+  <link rel="stylesheet" href="style.css?v=128" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -5850,6 +5850,39 @@
 
       <div id="result" class="hidden"></div>
 
+      <!-- ── The getting-started rail ──────────────────────────────────────────
+           The checklist lives on the Dashboard, and the three steps that show what
+           the app is *for* all happen somewhere else. Pressing "Find Goldmines"
+           handed a first-day tester a screen of thirty controls with the
+           instruction left behind on the page they came from.
+
+           This is that instruction, carried onto the screen: which control to
+           touch, what will tick the step, and the way back. Every word of it is
+           written by refreshCoach() in app.js from /api/onboarding — it stays
+           empty until there is a plan, it never appears on the Dashboard (where
+           the checklist itself is on screen), and it goes for good the moment the
+           five steps are done. -->
+      <aside id="onboard-coach" class="onboard-coach hidden" aria-label="Getting started" aria-live="polite">
+        <div class="onboard-coach-inner">
+          <div id="coach-bead" class="onboard-coach-bead" aria-hidden="true"></div>
+          <div class="onboard-coach-body">
+            <p id="coach-eyebrow" class="onboard-coach-eyebrow"></p>
+            <p id="coach-title" class="onboard-coach-title"></p>
+            <p id="coach-copy" class="onboard-coach-copy"></p>
+            <!-- What the app is watching for. Nothing here is ticked by the seller
+                 saying they did it, which is only a virtue if they can find out
+                 what earns the tick. -->
+            <p id="coach-proof" class="onboard-coach-proof"></p>
+          </div>
+          <div class="onboard-coach-actions">
+            <button id="coach-go" class="btn btn-primary small hidden" type="button"></button>
+            <button id="coach-checklist" class="btn btn-ghost small" type="button">All 5 steps</button>
+          </div>
+          <button id="coach-dismiss" class="onboard-coach-dismiss" type="button"
+                  title="Hide until next launch" aria-label="Hide the getting-started rail">&times;</button>
+        </div>
+      </aside>
+
       <footer class="app-footer">
         <span>Powered by <strong>ING Mining™</strong></span>
         <span class="app-footer-divider">·</span>
@@ -6212,6 +6245,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=144"></script>
+  <script src="app.js?v=145"></script>
 </body>
 </html>
