@@ -320,7 +320,7 @@ public static partial class LiveLotSize
         var days = (int)Math.Ceiling((daysToSellOne ?? 0) + (units - 1) / monthlySales * 30m);
 
         var note = $"About {monthlySales:0.#} of these sell a month on eBay, so {units} of them is roughly "
-                 + $"{Months(months)} of selling — the last one is cash in about {days} days, not {daysToSellOne ?? 0}.";
+                 + $"{MonthsInWords(months)} of selling — the last one is cash in about {days} days, not {daysToSellOne ?? 0}.";
 
         return (months, days, note);
     }
@@ -328,7 +328,12 @@ public static partial class LiveLotSize
     /// <summary>Long enough that the money being tied up is the thing worth saying out loud.</summary>
     public const decimal SlowClearanceMonths = 2m;
 
-    private static string Months(decimal months) => months switch
+    /// <summary>
+    /// A span of months in the words this app says it in. Public because
+    /// <see cref="LiveStockDepth"/> describes the same demand over the same window — one vocabulary,
+    /// so "about 2.5 months" cannot become "roughly 3 months" one strip further down the card.
+    /// </summary>
+    public static string MonthsInWords(decimal months) => months switch
     {
         < 1m => "under a month",
         < 1.5m => "about a month",

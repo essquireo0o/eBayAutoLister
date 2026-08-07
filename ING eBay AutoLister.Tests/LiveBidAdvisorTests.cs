@@ -1456,4 +1456,119 @@ public class LiveBidAdvisorTests
             Math.Round(200m * used.Trend.ResaleMultiplier * used.Condition.ResaleMultiplier, 2),
             used.ResalePrice);
     }
+
+    // ── How many of these you'd then own ──────────────────────────────────────
+    //
+    // The failure this catches is not a mispriced lot. Every lot in it is priced correctly — the
+    // host has a pallet of one product and puts one up every four minutes, and the card says BID UP
+    // TO $90 six times because six times it is true. What is not true is the implied sixth
+    // sentence: that six of them is six times the profit.
+
+    /// <summary>
+    /// Every card carries the block, so its silence can never mean "nothing looked". A card built
+    /// with no own-record at all — the state the endpoint only reaches when the seller's book threw
+    /// — says so rather than reporting an empty shelf, which is the failure that would turn "you
+    /// already have four" into silence.
+    /// </summary>
+    [Fact]
+    public void Every_card_carries_a_stock_read_and_an_unread_shelf_says_so()
+    {
+        var blind = Card(Analysis(), bid: 40m);
+
+        Assert.NotNull(blind.Stock);
+        Assert.False(blind.Stock.ShelfRead);
+        Assert.Equal(LiveStockVerdicts.None, blind.Stock.Verdict);
+        Assert.NotEmpty(blind.Stock.Headline);
+
+        var read = Advisor.Build(
+            Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now, own: new OwnSalesEvidence());
+
+        Assert.True(read.Stock.ShelfRead);
+        Assert.Equal(LiveStockVerdicts.Single, read.Stock.Verdict);
+        Assert.Equal(1, read.Stock.UnitsAfter);
+    }
+
+    /// <summary>The units the ceiling was built for are the units the pile counts. A lot of three is
+    /// three things to sell, not one.</summary>
+    [Fact]
+    public void A_multi_unit_lot_puts_all_of_its_units_in_the_pile()
+    {
+        var card = Advisor.Build("3x " + Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now);
+
+        Assert.Equal(3, card.Units.Count);
+        Assert.Equal(3, card.Stock.LotUnits);
+        Assert.Equal(3, card.Stock.UnitsAfter);
+    }
+
+    /// <summary>Tonight's buy sheet reaches the card — the count nothing else on it can see.</summary>
+    [Fact]
+    public void Lots_won_tonight_reach_the_card()
+    {
+        // Seven already in boxes tonight against four sales a month — two months of stock, which is
+        // the first depth this is allowed to spend a warning on.
+        var card = Advisor.Build(
+            Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now, tonight: new LiveStockTonight(7, 7));
+
+        Assert.Equal(7, card.Stock.WonTonight);
+        Assert.Equal(8, card.Stock.UnitsAfter);
+        Assert.Equal(LiveStockVerdicts.Deep, card.Stock.Verdict);
+        Assert.Contains(card.Warnings, w => w.Contains("7 won tonight", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And it changes nothing about the money. Saturation is a claim about a calendar, not about
+    /// what the object fetches — the fourth one still resells for exactly what the comps say.
+    /// </summary>
+    [Fact]
+    public void A_deep_shelf_moves_no_figure_on_the_card()
+    {
+        var clear = Card(Analysis(), bid: 40m);
+        var deep = Advisor.Build(
+            Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now, tonight: new LiveStockTonight(15, 15));
+
+        Assert.Equal(LiveStockVerdicts.Flooded, deep.Stock.Verdict);
+        Assert.Equal(clear.ResalePrice, deep.ResalePrice);
+        Assert.Equal(clear.MaxBid, deep.MaxBid);
+        Assert.Equal(clear.BreakEvenBid, deep.BreakEvenBid);
+        Assert.Equal(clear.ProfitAtMaxBid, deep.ProfitAtMaxBid);
+        Assert.Equal(clear.ProfitNow, deep.ProfitNow);
+        Assert.Equal(clear.Call, deep.Call);
+        Assert.Equal(clear.CallLabel, deep.CallLabel);
+        Assert.Equal(clear.PriceLow, deep.PriceLow);
+        Assert.Equal(clear.PriceHigh, deep.PriceHigh);
+        Assert.Equal(clear.SellThroughRate, deep.SellThroughRate);
+    }
+
+    /// <summary>
+    /// A card nothing could price still counts the pile. "Nothing on eBay priced this AND you are
+    /// already holding four" is the most useful thing an unpriceable card can say, and it is exactly
+    /// the card on which a seller talks themselves into one more cheap one.
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_card_still_counts_the_pile()
+    {
+        var card = Advisor.Build(
+            Product, Analysis(expected: null), Ask(bid: 40m), Fees, nowUtc: Now,
+            tonight: new LiveStockTonight(4, 4));
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(5, card.Stock.UnitsAfter);
+        Assert.Equal(LiveStockVerdicts.Blind, card.Stock.Verdict);
+        Assert.Contains(card.Warnings, w => w.Contains("no dated sold history", StringComparison.Ordinal));
+    }
+
+    /// <summary>A card built without a sheet is priced identically and simply counts one fewer
+    /// thing — the count is additive, like every WhatsNot read before it.</summary>
+    [Fact]
+    public void A_card_built_without_a_sheet_is_priced_identically()
+    {
+        var without = Card(Analysis(), bid: 40m);
+        var with = Advisor.Build(
+            Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now, tonight: LiveStockTonight.Nothing);
+
+        Assert.Equal(without.MaxBid, with.MaxBid);
+        Assert.Equal(without.ResalePrice, with.ResalePrice);
+        Assert.Equal(without.Say, with.Say);
+        Assert.Equal(without.Warnings.Count, with.Warnings.Count);
+    }
 }

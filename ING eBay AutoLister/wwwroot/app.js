@@ -10831,6 +10831,40 @@
           </div>` : ''}
       </div>` : '';
 
+    // ── How many of these you'd then own ───────────────────────────────────────
+    // Everything above asks whether THIS lot is worth its price, and every one of
+    // those answers is correct about a lot the seller has never owned one of. A live
+    // host has a pallet of the thing and puts one up every four minutes; win six and
+    // the app has said yes six times to six defensible purchases, and the seller now
+    // owns six of something eBay clears two of a month.
+    //
+    // The bars are the feature: "2 on the shelf · 1 won tonight · 2 in this lot" is a
+    // sentence read in a second. The middle one is the fact nothing else on this card
+    // can see — those lots are still in their boxes and have never touched the deal
+    // pipeline. Rendered on every card, for the same reason as the strips above it;
+    // no bars are drawn on a lone item with nothing behind it, because a bar reading
+    // "This lot 1" is a picture of a number already in the sentence beside it.
+    //
+    // Nothing here is a price and nothing here moved one. Every word is the server's
+    // (Services/LiveStockDepth.cs) — this divides and counts nothing.
+    const st = c.stock || {};
+    const stockStrip = st.headline ? `
+      <div class="wn-stock wn-stock-${esc(st.verdict || 'none')}">
+        <div class="wn-stock-line">
+          <span class="wn-stock-label">Your stock</span>
+          <strong class="wn-stock-headline">${esc(st.headline)}</strong>
+          ${st.monthsToClear != null && (st.verdict === 'deep' || st.verdict === 'flooded')
+            ? `<span class="wn-stock-tag">${st.unitsAfter} to sell</span>` : ''}
+          ${st.identityIsLoose && st.alreadyStocked
+            ? '<span class="wn-stock-src">matched loosely</span>' : ''}
+        </div>
+        ${(st.sources || []).length ? `<div class="wn-stock-bars">${
+          st.sources.map(b => `<span class="wn-stock-bar wn-stock-bar-${esc(b.kind)}" title="${esc(b.detail)}">` +
+            `<span class="wn-stock-bar-name">${esc(b.label)}</span>` +
+            `<span class="wn-stock-bar-fig">${b.units}</span></span>`).join('')}</div>` : ''}
+        ${st.note ? `<p class="wn-stock-note">${esc(st.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The press, not the price ───────────────────────────────────────────────
     // Every figure below compares the bid ON SCREEN against the ceiling, which
     // answers whether the last bid was all right. Nobody buys at that price: pressing
@@ -10958,6 +10992,7 @@
       ${trendStrip}
       ${condStrip}
       ${unitsStrip}
+      ${stockStrip}
       ${ladder}
       ${meter}
       ${wnOwnBlock(c.ownHistory)}

@@ -95,6 +95,51 @@ public sealed class LiveBuySheet
         }
     }
 
+    /// <summary>
+    /// How many units of one product tonight's sheet is already holding — the count the live card
+    /// asks for before it says whether to bid on another one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the fact nothing else on that card can see. The Deal Pipeline knows what the seller
+    /// bought last month; it knows nothing about the three identical lots won on this tab in the
+    /// last twenty minutes, because those are still in their boxes and have never been listed. The
+    /// same host putting up the same product every four minutes is the ordinary shape of a live
+    /// show, and it is exactly the shape a per-lot ceiling cannot see.
+    /// </para>
+    /// <para>
+    /// <b>Listed rows are deliberately excluded.</b> Listing a won lot writes a Deal Pipeline card
+    /// for it (<see cref="MarkListed"/>), and from that moment the pipeline counts those units as
+    /// held stock. Counting them here as well would report a stack of four as a stack of eight on
+    /// the one screen where an inflated number talks the seller out of a good lot.
+    /// </para>
+    /// <para>
+    /// Products are matched by <see cref="JackpotHunter.ProductSignature"/> — the same clustering
+    /// key the seller's own record and the Restock board group by — so all three screens agree
+    /// about which items are "these". It reads the cached list under the same lock as everything
+    /// else here: no file I/O in the common case, which is what lets it sit in a re-price.
+    /// </para>
+    /// </remarks>
+    public LiveStockTonight UnitsWonOf(string? title)
+    {
+        var (key, _) = JackpotHunter.ProductSignature(title);
+        if (key.Length == 0) return LiveStockTonight.Nothing;
+
+        List<WonLot> matched;
+        lock (_gate)
+        {
+            matched = Load()
+                .Where(l => string.IsNullOrEmpty(l.ListedDraftFile))
+                .Where(l => !string.IsNullOrWhiteSpace(l.Item))
+                .Where(l => string.Equals(JackpotHunter.ProductSignature(l.Item).Key, key, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        return matched.Count == 0
+            ? LiveStockTonight.Nothing
+            : new LiveStockTonight(matched.Sum(l => Math.Max(1, l.Units)), matched.Count);
+    }
+
     /// <summary>One row, by its own id. Null when it is not on the sheet — cleared, trimmed, or a
     /// stale id from a screen that has been open since the last show.</summary>
     public WonLot? Find(string? id)
@@ -183,6 +228,10 @@ public sealed class LiveBuySheet
             Item = card.Item,
             CategoryLabel = card.CategoryLabel,
             WonAtUtc = nowUtc,
+            // One hammer price, N objects to sell. Written down because the next card that prices
+            // this same product asks the sheet how many of it are already in a box tonight, and a
+            // lot of three recorded as one would answer that with a third of the truth.
+            Units = Math.Max(1, card.Units?.Count ?? 1),
 
             WinningBid = card.CurrentBid,
             BuyerFeePercent = card.BuyerFeePercent,

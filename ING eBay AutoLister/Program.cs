@@ -2962,7 +2962,8 @@ app.MapPost("/api/whatsnot/bid", async (
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
     EarningsStore earnings, CostBasisStore costBasis, EarningsCalculator earningsCalc, DealStore deals,
-    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+    LiveBuySheet sheet, CredentialsStore store, LicenseService license, ActionLog log,
+    CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -3045,7 +3046,14 @@ app.MapPost("/api/whatsnot/bid", async (
     // carries the fee eBay actually charged THEM, on THIS product, in their own listings.
     var own = ReadOwnTrackRecord(title, earnings, costBasis, earningsCalc, deals, feeProfile, log);
 
-    var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own, search: terms);
+    // And how many of it are already in a box from tonight. Deliberately NOT held with the comps:
+    // the shelf cannot change while a lot is on screen, but this can — the seller changes it
+    // themselves by pressing Won it — so it is re-counted on every price and re-price, off a list
+    // already in memory. See LiveBuySheet.UnitsWonOf for why listed rows are left out of it.
+    var tonight = sheet.UnitsWonOf(title);
+
+    var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own,
+        search: terms, tonight: tonight);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
@@ -3071,6 +3079,11 @@ app.MapPost("/api/whatsnot/bid", async (
         // The presses, not just the price. This is where the first real "the ceiling said yes and
         // the next bid was already past it" will show up, on a real show, in the seller's own log.
         $"next bid {(card.NextBid.Readable ? $"{card.NextBid.Amount:C} ({card.NextBid.Verdict}, {card.NextBid.BidsLeft} left)" : "n/a")}; " +
+        // How deep the shelf would then be. This is where the first real "the same host put up four
+        // of these and the app said yes to all of them" shows up, in the seller's own log.
+        $"stock {card.Stock.Verdict} — would hold {card.Stock.UnitsAfter} " +
+        $"({card.Stock.UnitsHeld} shelf, {card.Stock.WonTonight} won tonight, {card.Stock.LotUnits} this lot)" +
+        $"{(card.Stock.MonthsToClear is { } m ? $", {m:0.#} months to clear" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);
@@ -3093,8 +3106,8 @@ app.MapPost("/api/whatsnot/bid", async (
 // Which also makes the target return, the shipping and the buyer's premium instant, and that is the
 // bigger win: the seller can move the target and watch the ceiling move with it, mid-lot.
 app.MapPost("/api/whatsnot/rebid", (
-    LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, FeeProfile feeProfile,
-    CredentialsStore store, LicenseService license) =>
+    LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, LiveBuySheet sheet,
+    FeeProfile feeProfile, CredentialsStore store, LicenseService license) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -3123,7 +3136,11 @@ app.MapPost("/api/whatsnot/rebid", (
     }
 
     var now = DateTime.UtcNow;
-    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search);
+    // Re-counted here rather than held, because this is the one input to the card that the seller
+    // can change without touching the bid box: winning the previous lot of the same product and
+    // pressing Won it. Held comps, fresh count — no eBay read either way.
+    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search,
+        sheet.UnitsWonOf(quote.Item));
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3181,8 +3198,11 @@ app.MapPost("/api/whatsnot/won", (
             "Press Price it to read eBay for what you've typed, then record the win.");
     }
 
+    // The same card the seller was looking at, at the price it hammered at — including the stock
+    // read, counted BEFORE this win goes on the sheet, which is what the card on screen said.
     var card = advisor.Build(
-        quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own, quote.Search);
+        quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own, quote.Search,
+        sheet.UnitsWonOf(quote.Item));
     var result = sheet.Record(card);
 
     log.Add("Research", "Live lot won",

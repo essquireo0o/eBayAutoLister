@@ -47,11 +47,47 @@ public static class LiveBidSpeech
         // number this card does not have — and a spoken "$0 of room" on an item with no sold history
         // is the one failure this screen exists to avoid.
         if (card.Call == LiveBidCalls.NoData)
-            return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.", YourOwnRecord(card));
+            return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.",
+                YourOwnRecord(card), HowManyYoudHave(card));
 
         return Join(Headline(card), HowMany(card), WhichWayItsGoing(card), WhatKindOfOne(card),
             WhereTheBiddingIs(card), HowManyPressesLeft(card), WhatItResellsFor(card),
-            YourOwnRecord(card));
+            YourOwnRecord(card), HowManyYoudHave(card));
+    }
+
+    /// <summary>
+    /// How many of these winning it would make, said last — after everything the market and the
+    /// seller's own book have to say about the object, because it is the one clause that is not
+    /// about the object at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two states, and they are the two the badge cannot express. A live host puts up the same
+    /// product every four minutes and each one is individually a <c>BID UP TO $90</c>; the app has
+    /// no way to say "and that is the fourth" except here. So it speaks when the pile has crossed
+    /// into months of stock, and when there is a pile with no dated history to measure it against.
+    /// </para>
+    /// <para>
+    /// Silent on every card where the seller is buying their first one, and on every card where the
+    /// market clears the stack comfortably — which is nearly all of them. A clause on every lot in
+    /// exchange for a count the strip already carries would cost the line the one thing it is for.
+    /// It never repeats the ceiling and never states a price: nothing about a shelf changes what the
+    /// thing is worth.
+    /// </para>
+    /// </remarks>
+    private static string HowManyYoudHave(LiveBidCard card)
+    {
+        if (card.Stock is not { } stock || !stock.AlreadyStocked) return "";
+
+        return stock.Verdict switch
+        {
+            LiveStockVerdicts.Flooded or LiveStockVerdicts.Deep =>
+                $"That makes {stock.UnitsAfter} of these — {LiveStockDepth.MonthsInWords(stock.MonthsToClear ?? 0m)} " +
+                "of stock.",
+            LiveStockVerdicts.Blind when stock.UnitsAfter >= LiveStockDepth.BlindPileUnits =>
+                $"That makes {stock.UnitsAfter} of these, and nothing dated says how fast they clear.",
+            _ => "",
+        };
     }
 
     /// <summary>

@@ -403,6 +403,124 @@ public class LiveBidSpeechTests
         Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
     }
 
+    // ── How many of these you'd then own ──────────────────────────────────────
+    //
+    // The one clause on this line that is not about the object at all. A live host puts up the same
+    // product every four minutes and each one is individually a BID UP TO $90; nothing else the
+    // badge can say expresses "and that is the fourth".
+
+    private static LiveStockRead Pile(
+        string verdict, int after = 5, decimal? months = 2.5m, int shelf = 4) => new()
+    {
+        Verdict = verdict,
+        UnitsAfter = after,
+        UnitsHeld = shelf,
+        MonthsToClear = months,
+        Readable = verdict != LiveStockVerdicts.Blind,
+        Headline = "headline",
+    };
+
+    [Fact]
+    public void Months_of_stock_are_spoken_last()
+    {
+        var card = Card();
+        card.Stock = Pile(LiveStockVerdicts.Deep);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.EndsWith("That makes 5 of these — about 2.5 months of stock.", said, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_flooded_shelf_is_spoken()
+    {
+        var card = Card();
+        card.Stock = Pile(LiveStockVerdicts.Flooded, after: 10, months: 5m, shelf: 9);
+
+        Assert.Contains("That makes 10 of these", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>A pile with nothing to measure it against is spoken as exactly that — and only once
+    /// it is a pile rather than a spare.</summary>
+    [Fact]
+    public void A_blind_pile_is_spoken_and_a_blind_spare_is_not()
+    {
+        var pile = Card();
+        pile.Stock = Pile(LiveStockVerdicts.Blind, after: 4, months: null, shelf: 3);
+        Assert.Contains("nothing dated says how fast they clear",
+            LiveBidSpeech.Say(pile), StringComparison.Ordinal);
+
+        var spare = Card();
+        spare.Stock = Pile(LiveStockVerdicts.Blind, after: 2, months: null, shelf: 1);
+        Assert.DoesNotContain("That makes", LiveBidSpeech.Say(spare), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Silent on the first one and on a stack the market clears — which is nearly every card. A
+    /// clause on every lot in exchange for a count the card's own strip already carries would cost
+    /// this line the one thing it is for.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveStockVerdicts.Single)]
+    [InlineData(LiveStockVerdicts.Clear)]
+    [InlineData(LiveStockVerdicts.None)]
+    public void The_ordinary_shelf_is_never_spoken(string verdict)
+    {
+        var card = Card();
+        card.Stock = Pile(verdict);
+
+        Assert.DoesNotContain("That makes", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>Nothing already held means there is nothing to warn about, whatever the verdict says
+    /// — a multi-unit lot's own size is the units block's sentence, not this one's.</summary>
+    [Fact]
+    public void A_lot_with_nothing_behind_it_is_never_spoken_about()
+    {
+        var card = Card();
+        card.Stock = Pile(LiveStockVerdicts.Deep, after: 6, months: 3m, shelf: 0);
+
+        Assert.DoesNotContain("That makes", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>It is spoken on an unpriceable card too — the one where it is the only thing on
+    /// screen that can stop a purchase.</summary>
+    [Fact]
+    public void The_pile_is_spoken_on_a_card_nothing_could_price()
+    {
+        var card = Card(call: LiveBidCalls.NoData, label: "CAN'T PRICE IT");
+        card.Stock = Pile(LiveStockVerdicts.Blind, after: 4, months: null, shelf: 3);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.Contains("No eBay sold history to bid against.", said, StringComparison.Ordinal);
+        Assert.Contains("That makes 4 of these", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>Nothing about a shelf changes what the thing is worth, and a second dollar figure in
+    /// a spoken line is a second number to mishear.</summary>
+    [Fact]
+    public void The_clause_never_states_a_price()
+    {
+        var card = Card();
+        card.Stock = Pile(LiveStockVerdicts.Flooded, after: 10, months: 5m, shelf: 9);
+
+        var said = LiveBidSpeech.Say(card);
+        var clause = said[said.IndexOf("That makes", StringComparison.Ordinal)..];
+
+        Assert.DoesNotContain("$", clause, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card built by something that never set the block at all still speaks.</summary>
+    [Fact]
+    public void A_card_with_no_stock_block_still_produces_a_line()
+    {
+        var card = Card();
+        card.Stock = null!;
+
+        Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_line_never_runs_on_or_ends_in_a_hanging_space()
     {

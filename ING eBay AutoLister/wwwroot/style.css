@@ -17206,6 +17206,138 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── How many of these you'd then own ─────────────────────────────────────────
+   Directly under the unit count, because it is the same count carried one step
+   further: how many are in this lot, and then how many that makes altogether.
+   Sits above the ladder for the same reason the strips above it do — everything
+   below is money, and this is the only block on the card that is about a calendar.
+
+   Four edges, and only two of them are news. A single item and a stack the market
+   clears comfortably get no colour at all: this strip is on every card, and one
+   that shouted on all of them would train the eye to skip the two that matter. */
+.wn-stock {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* Months of stock. Real money, parked — an amber sentence, not a red one: every
+   unit still makes its profit, it just makes it later. */
+.wn-stock-deep {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Long enough that the last one will be sold into a market nothing on this card
+   has any evidence about. */
+.wn-stock-flooded {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+/* A pile with no dated history to measure it against — unknown rather than bad,
+   and the strip says so in words rather than in colour. */
+.wn-stock-blind,
+.wn-stock-none {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-stock-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-stock-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-stock-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-stock-deep .wn-stock-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-stock-flooded .wn-stock-headline {
+  color: var(--danger, #d46a6a);
+}
+.wn-stock-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+.wn-stock-flooded .wn-stock-tag {
+  background: rgba(212, 106, 106, .16);
+  color: var(--danger, #d46a6a);
+}
+/* That the pile may be somebody else's product. Provenance, never news. */
+.wn-stock-src {
+  font-size: 11.5px;
+  color: var(--text-dim, #8b93a7);
+}
+/* The bars — the whole feature in one glance. "2 on the shelf · 1 won tonight ·
+   2 in this lot" is the sentence that decides whether to press bid on the fourth
+   one, in the time a live lot leaves to read it. */
+.wn-stock-bars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-stock-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+/* The two that are already committed money get the colour; the lot on screen is
+   not owned yet and is drawn as the plain one. Tonight's is the loud one because
+   it is the count nothing else on this card can see. */
+.wn-stock-bar-shelf {
+  border-color: rgba(224, 180, 74, .5);
+  background: rgba(224, 180, 74, .08);
+}
+.wn-stock-bar-tonight {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-stock-bar-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-stock-bar-tonight .wn-stock-bar-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-stock-bar-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* The arithmetic behind the headline. Said on every card, so this is normally the
+   whole block. */
+.wn-stock-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 .wn-ladder {
   display: flex;
   flex-wrap: wrap;
@@ -17926,6 +18058,14 @@ p.wn-units-refused {
      as long as they fit and wrap when they do not — two or three of them are the
      one thing on this block worth comparing at a glance. */
   .wn-cond-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* And once more on the stock strip, where "YOUR STOCK" and "You'd have 5 — about
+     2.5 months of stock" want the same line and only one of them is the sentence.
+     The bars below wrap on their own; three of them side by side is the comparison
+     the block exists for and is kept as long as it fits. */
+  .wn-stock-line {
     flex-direction: column;
     gap: 1px;
   }

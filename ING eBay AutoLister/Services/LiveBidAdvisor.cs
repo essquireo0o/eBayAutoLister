@@ -88,10 +88,16 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// falls back to what <see cref="LiveSearchQuery"/> would have asked for, so a card can never
     /// claim a search that nothing would run.
     /// </param>
+    /// <param name="tonight">
+    /// How many units of this product tonight's buy sheet is already holding
+    /// (<see cref="LiveBuySheet.UnitsWonOf"/>). Default is none, so a card built without a sheet is
+    /// priced identically and simply counts one fewer thing. It changes no figure here — see
+    /// <see cref="LiveStockDepth"/> for why saturation is reported in months rather than in dollars.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
         ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
-        LiveSearchTerms? search = null)
+        LiveSearchTerms? search = null, LiveStockTonight tonight = default)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var terms = search ?? LiveSearchQuery.Build(item);
@@ -171,6 +177,11 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // the card on which "you have sold four of these yourself" is the only evidence there
             // is, and the seller's own ceiling becomes the only one on screen.
             AttachOwnRecord(card, own);
+            // And how many of it are already in the house. Read on this path too, with no clearance
+            // rate to measure the pile against — "nothing priced this AND you are holding four" is
+            // the single most useful thing an unpriceable card can say, and it is exactly the card
+            // on which a seller talks themselves into one more cheap one.
+            ApplyStock(card, own, tonight, monthlySales: 0m, daysToSellOne: null, activeComps: card.ActiveCompCount);
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
             card.Say = LiveBidSpeech.Say(card);
             return card;
@@ -277,6 +288,11 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.Reason = reason;
         card.Warnings.AddRange(Warnings(card, bidAgainst));
         AttachOwnRecord(card, own);
+        // How many of these the seller would then own, against how many the market clears. Read
+        // after the ceiling rather than into it: this changes no price on the card, because the
+        // fourth one still resells for what the comps say — it just sells in April. Both figures it
+        // measures the pile against are the card's own, already computed above.
+        ApplyStock(card, own, tonight, bidAgainst.EstimatedMonthlySales, card.DaysToSell, card.ActiveCompCount);
         card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
         // Last, because it restates what everything above decided. Both exits set it, so no card
         // this method returns can reach a screen without the line that screen reads out loud.
@@ -322,6 +338,34 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                 $"Your own record below is per unit — one listing, one buyer, one fee. This lot is " +
                 $"{card.Units.Count} of them, so its ceiling is per unit too.");
         }
+    }
+
+    /// <summary>
+    /// How many of this the seller would own after winning it, and how long that takes to clear.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately the last thing attached, and deliberately attached to nothing. It moves no
+    /// ceiling, no resale price, no break-even and no call — <see cref="LiveTrend"/> and
+    /// <see cref="LiveCondition"/> cut prices because they are about what the object fetches, and
+    /// this is about what a calendar does to money. A "you already have three" haircut would be a
+    /// number nobody measured, taken off the one figure on the card that comes from real sales.
+    /// </para>
+    /// <para>
+    /// The one thing it is allowed to do is <b>say something</b>, and only when the pile crosses a
+    /// bar. The seller's own record already warns about units held; what it cannot see, and what
+    /// this adds, is the lots won on this tab in the last twenty minutes and the number of months
+    /// the whole stack takes to turn over.
+    /// </para>
+    /// </remarks>
+    private static void ApplyStock(
+        LiveBidCard card, OwnSalesEvidence? own, LiveStockTonight tonight,
+        decimal monthlySales, int? daysToSellOne, int activeComps)
+    {
+        card.Stock = LiveStockDepth.Read(
+            card.Units.Count, own, tonight, monthlySales, daysToSellOne, activeComps);
+
+        if (card.Stock.Warning.Length > 0) card.Warnings.Add(card.Stock.Warning);
     }
 
     /// <summary>

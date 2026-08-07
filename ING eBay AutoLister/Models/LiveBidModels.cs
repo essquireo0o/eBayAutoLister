@@ -174,6 +174,14 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveTrendRead Trend { get; set; } = new();
 
+    /// <summary>
+    /// How many of this the seller would own if they won it — shelf, tonight's buy sheet and this
+    /// lot — and how long eBay takes to absorb that many. Never null, and it changes no price on
+    /// this card: saturation is a claim about time, not about what the thing fetches. See
+    /// <see cref="Services.LiveStockDepth"/>.
+    /// </summary>
+    public LiveStockRead Stock { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }

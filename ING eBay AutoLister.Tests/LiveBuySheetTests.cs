@@ -460,7 +460,122 @@ public class LiveBuySheetTests
         Assert.Contains("$150 profit", say, StringComparison.Ordinal);
     }
 
+    // ── How many of one product tonight has already bought ────────────────────
+    //
+    // The count nothing else on the live card can see. The Deal Pipeline knows what was bought last
+    // month; it knows nothing about three identical lots won on this tab twenty minutes ago, because
+    // those are still in their boxes. A host with a pallet putting one up every four minutes is the
+    // ordinary shape of a live show, and it is exactly the shape a per-lot ceiling is blind to.
+
+    /// <summary>Units, not rows: one hammer price on a lot of three is three things to sell.</summary>
+    [Fact]
+    public void Units_won_of_a_product_counts_units_not_rows()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf("Bitmain Antminer S19j Pro 104TH", units: 1), Now);
+        sheet.Record(CardOf("3x Bitmain Antminer S19j Pro", units: 3), Now);
+
+        var tonight = sheet.UnitsWonOf("Bitmain Antminer S19j Pro 104TH");
+
+        Assert.Equal(4, tonight.Units);
+        Assert.Equal(2, tonight.Lots);
+    }
+
+    /// <summary>A different product on the same sheet is a different product.</summary>
+    [Fact]
+    public void Units_won_of_a_product_ignores_the_rest_of_the_night()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf("Bitmain Antminer S19j Pro 104TH"), Now);
+        sheet.Record(CardOf("Goldshell Mini Doge II"), Now);
+
+        Assert.Equal(1, sheet.UnitsWonOf("Bitmain Antminer S19j Pro 104TH").Units);
+        Assert.Equal(1, sheet.UnitsWonOf("Goldshell Mini Doge II").Units);
+        Assert.Equal(0, sheet.UnitsWonOf("Whatsminer M30S").Units);
+    }
+
+    /// <summary>
+    /// The one arithmetic error that would talk a seller out of a good lot. Listing a won lot writes
+    /// a Deal Pipeline card for it, and from that moment the pipeline counts those units as held
+    /// stock — so counting them here as well would report a stack of four as a stack of eight, on
+    /// the one screen where an inflated number costs the seller a purchase they should have made.
+    /// </summary>
+    [Fact]
+    public void A_row_that_has_been_listed_is_left_to_the_deal_pipeline_to_count()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf(Product), Now);
+        var second = sheet.Record(CardOf(Product), Now);
+        Assert.Equal(2, sheet.UnitsWonOf(Product).Units);
+
+        sheet.MarkListed(second.Lots[0].Id, "draft.json", Product, 200m, "SKU-1", dealId: 7, Now);
+
+        var tonight = sheet.UnitsWonOf(Product);
+        Assert.Equal(1, tonight.Units);
+        Assert.Equal(1, tonight.Lots);
+    }
+
+    /// <summary>Nothing to count is a zero, and an empty question is not an error.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Nothing_to_match_counts_nothing(string? title)
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+        sheet.Record(CardOf(Product), Now);
+
+        Assert.Equal(LiveStockTonight.Nothing, sheet.UnitsWonOf(title));
+    }
+
+    /// <summary>
+    /// Rows written before the sheet recorded unit counts carry no <see cref="WonLot.Units"/> at
+    /// all. One is what such a row always meant, and it is what it has to keep meaning — a zero
+    /// would make an old night's stack silently vanish from tonight's count.
+    /// </summary>
+    [Fact]
+    public void A_row_from_an_older_sheet_counts_as_one_unit()
+    {
+        using var temp = new TempSheet();
+        File.WriteAllText(temp.Path, """
+            [{"id":"a1","item":"Bitmain Antminer S19j Pro 104TH","wonAtUtc":"2026-08-06T20:00:00Z",
+              "winningBid":100,"landedCost":100,"priced":true,"resalePrice":300,"call":"bid"}]
+            """);
+
+        var tonight = new LiveBuySheet(temp.Path).UnitsWonOf(Product);
+
+        Assert.Equal(1, tonight.Units);
+        Assert.Equal(1, tonight.Lots);
+    }
+
+    /// <summary>The units the card was priced for are what the row records — a lot of three won at
+    /// one hammer price is three units of stock.</summary>
+    [Fact]
+    public void A_row_records_the_units_the_card_was_priced_for()
+    {
+        var card = Advisor.Build("3x Bitmain Antminer S19j Pro", Analysis(), Ask(bid: 120m), Fees, nowUtc: Now);
+
+        Assert.Equal(3, card.Units.Count);
+        Assert.Equal(3, LiveBuySheet.RowFrom(card, Now).Units);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static LiveBidCard CardOf(string title, int units = 1)
+    {
+        var card = Advisor.Build(
+            title, Analysis(), new LiveBidRequest { Title = title, CurrentBid = 100m, Quantity = units },
+            Fees, nowUtc: Now);
+        Assert.Equal(units, card.Units.Count);
+        return card;
+    }
 
     private sealed class TempSheet : IDisposable
     {

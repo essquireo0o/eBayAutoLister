@@ -12134,3 +12134,193 @@ name and nothing else, and a test pins that too.
   handles the months; nothing here separates the rest.
 - **One band per lot.** A live "mixed lot, some sealed some opened" is a real thing and this prices
   it at whichever band the seller picked, which the worst-wins rule at least points downwards.
+
+
+---
+
+# The lot was fine. The fourth one was not (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Eleven sessions have improved what the live card knows about the thing on screen: what it searched
+for, how many are in it, what condition it is in, which way the price is going, how many presses are
+left, what the seller's own book says. Every one of them answers **"is this lot worth its price?"**
+— and every one of those answers is correct about a lot the seller has never owned one of.
+
+Live selling breaks that assumption harder than any other sourcing channel in this app. The host has
+a pallet of one product and puts one up every four minutes. Each is individually cheap, each is
+individually a defensible `BID UP TO $90`, and the app will say yes six times because six times it
+is true. What is not true is the implied seventh sentence: **that six of them is six times the
+profit.** They queue behind each other in the same demand. It is one flip and five months of a
+shelf, and until now nothing on this card could see it.
+
+There is now a strip on every card, directly under the unit count:
+
+> **YOUR STOCK** **You'd have 8 — about 2 months of stock** `8 TO SELL`
+> `ON THE SHELF 4`  `WON TONIGHT 3`  `THIS LOT 1`
+> About 4 of these sell a month on eBay, so 8 of them is roughly about 2 months of selling and the
+> last one is cash in about 67 days. The profit on each is real; what it costs is the months the cash
+> spends on a shelf. 10 of them are listed on eBay right now, ahead of yours.
+
+The bars are the feature. **"4 on the shelf · 3 won tonight · 1 in this lot"** is a sentence read in
+a second, and the middle bar is the one nothing else on this card can possibly see.
+
+## What it does
+
+`Services/LiveStockDepth.cs` adds up three counts that already existed in this app and had never
+been read at bid time, and measures the total against the clearance rate the card already knew.
+
+| Part | Where it comes from | Why it is separate |
+|---|---|---|
+| **On the shelf** | `OwnSalesEvidence.UnitsHeld` — Deal Pipeline rows at Bought or Listed | Money already in this product before tonight |
+| **Won tonight** | `LiveBuySheet.UnitsWonOf` — rows on tonight's sheet, **not yet listed** | Still in their boxes, invisible to every other screen |
+| **This lot** | `LiveLotUnits.Count` | Not owned yet, which is the whole question |
+
+Six states, in the words the strip says them in:
+
+| Verdict | When | Warns |
+|---|---|---|
+| `single` | One of them and none anywhere | no |
+| `clear` | Under 2 months of stock | no |
+| `deep` | 2 months or more (`LiveLotSize.SlowClearanceMonths`) | yes |
+| `flooded` | 4 months or more | yes |
+| `blind` | A pile and no dated sold history to measure it against | at 3+ units |
+| `none` | The seller's own book could not be read at all | no |
+
+## Nothing here touches a price, and that is the design
+
+`LiveTrend` and `LiveCondition` cut the ceiling because they are about **what the object fetches**.
+This is about **what a calendar does to money**: the fourth one still resells for exactly what the
+comps say — it just sells in April. A "you already have three" haircut would be a number nobody
+measured, taken off the one figure on the card that comes from real sales.
+
+So it is attached last, and attached to nothing. A test builds a card at a 16-unit pile and asserts
+the resale price, the ceiling, the break-even, the profit at the ceiling, the profit at the current
+bid, the call, the badge, the middle-half spread and the sell-through are **identical** to the same
+card with nothing held. A second test asserts the file contains no `Discount`, no `MaxBid`, no
+`ResalePrice`, no `BreakEven` and no `Median` — and no `DateTime.UtcNow`, no `await`, no
+`HttpClient` and no `Task<>`, because it also costs no lookup and no clock.
+
+The one thing it is allowed to do is **say something**, and only when the pile crosses a bar.
+
+## The double-count that would have talked a seller out of a good lot
+
+Listing a won lot writes a Deal Pipeline card for it (`LiveBuySheet.MarkListed` carries a `dealId`),
+and from that moment the pipeline counts those units as held stock. Counting them on tonight's sheet
+as well would report a stack of four as a stack of eight — on the one screen where an inflated
+number costs the seller a purchase they should have made.
+
+So `UnitsWonOf` counts **unlisted rows only**. A test wins two of one product, asserts 2, lists one,
+and asserts 1.
+
+Products are grouped by `JackpotHunter.ProductSignature` — the same clustering key the seller's own
+record and the Restock board use, so all three screens agree about which items are "these".
+
+## Tonight's count is the one input that is deliberately not held
+
+The comps are held for twenty minutes and so is the seller's own record, because neither can change
+while a lot is on screen. This one can: the seller changes it themselves, by winning the previous lot
+of the same product thirty seconds ago and pressing **Won it**.
+
+So it is re-counted on every price **and every re-price**, off a list already in memory — no eBay
+read either way, and the re-price still answers in the milliseconds a climbing bid leaves. A test
+asserts `LiveBidBoard` contains neither `LiveStockTonight` nor `UnitsWonOf`.
+
+A won row now records how many things it bought (`WonLot.Units`). One hammer price on a lot of three
+is three units of stock, and a sheet that recorded it as one would tell the next card it is clear
+when it is not. Rows written before this field existed carry `0`; every reader takes
+`Math.Max(1, Units)`, which is what such a row always meant.
+
+## An unread shelf is never an empty one
+
+The failure that would turn *"you already have four"* into silence. When the seller's own book could
+not be opened at all, the strip says so rather than reporting a shelf of zero — and if tonight's
+sheet still holds some, it shows that half of the count with the missing half named:
+
+> Your own sales book could not be read, so the count above is tonight's buy sheet alone — anything
+> already on your shelf is missing from it.
+
+The same discipline runs through the rest: a loose product match (two ordinary words, no model
+number) qualifies the **warning** as well as the note, because a caveat only the calm sentence
+carries is a caveat nobody reads. Other people's active listings are reported beside the pile and
+never inside it — the clearance rate is already measured against them.
+
+## The card nothing could price still counts the pile
+
+*"Nothing on eBay priced this AND you are already holding four"* is the most useful thing an
+unpriceable card can say, and it is exactly the card on which a seller talks themselves into one more
+cheap one. So the read runs on that path too, with no clearance rate, and comes back `blind`.
+
+## The spoken line
+
+One clause, last, in two states only: months of stock, and a pile nothing dated can measure. Silent
+on the first one and on a stack the market clears — which is nearly every card. It never states a
+price, asserted by scanning the clause for a `$`: nothing about a shelf changes what the thing is
+worth, and a second dollar figure in a spoken line is a second number to mishear.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+The pile never reaches the query: a test asserts `LiveSearchQuery` mentions neither `LiveStockDepth`
+nor `Stock`.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveStockDepth.cs` | New — the three counts, the six states, the three bars, the caveats and every sentence on the strip |
+| `ING eBay AutoLister/Models/LiveStockModels.cs` | New — `LiveStockRead`, `LiveStockSource`, `LiveStockTonight`, `LiveStockVerdicts`, `LiveStockSources` |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | `UnitsWonOf` — tonight's count by product, unlisted rows only; `RowFrom` records `Units` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | `WonLot.Units` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.Stock` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | `tonight` parameter, `ApplyStock` on both exits, and the one warning it is allowed to raise |
+| `ING eBay AutoLister/Services/LiveLotSize.cs` | `Months` → `MonthsInWords`, made public so both blocks say a span of months the same way |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `HowManyYoudHave` — two states, last |
+| `ING eBay AutoLister/Program.cs` | The sheet injected into `/bid` and `/rebid`, counted on all three card builds, and the pile in the fresh-price log line |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=133`, `style.css?v=116` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, between the units block and the ladder |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-stock-*` — the four edges, the three bar kinds; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveStockDepthTests.cs` | New — 35 tests on the pile, the bars, the ladder and everything it refuses to claim |
+| `ING eBay AutoLister.Tests/WhatsNotStockAssetTests.cs` | New — 19 tests holding the six links together |
+| `ING eBay AutoLister.Tests/LiveBuySheetTests.cs` | 8 new tests on tonight's count, including the listed-row double-count |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 6 new tests on what a real card does with the pile, including that a deep shelf moves no figure |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | 10 new tests on the two states the clause speaks in and the four it does not |
+| `ING eBay AutoLister.Tests/WhatsNotConditionAssetTests.cs`, `WhatsNotNextBidAssetTests.cs` | Re-pinned asset versions |
+| `whatsnot_stock_depth.png`, `whatsnot_stock_narrow.png` | The deep state, and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,281 passed**, 0 failed, 0 skipped (78 new; the previous commit was 4,203) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` and `/rebid` mocked in the shape the C# returns) | **24 checks, all passed.** On an ordinary card: the strip is the **fourth child of the card**, above the ladder, reading `Your only one`, with **no bars**, no colour, and the spoken line silent about the shelf. At eight units: an amber-edged strip reading `You'd have 8 — about 2 months of stock`, an `8 TO SELL` tag, three bars in the order `ON THE SHELF 4 / WON TONIGHT 3 / THIS LOT 1` each with its own tooltip, the tonight bar highlighted, *"About 4 of these sell a month"* and *"10 of them are listed on eBay right now"* in the note, *"4 on the shelf, 3 won tonight"* on the card's warning list, and *"That makes 8 of these — about 2 months of stock."* in the spoken line. Moving the bid re-priced off held comps and kept the strip. At twenty: a red edge and a red tag (`rgb(185, 58, 52)`). With no dated history: the words rather than a colour, and only the two bars that exist. At 560px `.wn-stock` overflowed by **0px**, the bars stayed inside the card by **0px**, and the headline took the line back from the label. 0 JS errors beyond Whatnot's own X-Frame-Options refusal, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every count, every month and every state is exercised
+  against sheets and pipelines built in tests. The action log now prints the verdict, the three
+  parts and the months to clear on every fresh price, which is where the first real "the same host
+  put up four of these and the app said yes to all of them" will show up.
+- **The pile is a product-signature match, and that key is loose on titles with no model number.**
+  A lot called "vintage tool lot" keys on two ordinary words and can collect somebody else's stock
+  into the count. It is flagged on the strip and on the warning, and it is not suppressed — a pile
+  reported with a caveat is more use than a pile not reported.
+- **`UnitsHeld` is the Deal Pipeline's, so it is only as complete as the pipeline.** Units bought
+  outside this app and never entered are missing from the shelf count, and the strip has no way to
+  know that. It says the count it has; it cannot say what is not in the book.
+- **The sheet is a night's sheet, not an inventory.** It holds 200 rows and is cleared by hand. A
+  seller who never clears it will carry last month's shows into tonight's count — the listed-row
+  exclusion catches the ones that became listings, and nothing catches the ones that were sold
+  outside the app.
+- **The clearance rate is the market's, not the seller's.** "About 4 of these sell a month on eBay"
+  is everybody's sales, and one seller with eight of them does not get all four a month. So the
+  months figure is the optimistic one, and it is optimistic in the direction that argues for
+  bidding — which is the wrong direction for a number whose job is to argue against it.
+- **It never moves the ceiling, by design, and that is also its weakness.** A seller who reads the
+  strip and bids anyway gets exactly the card they would have got without it. The evidence for going
+  further — a measured discount on the Nth duplicate — does not exist in this app yet.

@@ -77,6 +77,17 @@ public sealed class WonLot
     public string CategoryLabel { get; set; } = "";
     public DateTime WonAtUtc { get; set; }
 
+    /// <summary>
+    /// How many things this row bought. One hammer price, <see cref="Units"/> objects to sell — so
+    /// a lot of three won at $60 is three units of stock, and a sheet that counted it as one would
+    /// tell the next card it is clear when it is not.
+    /// </summary>
+    /// <remarks>
+    /// Rows written before this field existed carry 0; every reader takes <c>Math.Max(1, Units)</c>,
+    /// which is what a row from an older sheet always meant.
+    /// </remarks>
+    public int Units { get; set; } = 1;
+
     // ── What it cost ─────────────────────────────────────────────────────────
     public decimal WinningBid { get; set; }
     public decimal BuyerFeePercent { get; set; }
