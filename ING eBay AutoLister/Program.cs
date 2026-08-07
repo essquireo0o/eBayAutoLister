@@ -3153,9 +3153,12 @@ app.MapPost("/api/whatsnot/list", (
     }
 
     var now = DateTime.UtcNow;
-    var draft = WonLotListing.Draft(lot);
-    var price = WonLotListing.AskingPrice(lot);
+    // Minted once and given to both. The draft publishes under this SKU and the deal card is found
+    // by it, which is what lets the publish record what the lot cost without the seller typing
+    // anything. Two calls to Sku() could hand back two codes, and the join would silently not exist.
     var sku = WonLotListing.Sku(lot);
+    var draft = WonLotListing.Draft(lot, sku);
+    var price = WonLotListing.AskingPrice(lot);
 
     string filename;
     try
@@ -3175,7 +3178,7 @@ app.MapPost("/api/whatsnot/list", (
     long dealId = 0;
     try
     {
-        var deal = DealStore.FromRequest(WonLotListing.Deal(lot, now));
+        var deal = DealStore.FromRequest(WonLotListing.Deal(lot, now, sku));
         deals.Upsert(deal);
         dealId = deal.Id;
     }
@@ -4523,6 +4526,57 @@ static DealStageChangeResult ApplyDealCostBasis(DealRecord deal, EarningsStore e
         ? $"Recorded {result.CostBasisUnitCost:C2} as what this cost you — that also prices {result.SalesPriced} completed sale{(result.SalesPriced == 1 ? "" : "s")} in Money Made."
         : $"Recorded {result.CostBasisUnitCost:C2} as what this cost you. Inventory Health now has a real break-even floor for it, and any sale will count as real profit.";
     return result;
+}
+
+// A publish, joined to what the item cost. Called once, at the only moment both halves of the join
+// exist: the SKU the draft carried, and the listing ID eBay has just minted.
+//
+// The decision is PublishedCostLink's and the write is the pipeline's own ApplyDealCostBasis —
+// there is one function in this app that turns a purchase price into a cost basis, and this is not
+// a second one.
+//
+// It cannot throw. By the time it runs the listing is live on eBay, and a bookkeeping failure that
+// surfaced as a publish error would send a seller looking for a listing that already exists, or
+// publishing it twice. Everything that goes wrong here is logged and said, never raised.
+static string LinkPublishedCost(
+    string? sku, string? listingId, decimal listedPrice,
+    DealStore deals, CostBasisStore costBasis, EarningsStore earnings, ActionLog log)
+{
+    try
+    {
+        var plan = PublishedCostLink.Decide(sku, listingId, deals.GetAll(), costBasis.GetAll());
+        if (!plan.ShouldWrite)
+        {
+            var refusal = PublishedCostLink.Say(plan);
+            if (refusal.Length > 0)
+                log.Add("Info", "Cost basis not written for this publish", refusal);
+            return refusal;
+        }
+
+        // The card learns the two things a publish is: which listing it became, and that it is
+        // Listed. The stage is only sent when the card is behind it — Sold stays sold.
+        var moved = deals.ApplyEdit(plan.DealId, new DealUpsertRequest
+        {
+            ListingId = listingId,
+            Sku = plan.Sku,
+            ListedPrice = listedPrice > 0m ? listedPrice : null,
+            ListedUtc = DateTimeOffset.UtcNow,
+            Stage = plan.AdvanceToListed ? DealStages.Listed : null,
+        });
+        if (moved is null) return "";
+
+        var result = ApplyDealCostBasis(moved, earnings, costBasis);
+        var said = PublishedCostLink.Say(plan, result.Message);
+        log.Add("Info", "Cost basis written from the publish",
+            $"\"{moved.Title}\" — SKU {plan.Sku}, listing {listingId}, "
+          + $"{result.CostBasisUnitCost:C2} all in; {result.SalesPriced} completed sale(s) priced");
+        return said;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Could not record what this listing cost", ex.Message);
+        return "";
+    }
 }
 
 // One place that assembles the board, so every mutation answers with the recomputed pipeline and
@@ -8962,7 +9016,8 @@ app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay
 // exactly those failures the app looks at the account before it says anything.
 app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService ebay, ActionLog log,
     CredentialsStore store, LicenseService license, PublishGuard guard,
-    CategoryMemoryStore categoryMemory) =>
+    CategoryMemoryStore categoryMemory, DealStore deals, CostBasisStore costBasis,
+    EarningsStore earnings) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -9011,11 +9066,16 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
         // under a category the app never saw confirmed.
         categoryMemory.Remember(req.Title, req.CategoryId, req.Category);
 
+        // The one instant when both halves of the join exist: the SKU the seller's draft carried,
+        // and the listing ID eBay has just minted. What the item cost stops waiting for somebody to
+        // type it in at midnight.
+        var costLink = LinkPublishedCost(result.Sku, result.ListingId, req.Price, deals, costBasis, earnings, log);
+
         var listingUrl = !string.IsNullOrEmpty(result.ListingId)
             ? $"https://www.ebay.com/itm/{result.ListingId}"
             : "";
         log.Add("Info", "eBay listing published live", $"Listing ID: {result.ListingId}; Offer ID: {result.OfferId}; SKU: {result.Sku}");
-        return Results.Ok(new { result.OfferId, result.ListingId, result.Sku, listingUrl });
+        return Results.Ok(new { result.OfferId, result.ListingId, result.Sku, listingUrl, costMessage = costLink });
     }
     catch (Exception ex)
     {

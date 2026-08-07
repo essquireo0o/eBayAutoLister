@@ -1626,7 +1626,10 @@ public class EbayService(
         var client = httpClientFactory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var sku = $"SKU-{Guid.NewGuid():N}"[..20];
+        // The seller's own SKU when the draft carries one. This path addresses every call to the
+        // SKU, so it cannot be blank — but it can be theirs, and it is what joins the listing back
+        // to what the item cost.
+        var sku = SellerSku.For(req.Sku);
         await CreateInventoryItemAsync(client, req, sku);
         return await CreateOfferAsync(client, req, sku);
     }
@@ -1634,9 +1637,13 @@ public class EbayService(
     public async Task<PublishListingResult> PublishListingAsync(PostListingRequest req)
     {
         var token = await GetOrRefreshTokenAsync();
-        var listingId = await AddFixedPriceItemAsync(token, req);
-        log.Add("Info", "eBay listing published live (Trading API)", $"Listing ID: {listingId}");
-        return new PublishListingResult("", listingId, "");
+        // Not minted. A listing published without a SKU is published without one — the seller's
+        // Seller Hub is theirs, and a random code in it is a key they cannot look anything up by.
+        var sku = SellerSku.Sanitize(req.Sku);
+        var listingId = await AddFixedPriceItemAsync(token, req, sku);
+        log.Add("Info", "eBay listing published live (Trading API)",
+            $"Listing ID: {listingId}{(sku.Length > 0 ? $"; SKU: {sku}" : "")}");
+        return new PublishListingResult("", listingId, sku);
     }
 
     // ── Trading API: AddFixedPriceItem ────────────────────────────────────────
@@ -1731,7 +1738,7 @@ public class EbayService(
         return desc;
     }
 
-    private async Task<string> AddFixedPriceItemAsync(string token, PostListingRequest req)
+    private async Task<string> AddFixedPriceItemAsync(string token, PostListingRequest req, string sku)
     {
         var c = creds.Get();
 
@@ -1896,6 +1903,7 @@ public class EbayService(
             <AddFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
               <Item>
                 <Title>{Xe(SanitizeTitle(req.Title))}</Title>
+                {(sku.Length == 0 ? "" : $"<SKU>{Xe(sku)}</SKU>")}
                 {(string.IsNullOrWhiteSpace(req.Subtitle) ? "" : $"<SubTitle>{Xe(req.Subtitle)}</SubTitle>")}
                 <Description>{descCdata}</Description>
                 <PrimaryCategory><CategoryID>{Xe(categoryId)}</CategoryID></PrimaryCategory>

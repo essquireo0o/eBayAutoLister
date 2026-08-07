@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=105" />
+  <link rel="stylesheet" href="style.css?v=106" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -766,6 +766,13 @@
             <div class="nl-form-panel">
               <p class="nl-section-heading">Listing Details</p>
               <form id="nl-form" autocomplete="off">
+
+                <!-- The seller's own code for this item, carried in from the draft that made it.
+                     Hidden because it is not theirs to retype here — it is the key that joins this
+                     listing back to what the item cost, and the line under it says so out loud so
+                     the money it is about is not invisible. -->
+                <input id="nl-sku" type="hidden" />
+                <p id="nl-sku-note" class="nl-sku-note hidden" role="note"></p>
 
                 <details class="form-panel" open>
                   <summary>Title &amp; Category</summary>
@@ -5860,6 +5867,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=122"></script>
+  <script src="app.js?v=123"></script>
 </body>
 </html>

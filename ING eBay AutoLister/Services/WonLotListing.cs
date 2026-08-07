@@ -147,7 +147,19 @@ public static class WonLotListing
     /// The lot as a local draft, ready for the listing editor. Saved by
     /// <see cref="DraftStore.SaveDraft"/>, which mints the filename.
     /// </summary>
-    public static DraftFile Draft(WonLot lot)
+    public static DraftFile Draft(WonLot lot) => Draft(lot, Sku(lot));
+
+    /// <summary>
+    /// The same draft, carrying a SKU decided by the caller.
+    /// </summary>
+    /// <remarks>
+    /// The SKU is minted once and handed to both this and <see cref="Deal(WonLot, DateTime, string)"/>,
+    /// so the file on the desktop and the card on the board provably describe one lot. Minting it
+    /// twice was a real hazard rather than a tidiness point: <see cref="Sku"/> falls back to a fresh
+    /// GUID for a lot whose id is too short to use, so two calls could hand back two different codes
+    /// and the join between the listing and its cost would silently not exist.
+    /// </remarks>
+    public static DraftFile Draft(WonLot lot, string sku)
     {
         ArgumentNullException.ThrowIfNull(lot);
 
@@ -161,6 +173,11 @@ public static class WonLotListing
             {
                 Title = title,
                 Description = Description(lot),
+                // What the item cost is already known — it was won an hour ago — and this is the key
+                // that carries it onto eBay. The publish sends this SKU, and the cost basis is
+                // written the moment eBay answers with a listing ID, instead of waiting for the
+                // seller to type it onto a card at midnight.
+                Sku = SellerSku.Sanitize(sku),
                 // No price at all rather than a zero pretending to be one. The editor shows an
                 // empty box, which is what "you decide this" looks like.
                 Price = price ?? 0m,
@@ -187,7 +204,10 @@ public static class WonLotListing
     /// writes one at Listed. Together they are the row's landed cost, so the board's capital figure
     /// and the buy sheet's spend are the same money.
     /// </remarks>
-    public static DealUpsertRequest Deal(WonLot lot, DateTime nowUtc)
+    public static DealUpsertRequest Deal(WonLot lot, DateTime nowUtc) => Deal(lot, nowUtc, Sku(lot));
+
+    /// <summary>The same card, carrying the SKU its draft carries.</summary>
+    public static DealUpsertRequest Deal(WonLot lot, DateTime nowUtc, string sku)
     {
         ArgumentNullException.ThrowIfNull(lot);
 
@@ -219,7 +239,7 @@ public static class WonLotListing
             // maximum, so tonight's discipline survives the sheet being cleared.
             MaxBuyPrice = lot.CeilingAtWin > 0m ? lot.CeilingAtWin : null,
 
-            Sku = Sku(lot),
+            Sku = SellerSku.Sanitize(sku),
             Note = $"Won on a live show{(string.IsNullOrWhiteSpace(lot.CategoryLabel) ? "" : $" · {lot.CategoryLabel}")}",
         };
     }

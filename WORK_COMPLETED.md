@@ -10355,3 +10355,144 @@ path but not the arithmetic underneath it, which is what the 51 new C# tests are
 - **It is one lot at a time.** A nine-lot night is nine presses. A "draft everything" button is
   trivial to add on top of this endpoint and was deliberately not added yet: nine drafts made in one
   press, each needing photos and a condition, is a queue nobody finishes.
+
+---
+
+# The cost follows the item onto eBay
+
+## The question this answers
+
+The previous session ended with the won lot becoming a listing draft and a deal card, and named its
+own next thread:
+
+> *"The SKU on the draft is not the SKU eBay publishes. Carrying the draft's SKU through the publish
+> call is the obvious next thread, and it is what would make the cost basis automatic."*
+
+It is worse than that sounds. The SKU minted for a won lot — `WN-20260806-A1B2C3` — was written on
+the draft's row and on the deal card, and then **reached eBay nowhere**: every publish minted a fresh
+`SKU-{guid}` and threw the seller's away. So the last step of a live-buying night was manual, and
+nobody does it: drag the card to **Listed**, find the listing ID on eBay, type it onto the card,
+press *Apply what you paid*. Skip it — at midnight, everybody skips it — and `CostBasisStore` stays
+empty, which means:
+
+- Inventory Health has **no break-even floor** for the item and will happily recommend a markdown
+  that sells it at a loss;
+- **Money Made counts the whole sale price as profit**, because a sale with no unit cost has nothing
+  to subtract from it;
+- and the buy sheet's *"you spent $1,240 and it's worth $3,100"* is never settled against what
+  actually happened.
+
+The listing ID that was missing is minted by the publish. The SKU is on the draft. Both are in hand
+at the same instant exactly once — **the moment eBay says yes** — and nothing was looking.
+
+## What it does
+
+The seller publishes a draft that came from a won lot, and the result now says a second thing:
+
+> ✓ Published live! Listing ID: 1234567890 — View on eBay
+>
+> **SKU WN-20260806-A1B2C3 matched a deal on your board, so its card moved to Listed. Recorded
+> $131.60 as what this cost you — that also prices 1 completed sale in Money Made.**
+
+Three writes, none of them typed: the SKU went to eBay on the listing, the deal card learned which
+listing it became and moved to **Listed**, and the cost basis was written — hammer plus buyer's
+premium as the unit cost, shipping as inbound freight, which is the split the table already wanted.
+
+Above the form, a draft that carries a SKU says so before anything is published:
+
+> SKU WN-20260806-A1B2C3 — publishing this records what you paid for it, so Money Made counts the
+> sale as real profit.
+
+## The refusals, which are most of it
+
+`PublishedCostLink.Decide` is pure, and its job is mostly to say no. Every row below is a way to
+write a **wrong** number into the table that every profit figure in the app reads — and a wrong cost
+is worse than no cost, because it is wrong silently and everything downstream inherits it.
+
+| It will not | Why |
+|---|---|
+| Guess which deal | An exact SKU match or nothing. No title matching, no "the most recent card" |
+| Choose between two cards under one SKU | Then the SKU is not the key it is being used as. It reports both and writes nothing |
+| Overwrite a cost the seller entered | A number the seller typed is the most reliable input this app has. Found by listing ID **or** by SKU — that fallback is what keeps a relisted item's cost |
+| Re-point a deal already joined to another listing | The cost would move off an item that may already have sold under it |
+| Move a card backwards | Publishing is what **Listed** means, so a card behind it moves up. Sold stays sold; dropped stays dropped |
+| Compute a cost of its own | There is one function in this app that turns a purchase price into a cost basis — `ApplyDealCostBasis` — and this calls it |
+| Fail a publish | By the time it runs, the listing is **live on eBay**. A bookkeeping error surfacing as a publish error sends a seller looking for a listing that exists, or publishing it twice. Everything here is caught, logged and said |
+
+## It never invents a SKU
+
+`SellerSku` cuts the seller's code down to what eBay accepts — 50 characters, no whitespace, spaces
+becoming hyphens rather than closing up (`S19J PRO` collapsing to `S19JPRO` is a different code from
+the one on the box) — and returns **an empty string when there is nothing usable**, which the publish
+path reads as *send no `<SKU>` element at all*. A random code written onto somebody's live listing is
+a key in their Seller Hub, their reports and their exports that they did not choose and cannot look
+anything up by. The Inventory API path is the one exception, because there the call is *addressed* to
+the SKU and cannot be blank — it still prefers the seller's own and mints only as a fallback.
+
+## Two bugs found on the way
+
+- **The SKU was minted twice for one lot.** `/api/whatsnot/list` called `WonLotListing.Sku(lot)` for
+  the sheet, and `Deal()` called it again for the card. It falls back to a fresh GUID for a lot whose
+  id is too short to use — so two calls could hand back two different codes, and the join between the
+  listing and its cost would silently not exist. It is minted once now and given to both.
+- **`UpdateListingRequest` redeclared `Sku`.** An edit and a publish had two different properties of
+  the same name, and anything holding one as a `PostListingRequest` read the blank base. One
+  property now.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list` and `/api/whatsnot/embed-check` are all still registered and are asserted to be.
+The two existing routes to a cost basis — moving a card to Listed, and *Apply what you paid* — are
+pinned as still there, and so is the duplicate-publish guard.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/SellerSku.cs` | New — the eBay fence, the mint, and the rule that nothing is invented |
+| `ING eBay AutoLister/Services/PublishedCostLink.cs` | New — the pure decision, its eight outcomes and the sentence each one says |
+| `ING eBay AutoLister/Services/EbayService.cs` | The publish sends the seller's SKU and returns it; the Inventory path prefers it |
+| `ING eBay AutoLister/Services/WonLotListing.cs` | `Draft`/`Deal` take the SKU they are to carry; the draft carries it onto the listing |
+| `ING eBay AutoLister/Models/ListingData.cs` | `PostListingRequest.Sku`; the duplicate on `UpdateListingRequest` removed |
+| `ING eBay AutoLister/Program.cs` | `LinkPublishedCost` beside `ApplyDealCostBasis`; the publish endpoint calls it; the won lot mints one SKU |
+| `ING eBay AutoLister/wwwroot/index.html` | Hidden `nl-sku` and the line about it; `app.js?v=123`, `style.css?v=106` |
+| `ING eBay AutoLister/wwwroot/app.js` | `nlSetSku`, the SKU in the publish payload, and what the publish did about the money |
+| `ING eBay AutoLister/wwwroot/style.css` | `.nl-sku-note` |
+| `ING eBay AutoLister.Tests/SellerSkuTests.cs` | New — 21 tests on the fence and on inventing nothing |
+| `ING eBay AutoLister.Tests/PublishedCostLinkTests.cs` | New — 22 tests, most of them refusals |
+| `ING eBay AutoLister.Tests/PublishedCostAssetTests.cs` | New — 20 tests holding the five links of the chain together |
+| `ING eBay AutoLister.Tests/WonLotListingTests.cs` | 2 new — the draft carries the card's SKU, and both clean it the same way |
+| `publish_cost_link.png`, `publish_cost_recorded.png` | The line above the form, and what the publish said about the money |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,599 passed**, 0 failed, 0 skipped (65 new; the previous commit was 3,534) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the endpoints mocked in the shape the C# returns) | **10/10 checks.** A won-lot draft opened through **Open All Drafts** lands with its SKU in the hidden field and the line above the form naming it. Pressing **Publish** sends `sku: "WN-20260806-A1B2C3"` in the payload, and the server's cost sentence — *"Recorded $131.60 as what this cost you"* — renders under the success message. A fresh tab carries **no** SKU and the line is gone. **No page errors.** |
+
+The eBay call itself is not exercised — nothing in this repo publishes to eBay in a test — so what is
+pinned there is the payload: the `<SKU>` element is present exactly when there is a SKU, and absent
+when there is not.
+
+## Known limits
+
+- **The eBay round trip is untested end to end.** `<SKU>` is asserted into the `AddFixedPriceItem`
+  XML by an asset test reading the source. Whether eBay accepts a given seller's SKU — it rejects
+  duplicates within one account — is knowable only from a real publish, and a rejection there is
+  reported as an ordinary publish failure, in eBay's own words.
+- **A duplicate SKU at eBay is a publish failure, not a warning.** The app does not check the
+  seller's existing listings for the SKU before sending it. For lot SKUs, which carry a date and the
+  row's id, a collision is essentially impossible; for a hand-typed one it is not.
+- **Only deals carry SKUs today.** The cost link fires for a draft that came from a won lot, or for
+  any deal card the seller has given a SKU to. A listing typed from scratch publishes exactly as
+  before, and says nothing new.
+- **The board on screen is not refreshed.** A publish that moves a card to Listed does so on disk; a
+  Deal Pipeline screen left open behind it still shows the old column until it is reopened.
+- **One cost basis per listing.** The freight is divided by the deal's quantity exactly as the
+  pipeline already did, but a lot of six published as one listing of six is one row, and the seller
+  cannot tell the app that two of the six were broken.

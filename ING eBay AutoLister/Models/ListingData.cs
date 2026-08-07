@@ -348,6 +348,18 @@ public class PostListingRequest : ListingData
     /// this, so an old client that doesn't send it is still protected.
     /// </remarks>
     public string? WorkKey { get; set; }
+
+    /// <summary>
+    /// The seller's own code for this item, carried from the draft that made it.
+    /// </summary>
+    /// <remarks>
+    /// The one key that outlives the listing: eBay mints a new listing ID on every relist, and
+    /// <see cref="Services.CostBasisStore"/> falls back to the SKU so the cost the seller already
+    /// recorded survives it. Blank on a listing typed from scratch, and blank is honoured — see
+    /// <see cref="Services.SellerSku"/>, which never invents a code for somebody's Seller Hub.
+    /// </remarks>
+    public string Sku { get; set; } = "";
+
     public string ListingFormat { get; set; } = "FIXED_PRICE";
     public int DurationDays { get; set; } = 30;
     // Per-listing policy overrides (fall back to saved credentials when blank)
@@ -403,7 +415,9 @@ public class UpdateListingRequest : PostListingRequest
 {
     public string OfferId { get; set; } = "";
     public string ListingId { get; set; } = "";
-    public string Sku { get; set; } = "";
+    // Sku is inherited. It used to be redeclared here, which meant an edit and a publish had two
+    // different properties of the same name — and code holding one of these as a PostListingRequest
+    // read the base's blank one. One property, so the SKU an edit carries is the SKU a publish sends.
     public bool ManualRevisionConfirmed { get; set; }
 }
 

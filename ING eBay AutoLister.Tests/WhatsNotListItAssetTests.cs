@@ -80,7 +80,9 @@ public class WhatsNotListItAssetTests
         var endpoint = ListEndpoint();
 
         Assert.Contains("WonLotListing.AskingPrice(lot)", endpoint, StringComparison.Ordinal);
-        Assert.Contains("WonLotListing.Draft(lot)", endpoint, StringComparison.Ordinal);
+        // The SKU is minted once above and handed to the draft, so the file on the desktop and the
+        // card on the board provably describe one lot — and the publish can find the cost by it.
+        Assert.Contains("WonLotListing.Draft(lot, sku)", endpoint, StringComparison.Ordinal);
         Assert.DoesNotContain("Charm(", endpoint, StringComparison.Ordinal);
     }
 

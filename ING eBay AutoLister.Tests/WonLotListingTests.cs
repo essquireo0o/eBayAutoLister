@@ -186,6 +186,38 @@ public class WonLotListingTests
         Assert.Equal(skuA, WonLotListing.Sku(a));
     }
 
+    /// <summary>
+    /// The SKU is what the cost basis is found by after the publish, so the draft carries it onto
+    /// the listing rather than leaving it on the board. Until it did, the code minted here reached
+    /// eBay nowhere and the cost waited for somebody to type a listing ID onto a card at midnight.
+    /// </summary>
+    [Fact]
+    public void The_draft_carries_the_sku_the_deal_card_is_filed_under()
+    {
+        var lot = Won(landed: 120m, resale: 300m);
+        var sku = WonLotListing.Sku(lot);
+
+        Assert.Equal(sku, WonLotListing.Draft(lot, sku).Data.Sku);
+        Assert.Equal(sku, WonLotListing.Deal(lot, Now, sku).Sku);
+    }
+
+    /// <summary>
+    /// A SKU that reaches eBay in one shape and the deal board in another is a join that does not
+    /// exist. Both go through the same fence, so a hand-edited code cannot land differently in the
+    /// two places.
+    /// </summary>
+    [Fact]
+    public void Both_halves_clean_the_sku_the_same_way()
+    {
+        var lot = Won(landed: 120m, resale: 300m);
+
+        var draft = WonLotListing.Draft(lot, "WN 2026 0806");
+        var deal = WonLotListing.Deal(lot, Now, "WN 2026 0806");
+
+        Assert.Equal("WN-2026-0806", draft.Data.Sku);
+        Assert.Equal(draft.Data.Sku, deal.Sku);
+    }
+
     // ── The deal card ─────────────────────────────────────────────────────────
 
     /// <summary>

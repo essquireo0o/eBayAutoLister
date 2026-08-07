@@ -3135,6 +3135,20 @@ textarea {
   padding: 9px 28px;
 }
 
+/* The SKU a draft arrived with. Quiet — it is a fact about this listing, not an instruction — but
+   it is about money already spent, so it reads before the first field rather than after the last. */
+.nl-sku-note {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--teal-600);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .nl-drop-zone {
   border: 2px dashed var(--line-strong);
   border-radius: var(--r-lg);

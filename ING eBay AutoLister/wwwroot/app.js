@@ -18821,6 +18821,24 @@
     $('nl-photos-error')?.classList.add('hidden');
   }
 
+  // The SKU a draft arrived with, and the one line about it the seller ever needs to read.
+  //
+  // Hidden field plus a sentence, rather than another box to fill in: this code was minted by the
+  // screen that knew what the lot cost, and retyping it is how the join between the listing and
+  // that cost gets broken. The line is shown only when there IS one, because most listings have no
+  // SKU and a permanently empty note is noise on the busiest form in the app.
+  function nlSetSku(sku) {
+    const field = $('nl-sku');
+    if (field) field.value = sku || '';
+
+    const note = $('nl-sku-note');
+    if (!note) return;
+    if (!sku) { note.classList.add('hidden'); note.textContent = ''; return; }
+    note.textContent = `SKU ${sku} — publishing this records what you paid for it, so Money Made `
+                     + `counts the sale as real profit.`;
+    note.classList.remove('hidden');
+  }
+
   function nlClearForm() {
     const sets = [
       ['nl-title', ''], ['nl-subtitle', ''], ['nl-category', ''], ['nl-category-id', ''],
@@ -18834,6 +18852,7 @@
       ['nl-charity-pct', '0'], ['nl-charity-id', ''],
     ];
     sets.forEach(([id, val]) => set(id, val));
+    nlSetSku('');
     if ($('nl-best-offer')) $('nl-best-offer').checked = false;
     if ($('nl-private')) $('nl-private').checked = false;
     nlToggleBestOffer(false);
@@ -19773,6 +19792,7 @@
   }
 
   function fillNlForm(d) {
+    nlSetSku(d.sku || '');
     set('nl-title', d.title || '');
     set('nl-subtitle', d.subtitle || '');
     set('nl-category', d.category || '');
@@ -19838,6 +19858,10 @@
     descCommitText('nl');   // words typed on the text tab, before the HTML field is read
     return {
       title: $('nl-title')?.value || '',
+      // Carried, never invented here. A draft made from a won lot arrives with the SKU its deal
+      // card is filed under, and that is what lets the publish record what the item cost. A listing
+      // typed from scratch sends an empty string, and the server publishes without a SKU.
+      sku: ($('nl-sku')?.value || '').trim(),
       subtitle: $('nl-subtitle')?.value || '',
       // Once a category is chosen the search box is emptied and the name moves to the chip beside
       // it, so reading the input alone sent a blank name on every finished listing. The chip is
@@ -21689,6 +21713,13 @@
         $('nl-result-msg').innerHTML += link;
         if (body.message) {
           $('nl-result-msg').innerHTML += '<span class="nl-result-note">' + esc(body.message) + '</span>';
+        }
+        // What the publish did about the money, in the server's own words. Shown whether it recorded
+        // the cost or refused to — a seller who thinks the cost was captured and finds out months
+        // later that it wasn't has been told the wrong thing at the one moment they could fix it.
+        if (body.costMessage) {
+          $('nl-result-msg').innerHTML += '<span class="nl-result-note">' + esc(body.costMessage) + '</span>';
+          addActivity('What this listing cost', body.costMessage);
         }
         addActivity('Listing published live', 'ID: ' + (body.listingId || '-') + '; Offer: ' + (body.offerId || '-'));
         loadListings('Listings refreshed after publish');
