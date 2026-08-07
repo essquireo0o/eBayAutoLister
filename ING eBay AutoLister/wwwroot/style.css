@@ -4470,16 +4470,22 @@ textarea {
   color: var(--brand-ink);
 }
 
-/* "Test key" and whatever Anthropic said about it, on one line under the field it is about. */
-.ai-key-check {
+/* "Test key" and whatever Anthropic said about it, on one line under the field it is about —
+   and "Test connection" with what eBay said, which is the same row doing the same job one
+   required step along. Deliberately one rule: the two verdicts are read the same way, so they
+   must not drift into looking like different kinds of thing. */
+.ai-key-check,
+.ebay-link-check {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
 }
-.ai-key-check .btn { flex-shrink: 0; }
-.ai-key-check .sd-test-msg { flex: 1; min-width: 180px; }
+.ai-key-check .btn,
+.ebay-link-check .btn { flex-shrink: 0; }
+.ai-key-check .sd-test-msg,
+.ebay-link-check .sd-test-msg { flex: 1; min-width: 180px; }
 
 .setup-policy-manual {
   margin-top: 12px;

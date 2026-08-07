@@ -352,8 +352,8 @@ public class WhatsNotShipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=143", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=126", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=144", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=127", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

@@ -267,4 +267,123 @@ public class OnboardingStoreTests : IDisposable
         store.RecordKeyCheck(AiKeyCheck.Works);
         Assert.Equal(AiKeyCheck.Works, NewStore().KeyCheck().State);
     }
+
+    // ── What eBay last said about the sign-in ────────────────────────────────
+
+    [Fact]
+    public void NoConnectionHasBeenTestedOnAFreshInstall()
+    {
+        var store = NewStore();
+
+        Assert.Equal(EbayLinkCheck.Untested, store.EbayCheck().State);
+        Assert.Null(store.EbayCheck().At);
+        Assert.Equal(EbayLinkCheck.Untested, store.Facts(false, false).EbayLinkState);
+    }
+
+    [Fact]
+    public void TheConnectionVerdictSurvivesARestart()
+    {
+        var at = new DateTimeOffset(2026, 8, 7, 15, 0, 0, TimeSpan.Zero);
+        NewStore().RecordEbayCheck(EbayLinkCheck.Rejected, at);
+
+        var reopened = NewStore().EbayCheck();
+
+        Assert.Equal(EbayLinkCheck.Rejected, reopened.State);
+        Assert.Equal(at, reopened.At);
+    }
+
+    [Fact]
+    public void TheLastAnswerWinsRatherThanTheFirst()
+    {
+        // Unlike a milestone: this is the current state of one connection, and a seller who signs
+        // in again after a refusal has to be able to turn step 2 green again.
+        var store = NewStore();
+        store.RecordEbayCheck(EbayLinkCheck.Expired);
+        store.RecordEbayCheck(EbayLinkCheck.Works);
+
+        Assert.Equal(EbayLinkCheck.Works, NewStore().EbayCheck().State);
+    }
+
+    [Fact]
+    public void SigningInAgainForgetsWhatEbaySaidAboutTheOldGrant()
+    {
+        var store = NewStore();
+        store.RecordEbayCheck(EbayLinkCheck.Rejected);
+
+        store.RecordEbayCheck(EbayLinkCheck.Untested);
+
+        Assert.Equal(EbayLinkCheck.Untested, NewStore().EbayCheck().State);
+        Assert.Null(NewStore().EbayCheck().At);
+    }
+
+    [Fact]
+    public void TheTwoVerdictsAreAboutDifferentThingsAndDoNotOverwriteEachOther()
+    {
+        var store = NewStore();
+        store.RecordKeyCheck(AiKeyCheck.Works);
+        store.RecordEbayCheck(EbayLinkCheck.Rejected);
+
+        var facts = NewStore().Facts(hasAiKey: true, ebayConnected: true);
+
+        Assert.Equal(AiKeyCheck.Works, facts.AiKeyState);
+        Assert.Equal(EbayLinkCheck.Rejected, facts.EbayLinkState);
+    }
+
+    [Fact]
+    public void AnUnknownConnectionStateIsStoredAsUntestedRatherThanAsItself()
+    {
+        var store = NewStore();
+        store.RecordEbayCheck("half-connected");
+
+        Assert.Equal(EbayLinkCheck.Untested, NewStore().EbayCheck().State);
+    }
+
+    [Fact]
+    public void TheConnectionVerdictIsNotAMilestoneAndDoesNotShowUpAsOne()
+    {
+        var store = NewStore();
+        store.RecordEbayCheck(EbayLinkCheck.Works);
+
+        var facts = store.Facts(false, true);
+        Assert.Null(facts.PricedAt);
+        Assert.Null(facts.PublishedAt);
+        Assert.False(facts.Dismissed);
+        Assert.False(facts.WelcomeSeen);
+    }
+
+    [Fact]
+    public void ResetForgetsTheConnectionVerdictToo()
+    {
+        var store = NewStore();
+        store.RecordEbayCheck(EbayLinkCheck.Expired);
+
+        store.Reset();
+
+        Assert.Equal(EbayLinkCheck.Untested, NewStore().EbayCheck().State);
+    }
+
+    [Fact]
+    public void AConnectionVerdictLandsOnADatabaseWrittenBeforeThisFeature()
+    {
+        // The same migration as the key check's, exercised from the other side: an install whose
+        // table predates the note column takes an eBay verdict once the column is added past it.
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE onboarding (key TEXT PRIMARY KEY, reached_at TEXT NOT NULL DEFAULT '');
+                INSERT INTO onboarding (key, reached_at) VALUES ('published', '2026-08-01T12:00:00.0000000+00:00');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var store = NewStore();
+        Assert.NotNull(store.ReachedAt(OnboardingProgress.Milestones.Published));
+        Assert.Equal(EbayLinkCheck.Untested, store.EbayCheck().State);
+
+        store.RecordEbayCheck(EbayLinkCheck.Works);
+        Assert.Equal(EbayLinkCheck.Works, NewStore().EbayCheck().State);
+    }
 }

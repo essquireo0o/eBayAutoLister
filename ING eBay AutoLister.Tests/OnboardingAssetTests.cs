@@ -319,4 +319,92 @@ public class OnboardingAssetTests
         Assert.True(dir is not null, "could not find the repository root above " + AppContext.BaseDirectory);
         return dir!.FullName;
     }
+
+    // ── Step 2: what eBay said, on the page ──────────────────────────────────
+
+    [Fact]
+    public void TheEbayRowCanSayWhatIsWrongWithTheConnection()
+    {
+        // The server can compute a perfect verdict and the seller never sees it if the row it
+        // addresses has nowhere to put a sentence.
+        Assert.Contains("id=\"step2-problem\"", Html, StringComparison.Ordinal);
+        Assert.Contains("id=\"step2-problem-text\"", Html, StringComparison.Ordinal);
+
+        var paint = Between(Js, "function paintStep2Problem(step) {", "\n  }");
+        Assert.Contains("step2-problem-text", paint, StringComparison.Ordinal);
+        // And it takes the tick back off. A green row over a connection eBay is refusing is the
+        // exact lie this check exists to stop.
+        Assert.Contains("markSetupStep('step2', false", paint, StringComparison.Ordinal);
+        Assert.Contains("is-problem", paint, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFrontEndReddensExactlyTheStatesTheServerCallsDefinitive()
+    {
+        // Two copies of one rule is one copy too many, so this holds them together: the states the
+        // UI marks `bad: true` must be exactly the states the server allows to untick step 2.
+        var table = Between(Js, "const EBAY_LINK_UI = {", "\n  };");
+
+        foreach (var state in EbayLinkCheck.All)
+        {
+            var line = table.Split('\n').SingleOrDefault(l =>
+                l.TrimStart().StartsWith($"{state}:", StringComparison.Ordinal) ||
+                l.TrimStart().StartsWith($"'{state}':", StringComparison.Ordinal));
+
+            Assert.True(line is not null, $"the front end has no row for '{state}'");
+            var reddens = line!.Contains("bad: true", StringComparison.Ordinal);
+            Assert.Equal(EbayLinkCheck.IsDefinitive(state), reddens);
+        }
+    }
+
+    [Fact]
+    public void TheConnectionIsTestedWhereTheSellerConnectsIt()
+    {
+        // A check nobody runs is worth nothing, so it sits on the eBay step in settings — and it
+        // runs itself the moment a sign-in lands, which is the one second the seller is still
+        // looking at the screen that caused it.
+        Assert.Contains("id=\"btn-test-ebay-link\"", Html, StringComparison.Ordinal);
+        Assert.Contains("id=\"ebay-link-check-msg\"", Html, StringComparison.Ordinal);
+        Assert.Contains(".ebay-link-check", Css, StringComparison.Ordinal);
+
+        Assert.Contains("'btn-test-ebay-link', 'click'", Js, StringComparison.Ordinal);
+        var auth = Between(Js, "function updateAuthUI(connected) {", "\n  }");
+        Assert.Contains("checkEbayLink({ quiet: true })", auth, StringComparison.Ordinal);
+        // But not on every page load: the first paint of an already-connected app is not news, and
+        // reaching eBay on every launch is what /api/onboarding is careful not to do.
+        Assert.Contains("authUiPainted", auth, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheDashboardChipDoesNotCallARefusedSignInConnected()
+    {
+        var chips = Between(Js, "function renderDashStatus() {", "\n  }");
+
+        Assert.Contains("ebayLinkIsBroken()", chips, StringComparison.Ordinal);
+        Assert.Contains("eBay is refusing this sign-in", chips, StringComparison.Ordinal);
+
+        // Nor does the top bar, which is the one readout on screen from every page in the app.
+        var paint = Between(Js, "function paintEbayLinkState() {", "\n  }");
+        Assert.Contains("auth-status", paint, StringComparison.Ordinal);
+        Assert.Contains("badge-warn", paint, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheCheckedConnectionStateReachesTheFrontEndFromThePlan()
+    {
+        // One answer, read by the panel, the settings row and the chip — rather than three screens
+        // each keeping their own idea of whether eBay is connected.
+        Assert.Contains("plan.ebayLinkState", Js, StringComparison.Ordinal);
+        Assert.Equal(EbayLinkCheck.Untested,
+            OnboardingProgress.Build(new OnboardingProgress.Facts(false, false)).EbayLinkState);
+    }
+
+    [Fact]
+    public void ThePageAsksTheEndpointTheServerActuallyServes()
+    {
+        var program = File.ReadAllText(Path.Combine(RepoRoot(), "ING eBay AutoLister", "Program.cs"));
+
+        Assert.Contains("'/api/ebay-link/check'", Js, StringComparison.Ordinal);
+        Assert.Contains("\"/api/ebay-link/check\"", program, StringComparison.Ordinal);
+    }
 }

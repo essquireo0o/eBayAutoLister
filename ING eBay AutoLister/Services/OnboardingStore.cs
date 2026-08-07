@@ -25,6 +25,7 @@ public sealed class OnboardingStore
     private const string DismissedKey = "flag:dismissed";
     private const string WelcomeSeenKey = "flag:welcome_seen";
     private const string KeyCheckKey = "flag:ai_key_check";
+    private const string EbayCheckKey = "flag:ebay_link_check";
 
     private readonly string _databasePath;
     private readonly object _gate = new();
@@ -104,15 +105,52 @@ public sealed class OnboardingStore
     /// about the new one would be a guess.
     /// </para>
     /// </remarks>
-    public void RecordKeyCheck(string? state, DateTimeOffset? at = null)
-    {
-        var normalized = AiKeyCheck.Normalize(state);
+    public void RecordKeyCheck(string? state, DateTimeOffset? at = null) =>
+        RecordVerdict(KeyCheckKey, AiKeyCheck.Normalize(state), AiKeyCheck.Untested, at);
 
+    /// <summary>The last thing Anthropic said about the saved key, and when it said it.</summary>
+    public (string State, DateTimeOffset? At) KeyCheck()
+    {
+        var rows = ReadAll();
+        return rows.TryGetValue(KeyCheckKey, out var row)
+            ? (AiKeyCheck.Normalize(row.Note), row.When)
+            : (AiKeyCheck.Untested, null);
+    }
+
+    /// <summary>
+    /// Records what eBay said about the stored sign-in, replacing whatever it said last time.
+    /// </summary>
+    /// <remarks>
+    /// The same bargain as <see cref="RecordKeyCheck"/>, one row along: the current state of one
+    /// connection, not a milestone. A seller who signs in again after a refusal has to be able to
+    /// turn step 2 green again, and <see cref="EbayLinkCheck.Untested"/> clears the row, which is
+    /// what a fresh sign-in does — the old verdict was about a grant eBay has already replaced.
+    /// </remarks>
+    public void RecordEbayCheck(string? state, DateTimeOffset? at = null) =>
+        RecordVerdict(EbayCheckKey, EbayLinkCheck.Normalize(state), EbayLinkCheck.Untested, at);
+
+    /// <summary>The last thing eBay said about the stored sign-in, and when it said it.</summary>
+    public (string State, DateTimeOffset? At) EbayCheck()
+    {
+        var rows = ReadAll();
+        return rows.TryGetValue(EbayCheckKey, out var row)
+            ? (EbayLinkCheck.Normalize(row.Note), row.When)
+            : (EbayLinkCheck.Untested, null);
+    }
+
+    /// <summary>
+    /// One row's worth of "what the other end last said", shared by the key and the eBay checks
+    /// because they are the same shape: last write wins, the untested spelling clears the row
+    /// rather than storing the word, and a database that cannot take it costs one line of
+    /// explanation on a checklist and nothing else.
+    /// </summary>
+    private void RecordVerdict(string key, string normalized, string untested, DateTimeOffset? at)
+    {
         // Nothing to say, or nowhere to say it: an install whose migration never landed keeps
-        // working, it just never shows a checked key.
-        if (normalized == AiKeyCheck.Untested || !_hasNote)
+        // working, it just never shows a checked key or a checked connection.
+        if (normalized == untested || !_hasNote)
         {
-            if (normalized == AiKeyCheck.Untested) SetFlag(KeyCheckKey, false);
+            if (normalized == untested) SetFlag(key, false);
             return;
         }
 
@@ -126,7 +164,7 @@ public sealed class OnboardingStore
                     INSERT INTO onboarding (key, reached_at, note) VALUES (@key, @reached_at, @note)
                     ON CONFLICT(key) DO UPDATE SET reached_at = @reached_at, note = @note;
                     """;
-                command.Parameters.AddWithValue("@key", KeyCheckKey);
+                command.Parameters.AddWithValue("@key", key);
                 command.Parameters.AddWithValue("@reached_at", (at ?? DateTimeOffset.UtcNow).ToString("O"));
                 command.Parameters.AddWithValue("@note", normalized);
                 command.ExecuteNonQuery();
@@ -136,15 +174,6 @@ public sealed class OnboardingStore
         {
             // Same bargain as Reach: a lost verdict costs one line of explanation on a checklist.
         }
-    }
-
-    /// <summary>The last thing Anthropic said about the saved key, and when it said it.</summary>
-    public (string State, DateTimeOffset? At) KeyCheck()
-    {
-        var rows = ReadAll();
-        return rows.TryGetValue(KeyCheckKey, out var row)
-            ? (AiKeyCheck.Normalize(row.Note), row.When)
-            : (AiKeyCheck.Untested, null);
     }
 
     /// <summary>The seller closed the panel, or asked for it back.</summary>
@@ -160,6 +189,9 @@ public sealed class OnboardingStore
         var keyCheck = rows.TryGetValue(KeyCheckKey, out var checkRow)
             ? (State: AiKeyCheck.Normalize(checkRow.Note), At: (DateTimeOffset?)checkRow.When)
             : (State: AiKeyCheck.Untested, At: (DateTimeOffset?)null);
+        var ebayCheck = rows.TryGetValue(EbayCheckKey, out var ebayRow)
+            ? (State: EbayLinkCheck.Normalize(ebayRow.Note), At: (DateTimeOffset?)ebayRow.When)
+            : (State: EbayLinkCheck.Untested, At: (DateTimeOffset?)null);
 
         return new OnboardingProgress.Facts(
             HasAiKey: hasAiKey,
@@ -170,7 +202,9 @@ public sealed class OnboardingStore
             Dismissed: rows.ContainsKey(DismissedKey),
             WelcomeSeen: rows.ContainsKey(WelcomeSeenKey),
             AiKeyState: keyCheck.State,
-            AiKeyCheckedAt: keyCheck.At);
+            AiKeyCheckedAt: keyCheck.At,
+            EbayLinkState: ebayCheck.State,
+            EbayLinkCheckedAt: ebayCheck.At);
 
         DateTimeOffset? Get(string key) => rows.TryGetValue(key, out var row) ? row.When : null;
     }

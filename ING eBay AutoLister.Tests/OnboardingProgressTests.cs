@@ -384,4 +384,154 @@ public class OnboardingProgressTests
         // ShowWelcome asks "has this install ever done anything", and pasting a key is something.
         Assert.False(OnboardingProgress.Build(WithKey(AiKeyCheck.Rejected)).ShowWelcome);
     }
+
+    // ── Step 2: a held token is not a working connection ─────────────────────
+
+    private static readonly DateTimeOffset Checked = new(2026, 8, 7, 15, 0, 0, TimeSpan.Zero);
+
+    private static OnboardingProgress.Facts WithEbay(string state) => new(
+        HasAiKey: false, EbayConnected: true,
+        EbayLinkState: state, EbayLinkCheckedAt: Checked);
+
+    [Theory]
+    [InlineData(EbayLinkCheck.Rejected)]
+    [InlineData(EbayLinkCheck.Expired)]
+    [InlineData(EbayLinkCheck.NoSession)]
+    [InlineData(EbayLinkCheck.NotConfigured)]
+    public void AConnectionEbayWillNotPublishThroughDoesNotTickStepTwo(string state)
+    {
+        var plan = OnboardingProgress.Build(WithEbay(state));
+
+        var ebay = Step(plan, "ebay");
+        Assert.False(ebay.Done);
+        Assert.NotEqual("", ebay.Problem);
+        // And it says which of the four it is, not a generic "there is a problem".
+        Assert.Contains(EbayLinkCheck.Describe(state).Headline, ebay.Problem, StringComparison.Ordinal);
+        Assert.Contains(EbayLinkCheck.Describe(state).WhatToDo, ebay.Problem, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(EbayLinkCheck.Untested)]
+    [InlineData(EbayLinkCheck.Unreachable)]
+    [InlineData(null)]
+    public void AnAnswerThatProvesNothingLeavesStepTwoExactlyAsItWas(string? state)
+    {
+        // The load-bearing case, and the same one as step 1's: eBay being down says nothing about
+        // this seller's account, and every install that never runs the check keeps the old
+        // behaviour — a held token ticks step 2.
+        var plan = OnboardingProgress.Build(Fresh() with { EbayConnected = true, EbayLinkState = state });
+
+        var ebay = Step(plan, "ebay");
+        Assert.True(ebay.Done);
+        Assert.Equal("", ebay.Problem);
+        Assert.Equal("eBay is connected.", ebay.Note);
+    }
+
+    [Fact]
+    public void ATestedConnectionGetsTheStrongerSentenceAndTheDate()
+    {
+        var ebay = Step(OnboardingProgress.Build(WithEbay(EbayLinkCheck.Works)), "ebay");
+
+        Assert.True(ebay.Done);
+        Assert.Equal("", ebay.Problem);
+        Assert.Contains("it answered when we tested it", ebay.Note, StringComparison.Ordinal);
+        Assert.Contains("Aug 7", ebay.Note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AConnectionThatWorksWithNoDateStillReadsAsASentence()
+    {
+        var plan = OnboardingProgress.Build(
+            Fresh() with { EbayConnected = true, EbayLinkState = EbayLinkCheck.Works });
+
+        Assert.EndsWith(".", Step(plan, "ebay").Note, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(EbayLinkCheck.Rejected)]
+    [InlineData(EbayLinkCheck.NoSession)]
+    [InlineData(EbayLinkCheck.NotConfigured)]
+    public void AVerdictAboutAConnectionThatIsNotThereChangesNothing(string state)
+    {
+        // With no token stored, step 2 is already outstanding and there is nothing to untick. A red
+        // problem line under a step the seller has plainly not done yet is noise.
+        var plan = OnboardingProgress.Build(Fresh() with { EbayLinkState = state });
+
+        var ebay = Step(plan, "ebay");
+        Assert.False(ebay.Done);
+        Assert.Equal("", ebay.Problem);
+        Assert.Equal("", ebay.Note);
+        // Nor does it jump the queue: with no key saved either, step 1 is still the next thing.
+        Assert.Equal("key", plan.NextStepId);
+    }
+
+    [Fact]
+    public void ABrokenConnectionIsNotASetUpApp()
+    {
+        // Every eBay-only screen reads SetupComplete. A token that cannot publish is a screen away
+        // from working, not set up.
+        Assert.False(OnboardingProgress.Build(
+            WithEbay(EbayLinkCheck.Expired) with { HasAiKey = true }).SetupComplete);
+        Assert.True(OnboardingProgress.Build(
+            WithEbay(EbayLinkCheck.Works) with { HasAiKey = true }).SetupComplete);
+    }
+
+    [Fact]
+    public void ABrokenConnectionSaysSoInTheHeadline()
+    {
+        var plan = OnboardingProgress.Build(WithEbay(EbayLinkCheck.Rejected));
+
+        Assert.Equal("Your eBay connection isn't working yet", plan.Headline);
+        // The sub-line is the short form only: the row below already carries the paragraph, and
+        // printing it twice on one screen makes both copies read as boilerplate.
+        Assert.Equal(EbayLinkCheck.Describe(EbayLinkCheck.Rejected).Headline, plan.Sub);
+    }
+
+    [Fact]
+    public void TheKeyIsNamedFirstWhenBothAreBroken()
+    {
+        // Two problems named in one headline reads as an app that is broken. One at a time, in the
+        // order the seller does them.
+        var plan = OnboardingProgress.Build(new OnboardingProgress.Facts(
+            HasAiKey: true, EbayConnected: true,
+            AiKeyState: AiKeyCheck.Rejected, EbayLinkState: EbayLinkCheck.Rejected));
+
+        Assert.Equal("Your Claude key isn't working yet", plan.Headline);
+        Assert.NotEqual("", Step(plan, "key").Problem);
+        // The eBay row still says its own piece — it is only the headline that has to choose.
+        Assert.NotEqual("", Step(plan, "ebay").Problem);
+        Assert.Equal(0, plan.Done);
+    }
+
+    [Fact]
+    public void ABrokenConnectionDoesNotUntickAnythingThatWasActuallyEarned()
+    {
+        var when = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var plan = OnboardingProgress.Build(Everything(when) with { EbayLinkState = EbayLinkCheck.Expired });
+
+        Assert.False(Step(plan, "ebay").Done);
+        Assert.True(Step(plan, "priced").Done);
+        Assert.True(Step(plan, "written").Done);
+        // Published is the milestone this failure would stop happening *again* — it does not unhappen.
+        Assert.True(Step(plan, "published").Done);
+        Assert.Equal(4, plan.Done);
+        Assert.False(plan.FirstFlipComplete);
+    }
+
+    [Fact]
+    public void ABrokenConnectionIsTheOneNextThingToDo()
+    {
+        var plan = OnboardingProgress.Build(
+            WithEbay(EbayLinkCheck.Rejected) with { HasAiKey = true, AiKeyState = AiKeyCheck.Works });
+
+        Assert.Equal("ebay", plan.NextStepId);
+        Assert.Equal(1, plan.Steps.Count(step => step.State == "next"));
+    }
+
+    [Fact]
+    public void TheConnectionStateIsOnThePlanForTheScreensOutsideThePanel()
+    {
+        Assert.Equal(EbayLinkCheck.Rejected, OnboardingProgress.Build(WithEbay(EbayLinkCheck.Rejected)).EbayLinkState);
+        Assert.Equal(EbayLinkCheck.Untested, OnboardingProgress.Build(Fresh()).EbayLinkState);
+    }
 }

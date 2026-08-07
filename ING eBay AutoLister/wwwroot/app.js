@@ -17792,6 +17792,109 @@
     }
   }
 
+  // ── Does the eBay connection actually work? ────────────────────────────────
+  //
+  // The same argument as the key, one required step along. "Connected to eBay" has only ever meant
+  // "this install is holding a token", and a grant the seller revoked, a refresh token past its
+  // eighteen months, a sign-in that came back to the wrong port and a consent screen where the
+  // selling permissions were never granted all satisfy that. The row goes green, the tester spends
+  // five minutes on steps 3-5, and the failure arrives at the publish — the last step of the path
+  // and the most expensive one to reach.
+  //
+  // The server already knew how to ask (ConnectionDoctor: renew the sign-in, then one authenticated
+  // Sell API call). What was missing was anywhere for the answer to show up. See EbayLinkCheck.
+
+  let ebayLinkState = 'untested';
+
+  const EBAY_LINK_UI = {
+    works:            { text: '✓ eBay renewed the sign-in and answered.',            cls: 'ok',    bad: false },
+    rejected:         { text: '✗ eBay is refusing this sign-in.',                    cls: 'error', bad: true  },
+    expired:          { text: '✗ The eBay sign-in has expired — sign in again.',     cls: 'error', bad: true  },
+    'no-session':     { text: '✗ The eBay sign-in never finished.',                  cls: 'error', bad: true  },
+    'not-configured': { text: '✗ This app can’t start an eBay sign-in yet.',         cls: 'error', bad: true  },
+    unreachable:      { text: 'Couldn’t reach eBay. This says nothing about your account — try again in a moment.',
+                        cls: '', bad: false },
+    untested:         { text: '', cls: '', bad: false },
+  };
+
+  function ebayLinkIsBroken() {
+    return isConnected && !!EBAY_LINK_UI[ebayLinkState]?.bad;
+  }
+
+  /** Paints the settings row from whatever the last verdict was. Safe to call at any time. */
+  function paintEbayLinkState() {
+    const ui = EBAY_LINK_UI[ebayLinkState] || EBAY_LINK_UI.untested;
+    const msg = $('ebay-link-check-msg');
+    if (msg && msg.dataset.busy !== '1') {
+      msg.textContent = ui.text;
+      msg.className = `sd-test-msg ${ui.cls}`;
+    }
+
+    // The top bar made the same claim as the chip and the row, and it is the one on screen from
+    // every page in the app. A green "Connected to eBay" over a sign-in eBay is refusing is the
+    // last place this lie was still being told.
+    const badge = $('auth-status');
+    if (badge) {
+      const broken = ebayLinkIsBroken();
+      badge.textContent = broken ? 'eBay needs attention' : 'Connected to eBay';
+      badge.classList.toggle('badge-on', !broken);
+      badge.classList.toggle('badge-warn', broken);
+    }
+
+    renderDashStatus();
+  }
+
+  /**
+   * Asks the server to ask eBay. Records the answer on the way through, so the dashboard is still
+   * right after a restart, and repaints the checklist from the plan the same call returns.
+   *
+   * `quiet` is the automatic run just after a sign-in: no spinner text over a row the seller isn't
+   * looking at, and no activity line for a connection that simply works.
+   */
+  async function checkEbayLink({ announce = false, quiet = false } = {}) {
+    const msg = $('ebay-link-check-msg');
+    const btn = $('btn-test-ebay-link');
+    if (msg && !quiet) { msg.dataset.busy = '1'; msg.textContent = 'Asking eBay…'; msg.className = 'sd-test-msg'; }
+    if (btn && !quiet) btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/ebay-link/check', { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      ebayLinkState = body?.verdict?.state || 'untested';
+      if (msg) delete msg.dataset.busy;
+      paintEbayLinkState();
+      if (body?.plan) renderOnboarding(body.plan);
+
+      // Re-asserted *after* the plan, and this line is load-bearing. The server refuses to record
+      // "couldn't reach eBay" — it says nothing about the account and must not sit where a real
+      // verdict goes — so the plan that comes back in the same response still carries the previous
+      // state, and repainting from it wiped the one sentence the seller pressed the button for.
+      // For every recorded verdict the two agree and this changes nothing.
+      ebayLinkState = body?.verdict?.state || ebayLinkState;
+      paintEbayLinkState();
+      // A broken connection is worth an activity line whoever asked for the check — it is the
+      // reason the next publish will fail, and the log is where a tester looks when one does.
+      if (body?.verdict && (announce || !body.verdict.ok)) {
+        addActivity(body.verdict.ok ? 'eBay connection checked' : 'eBay connection problem',
+          `${body.verdict.headline} ${body.verdict.whatToDo}`);
+      }
+      return body?.verdict || null;
+    } catch (err) {
+      // A failed round trip to our own server says nothing about eBay either.
+      if (msg) {
+        delete msg.dataset.busy;
+        if (!quiet) {
+          msg.textContent = `Could not run the check: ${errorText(err)}`;
+          msg.className = 'sd-test-msg error';
+        }
+      }
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // ── Fees & Costs (Settings) ────────────────────────────────────────────────
   // These eleven numbers are the difference between a net profit figure and a guess. They live on
   // the server in one FeeProfile, so saving them re-prices every screen at once — no re-scan, no
@@ -17993,6 +18096,7 @@
     // Anthropic is the only party that can answer "does this key work". Pressing this is also the
     // one way to clear a stale "rejected" after the seller has fixed the key.
     on('btn-test-ai-key', 'click', () => checkAiKey({ announce: true }));
+    on('btn-test-ebay-link', 'click', () => checkEbayLink({ announce: true }));
 
     on('s-anthropic-reveal', 'click', () => {
       const input = $('s-anthropic-key');
@@ -20008,8 +20112,20 @@
     while (list.children.length > 6) list.lastElementChild?.remove();
   }
 
+  // Whether this page has painted the eBay connection state even once. The first paint is the
+  // status call every launch makes, and a connection already made is not news — a check there
+  // would reach eBay on every page load, which is exactly what /api/onboarding is careful not to do.
+  let authUiPainted = false;
+
   function updateAuthUI(connected) {
+    // A sign-in landing *during* this session is different: it is the one second in which the
+    // seller is still looking at the eBay screen and can do something about a bad one. Left to a
+    // button, the check is worth nothing — nobody presses Test connection on a connection they
+    // have just been told is fine.
+    const justConnected = authUiPainted && connected && !isConnected;
     isConnected = connected;
+    authUiPainted = true;
+    if (justConnected) checkEbayLink({ quiet: true });
     if (connected) {
       $('auth-status')?.classList.remove('hidden');
       $('btn-connect')?.classList.add('hidden');
@@ -20107,8 +20223,17 @@
   function renderDashStatus() {
     // Connection only. This chip used to read "eBay connected · policies needed" and stay amber
     // until policies were chosen — the same nag the seller asked to be rid of, in a second place.
-    setDashChip('dash-chip-ebay', isConnected,
-      'eBay connected', 'eBay not connected');
+    //
+    // "Connected" was also true of a revoked grant and an expired sign-in: the chip was reporting
+    // that a token is on disk. It now reports what eBay said, when eBay has been asked.
+    const ebayOk = isConnected && !ebayLinkIsBroken();
+    setDashChip('dash-chip-ebay', ebayOk,
+      ebayLinkState === 'works' ? 'eBay connection works' : 'eBay connected',
+      ebayLinkState === 'rejected' ? 'eBay is refusing this sign-in'
+      : ebayLinkState === 'expired' ? 'eBay sign-in expired'
+      : ebayLinkState === 'no-session' && isConnected ? 'eBay sign-in unfinished'
+      : ebayLinkState === 'not-configured' && isConnected ? 'eBay sign-in unavailable'
+      : 'eBay not connected');
     // "Saved" was the only thing this chip could ever say. A key Anthropic has refused is saved
     // too, and a green chip over it is the app agreeing with a setup that cannot work.
     const keyOk = hasAnthropicKey && !aiKeyIsBroken();
@@ -20175,6 +20300,13 @@
       paintAiKeyState();
     }
 
+    // And what eBay last said about the sign-in, for the same reason: step 2 is painted from local
+    // state the instant eBay answers, and local state cannot tell a working grant from a revoked one.
+    if (plan.ebayLinkState) {
+      ebayLinkState = plan.ebayLinkState;
+      paintEbayLinkState();
+    }
+
     plan.steps.forEach(step => {
       const prefix = ONBOARD_ROWS[step.id];
       const row = $(`${prefix}-row`);
@@ -20184,6 +20316,7 @@
       // that key works, and a step that says "✓ Key saved" over a key Anthropic has refused is the
       // exact lie this check exists to stop. So a problem, and only a problem, overrides it here.
       if (prefix === 'step1') paintStep1Problem(step);
+      if (prefix === 'step2') paintStep2Problem(step);
 
       // Steps 1 and 2 belong to updateSetupChecklist, which paints them the instant a key is saved
       // or eBay answers — with the right button labels ("✓ Key saved", "✓ Connected"). Repainting
@@ -20238,6 +20371,33 @@
     }
 
     if (problem) markSetupStep('step1', false, 'Key saved');
+  }
+
+  /**
+   * Step 2's second line, and the same bargain as step 1's: empty on a healthy install, and on a
+   * broken one the sentence saying which of the four failures happened and what to do about it.
+   *
+   * No link element here, because there is nowhere else to go — every one of these is fixed by the
+   * row's own "Log into eBay →" button, which taking the tick off puts back.
+   */
+  function paintStep2Problem(step) {
+    const problem = step?.problem || '';
+    const box  = $('step2-problem');
+    const text = $('step2-problem-text');
+
+    if (text) text.textContent = problem;
+    box?.classList.toggle('hidden', !problem);
+    $('step2-row')?.classList.toggle('is-problem', !!problem);
+
+    if (problem) {
+      markSetupStep('step2', false, 'Connected');
+      // The copy above still reads "eBay is connected", which is the claim being withdrawn.
+      setText('step2-copy', 'Log into eBay so the app can read your listings and publish for you.');
+    } else if (step?.done && step.note) {
+      // And the other half of the same honesty: once eBay has actually answered, the row says so
+      // with the date, rather than repeating the "eBay is connected" that local state already knew.
+      setText('step2-copy', step.note);
+    }
   }
 
   // Server step id → the row prefix markSetupStep already understands.

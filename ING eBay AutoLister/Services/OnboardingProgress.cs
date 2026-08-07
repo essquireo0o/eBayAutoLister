@@ -65,6 +65,12 @@ public static class OnboardingProgress
     /// the old behaviour: a saved key ticks step 1.
     /// </param>
     /// <param name="AiKeyCheckedAt">When that was established, for the dated line on a done row.</param>
+    /// <param name="EbayLinkState">
+    /// The last thing eBay said about the stored sign-in — see <see cref="EbayLinkCheck"/>. Defaults
+    /// to untested, which is what every install said before the check existed and is treated exactly
+    /// as the old behaviour: a held token ticks step 2.
+    /// </param>
+    /// <param name="EbayLinkCheckedAt">When that was established, for the dated line on a done row.</param>
     public sealed record Facts(
         bool HasAiKey,
         bool EbayConnected,
@@ -74,7 +80,9 @@ public static class OnboardingProgress
         bool Dismissed = false,
         bool WelcomeSeen = false,
         string? AiKeyState = null,
-        DateTimeOffset? AiKeyCheckedAt = null);
+        DateTimeOffset? AiKeyCheckedAt = null,
+        string? EbayLinkState = null,
+        DateTimeOffset? EbayLinkCheckedAt = null);
 
     /// <param name="Id">Stable id. The UI keys rows off this, never off the number.</param>
     /// <param name="Number">Where it sits in the path, 1-based, for the numbered bead on the row.</param>
@@ -126,6 +134,7 @@ public static class OnboardingProgress
     /// The last thing Anthropic said about the key, so the pages outside this panel — the settings
     /// pill, the dashboard chip — can read one answer rather than each keeping their own.
     /// </param>
+    /// <param name="EbayLinkState">The same, for what eBay last said about the stored sign-in.</param>
     public sealed record Plan(
         IReadOnlyList<Step> Steps,
         int Done,
@@ -138,7 +147,8 @@ public static class OnboardingProgress
         string? NextStepId,
         string AiKeyState,
         bool Dismissed,
-        bool ShowWelcome);
+        bool ShowWelcome,
+        string EbayLinkState = EbayLinkCheck.Untested);
 
     /// <summary>
     /// The one sentence a tester should be able to repeat after five minutes. Kept here rather than
@@ -168,6 +178,23 @@ public static class OnboardingProgress
                 ? dated
                 : "Key saved, and Anthropic answered when we tested it.";
 
+        // And a held token is not a working connection, for the same reason and with a worse
+        // ending: a revoked grant, an expired refresh token and a consent screen where the selling
+        // permissions were never granted all look like "something is stored" from disk, and the
+        // failure they cause arrives at step 5 — the publish, the last and most expensive step of
+        // the path to reach. Same rule as the key: only an answer that says something about this
+        // seller's account may untick the row. eBay being down says nothing about it.
+        var ebayVerdict = EbayLinkCheck.Describe(facts.EbayLinkState, facts.EbayLinkCheckedAt);
+        var ebayBroken = facts.EbayConnected && EbayLinkCheck.IsDefinitive(ebayVerdict.State);
+        var ebayDone = facts.EbayConnected && !ebayBroken;
+
+        var ebayNote =
+            !ebayDone ? ""
+            : ebayVerdict.State != EbayLinkCheck.Works ? "eBay is connected."
+            : Stamp("eBay is connected, and it answered when we tested it", facts.EbayLinkCheckedAt) is { Length: > 0 } ebayDated
+                ? ebayDated
+                : "eBay is connected, and it answered when we tested it.";
+
         var steps = new List<Step>
         {
             Make("key", 1,
@@ -185,7 +212,8 @@ public static class OnboardingProgress
                 "Your own account, so the app can read what you already have listed, publish new listings, and "
                     + "later import what each one actually sold for.",
                 "Log into eBay →", "ebay",
-                facts.EbayConnected, facts.EbayConnected ? "eBay is connected." : ""),
+                ebayDone, ebayNote,
+                ebayBroken ? $"{ebayVerdict.Headline} {ebayVerdict.WhatToDo}" : ""),
 
             Make("priced", 3,
                 "Price one item against real sold comps",
@@ -221,7 +249,7 @@ public static class OnboardingProgress
 
         // "Set up" now means the key works, not that a key exists. Every eBay-only screen that reads
         // this flag was already asking the question this way; it just had no way to find out.
-        var setupComplete = keyDone && facts.EbayConnected;
+        var setupComplete = keyDone && ebayDone;
         var flipComplete = done == total;
 
         return new Plan(
@@ -231,11 +259,18 @@ public static class OnboardingProgress
             PercentComplete: (int)Math.Round(done * 100.0 / total, MidpointRounding.AwayFromZero),
             SetupComplete: setupComplete,
             FirstFlipComplete: flipComplete,
-            Headline: keyBroken ? "Your Claude key isn't working yet" : Headline(done, setupComplete, flipComplete),
-            // Which of the two failures it is, and no more. The row below carries the same sentence
-            // plus what to do about it and the link that does it — printing the whole paragraph
-            // twice on one screen makes both copies read as boilerplate.
-            Sub: keyBroken ? keyVerdict.Headline : Sub(next, flipComplete),
+            // The key first when both are broken. It is step 1, it is the one a tester is most
+            // likely to have got wrong on day one, and a headline that names two problems at once
+            // reads as an app that is broken rather than as two things to go and fix in order.
+            Headline: keyBroken ? "Your Claude key isn't working yet"
+                : ebayBroken ? "Your eBay connection isn't working yet"
+                : Headline(done, setupComplete, flipComplete),
+            // Which failure it is, and no more. The row below carries the same sentence plus what
+            // to do about it and the link that does it — printing the whole paragraph twice on one
+            // screen makes both copies read as boilerplate.
+            Sub: keyBroken ? keyVerdict.Headline
+                : ebayBroken ? ebayVerdict.Headline
+                : Sub(next, flipComplete),
             NextStepId: next?.Id,
             AiKeyState: keyVerdict.State,
             Dismissed: facts.Dismissed,
@@ -247,7 +282,8 @@ public static class OnboardingProgress
                 && !facts.EbayConnected
                 && facts.PricedAt is null
                 && facts.WrittenAt is null
-                && facts.PublishedAt is null);
+                && facts.PublishedAt is null,
+            EbayLinkState: ebayVerdict.State);
     }
 
     private static Step Make(string id, int number, string title, string why,

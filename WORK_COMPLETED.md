@@ -13995,3 +13995,142 @@ one place in this app that knows what an `authentication_error` looks like.
   and the row has nothing to add.
 - **Nothing measures whether it helps.** Same as the path it sits on: no funnel, no telemetry, and no
   way to know from here how many testers were saved a wasted evening by it.
+
+---
+
+# Ask eBay whether it will take a listing, before the tester spends five minutes on the rest
+
+## The question this answers
+
+Step 1 stopped ticking green over a key Anthropic refuses. Step 2 was still doing exactly that, one
+required step along and with a worse ending.
+
+"Connect eBay" ticks when this install is **holding a token**. Holding a token is not evidence that
+eBay will take a listing. Four things look identical from disk:
+
+- a grant the seller revoked in their own eBay account,
+- a refresh token that reached the end of its eighteen months,
+- a sign-in that came back through the relay to the wrong port and stored nothing usable,
+- and a consent screen where the selling permissions were never granted — which stores perfectly and
+  then cannot list anything.
+
+All four leave something on disk, so the row went green. The tester spent five minutes on steps 3-5
+and met the failure at **the publish** — the last step of the path, and the most expensive one to
+reach, because by then they have priced an item and had the AI write a listing for it.
+
+## Nothing new asks eBay — the answer had nowhere to land
+
+`ConnectionDoctor.CheckEbayAsync` has done this properly since long before onboarding existed: a live
+token refresh, then an authenticated Sell API call **on the token that refresh returned**. What was
+missing was anywhere for its verdict to show up. It sat behind the Connections card, which runs all
+four connections, launches two headless browsers and takes the better part of a minute — a "why is
+this broken" button that no first-day tester knows exists.
+
+So `EbayLinkCheck` is a translation layer, not a second reading of eBay's HTTP statuses. There is one
+place in this app that decides what a 401 from the Sell API means and it is still `ClassifyEbay`.
+
+## What each answer is allowed to do
+
+The load-bearing distinction is the same as the key's: not "did the check succeed" but "does this
+answer say anything about **this seller's account**".
+
+| eBay said | State | Untick step 2? |
+|---|---|---|
+| refresh + Sell API both answered | `works` | no — ticked, with the date |
+| revoked, or the Sell API refused the token | `rejected` | **yes** |
+| the refresh token is past its expiry | `expired` | **yes** |
+| no refresh token stored / the sign-in never completed | `no-session` | **yes** |
+| no app keys, or the app is not on the address eBay returns to | `not-configured` | **yes** |
+| token endpoint down, 5xx, no answer, timeout | `unreachable` | **no** |
+
+`unreachable` is discarded rather than recorded. eBay's end being unwell says nothing about the
+seller's account, and a tester on a train must not be told their sign-in is broken. An install that
+never runs the check behaves exactly as it did before: `untested` ticks step 2 off a held token.
+
+The four failures do not share a sentence, because they do not share a fix — and `not-configured` is
+the one that clicking Connect cannot fix at all, so it says restart first.
+
+## Where it says it
+
+- **The dashboard checklist.** Step 2 loses its tick, turns red and carries the sentence. No fix
+  link: every one of these is fixed by the row's own **Log into eBay →** button, which unticking
+  puts back. Once eBay *has* answered, the row reads *"eBay is connected, and it answered when we
+  tested it on Aug 7."*
+- **Settings → the eBay step.** A **Test connection** button above Load Policies, in the same rule as
+  Test key — the two verdicts are read the same way and must not look like different kinds of thing.
+- **On sign-in.** Run automatically the moment a connection lands *during a session*, which is the
+  one second the seller is still looking at the screen that caused it. Deliberately **not** on the
+  first paint of an already-connected app: reaching eBay on every page load is what `/api/onboarding`
+  is careful not to do.
+- **The hero chip and the top bar.** "eBay connected" and the green "Connected to eBay" badge were
+  both reporting that a token is on disk. The badge is the one readout visible from every page in the
+  app, and it was the last place this claim was still being made unconditionally.
+- **The headline.** *"Your eBay connection isn't working yet"* — but the key is named first when both
+  are broken. Two problems in one headline reads as an app that is broken, rather than as two things
+  to fix in order.
+
+## What it refuses to do
+
+- **It never guesses.** Only the four definitive states are recorded.
+- **It does not untick what was earned.** A seller whose sign-in expires has still priced, written
+  and published. Only step 2 is in question.
+- **A verdict about a connection that is not there changes nothing.** With no token stored, step 2 is
+  already outstanding; a red problem line under a step the seller plainly has not done yet is noise.
+- **It forgets a stale verdict on a new sign-in.** All four token-storing paths (`/api/ebay/callback`,
+  `/finish`, `/token`, `/exchange-redirect-url`) and `/disconnect` clear it. The last answer was
+  about a grant eBay has already replaced.
+- **A broken connection is not a set-up app.** `SetupComplete` — which every eBay-only screen reads —
+  now means the connection works, not that a token exists.
+
+## The bug the browser found
+
+Pressing **Test connection** while eBay was down showed the answer and then wiped it, in the same
+tick. The server refuses to record `unreachable`, so the plan returned in that same response still
+carried the previous state, and repainting from it blanked the one sentence the seller pressed the
+button for. The verdict is now re-asserted **after** the plan; for every recorded state the two agree
+and the line changes nothing.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/EbayLinkCheck.cs` | **New** — the seven states, what each means and what to do about it. Pure, and driven off `ConnectionState` rather than its own reading of eBay's statuses |
+| `ING eBay AutoLister/Services/OnboardingStore.cs` | `RecordEbayCheck` / `EbayCheck()`; the key and eBay verdicts now share one `RecordVerdict` — same shape, same last-write-wins, same migration tolerance |
+| `ING eBay AutoLister/Services/OnboardingProgress.cs` | `Facts.EbayLinkState`/`EbayLinkCheckedAt`, `Plan.EbayLinkState`; step 2 and `SetupComplete` now mean "the connection works"; the headline picks one problem |
+| `ING eBay AutoLister/Program.cs` | `POST /api/ebay-link/check`; the verdict is forgotten on all four token-storing paths and on disconnect |
+| `ING eBay AutoLister/wwwroot/index.html` | `step2-problem` on the checklist row, the Test connection row on the eBay step; `app.js?v=144`, `style.css?v=127` |
+| `ING eBay AutoLister/wwwroot/app.js` | `checkEbayLink`, `paintEbayLinkState`, `paintStep2Problem`, `EBAY_LINK_UI`; the automatic run on a sign-in landing; the chip and the top-bar badge read the verdict |
+| `ING eBay AutoLister/wwwroot/style.css` | `.ebay-link-check` folded into the `.ai-key-check` rule — one rule, so the two verdict rows cannot drift apart |
+| `ING eBay AutoLister.Tests/EbayLinkCheckTests.cs` | **New**, 15 tests — every `ConnectionState` maps, none is left to fall into "unreachable", and only the four definitive states may untick |
+| `ING eBay AutoLister.Tests/OnboardingProgressTests.cs` | +13 — the four failures, the two that prove nothing, the dated note, the headline order, and what a broken connection may not untick |
+| `ING eBay AutoLister.Tests/OnboardingStoreTests.cs` | +9 — persistence, last-write-wins, clearing, independence from the key verdict, and the note-column migration from the other side |
+| `ING eBay AutoLister.Tests/OnboardingAssetTests.cs` | +6 — holds the front end's state table to the server's: exactly the states the server calls definitive are the states the UI reddens |
+| Eleven `WhatsNot*AssetTests.cs` | Re-pinned asset versions |
+| `ebay_link_rejected.png`, `ebay_link_settings.png`, `ebay_link_narrow.png` | The checklist, the settings row, and the panel at 900px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,838 passed**, 0 failed, 0 skipped (61 new) |
+| Real browser (Playwright, `wwwroot` served statically, every `/api/onboarding` answer and every verdict **serialised out of the real `OnboardingProgress` and `EbayLinkCheck`** rather than hand-written) | **39 checks, all passed, 0 JS errors.** Rejected: step 2 loses its tick, turns red, prints the server's sentence character-for-character, its own button is enabled and still says "Log into eBay →", the copy stops claiming eBay is connected, `2 of 5`, headline *"Your eBay connection isn't working yet"*, chip off and reading "eBay is refusing this sign-in", top bar "eBay needs attention" — and step 3, which was earned, keeps its tick. Expired, no-session and not-configured: the same machinery, each with its own sentence. **Unreachable: step 2 still ticked, nothing red, chip still positive** — the case that matters most. Works: ticked, the row carrying the dated proof, chip "eBay connection works", no red anywhere. Both broken: the key is named in the headline and both rows still say their own piece. Pressing **Test connection** POSTs `/api/ebay-link/check` and paints the verdict; with eBay down the answer stays on screen and step 2 keeps its tick. At 900px the row overflowed the panel by **0px** |
+
+## Known limits
+
+- **It proves the connection, not the listing.** A refresh and one authenticated Sell API call do not
+  prove the account can publish in a given category, has business policies, or is not restricted on
+  the item in hand. Those failures still arrive at the publish, where the failure translator has them.
+- **A verdict is a snapshot.** A grant revoked an hour after it was tested shows green until
+  something asks again. Nothing re-checks on a schedule, and a publish that fails with an auth error
+  does not write the verdict back — the same gap the key check has.
+- **The expiry warning is not carried.** `ClassifyEbay` distinguishes "connected, but the refresh
+  token expires within a month", and that collapses to `works` here. A seller three weeks from a
+  dead sign-in is told everything is fine — the Connections card is still the only place that says
+  otherwise.
+- **The check costs a live token refresh.** Trivial, but it is a real call and it rotates eBay's
+  token, so it runs on the button and on a sign-in landing, and never on page load.
+- **It cannot tell a relay misconfiguration from a closed browser tab.** Both end as `no-session`,
+  and the sentence covers both by naming the window that has to come back.
+- **Nothing measures whether it helps.** Same as the path it sits on: no funnel, no telemetry, and no
+  way to know from here how many testers were saved a wasted evening by it.

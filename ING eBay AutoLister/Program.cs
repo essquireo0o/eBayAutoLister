@@ -856,6 +856,25 @@ app.MapPost("/api/ai-key/check", async (ClaudeService claude, CredentialsStore s
     return Results.Ok(new { verdict, plan = BuildOnboardingPlan(store, onboarding) });
 });
 
+// The same question, one step along: eBay has issued this install a token, but will it take a
+// listing? A grant revoked in the seller's eBay account, a refresh token past its eighteen months,
+// and a consent screen where the selling permissions were never granted all look identical from
+// disk — and the failure they cause waits at step 5, the publish, which is the most expensive step
+// of the path to reach. ConnectionDoctor already asks eBay properly; this puts its answer somewhere
+// a new tester will see it. See EbayLinkCheck.
+app.MapPost("/api/ebay-link/check", async (ConnectionDoctor doctor, CredentialsStore store,
+    OnboardingStore onboarding, CancellationToken ct) =>
+{
+    var verdict = EbayLinkCheck.FromCheck(await doctor.CheckEbayAsync(ct));
+
+    // Only an answer about this account is recorded. "Could not reach eBay" is an answer about the
+    // moment, and writing it down would take a green tick off a connection that has been working.
+    if (verdict.State != EbayLinkCheck.Unreachable)
+        onboarding.RecordEbayCheck(verdict.State, verdict.CheckedAt);
+
+    return Results.Ok(new { verdict, plan = BuildOnboardingPlan(store, onboarding) });
+});
+
 // Recorded server-side rather than in localStorage: this is the flag that stops a first-run screen
 // reappearing, and a seller who clears their browser data should not be greeted as a new install.
 app.MapPost("/api/onboarding/welcome-seen", (CredentialsStore store, OnboardingStore onboarding) =>
@@ -8473,7 +8492,7 @@ app.MapGet("/api/ebay/auth-url", (EbayService ebay) =>
 
 // Legacy direct callback (sandbox / local dev only): eBay redirects here with the code and this
 // end does the exchange itself, rather than through the relay.
-app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, CredentialsStore store, ActionLog log, HttpContext ctx) =>
+app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, CredentialsStore store, ActionLog log, OnboardingStore onboarding, HttpContext ctx) =>
 {
     if (string.IsNullOrWhiteSpace(code))
     {
@@ -8493,6 +8512,9 @@ app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, Credenti
         }
 
         store.SaveOAuthTokensFull(token.AccessToken, token.RefreshToken, token.ExpiresIn, token.RefreshTokenExpiresIn, token.TokenType);
+        // Whatever eBay last said was said about a grant that has just been replaced. A seller who
+        // signs in again to fix a refused connection must not still be told it is refused.
+        onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
         log.Add("Info", "eBay connected", "Sign-in completed through the direct callback; tokens stored.");
         ctx.Response.Redirect("/?ebay_connected=1");
     }
@@ -8510,22 +8532,28 @@ app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, Credenti
 // All of the judgement — session validity, how long to wait, what each relay answer means — lives
 // in EbayService.CompleteRelaySignInAsync, which records the outcome so /api/ebay/status can still
 // explain it after this redirect has been navigated away from.
-app.MapGet("/api/ebay/finish", async (string? session, string? pickup, EbayService ebay, HttpContext ctx) =>
+app.MapGet("/api/ebay/finish", async (string? session, string? pickup, EbayService ebay,
+    OnboardingStore onboarding, HttpContext ctx) =>
 {
     var status = await ebay.CompleteRelaySignInAsync(session, pickup, ctx.RequestAborted);
+    if (status.Stage == EbaySignInStage.Connected)
+        onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
     ctx.Response.Redirect(status.Stage == EbaySignInStage.Connected
         ? $"/?ebay_connected=1&ebay_status={Uri.EscapeDataString(status.Code)}"
         : $"/?ebay_error={Uri.EscapeDataString(status.Code)}");
 });
 
-app.MapPost("/api/ebay/token", async (EbayAuthRequest req, EbayService ebay, CredentialsStore store) =>
+app.MapPost("/api/ebay/token", async (EbayAuthRequest req, EbayService ebay, CredentialsStore store,
+    OnboardingStore onboarding) =>
 {
     var token = await ebay.ExchangeCodeForTokenResultAsync(req.Code);
     store.SaveOAuthTokensFull(token.AccessToken, token.RefreshToken, token.ExpiresIn, token.RefreshTokenExpiresIn, token.TokenType);
+    onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
     return Results.Ok(new { hasToken = !string.IsNullOrWhiteSpace(token.AccessToken), hasRefreshToken = !string.IsNullOrWhiteSpace(token.RefreshToken) });
 });
 
-app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest req, EbayService ebay, CredentialsStore store, ActionLog log) =>
+app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest req, EbayService ebay,
+    CredentialsStore store, ActionLog log, OnboardingStore onboarding) =>
 {
     if (string.IsNullOrWhiteSpace(req.RedirectUrl))
         return Results.BadRequest("Paste the full eBay OAuth redirect URL.");
@@ -8534,6 +8562,7 @@ app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest r
     {
         var result = await ebay.ExchangeProductionRedirectUrlAsync(req.RedirectUrl);
         store.SaveOAuthTokensFull(result.Token, result.RefreshToken, result.ExpiresIn, result.RefreshTokenExpiresIn, result.TokenType);
+        onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
         log.Add("Info", "Production eBay OAuth connected", $"Accepted URL: {result.AcceptedUrl}; Redirect URI: {result.RedirectUri}; State: {result.State}");
 
         return Results.Ok(new
@@ -8821,9 +8850,12 @@ app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, Server
     });
 });
 
-app.MapPost("/api/ebay/disconnect", (CredentialsStore store) =>
+app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {
     store.ClearEbayTokens();
+    // There is no connection left for the last verdict to be about. Keeping it would meet the next
+    // sign-in with a red row describing a grant that no longer exists.
+    onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
     return Results.Ok();
 });
 

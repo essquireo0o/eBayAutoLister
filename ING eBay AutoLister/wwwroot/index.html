@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=126" />
+  <link rel="stylesheet" href="style.css?v=127" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -322,6 +322,13 @@
               <div class="setup-step-body">
                 <div class="setup-step-title" id="step2-title">Connect eBay</div>
                 <div class="setup-step-copy" id="step2-copy">Log into eBay so the app can read your listings and publish for you.</div>
+                <!-- Only ever filled in when the server has proof the stored sign-in will not
+                     publish: eBay refused it, it expired, it never finished, or the app cannot
+                     start one. A held token is not a working connection, and the failure it hides
+                     waits at step 5 — the publish, the most expensive step of the path to reach. -->
+                <div class="setup-step-problem hidden" id="step2-problem">
+                  <span id="step2-problem-text"></span>
+                </div>
               </div>
               <button id="step2-btn" class="btn btn-primary" type="button">Log into eBay →</button>
             </div>
@@ -5989,6 +5996,16 @@
           <span id="setup-req-policies-state" class="setup-req-state">Needed</span>
         </div>
 
+        <!-- Before the policies, the connection they come down. "Connected to eBay" has always
+             meant "this install is holding a token", which a revoked grant, an expired refresh
+             token and a sign-in that never granted the selling permissions all satisfy. This asks
+             eBay: renew the sign-in, then make one authenticated call. Two seconds, and it is the
+             difference between finding out here and finding out at the publish. -->
+        <div class="ebay-link-check">
+          <button id="btn-test-ebay-link" class="btn btn-secondary" type="button">Test connection</button>
+          <span id="ebay-link-check-msg" class="sd-test-msg"></span>
+        </div>
+
         <div class="policy-load-row">
           <button id="btn-load-policies" class="btn btn-secondary" type="button">Load Policies from eBay</button>
           <span id="policy-load-msg" class="sd-test-msg"></span>
@@ -6195,6 +6212,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=143"></script>
+  <script src="app.js?v=144"></script>
 </body>
 </html>
