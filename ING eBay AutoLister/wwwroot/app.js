@@ -9796,6 +9796,12 @@
     // A lot list still being priced is a dozen eBay reads for a screen nobody is on.
     // The rows already priced survive the close; the ones behind them are dropped.
     wnStopLotRun();
+    // And a reader still polling somebody else's site for a tab that was closed is
+    // worse than that: it is traffic at their expense for nobody's benefit.
+    wnClearWatchTimer();
+    const watch = $('wn-watch');
+    if (watch) watch.checked = false;
+    wnReadSeq++;
     closeWorkspacePage('whatsnot');
   }
 
@@ -9939,6 +9945,206 @@
     if (!el) return;
     el.className = 'wn-held wn-held-stale';
     el.textContent = text;
+  }
+
+  // ── WhatsNot: reading the lot off the show ──────────────────────────────────
+  // The last thing on this screen still done by hand. A lot is on the block for
+  // under a minute and eight of those seconds went on typing a model number into
+  // the box every number on the card is derived from.
+  //
+  // A live show's current lot is structured data, not a picture: the show's page is
+  // rendered from a payload that carries the listing. This frame cannot read it —
+  // a browser refuses cross-origin — so /api/whatsnot/read fetches the PUBLIC page
+  // server-side, where no such rule applies, and hands back a title. That title
+  // lands in the box below and goes through the same ⚡ Price it as a typed one.
+  //
+  // Nothing here decides anything. It fills two boxes and presses the button the
+  // seller would have pressed, and it says where every field came from — this is a
+  // claim about somebody else's document, and the seller can't see that document.
+  const WN_READ_KEY = 'whatsnotShowUrl';
+
+  // Slower than the bidding on purpose. This is a request at somebody else's site
+  // and the thing it is watching for — the show moving to the next lot — happens
+  // once a minute at best. Reading faster would cost them traffic and tell us
+  // nothing new.
+  const WN_WATCH_MS = 20000;
+
+  // A show is hours long; leaving an automatic reader pointed at a site until the
+  // laptop sleeps is not something to do quietly. It stops, says so, and the seller
+  // can turn it back on for the lots they care about.
+  const WN_WATCH_MAX_READS = 90;
+
+  let wnWatchTimer = null;
+  let wnWatchReads = 0;
+  let wnReadSeq = 0;
+  let wnReadLotKey = '';    // the lot last read — so a redraw isn't mistaken for a new lot
+  let wnReadFilled = '';    // what the read put in the item box, so the seller's own typing shows up
+
+  function wnSaveShowUrl(url) {
+    try { localStorage.setItem(WN_READ_KEY, url); }
+    catch { /* private mode — the read still works, it just forgets the address */ }
+  }
+
+  function wnShowUrl() {
+    try { return localStorage.getItem(WN_READ_KEY) || ''; } catch { return ''; }
+  }
+
+  /// The read, laid out. Every sentence on it is the server's — the headline, what it
+  /// means, the warnings and what to do instead. A browser that wrote its own would be
+  /// a second account of what a page said, and this one has no access to the page.
+  function wnRenderRead(read) {
+    const out = $('wn-read-out');
+    if (!out) return;
+    if (!read) { out.classList.add('hidden'); out.innerHTML = ''; return; }
+
+    // Four looks, and "in flight" is not one of the failures: painting the second a
+    // request is out in the colour a refusal gets means the seller sees a warning edge
+    // on every read, including every one that works.
+    const kind = read.status === 'read' ? 'ok'
+      : read.status === 'no-listing' ? 'none'
+      : read.status === 'reading' ? 'busy'
+      : 'bad';
+    const text = [`<div class="wn-read-head">${esc(read.headline || '')}</div>`];
+    if (read.detail) text.push(`<p class="wn-read-detail">${esc(read.detail)}</p>`);
+    (read.warnings || []).forEach(w => text.push(`<p class="wn-read-warn">⚠ ${esc(w)}</p>`));
+    if (read.hint) text.push(`<p class="wn-read-do">${esc(read.hint)}</p>`);
+
+    const evidence = read.evidence || [];
+    if (evidence.length) {
+      text.push('<details class="wn-read-ev"><summary>Where each field came from</summary><ul>' +
+        evidence.map(e => `<li>${esc(e)}</li>`).join('') + '</ul></details>');
+    }
+
+    // The photo is not evidence about money and nothing is priced off it. It answers
+    // one question the title can't: is this the thing actually on screen.
+    const shot = read.imageUrl
+      ? `<img class="wn-read-shot" src="${esc(read.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      : '';
+
+    out.className = `wn-read-out wn-read-${kind}`;
+    out.innerHTML = `<div class="wn-read-main">${shot}<div class="wn-read-text">${text.join('')}</div></div>`;
+  }
+
+  /// Reads the show and, when it found a lot, prices it.
+  ///
+  /// `auto` is the watch loop rather than a press, and it is more careful in two
+  /// ways: it only touches the boxes when the show has moved to a DIFFERENT lot, and
+  /// it gets out of the way the moment the seller has typed something of their own.
+  /// A reader that overwrote the item box every twenty seconds would be unusable at
+  /// exactly the moment it matters.
+  async function wnReadShow(options) {
+    const auto = !!(options && options.auto);
+    const url = ($('wn-read-url')?.value || '').trim();
+    const btn = $('wn-read-btn');
+    const seq = ++wnReadSeq;
+
+    if (!auto) {
+      wnRenderRead({ status: 'reading', headline: 'Reading the show…' });
+      if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Reading…'; }
+    }
+
+    let read = null;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/read', { url });
+      read = res.ok ? body : {
+        status: 'unreachable',
+        headline: body.error || 'That read didn\'t happen.',
+        hint: body.failure?.whatToDo || 'Type the item in and press Price it.',
+      };
+    } catch (err) {
+      read = { status: 'unreachable', headline: errorText(err, 'That read didn\'t happen.'),
+               hint: 'Type the item in and press Price it.' };
+    } finally {
+      if (btn && !auto) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        btn.textContent = '📡 Read the show';
+      }
+    }
+
+    // A newer read has already answered, or the tab was closed. An older answer
+    // painted over it would name a lot that is no longer on screen.
+    if (seq !== wnReadSeq) return;
+
+    wnRenderRead(read);
+
+    if (read.status !== 'read') {
+      // Between lots is the normal state of a live show, not a failure — the watch
+      // keeps going through it. Anything else has stopped working, and a loop that
+      // kept requesting through a refusal would be a loop hammering somebody's site.
+      if (auto && read.status !== 'no-listing') {
+        wnStopWatch(`Keep reading stopped — ${read.headline || 'the read failed.'}`);
+      } else if (!auto) {
+        wnSayLine([read.headline, read.hint].filter(Boolean).join(' '));
+        if (read.status === 'invalid' || read.status === 'not-a-show') $('wn-read-url')?.focus();
+      }
+      return;
+    }
+
+    wnSaveShowUrl(url);
+
+    // Whatnot's own id where there is one, the title where there isn't. This is only
+    // ever used to tell "the show moved on" apart from "the same lot, read again".
+    const lotKey = (read.listingId || read.title || '').toLowerCase();
+    const movedOn = lotKey !== wnReadLotKey;
+
+    if (auto) {
+      const typed = ($('wn-item')?.value || '').trim();
+      // The seller typed over it. Whatever they wrote outranks whatever the page says,
+      // so the loop stops rather than fighting them for the box.
+      if (typed && typed !== wnReadFilled) {
+        wnStopWatch('Keep reading stopped — you typed over the lot, and the box is yours.');
+        return;
+      }
+      // Same lot, still on the block. The card below is already priced for it, and the
+      // bid on the page is a snapshot that would fight the seller's own stepping.
+      if (!movedOn) return;
+    }
+
+    wnReadLotKey = lotKey;
+    wnReadFilled = read.title;
+    setVal('wn-item', read.title);
+    // A different item is a different question; the comps in hand answer the old one.
+    wnDropToken();
+
+    // The page's price is where the bidding was when the page loaded — an opening
+    // price as often as not, which the read says out loud. It is a starting point for
+    // the box, never a number this screen presents as the live bid.
+    if (read.currentBid != null && read.currentBid > 0) setVal('wn-bid', read.currentBid);
+
+    wnPriceItem();
+  }
+
+  function wnClearWatchTimer() {
+    if (wnWatchTimer) { clearInterval(wnWatchTimer); wnWatchTimer = null; }
+  }
+
+  /// Stops the loop and says why, in the one line. A reader that stopped silently
+  /// would leave the seller believing the screen was still watching the show.
+  function wnStopWatch(why) {
+    const wasOn = wnWatchTimer !== null;
+    wnClearWatchTimer();
+    const box = $('wn-watch');
+    if (box) box.checked = false;
+    if (why && wasOn) wnSayLine(why);
+  }
+
+  function wnStartWatch() {
+    wnClearWatchTimer();
+    wnWatchReads = 0;
+    wnWatchTimer = setInterval(wnWatchTick, WN_WATCH_MS);
+    // Reading now rather than in twenty seconds — a toggle that appears to do nothing
+    // for a third of a minute reads as a broken toggle.
+    wnReadShow({ auto: true });
+  }
+
+  function wnWatchTick() {
+    if (++wnWatchReads > WN_WATCH_MAX_READS) {
+      wnStopWatch(`Keep reading stopped after ${WN_WATCH_MAX_READS} reads — it is not something to ` +
+                  'leave running at somebody else\'s site all night. Turn it back on for the next lot.');
+      return;
+    }
+    wnReadShow({ auto: true });
   }
 
   async function wnPriceItem() {
@@ -10804,6 +11010,23 @@
     on('wn-price', 'click', wnPriceItem);
     on('wn-bid-up', 'click', () => wnStepBid(1));
     on('wn-bid-down', 'click', () => wnStepBid(-1));
+
+    // ── Reading the lot off the show ──────────────────────────────────────────
+    on('wn-read-btn', 'click', () => wnReadShow());
+    // The panel at the bottom is where the seller navigated to the show; retyping
+    // that address into a second box is the friction this button removes.
+    on('wn-read-here', 'click', () => {
+      const here = wnNormalizeUrl(wnHistory[wnHistoryAt] || $('wn-url')?.value);
+      if (here) setVal('wn-read-url', here);
+      $('wn-read-btn')?.focus();
+    });
+    $('wn-read-url')?.addEventListener('keydown', e => { if (e.key === 'Enter') wnReadShow(); });
+    $('wn-watch')?.addEventListener('change', e => {
+      if (e.target.checked) wnStartWatch(); else wnStopWatch();
+    });
+    const showBox = $('wn-read-url');
+    const rememberedShow = wnShowUrl();
+    if (showBox && rememberedShow) showBox.value = rememberedShow;
 
     // The lot list. Note what is NOT here: nothing re-prices the list when shipping,
     // the fee or the target change. Twelve fresh eBay reads on a keystroke is exactly

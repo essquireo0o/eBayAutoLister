@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=107" />
+  <link rel="stylesheet" href="style.css?v=108" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2714,13 +2714,51 @@
         </div>
 
         <div class="opportunity-overlay-body">
+          <!-- ── Read the lot off the show ─────────────────────────────────────────────────
+               The one thing on this screen that was still done by hand. Everything else about a
+               live bid is instant — the comps are held, the bid steps with an arrow key, the
+               ceiling re-answers with no network in it — and then eight of the seller's forty
+               seconds go on typing a model number into the box all of it runs on.
+               A live show's current lot is structured data, not a picture: the show's page is
+               rendered from a payload that carries the listing. /api/whatsnot/read fetches that
+               PUBLIC page server-side (the frame beside it can't — cross-origin) and hands back
+               a title, which lands in the box below and is priced by the same ⚡ Price it.
+               It is a snapshot at load: the title is solid, the live bid arrives over the show's
+               own connection afterwards, and the screen says so every time. -->
+          <div class="wn-read">
+            <div class="wn-read-row">
+              <label class="wn-field wn-field-wide">
+                <span>Show address</span>
+                <input id="wn-read-url" type="text" spellcheck="false" autocomplete="off"
+                       placeholder="https://www.whatnot.com/live/… — the show you're watching" />
+              </label>
+              <button id="wn-read-btn" class="btn btn-primary wn-read-btn" type="button">📡 Read the show</button>
+              <button id="wn-read-here" class="btn btn-ghost" type="button"
+                      title="Copy the address the panel at the bottom of this screen is on">↧ From the panel</button>
+              <!-- Off by default, and it is the only thing on this screen that reaches the
+                   network on its own. It also stops itself the moment the seller edits the item
+                   box: whatever they typed outranks whatever the page says. -->
+              <label class="wn-watch" title="Read the show again every few seconds and price each new lot as it comes up">
+                <input id="wn-watch" type="checkbox" />
+                <span>Keep reading</span>
+              </label>
+            </div>
+            <div id="wn-read-out" class="wn-read-out hidden"></div>
+            <p class="opp-hint wn-read-hint">
+              Reads the show's own page — the same one your browser loads — and puts the lot's name
+              in the box below, then prices it. It reads the <strong>public page, once per press</strong>,
+              with no account behind it; Whatnot's private API would answer the same question and is
+              deliberately not called. What that costs is the price: a page is a snapshot at load, so
+              the <strong>bid stays under your hand</strong>. Every read says where it got each field.
+            </p>
+          </div>
+
           <!-- ── The arbitrage card ────────────────────────────────────────────────────────
-               The item on screen, typed or pasted, against real eBay sold comps: the ceiling to
-               bid to, the spread it resells into, whether it moves, and how old the evidence is.
-               Typed rather than read off the feed because an <iframe> cannot read a cross-origin
-               page — see the note above the frame. Shipping, the buyer's premium and the target
-               return are remembered between items, because during a live sale there is time to
-               type the name and nothing else. -->
+               The item on screen — read off the show above, typed, or pasted — against real eBay
+               sold comps: the ceiling to bid to, the spread it resells into, whether it moves, and
+               how old the evidence is. Shipping, the buyer's premium and the target return are
+               remembered between items, because during a live sale there is time to name the lot
+               and nothing else. -->
           <div class="wn-ask">
             <div class="wn-ask-row">
               <label class="wn-field wn-field-wide">
@@ -2871,7 +2909,8 @@
             embedded — the answer appears above the frame, because a refused embed renders as a blank
             rectangle and tells the page nothing. <strong>Open in browser</strong> is the way into a
             site that refuses. The app cannot read what is inside the frame either (a browser refuses
-            cross-origin), so the item is typed into the box above.
+            cross-origin) — which is what <strong>📡 Read the show</strong> at the top of this screen
+            is for: it fetches the show's page through the app instead, where no such rule applies.
           </p>
           <div class="wn-frame-wrap">
             <!-- Shown over the frame when the site's own headers say the embed was refused, so the
@@ -5867,6 +5906,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=124"></script>
+  <script src="app.js?v=125"></script>
 </body>
 </html>

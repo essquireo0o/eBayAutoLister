@@ -112,7 +112,10 @@ public class WhatsNotArbitrageAssetTests
     public void The_screen_says_what_the_frame_can_and_cannot_do()
     {
         Assert.Contains("The app cannot read what is inside the", Html, StringComparison.Ordinal);
-        Assert.Contains("the item is typed into the box above", Html, StringComparison.Ordinal);
+        // And what to do about it. This used to end "so the item is typed into the box above"; the
+        // read gave the sentence a better second half, and the half that matters — the frame is not
+        // where the lot's name comes from — is still the one being made.
+        Assert.Contains("Read the show", Html, StringComparison.Ordinal);
     }
 
     /// <summary>

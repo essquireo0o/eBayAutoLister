@@ -209,8 +209,23 @@ public class WhatsNotOwnRecordAssetTests
     {
         // wwwroot is embedded, and a cached app.js against a new server renders a card with no panel
         // on it at all.
-        Assert.Contains("app.js?v=124", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=107", Html, StringComparison.Ordinal);
+        //
+        // A floor rather than an equality: this panel shipped at these stamps and every later session
+        // bumps them, so an equality here fails on somebody else's correct change and gets "fixed" by
+        // deletion. What has to hold is that the stamps never go BACKWARDS past this panel.
+        Assert.True(Stamp("app.js") >= 124, "app.js is stamped older than the version this panel shipped at");
+        Assert.True(Stamp("style.css") >= 107, "style.css is stamped older than the version this panel shipped at");
+    }
+
+    private static int Stamp(string asset)
+    {
+        var marker = asset + "?v=";
+        var at = Html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{asset} is no longer version-stamped in index.html");
+
+        var digits = Html[(at + marker.Length)..].TakeWhile(char.IsAsciiDigit).ToArray();
+        Assert.NotEmpty(digits);
+        return int.Parse(new string(digits));
     }
 
     // ── Additive, as every WhatsNot session has been ─────────────────────────────────────────

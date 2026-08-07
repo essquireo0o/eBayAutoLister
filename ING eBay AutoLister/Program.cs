@@ -467,6 +467,13 @@ builder.Services.AddSingleton<LiveBidBoard>();
 // turns X-Frame-Options / CSP frame-ancestors into a sentence.
 builder.Services.AddSingleton<FrameEmbedPolicy>();
 
+// The one step on that screen nothing else could make faster: the seller typing the lot's name while
+// the bidding runs. A live show's current lot is structured data on the show's own page, so it is
+// read rather than typed — the PUBLIC page, once per press, never the private API behind it (the
+// tradeoff is written out in WhatnotShowParser). It prices nothing: the title it finds goes to the
+// same /api/whatsnot/bid the typed box uses.
+builder.Services.AddSingleton<WhatnotShowReader>();
+
 // What the show cost and what it is worth. The card stopped at the hammer; this is the other end of
 // the same decision — a won lot is the SAME card, built by the same advisor against the same held
 // comps, at the price it actually hammered at. Persisted, because a live sale outlasts a session
@@ -3298,6 +3305,40 @@ app.MapPost("/api/whatsnot/lots", (
 // Headers only: FrameEmbedPolicy stops at the response headers and never reads or returns a body.
 app.MapGet("/api/whatsnot/embed-check", async (string? url, FrameEmbedPolicy policy, CancellationToken ct) =>
     Results.Ok(await policy.CheckAsync(url, ct)));
+
+// ── WhatsNot: read the lot off the show ───────────────────────────────────────────────────────
+// The last thing on this screen that was still done by hand. Everything else about a live bid has
+// been made instant — the comps are held, the bid steps with an arrow key, the ceiling re-answers
+// with no network in it — and then the seller spends eight of their forty seconds typing "Bitmain
+// Antminer S19j Pro 104TH" into the box that all of it runs on.
+//
+// The lot on a live show is structured data, not a picture: the show's own page is rendered from a
+// payload that carries the current listing. This reads that payload off the PUBLIC page — one GET,
+// per press, with no account behind it — and hands back a title. Whatnot's internal GraphQL API
+// would answer the same question and is deliberately not called; the reasoning, and what reading a
+// page instead costs (it is a snapshot at load, so the title is solid and the live bid is not), is
+// written out at the top of Services/WhatnotShowParser.cs.
+//
+// It prices NOTHING. The title goes back to the browser, into the same box the seller would have
+// typed, and /api/whatsnot/bid answers it exactly as it always has — so a lot that was read and the
+// same lot typed by hand get one ceiling from one function.
+app.MapPost("/api/whatsnot/read", async (
+    WhatnotReadRequest req, WhatnotShowReader reader,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var read = await reader.ReadAsync(req.Url, ct);
+
+    log.Add(read.Status == WhatnotReadStatuses.Read ? "Research" : "Warning", "Read the show",
+        read.Status == WhatnotReadStatuses.Read
+            ? $"\"{read.Title}\"" +
+              (read.CurrentBid is { } bid ? $" at {bid:C} ({read.BidKey})" : " with no price on the page") +
+              $"; {read.ElapsedMs}ms"
+            : $"{read.Status}: {read.Headline} ({read.ElapsedMs}ms)");
+
+    return Results.Ok(read);
+});
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the
 // CDNs in front of these sites refuse a bare client first — the same headers every feed read in this

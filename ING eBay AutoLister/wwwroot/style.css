@@ -16318,6 +16318,127 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    them rather than folded into a score. The frame keeps its space below — the
    card sits above it because the decision is the point and the stream is the
    context, not the other way round. */
+/* ── Read the lot off the show ─────────────────────────────────────────────────
+   Sits above the ask because it FILLS the ask. Quieter than the card below it:
+   this is where the item's name comes from, not what the item is worth, and the
+   only coloured thing on a successful read is the strip down its left edge. */
+.wn-read {
+  margin-bottom: 10px;
+}
+.wn-read-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.wn-read-btn {
+  white-space: nowrap;
+}
+/* The one control on this screen that reaches the network by itself, so it reads
+   as a switch rather than as another button in the row. */
+.wn-watch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wn-watch:hover {
+  border-color: var(--accent, #d4a24a);
+  color: var(--text, #e8ecf4);
+}
+.wn-watch > input {
+  margin: 0;
+  cursor: pointer;
+}
+.wn-read-hint {
+  margin: 6px 0 0;
+}
+
+.wn-read-out {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-left: 3px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 12.5px;
+}
+/* Found it, read the page and there was no lot on it, and couldn't read it at all.
+   Three states, three edges — the middle one is the normal state of a live show
+   between lots and is deliberately not a failure colour. The fourth, while the
+   request is out, keeps the neutral edge: every read passes through it, including
+   the ones that work. */
+.wn-read-busy {
+  border-left-color: var(--border, #2a2f3a);
+}
+.wn-read-ok {
+  border-left-color: var(--ok, #4ea87a);
+}
+.wn-read-none {
+  border-left-color: var(--text-dim, #8b93a7);
+}
+.wn-read-bad {
+  border-left-color: var(--warn, #d4a24a);
+}
+.wn-read-main {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.wn-read-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The lot's photo answers the one question its title can't — is this the thing on
+   screen. Nothing is priced off it, so it is thumbnail-sized and stays that way. */
+.wn-read-shot {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--panel, rgba(255, 255, 255, .02));
+}
+.wn-read-head {
+  font-weight: 600;
+  color: var(--text, #e8ecf4);
+  word-break: break-word;
+}
+.wn-read-detail,
+.wn-read-do,
+.wn-read-warn {
+  margin: 4px 0 0;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-read-warn {
+  color: var(--warn, #d4a24a);
+}
+.wn-read-do {
+  color: var(--text, #e8ecf4);
+}
+/* Folded, because it is the answer to "why did it read that?" and not part of the
+   read itself. Open it and every field says which key in the page it came from. */
+.wn-read-ev {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-read-ev > summary {
+  cursor: pointer;
+}
+.wn-read-ev ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  word-break: break-word;
+}
+
 .wn-ask {
   margin-bottom: 12px;
 }
@@ -17202,6 +17323,19 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   }
   .wn-say {
     font-size: 13px;
+  }
+  /* The read row's two buttons and its switch go full width under the address
+     rather than being squeezed beside it — this is the row you press first. */
+  .wn-read-btn,
+  .wn-watch {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  /* The photo gives its width back to the sentences, which are the part that says
+     what the app decided the page meant. */
+  .wn-read-shot {
+    width: 48px;
+    height: 48px;
   }
   .wn-meter-legend {
     font-size: 10px;

@@ -96,9 +96,16 @@ public static class PublicFeedHttp
         }
     }
 
-    // Reads the body without trusting the site to have declared its length. Returns null past the
-    // ceiling rather than growing a string until the process dies.
-    private static async Task<string?> ReadBoundedAsync(
+    /// <summary>
+    /// Reads the body without trusting the site to have declared its length. Returns null past the
+    /// ceiling rather than growing a string until the process dies.
+    /// </summary>
+    /// <remarks>
+    /// Public because <see cref="WhatnotShowReader"/> fetches a page rather than a feed and needs its
+    /// own sentences for a refusal, but must not get its own byte loop: two ceilings on how much of
+    /// somebody else's document this app will hold in memory is one ceiling too many.
+    /// </remarks>
+    public static async Task<string?> ReadBoundedAsync(
         HttpResponseMessage response, int maxBytes, CancellationToken ct)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
