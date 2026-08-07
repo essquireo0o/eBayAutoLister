@@ -11728,8 +11728,8 @@ sell-through path the ceiling is built on. The panel is the container; the card 
 | `ING eBay AutoLister/wwwroot/app.js` | The verdict store (`wnVerdicts`/`wnRememberVerdict`/`wnRememberedVerdict`/`wnForgetVerdict`/`wnRememberedWhen`), the short-circuit in `wnLoad`, `wnPointFrame` split out and shared, the re-check path in `wnCheckEmbed`, blanking a confirmed-refused frame, the two new overlay bindings |
 | `ING eBay AutoLister/wwwroot/index.html` | The note, the actions row, Read this show instead, Try it anyway; the hint rewritten; `app.js?v=130`, `style.css?v=113` |
 | `ING eBay AutoLister/wwwroot/style.css` | `.wn-blocked-note`, `.wn-blocked-actions` (wraps — three buttons do not fit one line beside a live stream) |
-| `ING eBay AutoLister.Tests/FrameEmbedPolicyTests.cs` | 15 new tests on what may be remembered, including the 403-plus-standing-list case that IS kept and the timeout that is not |
-| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | 5 new tests holding the short-circuit, the three ways to overturn it, the freshness note, the stopped load and the doorway |
+| `ING eBay AutoLister.Tests/FrameEmbedPolicyTests.cs` | 14 new tests (6 facts + an 8-case theory) on what may be remembered, including the 403-plus-standing-list case that IS kept and the timeout that is not |
+| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | 6 new tests holding the short-circuit, the three ways to overturn it, the freshness note, the stopped load and the doorway |
 | `whatsnot_refused_live.png`, `whatsnot_refused_remembered.png`, `whatsnot_refused_to_reader.png`, `whatsnot_refused_narrow.png` | The four states |
 
 ## How it was checked
