@@ -10665,3 +10665,201 @@ warning-list path but not the arithmetic underneath it, which is what the 55 new
   price.
 - **It only ever looks at eBay money.** Sales imported from anywhere else are not in the book, so a
   cross-listed seller's record here is their eBay half of it.
+
+---
+
+# The lot names itself: reading the show instead of typing it
+
+## The question this answers
+
+Four sessions have sharpened what happens *after* the seller says what the item is. The comps are
+held so a climbing bid costs no network. The bid steps with an arrow key. The ceiling, the
+break-even, the room and the seller's own record all re-answer instantly. Then the lot changes and
+all of it waits on a person typing **"Bitmain Antminer S19j Pro 104TH"** into a text box while an
+auctioneer talks over them.
+
+That is not a small remainder. A lot is on the block for well under a minute; eight seconds of
+typing is a fifth of the decision, spent on the one field that has to be **exactly right** — every
+number on the card is derived from the sold search that runs on it. And it is spent at the worst
+moment, because the seconds a seller has are the seconds the bidding is moving.
+
+The screen has said, since the first version, that this could not be fixed: an `<iframe>` cannot
+read a cross-origin page, and Whatnot refuses framing outright. Both of those are still true. They
+were also the wrong place to look.
+
+## What it does
+
+A row above the card:
+
+> **Show address** `https://www.whatnot.com/live/…`  📡 **Read the show**  ↧ From the panel  ☐ Keep reading
+
+Press it and the app fetches the show's page itself — the app is not a frame, so nothing stops it —
+finds the lot in the page's own data, and reports:
+
+> ✅ **Read from the show: Bitmain Antminer S19j Pro 104TH**
+>
+> That's the page as it loaded — a snapshot. The title is what the sold search will run on; the bid
+> moves over the show's live connection, so it stays under your hand.
+>
+> ▸ Where each field came from
+> - Title: `props.pageProps.liveStream.activeListing.title`
+> - Price: `props.pageProps.liveStream.activeListing.currentPrice`
+> - Lot id: `lst_9931`
+
+The title lands in the item box, the price in the bid box, and **⚡ Price it fires on its own**. The
+seller reads a ceiling instead of typing a model number.
+
+## Why the page and not the API
+
+Whatnot's own client gets the current lot from an internal GraphQL endpoint. That is the shortest
+path to a title *and* a live current bid, and it is deliberately not the path taken.
+
+A private API is undocumented and unversioned, calling it means sending requests a browser never
+would, and the account that would carry the consequence is **the seller's** — which is not this
+app's to spend. What is read instead is the public HTML of the page they already have open: the same
+bytes their browser is served, with the server-rendered payload still in it, fetched once when a
+button is pressed. A page view is a page view.
+
+The reasoning lives in `WhatnotShowParser` and `WhatnotShowReader`, next to the request rather than
+in a commit message, and a test asserts it is still there — this is the first thing a later session
+will be tempted to "improve", because the private API is faster and carries the number this one
+doesn't.
+
+**What the choice costs, said everywhere it shows.** The page is a *snapshot at load*. The live bid
+arrives over a websocket afterwards, so the title is solid and the price on the page is often the
+opening one. That sentence is on every successful read, not just the awkward ones — a seller who
+learns it from a screen that repeats it will not be caught out by it at $200. It is also why the bid
+box stays under the seller's hand: the read fills it once, on a new lot, and never fights the
+stepper.
+
+## Why not the video
+
+"Read what's on screen" sounds like computer vision on the stream. It is the wrong first move. The
+lot on a live show is not really a picture — it is a record, and reading a field out of a document is
+cheaper, faster and far more accurate than reading a caption off a compressed frame at 480p. The
+vision path keeps the job it is actually good at (is this the thing in the photo, what condition is
+it in), which is the app's existing product-photo pipeline. The read hands it a URL: the lot's own
+image comes back with every successful read.
+
+## The refusals
+
+Everything here feeds the box every number on the live card comes from, so a parser that guesses is
+worse than no parser. A wrong **title** prices a different product; a wrong **price** prices this one
+wrongly; both arrive on screen as a confident ceiling with a hammer coming down.
+
+| It refuses | Why |
+|---|---|
+| To divide by 100 unless the KEY says cents | Guessing from the size of the number turns a $1,299 lot into a $12.99 one — and $12.99 is *plausible*, so the mistake is invisible |
+| A bare `name` on anything that isn't a lot | `name` is on users, categories and half a framework's own objects. Read anywhere it appears, the app prices the seller's username |
+| A lot called "#12" | The same bar the pasted lot list uses, shared as a constant. A sold search on that answers at random, and a random answer here is a bid |
+| Any site but Whatnot | This knows one page shape. Pointed elsewhere it finds nothing or, far worse, the wrong thing |
+| Whatnot's browse page | It lists a hundred shows and has no lot of its own |
+| Loopback and private-network addresses | The same `FrameEmbedPolicy.Validate` guard the embed check runs — the app is about to make this request |
+| `http://` images | Rendered in the app's own page; an insecure image is blocked or a downgrade nobody asked for |
+| To price anything | Pinned by a test: no `AnalyzeProductAsync`, no `advisor.Build`, no `MaxBid` anywhere in the endpoint |
+
+And what it will not do silently: an opening price goes in the box **labelled** as where the bidding
+starts; a lot the page marks sold says it may be the one that just went; a title the clean shortened
+is shown next to the original; a giveaway is called a giveaway.
+
+## Keep reading
+
+The one control on this screen that reaches the network by itself, so it has four brakes and all
+four are pinned by tests:
+
+- **Off by default**, and 20 seconds between reads — slower than the bidding on purpose, because the
+  thing it watches for (the show moving on) happens once a minute at best.
+- **Stops itself after 90 reads** and says so. Leaving an automatic reader pointed at somebody's site
+  until the laptop sleeps is not something to do quietly.
+- **Stops when the tab closes.** A reader polling for a screen nobody is on is traffic at somebody
+  else's expense for nobody's benefit.
+- **Gets out of the way the moment the seller types.** What they typed outranks what the page says,
+  and a loop that overwrote the item box every 20 seconds would be worst at exactly the moment it
+  matters. It also leaves a lot alone while it is still the same lot — only a *different* lot
+  re-prices.
+
+It keeps going through "no lot on the page", because between lots is the normal state of a live show
+and not a failure. It stops on anything that actually broke, because a loop that kept requesting
+through a refusal is a loop hammering somebody's site.
+
+## Reuse, not reinvention
+
+| Borrowed | From |
+|---|---|
+| Title cleaning, and the bar for "searchable" | `LiveLotList.Clean` / `MinTitleLength` — a lot read off a page and the same lot pasted by hand reach the comp lookup identically |
+| The address guard | `FrameEmbedPolicy.Normalize` + `Validate` — the same one the embed check uses |
+| Browser-shaped headers, the bounded body read, block-page detection | `PublicFeedHttp` + `DealFeedParser.DetectBlock` |
+| The ceiling, and everything else about money | `/api/whatsnot/bid`, untouched |
+
+`PublicFeedHttp.ReadBoundedAsync` was made public rather than a second byte loop being written: two
+ceilings on how much of somebody else's document this app holds in memory is one ceiling too many.
+`GetAsync` — the path every deal feed runs on — still calls it and is otherwise untouched.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list` and `/api/whatsnot/embed-check` are all still registered and are asserted to be,
+and the live price still runs on `AnalyzeProductAsync`. The typed box still works on its own, on any
+platform, and a test says so.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Models/WhatnotReadModels.cs` | New — the request, the six statuses, and the read (deliberately carrying no price of its own) |
+| `ING eBay AutoLister/Services/WhatnotShowParser.cs` | New — the page's payloads, the walk, the scoring, the money rules and the refusals |
+| `ING eBay AutoLister/Services/WhatnotShowReader.cs` | New — one GET, the address guards, and every failure turned into a sentence with a next move |
+| `ING eBay AutoLister/Services/PublicFeedHttp.cs` | `ReadBoundedAsync` made public so the page read shares the app's one body ceiling |
+| `ING eBay AutoLister/Program.cs` | `WhatnotShowReader` registered; `POST /api/whatsnot/read` — a read, a log line, and provably no pricing |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnReadShow`, `wnRenderRead`, the watch loop and its brakes; the reader stops when the tab closes |
+| `ING eBay AutoLister/wwwroot/index.html` | The read row above the ask, the read panel, `app.js?v=125`, `style.css?v=108` |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-read*`, `.wn-watch` — three outcome edges, a thumbnail, folded at 620px |
+| `ING eBay AutoLister.Tests/WhatnotShowParserTests.cs` | New — the parser held to what it refuses to guess |
+| `ING eBay AutoLister.Tests/WhatsNotReadShowAssetTests.cs` | New — the five links from service to screen, held together |
+| `WhatsNotArbitrageAssetTests.cs` | The frame-hint pin follows the sentence the read gave a better second half to |
+| `WhatsNotOwnRecordAssetTests.cs` | The asset-version pins loosened from equality to floors — see below |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,724 passed**, 0 failed, 0 skipped (70 new; the previous commit was 3,654) |
+| `node --check wwwroot/app.js` | clean |
+
+The parser is tested against realistic page payloads in both shapes a Next.js app serves — a
+`<script type="application/json">` payload and streamed `self.__next_f` flight chunks — including a
+page whose only `name` belongs to the seller, a price written five different ways, a lot the page
+marks sold sitting next to a live one, and 4,000 objects of noise around the real listing.
+
+**Two asset-version pins were loosened from equality to floors.** They exist to catch a stamp going
+*backwards*, and an equality there fails on somebody else's correct bump and gets "fixed" by
+deleting the test — which is exactly how a version pin stops protecting anything. Same reasoning a
+previous session applied to `WhatsNotLotListAssetTests`.
+
+## Known limits
+
+- **The bid on the page is not the live bid.** It is the number at page render, and on many shows it
+  is the opening price. The read labels it and the seller owns the box; a genuinely live bid needs
+  the show's websocket, which is the private-client path this deliberately does not take.
+- **The page shape is Whatnot's to change without telling anyone.** The parser is written to be
+  tolerant — it looks for a lot rather than for one exact path — but the day the payload stops
+  carrying the listing, the read starts saying "no lot on that page" and means it. The fix then is a
+  new page shape here, not a login and a private endpoint.
+- **A signed-out page may not carry the lot at all.** This has no account behind it by design, so a
+  show that renders its current lot only for signed-in visitors reads as empty. That is honest and it
+  is also a real gap, and it is the most likely reason a seller sees "no lot" on a show that plainly
+  has one.
+- **The read was never run against a live Whatnot show.** It is exercised against fixtures shaped
+  like the real thing; nothing in this session proves which keys Whatnot's current payload actually
+  uses. The evidence lines exist precisely because of that — the first live read tells the seller,
+  and the next session, exactly which path answered.
+- **The screen was not driven in a real browser this session.** The installed app holds port 9332 and
+  there is no port override; the render path is held by asset tests rather than by a screenshot,
+  which is weaker than the last few sessions managed.
+- **It reads one show, not the ones next to it.** The lot list still has to be pasted, and "which of
+  tonight's four shows is worth watching" is not a question this answers.
+- **The vision pass is groundwork, not wired.** Every read returns the lot's photo URL, which is what
+  the existing product-photo pipeline would need to confirm identity and condition. Nothing calls it
+  yet.
