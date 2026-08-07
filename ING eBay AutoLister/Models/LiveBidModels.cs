@@ -37,6 +37,13 @@ public sealed class LiveBidRequest
 
     /// <summary>Optional category override, same ids as the Local Deals board.</summary>
     public string? CategoryId { get; set; }
+
+    /// <summary>
+    /// The handle on comps already read for this lot (<see cref="Services.LiveBidBoard"/>). Present
+    /// on a re-price, absent on a first price. It buys speed and nothing else: the ceiling is
+    /// recomputed in full, against the same sold history, by the same function.
+    /// </summary>
+    public string? Token { get; set; }
 }
 
 /// <summary>One sold comp, flattened for the card — the sale, what it went for, and when.</summary>
@@ -161,6 +168,29 @@ public sealed class LiveBidCard
     public List<LiveBidComp> Comps { get; set; } = [];
     public List<string> Warnings { get; set; } = [];
     public long ElapsedMs { get; set; }
+
+    // ── Moving the bid without re-reading eBay ────────────────────────────────
+    // The bid climbs every few seconds; the sold history behind it does not change between one bid
+    // and the next. So the comps are held (Services/LiveBidBoard.cs) and the ceiling is recomputed
+    // against them — the same Build, the same arithmetic, no comp lookup. See RepricedFromHeldComps.
+
+    /// <summary>The handle that re-prices this same lot at a new bid. Empty when nothing was held,
+    /// which is the client's signal that a change of bid costs a fresh read of eBay.</summary>
+    public string Token { get; set; } = "";
+
+    /// <summary>When the sold comps behind this card were read.</summary>
+    public DateTime? PricedAtUtc { get; set; }
+
+    /// <summary>How long ago that was, in seconds. Zero on a fresh price; printed on every re-price,
+    /// because "instant" is only honest while the thing it skipped is still true.</summary>
+    public int CompsAgeSeconds { get; set; }
+
+    /// <summary>
+    /// True when this card was computed against comps already in hand rather than a fresh eBay read.
+    /// Every other number on it means exactly what it means on a fresh card — this says only that
+    /// the sold history is <see cref="CompsAgeSeconds"/> old, and the screen says so out loud.
+    /// </summary>
+    public bool RepricedFromHeldComps { get; set; }
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

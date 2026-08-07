@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=100" />
+  <link rel="stylesheet" href="style.css?v=101" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2721,9 +2721,20 @@
                 <input id="wn-item" type="text" spellcheck="false" autocomplete="off"
                        placeholder="Brand + model, e.g. Bitmain Antminer S19j Pro 104TH" />
               </label>
-              <label class="wn-field">
+              <!-- The bid is the one field that moves while the card is on screen, so it is the one
+                   field with hands on it: − / + and the up/down arrow keys step it by whatever the
+                   bidding is worth at that level, and every step re-answers instantly against comps
+                   already in hand. Typing still works; this is for when both hands are not free. -->
+              <label class="wn-field wn-field-bid">
                 <span>Bid now</span>
-                <input id="wn-bid" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+                <div class="wn-stepper">
+                  <button id="wn-bid-down" class="wn-step" type="button" tabindex="-1"
+                          title="Lower the bid (↓)" aria-label="Lower the bid">−</button>
+                  <input id="wn-bid" type="number" min="0" step="1" inputmode="decimal" placeholder="0"
+                         aria-describedby="wn-live-note" />
+                  <button id="wn-bid-up" class="wn-step" type="button" tabindex="-1"
+                          title="Raise the bid (↑)" aria-label="Raise the bid">+</button>
+                </div>
               </label>
               <label class="wn-field">
                 <span>Shipping</span>
@@ -2739,9 +2750,11 @@
               </label>
               <button id="wn-price" class="btn btn-primary wn-price-btn" type="button">⚡ Price it</button>
             </div>
-            <p class="opp-hint wn-ask-hint">
+            <p class="opp-hint wn-ask-hint" id="wn-live-note">
               Priced against the same eBay sold comps and sell-through the Opportunity Finder uses —
-              no live eBay call, so it answers in about a second. Enter re-prices as the bidding moves.
+              no live eBay call, so it answers in about a second. Once it's priced, the comps are
+              held: moving the bid, the shipping, the fee or the target re-answers <strong>instantly</strong>,
+              against that same sold history. Changing the item reads eBay again.
             </p>
           </div>
 
@@ -5771,6 +5784,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=117"></script>
+  <script src="app.js?v=118"></script>
 </body>
 </html>

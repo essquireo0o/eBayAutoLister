@@ -455,6 +455,12 @@ builder.Services.AddSingleton<AuctionSniperAnalyzer>();
 // for the same item at the same price cannot disagree.
 builder.Services.AddSingleton<LiveBidAdvisor>();
 
+// The comps behind the lot on screen, held while it is being bid on. A live auction moves faster
+// than the sold history it is priced against: the bid climbs every few seconds and the last two
+// months of eBay sales do not change in between. Holding them turns "it's at $45 now" into an
+// answer with no network in it — recomputed by the same Build, never approximated.
+builder.Services.AddSingleton<LiveBidBoard>();
+
 // The other half of that screen is a browser panel, and a browser panel has one failure the seller
 // cannot diagnose: a site that refuses to be framed produces a blank rectangle and no error at all.
 // This asks the site for its headers directly — the app is not a frame, so nothing stops it — and
@@ -2893,7 +2899,7 @@ app.MapPost("/api/snap", async (
 // a live auction is over in under a minute; the hosted comps database answers in milliseconds,
 // which is the whole reason this screen can exist.
 app.MapPost("/api/whatsnot/bid", async (
-    LiveBidRequest req, LiveBidAdvisor advisor, FeeProfile feeProfile,
+    LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, FeeProfile feeProfile,
     ProductNormalizer normalizer, IMarketplaceRepository marketplace, ComparableMatcher matcher,
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
@@ -2946,6 +2952,12 @@ app.MapPost("/api/whatsnot/bid", async (
     }
 
     var card = advisor.Build(title, analysis, req, feeProfile, category);
+
+    // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
+    // only thing handed out; the analysis itself never leaves the server.
+    var quote = board.Hold(title, analysis, category);
+    card.Token = quote.Token;
+    card.PricedAtUtc = quote.PricedAtUtc;
     card.ElapsedMs = sw.ElapsedMilliseconds;
 
     log.Add("Research", "Live bid ceiling",
@@ -2953,6 +2965,66 @@ app.MapPost("/api/whatsnot/bid", async (
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
         $"max bid {card.MaxBid:C} ({card.Call}); {sw.ElapsedMilliseconds}ms");
 
+    return Results.Ok(card);
+});
+
+// ── WhatsNot: the bid moved ───────────────────────────────────────────────────────────────────
+// The same card, at a new bid, with no eBay in it.
+//
+// This is the endpoint the live half of the feature runs on. The auctioneer raises the bid every
+// two or three seconds and the seller has to know, each time, whether they are still under their
+// ceiling. Re-reading the sold comps for that would spend the seconds the decision is made in, to
+// arrive at the resale price the card already had — the comps behind a lot do not change while it
+// is being sold.
+//
+// So the comps are held (LiveBidBoard) and this recomputes the whole card against them: the SAME
+// LiveBidAdvisor.Build, the same JackpotHunter break-even, the same AuctionSniperAnalyzer ceiling.
+// Nothing here is a faster approximation of the fresh answer — at the same inputs it IS the fresh
+// answer, which is what stops the app holding two opinions about one item.
+//
+// Which also makes the target return, the shipping and the buyer's premium instant, and that is the
+// bigger win: the seller can move the target and watch the ceiling move with it, mid-lot.
+app.MapPost("/api/whatsnot/rebid", (
+    LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, FeeProfile feeProfile,
+    CredentialsStore store, LicenseService license) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var quote = board.Find(req.Token);
+
+    // No held comps: expired, evicted, or a token from a previous run of the app. This says so
+    // rather than pricing against nothing — a re-price that silently answered off thin air would be
+    // the one number on this screen with no sold history under it.
+    if (quote is null)
+    {
+        return BadInputJson("Those comps have been let go",
+            "The sold history behind this card is no longer held — a card is kept for " +
+            $"{LiveBidBoard.HoldFor.TotalMinutes:0} minutes, or until {LiveBidBoard.Capacity} newer ones replace it.",
+            "Press Price it to read eBay again.");
+    }
+
+    // The token prices the lot it was issued for. A re-price that accepted a different title would
+    // put somebody else's comps under this item's name.
+    var typed = (req.Title ?? "").Trim();
+    if (typed.Length > 0 && !string.Equals(typed, quote.Item, StringComparison.OrdinalIgnoreCase))
+    {
+        return BadInputJson("That's a different item",
+            $"These comps were read for \"{quote.Item}\".",
+            "Press Price it to read eBay for what you've typed.");
+    }
+
+    var now = DateTime.UtcNow;
+    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now);
+    card.Token = quote.Token;
+    card.PricedAtUtc = quote.PricedAtUtc;
+    card.CompsAgeSeconds = quote.AgeSeconds(now);
+    card.RepricedFromHeldComps = true;
+    card.ElapsedMs = sw.ElapsedMilliseconds;
+
+    // Not logged. This fires on every keystroke of a climbing bid, and an action log that is 90%
+    // one screen's re-prices is a log nobody can find anything else in. The fresh price above is
+    // logged, and it is the one that read eBay.
     return Results.Ok(card);
 });
 

@@ -9827,6 +9827,108 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  // ── Moving the bid ───────────────────────────────────────────────────────────
+  // The auctioneer raises the bid every two or three seconds. Re-reading eBay for
+  // each one would spend the seconds the decision is made in to arrive at the same
+  // resale price the card already had — sold comps do not change while a lot is
+  // being sold. So the server holds them and /api/whatsnot/rebid recomputes the
+  // whole card against them: the same ceiling function, no network beyond
+  // localhost. The card says how old the held comps are, every time.
+  //
+  // The token is dropped the moment the ITEM changes, because then it is a
+  // different question and the held comps are the wrong answer to it.
+  let wnToken = '';
+  let wnTokenItem = '';
+  let wnRebidTimer = null;
+  let wnRebidSeq = 0;
+  // Long enough to swallow a burst of arrow-key presses, short enough to feel like
+  // the number moved when you pressed the button.
+  const WN_REBID_DEBOUNCE_MS = 90;
+
+  /// What a bid step is worth at this level. A live sale goes up in dollars at $12
+  /// and in twenties at $600, so a fixed step is wrong at one end or useless at the
+  /// other. Presentation only — nothing here decides what anything is worth.
+  function wnBidStep(bid) {
+    const at = Math.max(0, bid || 0);
+    if (at < 25) return 1;
+    if (at < 100) return 5;
+    if (at < 500) return 10;
+    if (at < 2000) return 25;
+    return 100;
+  }
+
+  function wnStepBid(direction) {
+    const box = $('wn-bid');
+    if (!box) return;
+    const current = Math.max(0, wnNumber('wn-bid') || 0);
+    const step = wnBidStep(current);
+    // Down snaps to the step below rather than subtracting from an odd number, so
+    // stepping up and down again lands somewhere predictable.
+    const next = direction > 0
+      ? current + step
+      : Math.max(0, Math.ceil((current - step) / step) * step);
+    box.value = String(Math.round(next * 100) / 100);
+    wnScheduleRebid();
+  }
+
+  /// A held quote answers for one item. Anything that changes what is being priced
+  /// throws it away rather than repricing somebody else's comps under a new name.
+  function wnDropToken() {
+    wnToken = '';
+    wnTokenItem = '';
+    if (wnRebidTimer) { clearTimeout(wnRebidTimer); wnRebidTimer = null; }
+    wnRebidSeq++;
+  }
+
+  function wnScheduleRebid() {
+    if (!wnToken) return;                       // nothing priced yet — Price it reads eBay
+    if (wnRebidTimer) clearTimeout(wnRebidTimer);
+    wnRebidTimer = setTimeout(wnRebid, WN_REBID_DEBOUNCE_MS);
+  }
+
+  async function wnRebid() {
+    wnRebidTimer = null;
+    if (!wnToken) return;
+
+    const seq = ++wnRebidSeq;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/rebid', {
+        token: wnToken,
+        title: wnTokenItem,
+        currentBid: wnNumber('wn-bid'),
+        shippingCost: wnNumber('wn-ship'),
+        buyerFeePercent: wnNumber('wn-fee'),
+        targetRoiPercent: wnNumber('wn-target'),
+      });
+      // The bid moved again while this was in flight. An older answer painted over a
+      // newer one is the one failure that would make the card lie about the number
+      // on screen, which is the whole point of it.
+      if (seq !== wnRebidSeq) return;
+
+      if (!res.ok) {
+        // The comps were let go. Say so on the card and stop re-pricing against a
+        // token the server has forgotten — the way back is an explicit fresh read.
+        wnDropToken();
+        wnSaveSettings();
+        wnHeldNote(body.failure?.whatToDo || body.error || 'Press Price it to read eBay again.');
+        return;
+      }
+      wnRenderCard(body);
+    } catch {
+      // A dropped local request is not worth a red card; the numbers on screen are
+      // still the ones from the last answer, and the next keystroke tries again.
+    }
+  }
+
+  /// Replaces the held-comps line with a plain sentence when a re-price could not
+  /// happen. Leaves every number on the card alone — they were true when priced.
+  function wnHeldNote(text) {
+    const el = $('wn-held');
+    if (!el) return;
+    el.className = 'wn-held wn-held-stale';
+    el.textContent = text;
+  }
+
   async function wnPriceItem() {
     const item = ($('wn-item')?.value || '').trim();
     const card = $('wn-card');
@@ -9840,6 +9942,8 @@
     }
 
     wnSaveSettings();
+    // A fresh read supersedes anything held, including an answer still in flight.
+    wnDropToken();
     const btn = $('wn-price');
     if (btn) { btn.disabled = true; btn.textContent = 'Pricing…'; }
     card.classList.remove('hidden');
@@ -9857,6 +9961,10 @@
         card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(body.message || body.error || 'That didn\'t price.')}</p>`;
         return;
       }
+      // The comps behind this answer are now held server-side; from here the bid,
+      // the shipping, the fee and the target all move without touching eBay.
+      wnToken = body.token || '';
+      wnTokenItem = item;
       wnRenderCard(body);
     } catch (err) {
       card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(errorText(err, 'That didn\'t price.'))}</p>`;
@@ -9900,6 +10008,47 @@
         <div class="wn-rung"><span>Resells for</span><strong>${money2(c.resalePrice)}</strong></div>
       </div>` : '';
 
+    // ── The meter ──────────────────────────────────────────────────────────────
+    // The ladder has the numbers; this is for the two seconds there are to read
+    // them. One track from nothing to the walk-away line, the ceiling marked on it,
+    // and the bid on screen sitting somewhere along it — so "how close am I?" is
+    // answered by a glance instead of by comparing two dollar figures.
+    //
+    // Positions only. Every boundary drawn here is a number the server computed;
+    // this divides them to get a percentage of a bar and does no other arithmetic.
+    const meter = (priced && c.breakEvenBid > 0) ? (() => {
+      const pct = v => Math.max(0, Math.min(100, (v / c.breakEvenBid) * 100));
+      const ceiling = pct(c.maxBid);
+      const bidPct = c.bidWasKnown ? pct(c.currentBid) : null;
+      const past = c.bidWasKnown && c.currentBid > c.maxBid;
+      return `
+      <div class="wn-meter" role="img" aria-label="${esc(
+        (c.bidWasKnown ? `Bid ${moneyExact(c.currentBid)}. ` : '') +
+        `Stop at ${moneyExact(c.maxBid)}. Break-even ${moneyExact(c.breakEvenBid)}.`)}">
+        <div class="wn-meter-track">
+          <div class="wn-meter-good" style="width:${ceiling.toFixed(2)}%"></div>
+          <div class="wn-meter-edge" style="left:${ceiling.toFixed(2)}%"></div>
+          ${bidPct === null ? '' :
+            `<div class="wn-meter-bid${past ? ' wn-meter-bid-past' : ''}" style="left:${bidPct.toFixed(2)}%"></div>`}
+        </div>
+        <div class="wn-meter-legend">
+          <span>${c.bidWasKnown ? `bid ${moneyExact(c.currentBid)}` : 'no bid yet'}</span>
+          <span class="wn-meter-mid">stop at ${moneyExact(c.maxBid)}</span>
+          <span>loses money past ${moneyExact(c.breakEvenBid)}</span>
+        </div>
+      </div>`;
+    })() : '';
+
+    // Where the resale price came from, and when. A re-priced card is the same
+    // computation as a fresh one — what it is not is a fresh READ, and the seller
+    // has to be able to see the difference without being told twice.
+    const held = c.token ? (c.repricedFromHeldComps
+      ? `<p class="wn-held" id="wn-held">Bid moved without re-reading eBay — these sold comps were read ` +
+        `${c.compsAgeSeconds < 60 ? `${Math.max(1, c.compsAgeSeconds)}s` : `${Math.round(c.compsAgeSeconds / 60)} min`} ago. ` +
+        `<strong>Price it</strong> reads them again.</p>`
+      : `<p class="wn-held" id="wn-held">Comps read just now and held — moving the bid, shipping, fee or target ` +
+        `re-answers instantly against this same sold history.</p>`) : '';
+
     const warnings = (c.warnings || []).length
       ? `<ul class="wn-warnings">${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
       : '';
@@ -9925,6 +10074,7 @@
         </div>
       </div>
       ${ladder}
+      ${meter}
       <div class="wn-stats">
         ${wnStat('eBay resale', money2(c.resalePrice), c.medianPrice ? `median ${money(c.medianPrice)}` : '')}
         ${wnStat('Middle half of sales', spread, 'where these actually land')}
@@ -9934,6 +10084,7 @@
       </div>
       <p class="wn-evidence wn-evidence-${esc(c.evidenceTier)}">${esc(c.evidenceNote)}</p>
       ${c.freshnessNote ? `<p class="wn-fresh">${esc(c.freshnessNote)}</p>` : ''}
+      ${held}
       ${warnings}
       ${comps}
       ${priced && c.ceilingNote ? `<p class="wn-ceiling-note">${esc(c.ceilingNote)}</p>` : ''}
@@ -9973,11 +10124,38 @@
     wnRenderRecents();
 
     on('wn-price', 'click', wnPriceItem);
-    // The bid moves while the card is on screen, so Enter from any of the boxes re-prices
-    // rather than only the item name — the common move is "it's at $40 now", Enter.
+    on('wn-bid-up', 'click', () => wnStepBid(1));
+    on('wn-bid-down', 'click', () => wnStepBid(-1));
+
+    // Enter always reads eBay again. Everything cheap already happens as you type, so
+    // the one keystroke left is the expensive one — and it is also the way back when
+    // the held comps have been let go.
     ['wn-item', 'wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
     });
+
+    // The four boxes that change the ceiling but not the comps. Typing in any of them
+    // re-answers off the held sold history — no eBay, no spinner, no round trip past
+    // this machine. Before anything is priced there is no token and this does nothing.
+    ['wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+      $(id)?.addEventListener('input', wnScheduleRebid);
+    });
+
+    // Up/down on the bid box steps by what the bidding is worth at that level rather
+    // than by the input's own 1, and re-answers on the way — hands on the auction, not
+    // on the keyboard.
+    $('wn-bid')?.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      wnStepBid(e.key === 'ArrowUp' ? 1 : -1);
+    });
+
+    // A different item is a different question, and the comps in hand are the answer
+    // to the old one.
+    $('wn-item')?.addEventListener('input', () => {
+      if (wnToken && ($('wn-item').value || '').trim() !== wnTokenItem) wnDropToken();
+    });
+
     wnLoadSettings();
   }
 

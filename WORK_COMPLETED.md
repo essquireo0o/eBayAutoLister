@@ -9593,3 +9593,144 @@ the Opportunity Finder and `/api/whatsnot/bid` are all still registered.
   is a one-liner whose shape is pinned only by an asset test reading `Program.cs`.
 - **`.wn-status-checking` has no colour of its own** — it renders with the base status style. The
   three verdicts that persist all have one.
+
+---
+
+# Keeping up with the bidding
+
+## The question this answers
+
+The card told the seller what to bid. Then the auctioneer said "forty-five" and it was out of date.
+
+Every number on the WhatsNot card was computed for one bid, and a live auction has a new bid every
+two or three seconds. The only way to move it was to press Enter, which posted the item back to
+`/api/whatsnot/bid`, which re-ran the whole eBay sold-comp lookup — about a second — to arrive at
+**the same resale price it already had.** The sold history behind a lot does not change while the
+lot is being sold. So the expensive half was being repeated to update the cheap half, in the exact
+seconds the seller did not have.
+
+## What it does
+
+The comps are held while the lot is on screen, and moving the bid re-answers with no eBay in it:
+
+- **`LiveBidBoard`** keeps the `MarketAnalysisResult` the pipeline produced — not a card, not a
+  ceiling, not a conclusion — and hands back a token.
+- **`POST /api/whatsnot/rebid`** takes that token and a new bid and runs
+  **`LiveBidAdvisor.Build` again** over the same analysis.
+- The bid box grew hands: **−** and **+**, and the up/down arrow keys, stepping by what the bidding
+  is worth at that level ($1 under $25, $5 under $100, $10 under $500, $25 under $2,000, $100 above).
+- Every keystroke in the bid, shipping, buyer-fee or target box re-answers. Nothing spins, nothing
+  is fetched past this machine.
+
+Measured in the browser: four presses of **+** took the bid from $40 to $60, the room left fell from
+$27.68 to $7.68, and the only request made was `/api/whatsnot/rebid`. At $90 the badge turned to
+**STOP** and the marker on the meter turned red.
+
+## The property that makes it legitimate
+
+A re-priced card is **not a cheaper approximation of a fresh one — at the same inputs it is the same
+card, number for number.** `A_reprice_from_held_comps_is_the_same_card_as_a_fresh_one` builds both
+and asserts the ceiling, the break-even bid, the headroom, the landed cost, the profit at the
+ceiling, the call, the label, the reason, the resale price and the comp count are all equal.
+
+That is the difference between holding comps and inventing a fast path. There is still one function
+in this app that decides a maximum bid, and the fast answer goes through it. Anything else and the
+app would hold two opinions about one item — and the fast one is the one the seller acts on.
+
+Two consequences worth stating, both tested:
+
+- **The ceiling does not move as the bid climbs.** Four climbing bids over one held quote give one
+  ceiling and four headrooms. A ceiling that moved with the bid would be chasing the auction rather
+  than bounding it.
+- **The call flips exactly at the ceiling**, not near it — at `MaxBid` it is still a bid, one cent
+  over it is STOP.
+
+## What it also made instant, which may matter more
+
+The target return, the shipping and the buyer's premium re-price off the held comps too. The seller
+can sweep the target mid-lot and watch the ceiling move — *"at 15% I could go to $92."* And the
+answer that comes back is honest about the app's two bars: on a $2,000 lot the return binds and a
+thinner target raises the ceiling; on a $200 lot the **$100 cash floor** binds and moving the target
+changes nothing at all, because finding it, listing it and packing it costs the same hour whatever
+it cost to buy. Both are tested, and the card already says which bar bound.
+
+## The meter
+
+The ladder has the numbers; the meter is for the two seconds there are to read them. One track from
+nothing to the walk-away line, the ceiling drawn on it, and the bid sitting somewhere along it —
+white while there is room, red past the ceiling. "How close am I?" answered by a glance instead of by
+comparing two dollar figures.
+
+Every boundary it draws is a number the server computed. The browser divides them to get a
+percentage of a bar and does no other arithmetic; an asset test asserts the target return and the
+buyer's premium are never divided in JavaScript.
+
+## What it refuses to do
+
+- **It never hides that the comps are held.** Every card says which it is: *"Comps read just now and
+  held"* on a fresh one, *"Bid moved without re-reading eBay — these sold comps were read 47s ago"*
+  on a re-price. Instant is only honest while the thing it skipped is still true.
+- **It never re-prices a different item.** The token is dropped in the browser the moment the typed
+  item stops matching, and the endpoint refuses a token pointed at another title. Held comps are an
+  answer about one lot; putting them under another lot's name is the most expensive mistake this
+  screen could make.
+- **It never prices against comps that have been let go.** Past 20 minutes, or 12 newer lots, the
+  token stops resolving and the answer is "press Price it" — not a ceiling built on sold history of
+  unstated age. The screen says so on the card and stops re-pricing.
+- **It never lets a late answer paint over a newer one.** The bid moves faster than a round trip
+  completes, so replies can arrive out of order; each one carries a sequence number and a stale one
+  is discarded. An old answer on screen under a new bid is the single failure this feature cannot
+  afford.
+- **It still doesn't read the feed.** Unchanged, and still the honest limit: the item is typed.
+
+## Sold comps
+
+Untouched. The re-price reads a held object and writes nothing — a test asserts the route contains
+no repository call, no `AnalyzeProductAsync`, and no mutation, and that `/api/snap`,
+`/api/whatsnot/bid` and `/api/whatsnot/embed-check` are all still registered. The fresh price does
+exactly what it did before and now also holds its comps.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Services/LiveBidBoard.cs` | New — the held quotes, bounded by count and by age |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `Token` on the request; `Token`, `PricedAtUtc`, `CompsAgeSeconds`, `RepricedFromHeldComps` on the card |
+| `ING eBay AutoLister/Program.cs` | `LiveBidBoard` registered; the fresh price holds its comps; `POST /api/whatsnot/rebid` |
+| `ING eBay AutoLister/wwwroot/index.html` | The bid stepper, and an ask-row hint that promises exactly what happens; `app.js?v=118`, `style.css?v=101` |
+| `ING eBay AutoLister/wwwroot/app.js` | The token, the debounced re-price and its stale-answer guard, the step sizes, the meter, the held-comps line |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-stepper`, `.wn-step`, `.wn-meter*`, `.wn-held*` |
+| `ING eBay AutoLister.Tests/LiveBidBoardTests.cs` | New — 13 tests, led by "a re-price is the same card" |
+| `ING eBay AutoLister.Tests/WhatsNotLiveBidAssetTests.cs` | New — 11 tests holding the screen to what it refuses to do |
+| `whatsnot_live_bid.png` | The card at $90 on a $67.68 ceiling: STOP, the meter, the held-comps line |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,307 passed**, 0 failed, 0 skipped (30 new; the previous commit was 3,277) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright) | Priced at $40 → badge, meter, ladder, "comps read just now". Four presses of **+** → bid $60, room $27.68 → $7.68, **`/api/whatsnot/rebid` the only request made**, card now reads "Bid moved without re-reading eBay … read 47s ago". Typed $90 → **STOP**, `wn-call-stop`, `wn-meter-bid-past` visible. No page errors. |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with both endpoints mocked in the shape the C# returns. That exercises the whole
+render and wiring path — including that a re-price does not call the pricing endpoint — but not the
+arithmetic underneath it, which is what the 30 new C# tests are for.
+
+## Known limits
+
+- **The held comps are per-machine and in-memory.** Restart the app and every token is gone. That is
+  the right trade for a cache of somebody else's market data, but it means the first re-price after
+  a restart costs a full read, and the seller only finds out when the card tells them.
+- **Nothing pre-prices the next lot.** A live sale runs a queue and the board can hold a dozen of
+  them, but they only get there by being priced one at a time, by hand. The plumbing for "price the
+  next three while this one runs" now exists; the screen for it does not.
+- **The step sizes are a guess at the auctioneer's.** They scale with the bid, which is right in
+  shape, but no live platform's actual increment is read — and the platforms do publish them.
+- **A re-price is a round trip, just a local one.** It is two milliseconds and no network, which is
+  under the threshold where a human sees a delay, but it is not the same thing as computing it in
+  the browser — which was the alternative, and was rejected because it would put a second opinion
+  about the ceiling in JavaScript.
+- **The endpoints still have no tests of their own.** The board, the advisor and the ceiling are
+  covered; the two routes are pinned only by asset tests reading `Program.cs`.

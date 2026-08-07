@@ -16334,6 +16334,37 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   width: 100%;
   min-width: 0;
 }
+/* The bid is the field that moves during a lot, so it gets hands: − and + either
+   side of it, sized to be hit without looking away from the stream. */
+.wn-stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.wn-stepper > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+.wn-step {
+  flex: 0 0 auto;
+  width: 30px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  color: var(--text, #e8ecf4);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wn-step:hover {
+  border-color: var(--accent, #d4a24a);
+  color: var(--accent, #d4a24a);
+}
+.wn-field-bid {
+  width: 168px;
+}
+
 .wn-price-btn {
   white-space: nowrap;
 }
@@ -16432,6 +16463,73 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-neg {
   color: var(--danger, #e0796a);
+}
+
+/* The meter. One track from nothing to the walk-away line: green up to the ceiling,
+   the ceiling marked, and the bid sitting somewhere along it. This is the part read
+   in the two seconds a live lot gives you, so it carries no text of its own beyond
+   three labels — the numbers are in the ladder directly above it. */
+.wn-meter {
+  margin: 10px 0 0;
+}
+.wn-meter-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--danger-soft, rgba(224, 121, 106, .22));
+  overflow: hidden;
+}
+.wn-meter-good {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--success, #5ac882);
+  opacity: .55;
+}
+/* The ceiling itself, drawn as a line rather than a colour change, because the
+   colour change is the thing being explained. */
+.wn-meter-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--success, #5ac882);
+}
+.wn-meter-bid {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--text, #e8ecf4);
+  box-shadow: 0 0 0 2px var(--panel-2, rgba(0, 0, 0, .35));
+}
+.wn-meter-bid-past {
+  background: var(--danger, #e0796a);
+}
+.wn-meter-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim, #8b93a7);
+  font-variant-numeric: tabular-nums;
+}
+.wn-meter-mid {
+  color: var(--success, #5ac882);
+}
+
+/* Where the answer came from. Quiet on a fresh card, and it has to stay quiet —
+   it is a note about the evidence, not a warning about the number. */
+.wn-held {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-held-stale {
+  color: var(--warn, #e0b155);
 }
 
 .wn-stats {
