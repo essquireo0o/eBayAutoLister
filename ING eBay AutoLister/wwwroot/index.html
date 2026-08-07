@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=119" />
+  <link rel="stylesheet" href="style.css?v=120" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2894,6 +2894,19 @@
               <label class="wn-field" title="The return you want on the money. Blank uses the app's own 30% bar.">
                 <span>Target %</span>
                 <input id="wn-target" type="number" min="0" step="5" inputmode="decimal" placeholder="30" />
+              </label>
+              <!-- The only box on this row that is not about the item. Every other figure here
+                   sharpens what the thing is WORTH; this one is what you've got. A live show puts
+                   up a defensible lot every four minutes and this card says BID UP TO on all of
+                   them — six good calls in a row is a night's cash flow committed to stock that
+                   turns back into money in forty days. Set a figure and the ceiling is never
+                   quoted above what tonight's sheet leaves you; leave it blank and nothing is
+                   capped, whatever has been spent. -->
+              <label class="wn-field wn-field-budget"
+                     title="What you'll spend tonight, all in. The ceiling is never quoted above what's left of it after the lots already on your buy sheet. Blank caps nothing.">
+                <span>Tonight's budget</span>
+                <input id="wn-budget" type="number" min="0" step="25" inputmode="decimal" placeholder="—"
+                       aria-describedby="wn-live-note" />
               </label>
               <button id="wn-price" class="btn btn-primary wn-price-btn" type="button">⚡ Price it</button>
             </div>
@@ -6025,6 +6038,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=136"></script>
+  <script src="app.js?v=137"></script>
 </body>
 </html>

@@ -12873,3 +12873,152 @@ all still registered and are asserted to be, and the live price still runs on `A
   cut is not a judgement: unlike the trend, condition and shelf-time reads, nothing here is estimated
   from evidence that could be read another way. It is a rate the seller typed, multiplied by a price
   the platform will bill. The exposure is a wrong rate, and the box that fixes it is on screen.
+
+---
+
+# The ceiling that knows what is left in the account (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Sixteen sessions of the live card have answered one question — **what is the thing on screen worth**
+— and each has sharpened it: what these fetch lately, what they fetch in this condition, what they
+fetch when yours reaches the front of the queue, what the platform bills on top of the hammer. Every
+one of them assumed the seller could pay whatever the answer came to.
+
+A live show breaks that assumption faster than any other sourcing channel in this app. The lots come
+every four minutes, each one individually defensible, and the card says `BID UP TO` on all of them.
+Six good calls in a row is a seller who has committed **$1,400 they had not got**, on stock that
+becomes cash in forty days if it sells. Nothing on the screen has ever counted the money leaving —
+and the app knew exactly what it was, because tonight's buy sheet is the number the bank statement
+will agree with. It was simply only ever read **after** the hammer.
+
+So there is now a box on the form and a strip on every card:
+
+> **TONIGHT** **$20 left — that's the ceiling** `−93% TO BID`
+> `BUDGET $500`  `COMMITTED $480`  `LEFT $20`
+> The comps put this at $90.71, and $20 of tonight's $500 is left. The ceiling above is what that
+> cash lands with the premium, the tax and the shipping already inside it — not what the item is worth.
+
+## It is a cut, and it is not a haircut
+
+Every other cut on this card comes off the **resale price**, because each is a claim about what the
+object fetches. This one never touches the resale price, the median, the middle-half spread, the
+sell-through, the comp table or the query eBay was asked — a test builds the same lot with and
+without a budget off one analysis and asserts all seven are identical. The item is worth exactly what
+the comps say it is worth. There is simply not enough money left to land it.
+
+So it cuts the **ceiling**, and it says so in cash. A seller told `DON'T BID` on a lot they merely
+cannot afford would learn the wrong thing about the item and walk past the next one.
+
+## Four states, and nothing is assumed
+
+`Services/LiveBudget.cs` answers one question — *what is left, and what does that do to the ceiling* —
+in four states.
+
+| State | When | What the ceiling is |
+|---|---|---|
+| `none` | No budget set | the market's, unchanged — with the night's spend reported beside it |
+| `clear` | More left than the ceiling needs | the market's, and the figure is said out loud |
+| `capped` | Less left than the item is worth | **what the remaining cash lands** |
+| `spent` | Nothing left, or not enough to cover the freight | **zero**, and the badge says `OUT OF CASH` |
+
+An empty box caps nothing, whatever is on tonight's sheet — the ceiling is lowered on **exactly one
+line**, guarded by `Applied`, which a test counts. So a card without a budget is priced byte-for-byte
+as it was before the file existed, and every pre-existing ceiling test in the suite passes on its
+original figures. The spend is still reported in that state, because money that has left the account
+is a fact and not a setting.
+
+## The arithmetic is the card's own
+
+What is left has to cover the whole landed cost — the bid, the premium on it, the tax on both and the
+freight — so turning remaining cash into a bid is exactly `LiveBidAdvisor.BreakEvenBid`, which is the
+function that already turns an all-in ceiling into a bid on this screen. It is **called, not
+restated**: a test asserts the affordable bid equals that function's answer, and a second asserts that
+winning at the quoted ceiling lands inside the remaining cash to the cent. Two "what bid fits inside
+this much money" arithmetics is how the badge and the ladder end up disagreeing by the premium.
+
+## A lot the market refused is still refused for the market's reason
+
+`Judge` reaches the market's own two refusals first. If the comps say fees eat the whole resale price,
+that is the reason — a badge blaming the seller's wallet for a bad lot would teach them the wrong
+thing, and `LiveBudget.Applied` is false whenever there was no ceiling to cut. Only a lot the market
+was willing to price can be stopped for money, and when it is, the reason names the comps' own figure:
+*"The item is worth up to $90.71 and you have $0 left of tonight's $500. Nothing wrong with the lot."*
+
+The same distinction runs through the "bidding is past the ceiling" branch. Past a **cash** ceiling on
+a lot still making money, "not enough left to be worth the work" would be false — there is plenty
+left, it is just not the seller's tonight.
+
+## The win deliberately does not carry it
+
+`LiveWinRequest.AsBid()` carries every other cost on the card and leaves this one behind.
+`WonLot.CeilingAtWin` is what the sheet's discipline column measures against, and it has to stay the
+market's answer: a lot won for well under what it is worth on a night the cash ran out is **not an
+overpay**, and recording it as one would turn `BuySheet.OverpaidBy` into a number about the seller's
+bank balance rather than about their bidding.
+
+## The spoken line names both figures
+
+A seller who hears `BID UP TO $6` on something they know fetches $200 will assume the app has misread
+the item — and the next thing they do is bid past it. So the one line carries two numbers where every
+other clause carries at most one: *"That's your remaining $20, not the $90 the comps back."* Silent on
+a spent budget, where the badge has already said it, and silent on every card with room to spare.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveBudget.cs` | New — the four states, the cash-to-bid conversion, the cut and every sentence |
+| `ING eBay AutoLister/Models/LiveBudgetModels.cs` | New — `LiveBudgetTonight`, `LiveBudgetVerdicts`, `LiveBudgetRead` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidRequest.NightBudget`; `LiveBidCard.Budget` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | Why `AsBid()` leaves the budget behind |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | `Committed()` — the night's landed spend, off the cached list under the same lock |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The `cash` parameter, the read, the one-line cap, the ceiling note, the two badge branches, the warning |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhoseCeilingThatIs` — the one clause that carries two figures |
+| `ING eBay AutoLister/Program.cs` | `sheet.Committed()` into the fresh price and the re-price, and the verdict, the money and both ceilings in the log line |
+| `ING eBay AutoLister/wwwroot/index.html` | The budget box, `app.js?v=137`, `style.css?v=120` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnBudgetFields()` into the three pre-hammer payloads and not the win, remembered, re-priced on input, the strip |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-budget-*` — the four edges, the bar, the three cells, the tag; `.wn-field-budget`; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveBudgetTests.cs` | New — 15 tests on the states, the conversion, and everything it refuses to cap |
+| `ING eBay AutoLister.Tests/WhatsNotBudgetAssetTests.cs` | New — 20 tests holding the eight links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 9 new tests on what a real card does with a budget, including that an unbudgeted card is byte-for-byte the old one |
+| `WhatsNotTaxAssetTests.cs`, `WhatsNotShipAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotHoldAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotConditionAssetTests.cs` | Re-pinned asset versions, the strip order and the two widened literals |
+| `whatsnot_budget_capped.png`, `whatsnot_budget_spent.png`, `whatsnot_budget_clear.png`, `whatsnot_budget_none.png`, `whatsnot_budget_narrow.png` | The state that cuts, the state that stops, the two that must look free, and the cutting one at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,510 passed**, 0 failed, 0 skipped (44 new; the previous commit was 4,466) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` mocked in the shape the C# returns) | **30 checks, all passed.** On the capped card: a warn-edged strip reading `$20 left — that's the ceiling`, a `−93% TO BID` tag, a bar measured at **96.0%** of its track, three cells with `LEFT $20.00` drawn loud, the strip **immediately above the ladder**, a `BID UP TO $6` badge, and a reason naming both $20 and $90.71. On `spent`: the badge reads **OUT OF CASH**, the reason keeps $90.71 beside it and never says "fees and shipping eat", and the bar is full. On `clear`: no tag and **nothing on the warning list** — the "an accurate card is not warned about" property drawn rather than asserted. On `none`: no cells, no bar, the $438 spend still said, and the badge back at the market's $90. The budget survived a page reload, which is the restart-mid-show case. At 560px the strip overflowed the card by **0px**, the cells stayed inside it by **0px** and the form's box by **0px**. 0 JS errors beyond Whatnot's own X-Frame-Options refusal, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every state and every dollar is exercised against
+  requests built in tests and a mocked endpoint. The action log now prints the verdict, the budget,
+  the spend, what is left and both ceilings on every fresh price, which is where the first real *"the
+  app said stop on a $200 lot because the night's budget was gone"* will show up.
+- **The budget is a night, and the app has no idea when a night ends.** It is measured against the
+  whole buy sheet as it stands, which is what "tonight" has meant on this screen since the sheet
+  existed — so a seller who has not cleared the sheet since Tuesday is measured against Tuesday's
+  spend too. The Clear button is the fix and it is on the same screen; nothing here dates a row.
+- **It counts committed money, not available money.** A lot won and listed three hours ago is still
+  counted as spent, which is right — it has not paid itself back — but a seller whose real constraint
+  is what is in the account today has no way to say "$200 of that came back". The sheet knows which
+  rows became drafts; it does not know which drafts sold.
+- **A budget typed for one show is used for the next.** It is remembered like the premium and the
+  tax rate, which is right for a limit on a night and wrong the moment the seller opens a second
+  show's page the next evening without clearing the sheet.
+- **It cuts, which means it can cost the seller a lot they should have won.** This is the most
+  actionable cut on the card and the only one whose fix takes one keystroke: the ceiling comes
+  straight back the moment the budget is raised, off the same held comps, with no eBay read. What it
+  cannot do is know that the seller has money somewhere the sheet cannot see.

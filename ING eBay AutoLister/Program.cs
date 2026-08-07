@@ -3058,8 +3058,14 @@ app.MapPost("/api/whatsnot/bid", async (
     // moment the seller presses Won it, which is why it is counted here rather than held.
     var freight = sheet.ShippingOnShow(req.ShowName);
 
+    // And what the night has cost so far. Same list, same lock, no eBay in it — and it is the only
+    // input to the card that is not about the item on screen. It caps nothing unless the seller has
+    // set a budget; what it stops is the thing this screen is otherwise built to cause, which is six
+    // individually defensible calls in one hour against money that ran out on the fourth.
+    var spent = sheet.Committed();
+
     var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own,
-        search: terms, tonight: tonight, ship: freight);
+        search: terms, tonight: tonight, ship: freight, cash: spent);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
@@ -3112,6 +3118,14 @@ app.MapPost("/api/whatsnot/bid", async (
         $"{(card.Tax.Applied ? $" — {card.Tax.RatePercent:0.##}% on {card.Tax.TaxableBase:C} = {card.Tax.Charged:C}, " +
                                $"ceiling {card.Tax.CutPercent:0.#}% lower" : "")}" +
         $"{(card.Tax.Exposure > 0m ? $" — about {card.Tax.Exposure:C} uncosted at the US average" : "")}; " +
+        // And whether the money was there. This is where the first real "the app said stop on a lot
+        // it priced at $200 because the night's budget was already gone" shows up, in the seller's
+        // own log, with the budget, the spend and both ceilings it was worked out from.
+        $"budget {card.Budget.Verdict}" +
+        $"{(card.Budget.Stated ? $" — {card.Budget.Committed:C} of {card.Budget.Budget:C} spent on " +
+                                 $"{card.Budget.LotsWon} lot(s), {card.Budget.Remaining:C} left" : "")}" +
+        $"{(card.Budget.Applied ? $", ceiling {card.Budget.MarketCeiling:C} -> {card.Budget.Ceiling:C} " +
+                                  $"({card.Budget.CutPercent:0.#}% off)" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);
@@ -3167,8 +3181,10 @@ app.MapPost("/api/whatsnot/rebid", (
     // Re-counted here rather than held, because this is the one input to the card that the seller
     // can change without touching the bid box: winning the previous lot of the same product and
     // pressing Won it. Held comps, fresh count — no eBay read either way.
+    // The spend is re-counted here for the same reason the unit count is: the seller changes it
+    // themselves, mid-lot, by pressing Won it on the one before. Held comps, fresh money.
     var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search,
-        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName));
+        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName), sheet.Committed());
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3231,6 +3247,11 @@ app.MapPost("/api/whatsnot/won", (
     // card on screen said. The freight one matters most here: this row's shipping is what the lot
     // actually adds to the box, so the night's spend stays the figure the bank statement will agree
     // with rather than the first-item rate charged once per lot.
+    //
+    // Tonight's budget is deliberately NOT carried here — see LiveWinRequest.AsBid. The ceiling
+    // written on this row is the one the seller's discipline is measured against, and that has to
+    // stay the market's answer: a lot won for less than it is worth on a night the cash ran out is
+    // not an overpay, and counting it as one would make the sheet's one honest column meaningless.
     var card = advisor.Build(
         quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own, quote.Search,
         sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName));

@@ -176,7 +176,7 @@ public class WhatsNotHoldAssetTests
     public void The_strip_sits_between_the_pile_and_the_freight()
     {
         var template = Js.Replace("\r\n", "\n");
-        Assert.Contains("${stockStrip}\n      ${holdStrip}\n      ${shipStrip}\n      ${taxStrip}\n      ${ladder}",
+        Assert.Contains("${stockStrip}\n      ${holdStrip}\n      ${shipStrip}\n      ${taxStrip}\n      ${budgetStrip}",
             template, StringComparison.Ordinal);
     }
 
@@ -331,8 +331,8 @@ public class WhatsNotHoldAssetTests
     [Fact]
     public void The_asset_versions_are_bumped()
     {
-        Assert.Contains("app.js?v=136", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=119", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

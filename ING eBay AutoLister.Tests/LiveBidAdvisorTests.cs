@@ -2099,4 +2099,201 @@ public class LiveBidAdvisorTests
         Assert.Equal(9.1m, taxed.Tax.CutPercent);   // 10 / 110
         Assert.Equal(taxed.Tax.CutPercent, actualCut);
     }
+
+    // ── The money that is actually there ──────────────────────────────────────
+    // Sixteen sessions of this card have answered "what is it worth", and every one of them assumed
+    // the seller could pay it. A live show puts up a defensible lot every four minutes: six good
+    // calls in a row is a night's cash flow committed, and until now nothing on the screen counted
+    // the money leaving. What is pinned here is that counting it changes NOTHING about the market —
+    // the item is worth what the comps say; there is simply not enough left to land it — and that a
+    // card with no budget entered is priced exactly as it was before the read existed.
+
+    private static LiveBidCard Budgeted(
+        decimal? budget, decimal spent, int lots, decimal? bid = null,
+        decimal? fee = null, decimal? shipping = null, MarketAnalysisResult? analysis = null) =>
+        Advisor.Build(
+            Product, analysis ?? Analysis(),
+            new LiveBidRequest
+            {
+                Title = Product, CurrentBid = bid, BuyerFeePercent = fee, ShippingCost = shipping,
+                NightBudget = budget,
+            },
+            Fees, nowUtc: Now, cash: new LiveBudgetTonight(lots, spent));
+
+    /// <summary>
+    /// No budget entered is no cap, whatever tonight's sheet says. The card is byte-for-byte the one
+    /// this file tested before the read existed — the property that keeps every other test in this
+    /// suite honest.
+    /// </summary>
+    [Fact]
+    public void A_card_with_no_budget_is_priced_exactly_as_it_was()
+    {
+        var plain = Card(Analysis(), bid: 40m);
+        var withSpend = Budgeted(budget: null, spent: 4_000m, lots: 20, bid: 40m);
+
+        Assert.Equal(plain.MaxBid, withSpend.MaxBid);
+        Assert.Equal(plain.Call, withSpend.Call);
+        Assert.Equal(plain.CallLabel, withSpend.CallLabel);
+        Assert.Equal(plain.Reason, withSpend.Reason);
+        Assert.Equal(plain.CeilingBoundBy, withSpend.CeilingBoundBy);
+        Assert.Equal(plain.CeilingNote, withSpend.CeilingNote);
+        Assert.Equal(plain.Say, withSpend.Say);
+
+        // And the spend is still on the card, because it is a fact rather than an assumption.
+        Assert.Equal(4_000m, withSpend.Budget.Committed);
+        Assert.False(withSpend.Budget.Applied);
+    }
+
+    /// <summary>
+    /// The cash left becomes the ceiling, and the card says whose ceiling it is. A figure well under
+    /// the comps with no reason beside it is the one thing on this screen a seller talks themselves
+    /// out of believing.
+    /// </summary>
+    [Fact]
+    public void The_cash_left_caps_the_ceiling_and_the_card_says_so()
+    {
+        var full = Card(Analysis(), bid: 20m);
+        var capped = Budgeted(budget: 500m, spent: 480m, lots: 8, bid: 20m);
+
+        Assert.True(full.MaxBid > 20m, "the market ceiling has to clear the bid for this to be about cash");
+        Assert.Equal(20m, capped.MaxBid);
+        Assert.Equal(LiveBudget.CeilingByBudget, capped.CeilingBoundBy);
+        Assert.Equal(full.MaxBid, capped.Budget.MarketCeiling);
+
+        Assert.Contains("your remaining", capped.Reason, StringComparison.Ordinal);
+        Assert.Contains("the comps back", capped.Reason, StringComparison.Ordinal);
+
+        // The room, the profit at the ceiling and the presses left all follow the capped figure —
+        // a ladder measured against one ceiling under a badge quoting another is the failure here.
+        Assert.Equal(capped.MaxBid - capped.CurrentBid, capped.Headroom);
+        Assert.True(capped.ProfitAtMaxBid > full.ProfitAtMaxBid,
+            "a lower ceiling leaves more profit at it, and the card has to show that figure");
+    }
+
+    /// <summary>
+    /// It moves the ceiling and leaves the market alone. Where the seller's money went is not a fact
+    /// about what the thing fetches, and a card that quietly re-rated the comps for a bank balance
+    /// would be inventing sales nobody made.
+    /// </summary>
+    [Fact]
+    public void Capping_the_ceiling_changes_nothing_about_the_market()
+    {
+        var full = Card(Analysis(), bid: 20m);
+        var capped = Budgeted(budget: 500m, spent: 480m, lots: 8, bid: 20m);
+
+        Assert.Equal(full.ResalePrice, capped.ResalePrice);
+        Assert.Equal(full.MedianPrice, capped.MedianPrice);
+        Assert.Equal(full.QuickSalePrice, capped.QuickSalePrice);
+        Assert.Equal(full.PriceLow, capped.PriceLow);
+        Assert.Equal(full.PriceHigh, capped.PriceHigh);
+        Assert.Equal(full.SellThroughRate, capped.SellThroughRate);
+        Assert.Equal(full.CompCount, capped.CompCount);
+        Assert.Equal(full.BreakEvenBid, capped.BreakEvenBid);
+        Assert.Equal(full.Search.Query, capped.Search.Query);
+    }
+
+    /// <summary>
+    /// The night is over. The badge says so in cash and names the market's own ceiling — a seller
+    /// told <c>DON'T BID</c> on a lot they merely cannot afford learns the wrong thing about the item
+    /// and walks past the next one.
+    /// </summary>
+    [Fact]
+    public void A_spent_budget_stops_the_card_in_its_own_words()
+    {
+        var card = Budgeted(budget: 500m, spent: 500m, lots: 9, bid: 20m);
+
+        Assert.Equal(LiveBidCalls.Stop, card.Call);
+        Assert.Equal("OUT OF CASH", card.CallLabel);
+        Assert.Equal(0m, card.MaxBid);
+        Assert.True(card.Budget.MarketCeiling > 0m);
+
+        Assert.Contains("Nothing wrong with the lot", card.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fees and shipping eat", card.Reason, StringComparison.Ordinal);
+        Assert.Contains("OUT OF CASH", card.Say, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A lot the market itself refused on a night the money also ran out is refused for the market's
+    /// reason. The item is the problem there, and a badge blaming the wallet would teach a seller
+    /// that a bad lot was a good one.
+    /// </summary>
+    [Fact]
+    public void A_lot_the_market_refused_is_still_refused_for_the_markets_reason()
+    {
+        // Nothing resells for enough to clear the fees, so there is no ceiling for cash to cut.
+        var card = Budgeted(budget: 500m, spent: 500m, lots: 9, bid: 20m,
+            analysis: Analysis(expected: 3m, p25: 2m, p75: 4m));
+
+        Assert.Equal(LiveBidCalls.Stop, card.Call);
+        Assert.Equal("DON'T BID", card.CallLabel);
+        Assert.False(card.Budget.Applied);
+    }
+
+    /// <summary>
+    /// Past a ceiling the CASH set, on a lot still making money at this price. "Not enough left to be
+    /// worth the work" would be false — there is plenty left, it is just not the seller's tonight.
+    /// </summary>
+    [Fact]
+    public void Bidding_past_the_cash_ceiling_is_refused_for_the_cash_and_not_for_the_work()
+    {
+        var card = Budgeted(budget: 500m, spent: 480m, lots: 8, bid: 30m);
+
+        Assert.Equal(LiveBidCalls.Stop, card.Call);
+        Assert.Contains("you have left tonight", card.Reason, StringComparison.Ordinal);
+        Assert.Contains("your budget stopping you, not the item", card.Reason, StringComparison.Ordinal);
+        Assert.True(card.CurrentBid <= card.BreakEvenBid,
+            "this test is only about the case where the lot still makes money at the bid");
+    }
+
+    /// <summary>
+    /// The cash ceiling is a bid, not a budget: winning at it costs the premium, the tax and the
+    /// freight on top, and all of that has to fit inside what is left.
+    /// </summary>
+    [Fact]
+    public void The_cash_ceiling_is_a_bid_with_the_premium_and_the_freight_already_out_of_it()
+    {
+        var card = Budgeted(budget: 500m, spent: 450m, lots: 8, bid: 10m, fee: 8m, shipping: 12m);
+
+        Assert.Equal(LiveBudgetVerdicts.Capped, card.Budget.Verdict);
+        Assert.Equal(50m, card.Budget.Remaining);
+        Assert.True(card.MaxBid < 50m, $"a {card.MaxBid} bid has to leave room for the premium and the freight");
+        Assert.True(LiveBidAdvisor.LandedCost(card.MaxBid, 8m, 12m) <= 50m,
+            $"winning at {card.MaxBid} lands at {LiveBidAdvisor.LandedCost(card.MaxBid, 8m, 12m)}, over the $50 left");
+    }
+
+    /// <summary>
+    /// A card the market could not price still reads the money. It is the one card with no ceiling to
+    /// cut, and a seller who has spent the night's budget should not have to price an unpriceable lot
+    /// to find that out.
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_card_still_reads_the_budget()
+    {
+        var card = Advisor.Build(
+            Product, null, new LiveBidRequest { Title = Product, CurrentBid = 40m, NightBudget = 500m },
+            Fees, nowUtc: Now, cash: new LiveBudgetTonight(6, 438m));
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(438m, card.Budget.Committed);
+        Assert.Equal(62m, card.Budget.Remaining);
+        Assert.False(card.Budget.Applied);
+    }
+
+    /// <summary>
+    /// The spoken line says whose ceiling it is, with both figures. A seller who hears
+    /// <c>BID UP TO $20</c> on something they know goes for $200 assumes the app misread the item —
+    /// and the next thing they do is bid past it.
+    /// </summary>
+    [Fact]
+    public void The_spoken_line_names_the_cash_and_the_comps()
+    {
+        var capped = Budgeted(budget: 500m, spent: 480m, lots: 8, bid: 10m);
+
+        Assert.Contains("your remaining", capped.Say, StringComparison.Ordinal);
+        Assert.Contains("the comps back", capped.Say, StringComparison.Ordinal);
+
+        // And a card with room to spare says nothing about money at all.
+        var clear = Budgeted(budget: 5_000m, spent: 100m, lots: 2, bid: 10m);
+        Assert.DoesNotContain("remaining", clear.Say, StringComparison.Ordinal);
+    }
 }

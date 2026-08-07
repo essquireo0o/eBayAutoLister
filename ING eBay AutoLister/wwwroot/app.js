@@ -9975,6 +9975,12 @@
     if (saved.tax != null) setVal('wn-tax', saved.tax);
     const exempt = $('wn-exempt');
     if (exempt) exempt.checked = saved.exempt === true;
+    // Tonight's budget outlives the session on purpose: a live show runs for hours and an
+    // app restarted in the middle of one must come back to the same limit, not to an
+    // unlimited card. What has already been spent against it is the server's, off the buy
+    // sheet — so a budget restored here can never be a budget with a forgotten spend
+    // behind it.
+    if (saved.budget != null) setVal('wn-budget', saved.budget);
     // The show itself is NOT remembered. It is the one field on this row that is only
     // true for tonight, and a handle carried in from last week would quietly combine
     // this lot's shipping with somebody else's box.
@@ -9994,6 +10000,9 @@
         // show. It is the one of the four that is visibly stated back on every card, so a
         // figure carried in from last night cannot sit there unnoticed.
         inc: $('wn-inc')?.value ?? '',
+        // What the night's money is. Not a fact about the item and not a fact about the
+        // show — a fact about the seller, which is why it belongs with the other four.
+        budget: $('wn-budget')?.value ?? '',
       }));
     } catch { /* private mode — the fields still work, they just don't persist */ }
   }
@@ -10029,6 +10038,20 @@
   /// request says. Nothing here computes tax; see Services/LiveSalesTax.cs.
   function wnTaxFields() {
     return { salesTaxPercent: wnNumber('wn-tax'), taxExempt: $('wn-exempt')?.checked === true };
+  }
+
+  /// ── What there is left to spend ─────────────────────────────────────────────
+  /// The one field on this screen that is not about the item. Sent everywhere a lot is
+  /// costed BEFORE the hammer — the card, the re-price and the lot list — and deliberately
+  /// NOT with a win: the ceiling written on a buy-sheet row is what the seller's discipline
+  /// is measured against, and that stays the market's answer.
+  ///
+  /// Null when the box is empty, which caps nothing at all however much has been spent.
+  /// What has already gone is never sent from here — the server reads it off tonight's buy
+  /// sheet, which is the only place that knows it. Nothing in the browser subtracts
+  /// anything; see Services/LiveBudget.cs.
+  function wnBudgetFields() {
+    return { nightBudget: wnNumber('wn-budget') };
   }
 
   /// The units block off the last card rendered. See wnUsePhotoTitle for the one thing
@@ -10183,6 +10206,7 @@
         showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
         ...wnTaxFields(),
+        ...wnBudgetFields(),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
@@ -10608,6 +10632,7 @@
         showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
         ...wnTaxFields(),
+        ...wnBudgetFields(),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
@@ -11038,6 +11063,50 @@
         ${tx.note ? `<p class="wn-tax-note">${esc(tx.note)}</p>` : ''}
       </div>` : '';
 
+    // ── And whether the money is there ─────────────────────────────────────────
+    // The last strip before the ladder, and the only one on this card that is not
+    // about the item. Everything above says what the thing is WORTH; this says what
+    // is left to pay for it. A live show puts up a defensible lot every four minutes
+    // and this screen says BID UP TO on all of them — six good calls in a row is a
+    // night's cash flow committed, and nothing here counted it until now.
+    //
+    // Nothing is assumed: an empty budget box caps nothing whatever the sheet says,
+    // and the spend is still reported, because money that has left the account is a
+    // fact. Every word and every dollar is the server's (Services/LiveBudget.cs) —
+    // the browser subtracts nothing, and the bar below is a width, not a decision.
+    const bg = c.budget || {};
+    const budgetStrip = bg.headline ? `
+      <div class="wn-budget wn-budget-${esc(bg.verdict || 'none')}">
+        <div class="wn-budget-line">
+          <span class="wn-budget-label">Tonight</span>
+          <strong class="wn-budget-headline">${esc(bg.headline)}</strong>
+          ${bg.applied && bg.cutPercent > 0
+            ? `<span class="wn-budget-tag">−${bg.cutPercent}% to bid</span>` : ''}
+          ${bg.stated && !bg.applied && bg.lotsWon > 0
+            ? `<span class="wn-budget-src">${bg.lotsWon} lot${bg.lotsWon === 1 ? '' : 's'} won</span>` : ''}
+        </div>
+        ${bg.stated ? `
+          <div class="wn-budget-bar" role="img"
+               aria-label="${esc(`${bg.spentPercent}% of tonight's budget committed`)}">
+            <div class="wn-budget-bar-spent" style="width:${bg.spentPercent}%"></div>
+          </div>
+          <div class="wn-budget-box">
+            <span class="wn-budget-cell" title="What you said you'd spend tonight, all in">
+              <span class="wn-budget-cell-name">Budget</span>
+              <span class="wn-budget-cell-fig">${moneyExact(bg.budget)}</span>
+            </span>
+            <span class="wn-budget-cell" title="What tonight's buy sheet has already committed — bid, premium, tax and shipping on every row">
+              <span class="wn-budget-cell-name">Committed</span>
+              <span class="wn-budget-cell-fig">${moneyExact(bg.committed)}</span>
+            </span>
+            <span class="wn-budget-cell wn-budget-cell-this" title="What's left to land a lot with — the ceiling above can never be quoted above what this covers">
+              <span class="wn-budget-cell-name">Left</span>
+              <span class="wn-budget-cell-fig">${moneyExact(bg.remaining)}</span>
+            </span>
+          </div>` : ''}
+        ${bg.note ? `<p class="wn-budget-note">${esc(bg.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The press, not the price ───────────────────────────────────────────────
     // Every figure below compares the bid ON SCREEN against the ceiling, which
     // answers whether the last bid was all right. Nobody buys at that price: pressing
@@ -11169,6 +11238,7 @@
       ${holdStrip}
       ${shipStrip}
       ${taxStrip}
+      ${budgetStrip}
       ${ladder}
       ${meter}
       ${wnOwnBlock(c.ownHistory)}
@@ -11596,6 +11666,7 @@
           showName: wnShow(),
           buyerFeePercent: wnNumber('wn-fee'),
           ...wnTaxFields(),
+          ...wnBudgetFields(),
           targetRoiPercent: wnNumber('wn-target'),
           // Sent for the same reason the other three are: a lot opened from this list
           // lands in the card above with its own numbers, and the presses left under the
@@ -11865,7 +11936,7 @@
     // the one keystroke left is the expensive one — and it is also the way back when
     // the held comps have been let go.
     ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-tax',
-     'wn-target']
+     'wn-target', 'wn-budget']
       .forEach(id => {
         $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
       });
@@ -11895,7 +11966,12 @@
     // Typing a rate mid-show drops every ceiling by the tax on it, and ticking the
     // certificate beside it puts them all straight back — off the same held comps, in
     // the seconds between two lots.
-    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-tax', 'wn-target']
+    // Tonight's budget is the eleventh, and it is the only one of them that is not
+    // about the item at all. Raising it mid-lot puts back the ceiling the comps
+    // support, instantly, which is the undo for a limit set too low on the one lot of
+    // the night the seller actually came for.
+    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-tax', 'wn-target',
+     'wn-budget']
       .forEach(id => {
         $(id)?.addEventListener('input', wnScheduleRebid);
       });

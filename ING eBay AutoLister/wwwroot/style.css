@@ -16682,6 +16682,12 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   margin: 0;
   cursor: pointer;
 }
+/* Tonight's money. Wider than the rate boxes because it holds a night's spend
+   rather than two digits, and last on the row because it is the only field here
+   that is not about the item on screen. */
+.wn-field-budget {
+  width: 132px;
+}
 
 .wn-price-btn {
   white-space: nowrap;
@@ -17765,6 +17771,153 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── And whether the money is there ──────────────────────────────────────────
+   The last strip before the ladder, and the only one on this card that is not
+   about the item. Everything above it says what the thing is worth; this says
+   what is left to pay for it. Drawn immediately over the ceiling it can lower,
+   because on the two states that lower it the number in the ladder is the
+   wallet's answer and not the market's. */
+.wn-budget {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* No budget set. Not an error — the card is right, and the ceiling above is the
+   market's — so this is the quietest edge on the strip even when there is real
+   money on tonight's sheet. Nothing here is being got wrong; it is simply not
+   being counted, and the seller is the one who decides whether to. */
+.wn-budget-none {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+/* Room to spare. The ordinary state of a good night. */
+.wn-budget-clear {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+/* The ceiling above is the cash and not the comps. Not an error and not good
+   news: it is the card being right about a limit the seller set, which is what
+   the neutral warn edge says everywhere else on this screen. */
+.wn-budget-capped {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Nothing left to bid with. The one state that stops the card, and the only one
+   drawn as a refusal. */
+.wn-budget-spent {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+.wn-budget-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-budget-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-budget-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-budget-capped .wn-budget-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-budget-spent .wn-budget-headline {
+  color: var(--danger, #d46a6a);
+}
+/* How much lower the ceiling is because of the cash. The same shape as the tax
+   tag beside it, and for the same reason: a number that moved the ceiling has to
+   say by how much, or the seller cannot check it. */
+.wn-budget-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+.wn-budget-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The night, as one bar. It is a width and nothing else — every figure in it is
+   the server's, and the point of drawing it is that "68% gone" is read in the
+   half-second a live card gets and three dollar figures are not. */
+.wn-budget-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel, rgba(255, 255, 255, .06));
+}
+.wn-budget-bar-spent {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #6ea8fe);
+  transition: width .18s ease-out;
+}
+.wn-budget-capped .wn-budget-bar-spent {
+  background: var(--warn, #e0b44a);
+}
+.wn-budget-spent .wn-budget-bar-spent {
+  background: var(--danger, #d46a6a);
+}
+/* The arithmetic in three figures: what was set aside, what has gone, what is
+   left. The last is the one the ceiling above was capped by, so it is the one
+   drawn loud. */
+.wn-budget-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-budget-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-budget-cell-this {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-budget-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-budget-cell-this .wn-budget-cell-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-budget-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-budget-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 .wn-ladder {
   display: flex;
   flex-wrap: wrap;
@@ -18519,7 +18672,20 @@ p.wn-units-refused {
     flex-direction: column;
     gap: 1px;
   }
+  /* And on the budget strip, where "TONIGHT" and "$62 left — that's the ceiling"
+     want the same line and only one of them is the sentence. The bar and the
+     three cells below it wrap on their own. */
+  .wn-budget-line {
+    flex-direction: column;
+    gap: 1px;
+  }
   .wn-field-cond {
+    width: 100%;
+  }
+  /* Tonight's money gets the whole line. Its label is two words and its figure is
+     a night's spend, and squeezed into a 132px column beside a rate box the two
+     of them wrap into something unreadable. */
+  .wn-field-budget {
     width: 100%;
   }
   /* The certificate is a tick, not a figure, and its label is two words. Given

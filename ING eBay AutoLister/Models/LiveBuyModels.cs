@@ -68,6 +68,15 @@ public sealed class LiveWinRequest
 
     /// <summary>The same question the card answers, asked at the winning bid. Everything the row
     /// shows comes back through <see cref="Services.LiveBidAdvisor.Build"/> from this.</summary>
+    /// <remarks>
+    /// One field is deliberately left behind: <see cref="LiveBidRequest.NightBudget"/>. Every other
+    /// cost on this request is carried so the row is costed at the card's own terms, and this one is
+    /// not, because <see cref="WonLot.CeilingAtWin"/> is what the sheet's discipline column measures
+    /// against — and that has to stay the market's answer. A lot won for well under what it is worth
+    /// on a night the cash ran out is not an overpay, and recording it as one would turn
+    /// <see cref="BuySheet.OverpaidBy"/> into a number about the seller's bank balance rather than
+    /// about their bidding. See <see cref="Services.LiveBudget"/>.
+    /// </remarks>
     public LiveBidRequest AsBid() => new()
     {
         Title = Title,

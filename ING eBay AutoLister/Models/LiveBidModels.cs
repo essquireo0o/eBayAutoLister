@@ -80,6 +80,19 @@ public sealed class LiveBidRequest
     /// "worth doing" bar (<see cref="Services.LocalArbitrageAnalyzer.SolidRoiPercent"/>).</summary>
     public decimal? TargetRoiPercent { get; set; }
 
+    /// <summary>
+    /// What the seller set aside to spend tonight, all in. Null or zero caps nothing at all — the
+    /// ceiling stays the market's, exactly as it was before this field existed.
+    /// </summary>
+    /// <remarks>
+    /// The only figure on this request that is not about the item. A live show puts up a defensible
+    /// lot every four minutes and this card says <c>BID UP TO</c> on all of them; what it has never
+    /// been able to say is that the money ran out three lots ago. Measured against what tonight's
+    /// buy sheet has already committed — see <see cref="Services.LiveBudget"/>, which cuts the
+    /// ceiling and never the resale price.
+    /// </remarks>
+    public decimal? NightBudget { get; set; }
+
     /// <summary>Optional category override, same ids as the Local Deals board.</summary>
     public string? CategoryId { get; set; }
 
@@ -252,6 +265,15 @@ public sealed class LiveBidCard
     /// See <see cref="Services.LiveSalesTax"/>.
     /// </summary>
     public LiveTaxRead Tax { get; set; } = new();
+
+    /// <summary>
+    /// What the seller has left to spend tonight, and whether the ceiling above is the market's or
+    /// the wallet's. Never null, for the same reason as the block above it: silence would mean both
+    /// "you have plenty" and "nobody is counting". The only read on this card that can lower the
+    /// ceiling without touching the resale price — the item is worth what it is worth; the money is
+    /// a separate fact. See <see cref="Services.LiveBudget"/>.
+    /// </summary>
+    public LiveBudgetRead Budget { get; set; } = new();
 
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }

@@ -184,6 +184,33 @@ public sealed class LiveBuySheet
             : new LiveShipTonight(matched.Count, Math.Round(matched.Sum(l => Math.Max(0m, l.ShippingCost)), 2));
     }
 
+    /// <summary>
+    /// What tonight has cost so far, all in — the one number the live card needs before it can say
+    /// whether the seller can afford the lot on screen.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same figure <see cref="BuySheet.Spent"/> carries and the same arithmetic behind it: the
+    /// sum of every row's landed cost, which is the number the bank statement will agree with. Every
+    /// row counts, including the ones nothing could price and the ones already listed — money that
+    /// has left the account has left it, and a lot that became a draft this afternoon has not paid
+    /// itself back yet.
+    /// </para>
+    /// <para>
+    /// Read under the same lock as everything else here, off the cached list: no file I/O in the
+    /// common case, which is what lets it sit inside a re-price that has to answer between two bids.
+    /// </para>
+    /// </remarks>
+    public LiveBudgetTonight Committed()
+    {
+        List<WonLot> lots;
+        lock (_gate) lots = Load();
+
+        return lots.Count == 0
+            ? LiveBudgetTonight.Nothing
+            : new LiveBudgetTonight(lots.Count, Math.Round(lots.Sum(l => Math.Max(0m, l.LandedCost)), 2));
+    }
+
     /// <summary>One row, by its own id. Null when it is not on the sheet — cleared, trimmed, or a
     /// stale id from a screen that has been open since the last show.</summary>
     public WonLot? Find(string? id)

@@ -242,8 +242,8 @@ public class WhatsNotConditionAssetTests
                  })
             Assert.Contains(rule, Css, StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=119", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=136", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -267,7 +267,7 @@ public class WhatsNotConditionAssetTests
     {
         Assert.Contains("private static string WhatKindOfOne(LiveBidCard card)", Speech, StringComparison.Ordinal);
         Assert.Contains("if (cond.Band == LiveConditionBands.Unstated) return \"\";", Speech, StringComparison.Ordinal);
-        Assert.Contains("WhichWayItsGoing(card), WhatKindOfOne(card)", Speech, StringComparison.Ordinal);
+        Assert.Contains("WhichWayItsGoing(card),\r\n            WhatKindOfOne(card)", Speech, StringComparison.Ordinal);
     }
 
     /// <summary>

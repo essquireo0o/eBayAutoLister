@@ -257,9 +257,10 @@ public class WhatsNotShipAssetTests
 
         // The shelf-time strip sits above it, between the pile and this, because it prices the wait
         // that pile causes. Below it is the other half of what winning costs — the tax the
-        // marketplace collects on the hammer — and then the ladder those two were costed into.
+        // marketplace collects on the hammer, then what is left of tonight's money — and then
+        // the ladder they were all costed into.
         var template = Js.Replace("\r\n", "\n");
-        Assert.Contains("${holdStrip}\n      ${shipStrip}\n      ${taxStrip}\n      ${ladder}",
+        Assert.Contains("${holdStrip}\n      ${shipStrip}\n      ${taxStrip}\n      ${budgetStrip}",
             template, StringComparison.Ordinal);
     }
 
@@ -351,8 +352,8 @@ public class WhatsNotShipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=136", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=119", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

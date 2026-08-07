@@ -115,10 +115,18 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// upward, and only when the show is named, its extra-item rate is stated, and a lot from that
     /// same show is already on the sheet.
     /// </param>
+    /// <param name="cash">
+    /// What tonight's buy sheet has already committed, all in
+    /// (<see cref="LiveBuySheet.Committed"/>). Default is nothing, so a card built without a sheet is
+    /// priced identically — and so is every card whose seller set no budget, whatever is on the
+    /// sheet. It can lower the ceiling, and it is the only thing here that lowers one for a reason
+    /// that is not about the item at all; see <see cref="LiveBudget"/>.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
         ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
-        LiveSearchTerms? search = null, LiveStockTonight tonight = default, LiveShipTonight ship = default)
+        LiveSearchTerms? search = null, LiveStockTonight tonight = default, LiveShipTonight ship = default,
+        LiveBudgetTonight cash = default)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var terms = search ?? LiveSearchQuery.Build(item);
@@ -231,6 +239,11 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // one card with no resale figure would read as "there is no queue".
             card.Hold = LiveHoldCost.Read(
                 card.Units.Count, own, tonight, monthlySales: 0m, perUnitResale: null, trend: trend);
+            // And what is left in the account, which is the one fact on this path that does not need
+            // a comp to be true. There is no ceiling here for it to cut — it is read with a market
+            // ceiling of zero, so it reports the money and changes nothing — but a seller who has
+            // spent tonight's budget should not have to price an unpriceable lot to find that out.
+            card.Budget = LiveBudget.Read(request.NightBudget, cash, 0m, feePercent, shipping, taxPercent);
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
             card.Say = LiveBidSpeech.Say(card);
             return card;
@@ -295,15 +308,40 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(
             breakEvenAllIn, shipping, target, feePercent, taxPercent);
 
+        // And then the money that is actually there. Everything above this line is what the lot is
+        // WORTH; this is the only read on the card that asks whether the seller can pay it. A live
+        // show puts up a defensible lot every four minutes and each one comes back BID UP TO — six
+        // in a row is a night's cash flow committed, and until now nothing on this screen counted it.
+        //
+        // It never touches the resale price, the median, the spread or the sell-through: the item is
+        // worth exactly what the comps say it is worth, there is simply not enough left to land it.
+        // So it lowers the CEILING and says so in cash — a seller told DON'T BID on a lot they merely
+        // cannot afford would learn the wrong thing about the item and walk past the next one. And a
+        // card with no budget entered is priced byte-for-byte as it was before this existed. See
+        // LiveBudget.
+        var budget = LiveBudget.Read(request.NightBudget, cash, maxBid, feePercent, shipping, taxPercent);
+        card.Budget = budget;
+        if (budget.Applied)
+        {
+            maxBid = budget.Ceiling;
+            boundBy = LiveBudget.CeilingByBudget;
+        }
+
         card.BreakEvenBid = BreakEvenBid(breakEvenAllIn, feePercent, shipping, taxPercent);
         card.MaxBid = maxBid;
         card.CeilingBoundBy = boundBy;
-        card.CeilingNote = boundBy == AuctionSniperAnalyzer.CeilingByCash
-            ? $"Ceiling set by the {LocalArbitrageAnalyzer.SolidProfit:C0} cash floor — a percentage has no size, " +
-              "and finding it, listing it and packing it costs the same hour whatever it cost to buy." +
-              (units.IsLot ? $" The floor is charged once for the lot, not {count} times: the packing and the " +
-                             "label on each of them is already in the break-even above it." : "")
-            : $"Ceiling set by your {target:0.#}% target return.";
+        card.CeilingNote = boundBy switch
+        {
+            // The wallet's, and it says the market's figure in the same breath — the difference
+            // between the two is the whole point of the sentence.
+            LiveBudget.CeilingByBudget => budget.Note,
+            AuctionSniperAnalyzer.CeilingByCash =>
+                $"Ceiling set by the {LocalArbitrageAnalyzer.SolidProfit:C0} cash floor — a percentage has no size, " +
+                "and finding it, listing it and packing it costs the same hour whatever it cost to buy." +
+                (units.IsLot ? $" The floor is charged once for the lot, not {count} times: the packing and the " +
+                               "label on each of them is already in the break-even above it." : ""),
+            _ => $"Ceiling set by your {target:0.#}% target return.",
+        };
         card.Headroom = Math.Round(maxBid - bid, 2);
         card.ProfitAtMaxBid = Math.Round(
             Math.Max(0m, breakEvenAllIn - LandedCost(maxBid, feePercent, shipping, taxPercent)), 2);
@@ -590,6 +628,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     {
         if (card.BreakEvenBid <= 0m || card.MaxBid <= 0m)
         {
+            // Out of cash is said only about a lot the market itself was willing to price. If the
+            // comps refused it, that is the reason — the item is the seller's problem there, and a
+            // badge blaming their wallet would teach them the wrong thing about a bad lot.
+            if (card.BreakEvenBid > 0m && card.Budget is { Exhausted: true } spent)
+                return (LiveBidCalls.Stop, "OUT OF CASH", spent.Reason);
+
             return (LiveBidCalls.Stop, "DON'T BID", card.BreakEvenBid <= 0m
                 ? "Fees and shipping eat the whole resale price — no bid makes this work."
                 : $"It breaks even at {card.BreakEvenBid:C}, but nothing under that clears " +
@@ -598,6 +642,16 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
 
         if (card.BidWasKnown && card.CurrentBid > card.MaxBid)
         {
+            // Past a ceiling the CASH set, on a lot still making money at this price. "Not enough
+            // left to be worth the work" would be false — there is plenty left, it is just not the
+            // seller's tonight.
+            if (card.Budget is { Capped: true } capped && card.CurrentBid <= card.BreakEvenBid)
+            {
+                return (LiveBidCalls.Stop, "STOP",
+                    $"Past the {card.MaxBid:C} you have left tonight. The comps back it to " +
+                    $"{capped.MarketCeiling:C} — this is your budget stopping you, not the item.");
+            }
+
             return (LiveBidCalls.Stop, "STOP",
                 card.CurrentBid > card.BreakEvenBid
                     ? $"The bidding is past {card.BreakEvenBid:C}, where this stops making money at all. Let it go."
@@ -615,6 +669,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var ceiling = $"Bid up to {card.MaxBid:C}{forAll}" +
                       (card.BuyerFeePercent > 0m || card.ShippingCost > 0m || card.Tax.Applied
                           ? $" ({LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost, card.Tax.RatePercent):C} landed)"
+                          : "") +
+                      // Which ceiling this is. Said in the same breath as the number, on both the
+                      // risky and the confident path, because a figure well under the comps with no
+                      // reason beside it is the one thing on this card a seller talks themselves out
+                      // of believing.
+                      (card.Budget is { Capped: true } left
+                          ? $" — that's your remaining {left.Remaining:C}, not the {left.MarketCeiling:C} the comps back"
                           : "");
 
         if (card.CompCount < MinCompsToBid || card.EvidenceTier != LocalArbitrageAnalyzer.EvidenceConfident)
@@ -700,6 +761,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // would be a warning about a card that is right. LiveSalesTax owns the sentence, so the
         // strip and the warning list cannot describe the same tax differently.
         if (card.Tax is { Warning.Length: > 0 } tax) warnings.Add(tax.Warning);
+
+        // And then whether the money is there at all — the last cost fact, and the only one on this
+        // list that is not about the item. Four states, three of which speak: the budget nobody set
+        // while real money leaves the account, the ceiling that is the wallet's rather than the
+        // market's, and the night that is over. LiveBudget owns every sentence, so the strip and the
+        // warning list cannot describe the same cash differently.
+        if (card.Budget is { Warning.Length: > 0 } cash) warnings.Add(cash.Warning);
 
         if (card.NewestCompAgeDays is int age && age > StaleCompDays)
         {

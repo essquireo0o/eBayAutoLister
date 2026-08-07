@@ -235,7 +235,7 @@ public class WhatsNotTaxAssetTests
         Assert.Contains("esc(tx.note)", Js, StringComparison.Ordinal);
 
         var template = Js.Replace("\r\n", "\n");
-        Assert.Contains("${shipStrip}\n      ${taxStrip}\n      ${ladder}", template, StringComparison.Ordinal);
+        Assert.Contains("${shipStrip}\n      ${taxStrip}\n      ${budgetStrip}", template, StringComparison.Ordinal);
 
         // The three figures are carried, not multiplied here.
         Assert.Contains("moneyExact(tx.taxableBase)", Js, StringComparison.Ordinal);
@@ -262,8 +262,8 @@ public class WhatsNotTaxAssetTests
         var none = Css[Css.IndexOf(".wn-tax-none {", StringComparison.Ordinal)..];
         Assert.Contains("var(--danger", none[..none.IndexOf('}')], StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=119", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=136", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
     }
 
     /// <summary>It folds on a narrow card, like every strip above it — this screen is used as a

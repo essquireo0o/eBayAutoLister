@@ -50,9 +50,38 @@ public static class LiveBidSpeech
             return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.",
                 YourOwnRecord(card), HowManyYoudHave(card));
 
-        return Join(Headline(card), HowMany(card), WhichWayItsGoing(card), WhatKindOfOne(card),
-            WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
+        return Join(Headline(card), HowMany(card), WhoseCeilingThatIs(card), WhichWayItsGoing(card),
+            WhatKindOfOne(card), WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
             WhatItResellsFor(card), YourOwnRecord(card), HowManyYoudHave(card), WhatTheWaitCosts(card));
+    }
+
+    /// <summary>
+    /// That the number just spoken is the seller's wallet rather than the market, said third —
+    /// immediately after the count, before every figure whose meaning it changes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One state speaks, and it is the one where the line would otherwise be actively misleading:
+    /// the ceiling was cut to what the remaining cash lands. A seller who hears <c>BID UP TO $62</c>
+    /// on something they know goes for $200 will assume the app has misread the item — and the next
+    /// thing they do is bid past it. Naming the comps' own figure in the same breath is what stops
+    /// that, so this clause carries two numbers where every other clause here carries at most one.
+    /// </para>
+    /// <para>
+    /// Silent when the budget is spent outright: the badge is already <c>OUT OF CASH</c> and
+    /// <see cref="Headline"/> has just said it. Silent on every card with room to spare and on every
+    /// card with no budget set, which is nearly all of them — a clause on every lot in exchange for a
+    /// figure the strip already carries would cost the line the one thing it is for.
+    /// </para>
+    /// </remarks>
+    private static string WhoseCeilingThatIs(LiveBidCard card)
+    {
+        if (card.Budget is not { Capped: true } budget) return "";
+
+        // Rounded against the bidder like every other figure in this line: the cash left down, the
+        // market's ceiling down too, so neither number invites a bid the card did not allow.
+        return $"That's your remaining {Math.Floor(budget.Remaining).ToString("C0")}, not the " +
+               $"{Math.Floor(budget.MarketCeiling).ToString("C0")} the comps back.";
     }
 
     /// <summary>
