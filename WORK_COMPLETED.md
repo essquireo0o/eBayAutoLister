@@ -9894,3 +9894,164 @@ and the three call colours the card's own badge uses.
   one — the numbers are on the row, but the comparison is left to the reader.
 - **`/api/whatsnot/lots` has no test of its own.** The parser under it is covered thoroughly; the
   route is pinned only by an asset test reading `Program.cs`, like the other three.
+
+---
+
+# The card, in one line: making the live screen answerable without looking at it
+
+## The question this answers
+
+The screen now prices the lot on the block, prices the twelve behind it, and re-prices on every
+raise of the bidding. All of that lands in one place: **`#wn-card`, replaced whole, every two or
+three seconds.**
+
+That is fine for a card you study and wrong for a card you glance at. The eye has to re-find the
+number it was on. A screen reader is handed the badge, the five-rung ladder, the meter, five stat
+tiles, the evidence note and the comp table — several times a lot. An announcement nobody can keep
+up with is the same as no announcement. And the previous sessions had left the screen's keyboard
+story unfinished: it could be reached without a mouse and not left without one.
+
+## What it does
+
+**One line, above the card, and it is the only live region on the screen.**
+
+> BID UP TO $240. At $120, $120 of room. Resells around $310, 72% sell-through, on 14 comps.
+
+- It stays in the same place while the card underneath is rebuilt, so a raise of the bidding moves
+  one sentence rather than a screenful.
+- It is what a **lot row is announced as** — so hearing a row and opening it say the same thing
+  about the same lot.
+- Every dead end reaches it too: nothing typed, a failed price, a dropped connection. A message
+  painted only into the card is silent to somebody who pressed the button from the keyboard and
+  never looked away from the stream.
+
+## The property that makes it legitimate
+
+**The sentence is written next to the money, not in the browser** — `Services/LiveBidSpeech.cs`,
+called from both exits of `LiveBidAdvisor.Build`, so no card that reaches a screen can arrive
+without it. The browser paints `card.say` verbatim and nothing else.
+
+The ceiling in the line is **`CallLabel` itself**, not a second rendering of `MaxBid`. Two
+renderings of one number is how a badge and the sentence under it end up a dollar apart, and the
+bidder acts on whichever one they read. An asset test asserts the browser's whole speech function
+contains no "of room", no "Resells around", and never touches `maxBid`, `headroom`, `resalePrice`
+or `sellThroughRate`.
+
+## What every figure in it rounds towards
+
+**Against the bidder, without exception.** The bid rounds up, the room rounds down, an overshoot
+rounds up, the resale price rounds down. A line read in the two seconds before a hand goes up must
+never be the optimistic version of the card underneath it. $119.60 of room is $119; forty cents of
+room is $0 and says so.
+
+## What it refuses to claim
+
+- **A resale price it does not have is a missing clause, not a zero.** A spoken line reads "—" as
+  nothing at all, so an absent number has to be an absent sentence.
+- **A sell-through rate with no denominator is never spoken.** The card shows "—" when nothing
+  comparable is listed; the line says nothing, rather than the two of them disagreeing about
+  whether 100% happened.
+- **No ceiling means nothing is said about room.** A `DON'T BID` card is not "you are $180 over" —
+  there is no line to be over, and speaking one invites the reading that some smaller bid works.
+- **A card that could not be priced says only that.** `CAN'T PRICE IT. No eBay sold history to bid
+  against.` — and nothing else, even when stale figures are still hanging off the object.
+- **It says nothing about how old the comps are.** That is the card's held-comps line. Keeping it
+  out is what makes the sentence *identical* before and after a re-price that changed nothing — so
+  a screen reader is not handed a fresh announcement every two seconds for an answer that did not
+  move.
+
+## The keyboard, which was the other half of this
+
+- **A priced lot row is a real `<button>`**, not a div wearing `role="button"`. Enter, Space, the
+  focus ring and the word "button" a screen reader says all come free, and none of them is a
+  handler that can be dropped. The hand-rolled Enter/Space listener went with the div.
+- **Focus survives the list rebuilding under it.** Rows are replaced wholesale as each answer
+  arrives; without this a seller who has tabbed to the third row loses the keyboard to `<body>` —
+  silently, ten times over one paste. It is restored **by lot, not by position**: the last render of
+  a run re-orders the list, and a position-based restore would move the keyboard onto a different
+  lot at exactly the moment the seller stopped watching.
+- **Opening a lot moves the keyboard to the card.** Otherwise Enter on a row leaves focus in the
+  list and the next Tab walks further down the lots rather than into the answer.
+- **The price button hands the keyboard back.** Disabling the focused button drops focus to
+  `<body>`, which during a live sale is a seller pressing keys at nothing.
+- **Opening the tab puts the cursor in the item box** — but only when nothing is priced, so
+  returning to a card being bid on does not pull focus off what was being read.
+- **Escape, in two steps.** Every other overlay here closes on Escape and this one did not. But it
+  is also the one screen you type into with a stream running, and closing it blanks the frame and
+  stops a lot run — too much for a stray key. The first Escape leaves the field; the second closes
+  the tab.
+- **A visible focus ring.** The old style changed a border colour and set `outline: none`, which is
+  an indicator you cannot find on a screen holding twelve bordered rows. Rows, steppers, the queue
+  summary and the nav buttons now get an outline outside themselves.
+
+## The bug this pass turned up
+
+The card was reading `body.message` off a failure — a field this app has never sent. So every
+failure on the screen showed its headline (`Nothing to price`) and silently dropped the half that
+says what to do about it (`Type or paste what's on screen…`). Fixed on the card and on the lot
+list; both now read `body.failure?.whatToDo`.
+
+Two smaller ones: an empty rows area after a paste that yielded nothing looked exactly like a button
+that had not fired (it now says so, and is told apart from the empty area after **Clear**), and the
+scroll to an opened lot ignored `prefers-reduced-motion`.
+
+## Responsive
+
+The way this screen is actually used is a narrow window down the side of a live stream. Below 620px
+the ask fields go full width, the ladder and the stat tiles drop from five across to two, the
+ceiling moves under the lot rather than being squeezed beside it, and the frame gives back the
+height the card needs. Measured in the browser at 560px: **nothing overflows the window.**
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/lots` and `/api/whatsnot/embed-check` are all still registered
+and asserted to be. The stepper, the 90ms debounce, the sequence guard and the instant re-price off
+held comps are unchanged — this session put a line above them and did not touch them.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | New — the one line, and the four things it refuses to say |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | Both exits of `Build` set `card.Say` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `Say` on the card |
+| `ING eBay AutoLister/wwwroot/index.html` | `#wn-say` (the only live region); `#wn-card` loses `aria-live`, gains `tabindex="-1"`; the lot note is `role="status"`; `app.js?v=120`, `style.css?v=103` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnSayLine`; rows as `<button>` with the card's own label; focus restored by lot; `whatToDo` on failures; the empty-result state; Escape; reduced motion; the button's focus returned |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-say` + its four call colours, `.wn-empty-do`, `.wn-lots-empty`, real focus rings, the button reset on a row, the 620px fold |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | New — 21 methods, 26 cases, led by what must never be spoken |
+| `ING eBay AutoLister.Tests/WhatsNotPolishAssetTests.cs` | New — 25 tests holding the screen to one live region, real buttons and surviving focus |
+| `ING eBay AutoLister.Tests/WhatsNotLotListAssetTests.cs` | The asset-version pin became a floor rather than an equality — a test hand-edited by every later session is a test edited without being read |
+| `whatsnot_spoken_line.png`, `whatsnot_narrow.png` | The line above the card, and the same screen at 560px |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,430 passed**, 0 failed, 0 skipped (52 new; the previous commit was 3,378) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the four endpoints mocked in the shape the C# returns) | **24/24 checks.** The line is the server's sentence character-for-character; the card carries no `aria-live` and the line does. Three ArrowUp presses: **0 fresh eBay reads, 3 re-prices.** Five lots priced, sorted BID · BID · RISKY · STOP · NO DATA, `aria-busy` cleared at the end, every row a `BUTTON`, each labelled with its own card's sentence. Focus held on the same lot across a full re-priced run. Enter on a row: **no pricing call**, and focus landed on `#wn-card`. Empty ask spoken and the cursor returned to the item box. A paste that read as nothing said so; **Clear** did not. Escape blurred the field, the second Escape closed the tab. At 560px **nothing overflowed**. No page errors. |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked — which exercises the whole render, focus, keyboard and
+wiring path but not the arithmetic underneath it, which is what the 52 new C# tests are for.
+
+## Known limits
+
+- **The line is English, and it is assembled by concatenation.** Fine for the one locale this app
+  ships in; it is not a string table and would have to become one before it were anything else.
+- **A screen reader still reads the whole card on demand, and the card is long.** The line is a
+  summary and a starting point, not a replacement — there is no skip-link past the ladder into the
+  comps, and on a thin card that is a lot of tabbing.
+- **The rows are buttons but they are not a list.** There is no `role="list"`, so a screen reader
+  says "button" twelve times and never "3 of 12". That wants the rows wrapped, and wrapping them is
+  a DOM change this pass did not make.
+- **Nothing announces that the sort happened.** The note says the list was sorted; a seller reading
+  the rows by keyboard is not told their order changed under them, only that focus stayed on the
+  lot they were on.
+- **The colour of the line is a stripe, and colour is all it is.** The call is in the words too, so
+  nothing is lost without it — but the stripe carries no shape of its own.
+- **`LiveBidSpeech` is called from nowhere but `Build`.** A card assembled by some future endpoint
+  that does not go through the advisor would reach the screen speechless, and only an asset test
+  counting two assignments would notice.

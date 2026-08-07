@@ -9776,6 +9776,11 @@
       if (remembered && box) box.value = remembered;
       wnLoad();
     }
+
+    // A show starts and there are seconds. Opening the tab puts the cursor where the first thing
+    // typed has to go — but only when nothing is priced yet, so coming back to a card that is
+    // being bid on does not pull the keyboard off whatever was being read.
+    if ($('wn-card')?.classList.contains('hidden')) $('wn-item')?.focus();
   }
 
   function closeWhatsNotSection() {
@@ -9938,8 +9943,12 @@
     if (!card) return;
 
     if (!item) {
+      // The empty ask is the one failure the seller caused, so it is said in the live region
+      // too — a message painted only into the card is silent to somebody who pressed the
+      // button from the keyboard and never looked away from the stream.
       card.classList.remove('hidden');
       card.innerHTML = '<p class="wn-empty">Type what\'s on screen — the brand and model are what the sold search runs on.</p>';
+      wnSayLine("Nothing to price — type what's on screen.");
       $('wn-item')?.focus();
       return;
     }
@@ -9948,9 +9957,13 @@
     // A fresh read supersedes anything held, including an answer still in flight.
     wnDropToken();
     const btn = $('wn-price');
-    if (btn) { btn.disabled = true; btn.textContent = 'Pricing…'; }
+    // Disabling the focused button drops the keyboard to <body>, which during a live sale is a
+    // seller pressing keys at nothing. The button is put back under the same finger afterwards.
+    const btnHadFocus = document.activeElement === btn;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Pricing…'; }
     card.classList.remove('hidden');
     card.innerHTML = `<p class="wn-empty">Checking eBay sold comps for <strong>${esc(item)}</strong>…</p>`;
+    wnSayLine(`Checking eBay sold comps for ${item}…`);
 
     try {
       const { res, body } = await safePost('/api/whatsnot/bid', {
@@ -9961,7 +9974,14 @@
         targetRoiPercent: wnNumber('wn-target'),
       });
       if (!res.ok) {
-        card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(body.message || body.error || 'That didn\'t price.')}</p>`;
+        // The headline alone is a diagnosis with no next move — "Nothing to price" without the
+        // sentence that says what to type. The server always sends both; the card was only ever
+        // reading the first one.
+        const headline = body.error || 'That didn\'t price.';
+        const whatToDo = body.failure?.whatToDo || '';
+        card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(headline)}</p>` +
+          (whatToDo ? `<p class="wn-empty wn-empty-do">${esc(whatToDo)}</p>` : '');
+        wnSayLine(whatToDo ? `${headline} ${whatToDo}` : headline);
         return;
       }
       // The comps behind this answer are now held server-side; from here the bid,
@@ -9970,10 +9990,37 @@
       wnTokenItem = item;
       wnRenderCard(body);
     } catch (err) {
-      card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(errorText(err, 'That didn\'t price.'))}</p>`;
+      const said = errorText(err, 'That didn\'t price.');
+      card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(said)}</p>`;
+      wnSayLine(said);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '⚡ Price it'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        btn.textContent = '⚡ Price it';
+        if (btnHadFocus) btn.focus();
+      }
     }
+  }
+
+  /// ── The one line ────────────────────────────────────────────────────────────
+  /// The card is replaced whole on every arrow key, so it is not a live region and
+  /// must not become one: a screen reader given the ladder, five stat tiles and a
+  /// comp table three times a lot is a screen reader saying nothing usable. This
+  /// single line is, and it is also the only part of the answer that stays in the
+  /// same place while the bidding climbs.
+  ///
+  /// The sentence is `card.say`, painted verbatim. Nothing here assembles it — see
+  /// Services/LiveBidSpeech.cs for why the words about money live next to the money.
+  function wnSayLine(text, call) {
+    const el = $('wn-say');
+    if (!el) return;
+    const said = (text || '').trim();
+    el.textContent = said;
+    // The call colours the stripe, using the same four names the badge and the lot
+    // rows use. Anything else that arrives is dropped rather than turned into a class.
+    const known = ['bid', 'risky', 'stop', 'no_data'].includes(call) ? ` wn-say-${call}` : '';
+    el.className = `wn-say${known}${said ? '' : ' hidden'}`;
   }
 
   function wnStat(label, value, note) {
@@ -9985,6 +10032,8 @@
   function wnRenderCard(c) {
     const card = $('wn-card');
     if (!card) return;
+
+    wnSayLine(c.say, c.call);
 
     const priced = c.call !== 'no_data';
     const spread = (c.priceLow > 0 && c.priceHigh > 0)
@@ -10116,6 +10165,10 @@
   let wnLots = [];         // { lot, state, card, error }
   let wnLotRun = 0;        // the run in flight; bumping it stops the previous one
   let wnLotRunning = false;
+  // Whether a list has been READ, which is not the same as whether there are rows. An empty
+  // rows area after Clear is empty; an empty rows area after a paste that yielded nothing is a
+  // result, and has to say so or it reads as a screen that ignored the button.
+  let wnLotsTried = false;
 
   /// Bumping the run number is how a run is stopped: the loop checks it after every
   /// answer and walks away rather than painting a row from a list nobody is on.
@@ -10128,6 +10181,9 @@
     wnLotRunning = running;
     const btn = $('wn-lots-price');
     if (btn) btn.textContent = running ? '■ Stop' : '⚡ Price the list';
+    // Rows appear one at a time over ten or twenty seconds. aria-busy is what stops a screen
+    // reader reading a half-built list as if it were the finished one.
+    $('wn-lots-rows')?.setAttribute('aria-busy', String(!!running));
   }
 
   function wnLotsNote(text) {
@@ -10152,6 +10208,7 @@
     }
 
     wnSaveSettings();
+    wnLotsTried = true;
     const run = ++wnLotRun;
     wnLotButton(true);
     wnLotsNote('Reading the list…');
@@ -10162,7 +10219,9 @@
       if (run !== wnLotRun) return;
       if (!res.ok) {
         wnLotButton(false);
-        wnLotsNote(body.message || body.error || "That list didn't read.");
+        // Headline plus what to do about it — the second half is the only part that is
+        // actionable, and it was being dropped.
+        wnLotsNote([body.error || "That list didn't read.", body.failure?.whatToDo].filter(Boolean).join(' '));
         return;
       }
       plan = body;
@@ -10197,7 +10256,7 @@
         });
         if (run !== wnLotRun) return;
         if (res.ok) { row.state = WN_LOT_PRICED; row.card = body; }
-        else { row.state = WN_LOT_FAILED; row.error = body.message || body.error || "Didn't price."; }
+        else { row.state = WN_LOT_FAILED; row.error = body.error || body.failure?.headline || "Didn't price."; }
       } catch (err) {
         if (run !== wnLotRun) return;
         row.state = WN_LOT_FAILED;
@@ -10235,7 +10294,25 @@
     const host = $('wn-lots-rows');
     if (!host) return;
 
-    if (!wnLots.length) { host.innerHTML = ''; return; }
+    if (!wnLots.length) {
+      // Two different nothings. After Clear there is nothing because the seller emptied it;
+      // after a paste that yielded no lots there is nothing because the paste said nothing the
+      // app could read, and a blank area would read as a button that did not fire.
+      host.innerHTML = wnLotsTried
+        ? '<p class="wn-lots-empty">No lots came off those lines. One lot per line — a lot number ' +
+          'and an asking price are fine, they come off on the way past.</p>'
+        : '';
+      return;
+    }
+
+    // The rows are replaced wholesale each time an answer arrives. Keyboard focus lives on a DOM
+    // node, so a seller who has tabbed to the third row loses it — silently, to <body> — every
+    // time a later lot finishes pricing. Put it back on the LOT it was on, not on the position:
+    // the last render of a run re-orders the list, and a position-based restore would quietly
+    // move the keyboard onto a different lot at exactly the moment the seller stops watching it.
+    const focusedLot = host.contains(document.activeElement) && document.activeElement?.dataset?.lot
+      ? wnLots[parseInt(document.activeElement.dataset.lot, 10)]
+      : null;
 
     host.innerHTML = wnLots.map((row, i) => {
       const c = row.card;
@@ -10258,25 +10335,31 @@
       const room = c.call === 'no_data' || !c.bidWasKnown ? '' :
         `<span class="${c.headroom < 0 ? 'wn-neg' : ''}">${moneyExact(c.headroom)} room</span> · `;
 
-      return `<div class="wn-lot-row wn-lot-priced wn-lot-call-${esc(c.call)}" role="button" tabindex="0"
-                   data-lot="${i}" title="Open this lot's card — instantly, off comps already read">
-        <div class="wn-lot-call">${esc(c.call === 'no_data' ? 'NO DATA' : (c.call === 'bid' ? 'BID' : c.call.toUpperCase()))}</div>
-        <div class="wn-lot-main">
-          <div class="wn-lot-title">${esc(c.item)}</div>
-          <div class="wn-lot-sub">${room}resells ${esc(resale)} · ${esc(st)} sell-through ·
-            ${c.compCount} comp${c.compCount === 1 ? '' : 's'}</div>
-        </div>
-        <div class="wn-lot-max"><span>up to</span><strong>${esc(ceiling)}</strong></div>
-      </div>`;
+      // A real <button>, not a div wearing role="button": Enter, Space, the focus ring and the
+      // "button" a screen reader announces all come with it, and none of them is a handler that
+      // can be dropped. The row's spoken name is the card's own one-line answer, so hearing the
+      // row and opening it say the same thing about the same lot.
+      return `<button type="button" class="wn-lot-row wn-lot-priced wn-lot-call-${esc(c.call)}"
+                   data-lot="${i}" aria-label="${esc(`${c.item}. ${c.say || ''}`.trim())}"
+                   title="Open this lot's card — instantly, off comps already read">
+        <span class="wn-lot-call">${esc(c.call === 'no_data' ? 'NO DATA' : (c.call === 'bid' ? 'BID' : c.call.toUpperCase()))}</span>
+        <span class="wn-lot-main">
+          <span class="wn-lot-title">${esc(c.item)}</span>
+          <span class="wn-lot-sub">${room}resells ${esc(resale)} · ${esc(st)} sell-through ·
+            ${c.compCount} comp${c.compCount === 1 ? '' : 's'}</span>
+        </span>
+        <span class="wn-lot-max"><span>up to</span><strong>${esc(ceiling)}</strong></span>
+      </button>`;
     }).join('');
 
     host.querySelectorAll('[data-lot]').forEach(el => {
-      const open = () => wnOpenLot(parseInt(el.dataset.lot, 10));
-      el.addEventListener('click', open);
-      el.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-      });
+      el.addEventListener('click', () => wnOpenLot(parseInt(el.dataset.lot, 10)));
     });
+
+    if (focusedLot) {
+      const moved = wnLots.indexOf(focusedLot);
+      if (moved >= 0) host.querySelector(`[data-lot="${moved}"]`)?.focus();
+    }
   }
 
   /// The lot reached the block. Its card is already in hand and its comps are still
@@ -10296,18 +10379,26 @@
     wnToken = row.card.token || '';
     wnTokenItem = row.card.item;
     wnRebidSeq++;
-    $('wn-card')?.classList.remove('hidden');
+    const card = $('wn-card');
+    card?.classList.remove('hidden');
     wnRenderCard(row.card);
     wnScheduleRebid();
-    $('wn-card')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // The keyboard follows the answer. Without this, Enter on a row leaves focus back in the
+    // list while the thing the seller asked for is somewhere above it — and the next Tab walks
+    // further down the lots instead of into the card. preventScroll because the scroll below is
+    // the deliberate one, and it honours reduced motion.
+    card?.focus({ preventScroll: true });
+    card?.scrollIntoView({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
   }
 
   function wnClearLotList() {
     wnStopLotRun();
     wnLots = [];
+    wnLotsTried = false;
     setVal('wn-lots', '');
     wnLotsNote('');
     wnRenderLotRows();
+    $('wn-lots')?.focus();
   }
 
   function bindWhatsNot() {
@@ -10377,6 +10468,24 @@
     // to the old one.
     $('wn-item')?.addEventListener('input', () => {
       if (wnToken && ($('wn-item').value || '').trim() !== wnTokenItem) wnDropToken();
+    });
+
+    // ── Escape ────────────────────────────────────────────────────────────────
+    // Every other overlay here closes on Escape and this one did not, which left the screen
+    // reachable by keyboard and only leaveable by mouse. But it is also the one screen you type
+    // into with a stream running: closing it blanks the frame and stops a lot run mid-list, and
+    // that is too much for a stray key. So the first Escape leaves the field and the second
+    // closes the tab — the same two-step a text field in any dialog gets.
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      const section = $('whatsnot-section');
+      if (!section || section.classList.contains('hidden')) return;
+      const active = document.activeElement;
+      if (active && section.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
+        active.blur();
+        return;
+      }
+      closeWhatsNotSection();
     });
 
     wnLoadSettings();

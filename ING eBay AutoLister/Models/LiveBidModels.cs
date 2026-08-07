@@ -87,6 +87,15 @@ public sealed class LiveBidCard
     /// <summary>The one line under it, in this item's own numbers. Never generic.</summary>
     public string Reason { get; set; } = "";
 
+    /// <summary>
+    /// The whole card in one sentence — the call, the ceiling, where the bidding is against it and
+    /// what the thing resells for. See <see cref="Services.LiveBidSpeech"/> for what it refuses to
+    /// claim. The screen paints this verbatim into its one live region and uses it as the label a
+    /// lot row is read out as; nothing in the browser assembles it, so the list and the card cannot
+    /// say different things about the same lot.
+    /// </summary>
+    public string Say { get; set; } = "";
+
     // ── What was priced ──────────────────────────────────────────────────────
     public string Item { get; set; } = "";
     /// <summary>The title the comp lookup actually ran against, when it differs from Item.</summary>

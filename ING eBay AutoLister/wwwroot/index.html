@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=102" />
+  <link rel="stylesheet" href="style.css?v=103" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2758,7 +2758,17 @@
             </p>
           </div>
 
-          <div id="wn-card" class="wn-card hidden" aria-live="polite"></div>
+          <!-- ── The one line ─────────────────────────────────────────────────────────────
+               The card below is replaced whole every time the bid moves, which during a live
+               sale is every two or three seconds. So this line — the call, the ceiling, the
+               room and what it resells for — is the one thing that stays in the same place and
+               the ONLY live region on the screen: a whole card announced three times a lot is
+               an announcement nobody can keep up with. Its words come from the server
+               (Services/LiveBidSpeech.cs) so the line and the badge cannot disagree.
+               The card itself is focusable but silent: opening a lot from the list moves the
+               keyboard to it, and the line above says what it found. -->
+          <p id="wn-say" class="wn-say hidden" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="wn-card" class="wn-card hidden" tabindex="-1"></div>
 
           <!-- ── The show's lot list ───────────────────────────────────────────────────────
                The card above answers "should I bid on this". This answers the question before
@@ -2778,7 +2788,9 @@
               <div class="wn-lots-actions">
                 <button id="wn-lots-price" class="btn btn-primary" type="button">⚡ Price the list</button>
                 <button id="wn-lots-clear" class="btn btn-ghost" type="button">Clear</button>
-                <span id="wn-lots-note" class="wn-lots-note"></span>
+                <!-- What the run is doing, said out loud. Rows arrive one at a time over ten or
+                     twenty seconds; without this the only report of progress is pixels. -->
+                <span id="wn-lots-note" class="wn-lots-note" role="status" aria-live="polite"></span>
               </div>
               <p class="opp-hint wn-lots-hint">
                 Lot numbers and asking prices are stripped off the line — the price becomes where the
@@ -5816,6 +5828,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=119"></script>
+  <script src="app.js?v=120"></script>
 </body>
 </html>

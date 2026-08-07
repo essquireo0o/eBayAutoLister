@@ -122,6 +122,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                 ? "No eBay sold history matched this item, so there is no resale price to bid against."
                 : card.EvidenceNote;
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
+            card.Say = LiveBidSpeech.Say(card);
             return card;
         }
 
@@ -169,6 +170,9 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.Reason = reason;
         card.Warnings.AddRange(Warnings(card, resale));
         card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
+        // Last, because it restates what everything above decided. Both exits set it, so no card
+        // this method returns can reach a screen without the line that screen reads out loud.
+        card.Say = LiveBidSpeech.Say(card);
 
         return card;
     }

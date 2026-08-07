@@ -229,13 +229,28 @@ public class WhatsNotLotListAssetTests
         Assert.Contains("one at a time", section, StringComparison.Ordinal);
     }
 
-    /// <summary>The browser was given a new copy of both assets. A cached app.js is a feature that
-    /// silently is not there.</summary>
-    [Fact]
-    public void The_browser_is_made_to_fetch_the_new_assets()
+    /// <summary>
+    /// The browser was given a new copy of both assets. A cached app.js is a feature that silently
+    /// is not there.
+    ///
+    /// Pinned as a floor rather than an equality: the numbers only ever go up, and a test that has
+    /// to be hand-edited by every later session is a test that gets hand-edited without being read.
+    /// </summary>
+    [Theory]
+    [InlineData("app.js", 119)]
+    [InlineData("style.css", 102)]
+    public void The_browser_is_made_to_fetch_the_new_assets(string asset, int atLeast)
     {
-        Assert.Contains("app.js?v=119", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=102", Html, StringComparison.Ordinal);
+        var marker = asset + "?v=";
+        var at = Html.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{asset} is not cache-busted at all");
+
+        var digits = Html[(at + marker.Length)..].TakeWhile(char.IsDigit).ToArray();
+        Assert.True(digits.Length > 0, $"{asset} has no version number after ?v=");
+
+        var version = int.Parse(new string(digits));
+        Assert.True(version >= atLeast,
+            $"{asset} is at v={version}, which is older than the v={atLeast} this feature shipped with");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

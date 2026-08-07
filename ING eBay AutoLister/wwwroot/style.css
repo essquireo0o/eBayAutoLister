@@ -16372,6 +16372,35 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   margin: 6px 0 0;
 }
 
+/* ── The one line ─────────────────────────────────────────────────────────────
+   The card below is replaced whole every time the bid moves, so the eye has to
+   re-find whatever it was reading. This does not move: same place, same length,
+   one sentence. It is also the screen's only live region — see index.html.
+   Its words are the server's (Services/LiveBidSpeech.cs); the stripe is the only
+   thing decided here, and it uses the badge's own four colours. */
+.wn-say {
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-left: 3px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.wn-say-bid {
+  border-left-color: var(--success, #5ac882);
+}
+.wn-say-risky {
+  border-left-color: var(--warn, #e0a94a);
+}
+.wn-say-stop,
+.wn-say-no_data {
+  border-left-color: var(--danger, #e0796a);
+}
+
 .wn-card {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 12px;
@@ -16379,12 +16408,27 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   margin-bottom: 12px;
   background: var(--panel-2, rgba(255, 255, 255, .02));
 }
+/* Opening a lot from the list moves the keyboard here. That is a programmatic
+   focus, not a tab stop, so it gets no ring — but a seller who tabbed here on
+   purpose still does. */
+.wn-card:focus {
+  outline: none;
+}
+.wn-card:focus-visible {
+  outline: 2px solid var(--accent, #d4a24a);
+  outline-offset: 2px;
+}
 .wn-empty {
   margin: 0;
   color: var(--text-dim, #8b93a7);
 }
 .wn-empty-bad {
   color: var(--danger, #e0796a);
+}
+/* The half of a failure that says what to do about it. Dimmer than the headline
+   and directly under it, because it is the sentence you act on. */
+.wn-empty-do {
+  margin: 4px 0 0;
 }
 
 /* The badge carries the answer, so it carries the colour. Four states, and the
@@ -16675,6 +16719,10 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   gap: 5px;
   margin-top: 10px;
 }
+/* A priced row is a real <button>, so this has to undo what a button brings with
+   it — the centred text, the browser's own font, its own colour — while a queued
+   row is still a plain div. Both are laid out by the same rule so a row does not
+   change shape at the moment it gets an answer. */
 .wn-lot-row {
   display: flex;
   align-items: center;
@@ -16683,14 +16731,31 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-radius: 8px;
   border: 1px solid var(--border, #2a2f3a);
   background: var(--panel-2, rgba(255, 255, 255, .02));
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
 }
 .wn-lot-row.wn-lot-priced {
   cursor: pointer;
 }
-.wn-lot-row.wn-lot-priced:hover,
-.wn-lot-row.wn-lot-priced:focus-visible {
+.wn-lot-row.wn-lot-priced:hover {
   border-color: var(--accent, #d4a24a);
-  outline: none;
+}
+/* A focus indicator that only changes a border colour is one you cannot find on a
+   screen holding twelve bordered rows. Keyboard focus gets an outline outside the
+   row, which is the one mark nothing else on this list wears. */
+.wn-lot-row.wn-lot-priced:focus-visible,
+.wn-step:focus-visible,
+.wn-queue-summary:focus-visible,
+.wn-nav-btn:focus-visible {
+  outline: 2px solid var(--accent, #d4a24a);
+  outline-offset: 2px;
+}
+.wn-lots-empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
 }
 .wn-lot-pricing {
   opacity: 0.75;
@@ -16731,7 +16796,10 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   flex: 1 1 auto;
   min-width: 0;
 }
+/* display:block because these are spans inside a <button> — a button may only hold
+   phrasing content, and an inline box cannot be given an ellipsis. */
 .wn-lot-title {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -16739,6 +16807,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .wn-lot-sub {
+  display: block;
   font-size: 11px;
   opacity: 0.75;
   overflow: hidden;
@@ -16765,5 +16834,44 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   }
   .wn-price-btn {
     width: 100%;
+  }
+}
+
+/* Narrower than this the app is a window down the side of a live stream, which is
+   how this screen is actually used. Everything that was trying to sit five across
+   drops to two, the ceiling moves under the lot rather than being squeezed beside
+   it, and the frame gives back the height the card needs — the decision is the
+   point and the stream is the context. */
+@media (max-width: 620px) {
+  .wn-field,
+  .wn-field-bid,
+  .wn-field-wide {
+    width: 100%;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .wn-rung,
+  .wn-stat {
+    flex: 1 1 calc(50% - 4px);
+  }
+  .wn-say {
+    font-size: 13px;
+  }
+  .wn-meter-legend {
+    font-size: 10px;
+  }
+  .wn-lot-row {
+    flex-wrap: wrap;
+  }
+  .wn-lot-max {
+    flex: 1 1 100%;
+    text-align: left;
+    padding-left: 76px;
+  }
+  .wn-lot-max > span {
+    display: inline;
+  }
+  .wn-frame {
+    min-height: 50vh;
   }
 }
