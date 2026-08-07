@@ -11924,3 +11924,213 @@ profit, headroom and resale of a card priced without one, and a test asserts all
 - **`stop` and `over` are the same news for the seller and different rows in the code.** They are
   kept apart because "there was room and you cannot use it" is worth explaining and "you are already
   past it" is not, but a screen read at a glance may not thank anyone for the distinction.
+
+
+---
+
+# The comps were sealed. The thing on screen was not (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Ten sessions have improved what the live card knows about a lot: what it searched for, how many
+things are in it, which way the price has been going, what the seller's own book says, how many
+presses are left. Every one of them was about the *item*, the *market* or the *hand*. None of them
+ever asked the question a reseller asks first.
+
+**What kind of one is it?**
+
+The ceiling is built on a median of everything that matched the name, and on eBay "everything that
+matched" routinely means **sealed boxes and beaten-up used units in the same list**. Nine sold at
+$200 with a New condition on them, three sold at $100 marked Pre-Owned, and the card prints
+`RESELLS FOR $200.00` — the right price for neither. The seller is the one person who can tell
+which is on the block, because they are looking at it through the camera while the auctioneer talks,
+and until now there was nothing on this screen for them to say it with.
+
+There is now a strip on every priced card, directly under the trend:
+
+> **CONDITION** **Bidding on a used one · comps: 9 new at $200, 3 used at $100** `CEILING CUT 50%`
+> *as you set it*
+> `NEW / SEALED 9 · $200`  `USED 3 · $100`
+> The ceiling below is priced 50% under the mixed median, on what the 3 used ones actually fetched —
+> $100 against $200 across every condition.
+
+The bars are the feature. "9 new at $200, 3 used at $100" is a sentence that takes a second to read
+and decides the bid.
+
+## What it does
+
+`Services/LiveCondition.cs` reads the condition column on the sold rows **already in hand** and puts
+the lot on the same four-rung ladder:
+
+| Band | What lands in it |
+|---|---|
+| `new` | brand new, factory sealed, unopened, NIB/BNIB/NWT/NOS |
+| `likenew` | open box, like new, eBay's own **New (other)**, mint |
+| `used` | pre-owned, used, refurbished, renewed, tested working, and the graded adjectives |
+| `broken` | for parts, not working, untested, as-is, salvage, damaged, cracked |
+| `unstated` | said nothing — which is a real answer and is counted as one |
+
+The lot's own band comes from the picker when the seller has used it, and from the lot's name
+otherwise (`SEALED`, `NIB`, `FOR PARTS`, `untested`). When a name says two things, **the worse one
+wins**: "tested working — screen cracked" is a cracked screen.
+
+## Why this cannot be done in the search, which is the whole design
+
+The comp lookup is a boolean AND over sold **titles** (`LiveSearchQuery`) and eBay's condition is a
+**field**, not a word sellers put in their titles. Putting "used" in the query would return almost
+nothing and the card would say CAN'T PRICE IT about an item with a perfectly good used market.
+
+So this splits comps the server is already holding. Three things follow from that and all three are
+the point:
+
+- **It costs no lookup and no clock.** A test asserts the file contains no `DateTime.UtcNow`, no
+  `await`, no `HttpClient` and no `Task<>`.
+- **Picking a condition re-answers instantly**, off held comps, with no eBay read — verified in a
+  real browser, and it is the same `/api/whatsnot/rebid` the bid box has always used.
+- **A re-price is identical to the fresh card it came from.** Nothing is carried across; the
+  reading is recomputed from the same rows.
+
+## The asymmetry, which is the trend read's asymmetry again
+
+A lot in a **worse** condition than its comps cuts the ceiling. A lot in a **better** condition than
+its comps does **not** raise it. That is not timidity, it is what the two mistakes cost. Refusing to
+bid up on a sealed box costs a lot somebody else wins — invisible, and there is another one in four
+minutes. Failing to cut on a used one costs real cash on a purchase with no undo, and the loss shows
+up weeks later when the thing sells for what used ones actually fetch. "It's sealed" is also a claim
+about an object being held up to a camera *by the person selling it*; "it's used" is the seller's
+own eyes.
+
+A card that picks **New / sealed** over mostly-used comps is priced identically to a blind one —
+same resale, same ceiling, same break-even, same profit, asserted five ways.
+
+## The gates, which is where the money is
+
+| Gate | Why |
+|---|---|
+| At least **half** the comps state a condition, and at least **4** of them | "The comps are 80% new" off three rows out of twenty is a claim about three rows |
+| At least **3** sales in the lot's own band (`AuctionSniperAnalyzer.MinCompsToBid`) | A band median off two sales is arithmetic, not evidence — and this one takes money off |
+| The band median must be **below** the mixed one | The no-raise rule, in code |
+| The cut stops at **50%** | Past there the gap has stopped looking like the same item in worse shape and started looking like a different item |
+
+The cut itself invents nothing: it is `matchedBandMedian / allClassifiedMedian`, measured off the
+same rows with `MarketplacePricingCalculator.Median` over `SoldPrice` — the same function and the
+same field the price estimator's own median is built from, so the ratio is a fact about condition
+and not about two ways of averaging. There is no "used items are worth 60%" constant anywhere in the
+file.
+
+## The state where the badge is knowingly optimistic
+
+The most valuable thing here is not the cut. It is the case where **there is nothing honest to cut
+with**: the lot is used, eleven of the thirteen comps are new, and only two used sales exist. Under
+the bar, nothing is re-priced — and that is exactly when the card has to say so:
+
+> This is a used one and the comps behind the ceiling are mostly new — 11 of 13. Only 2 used sales to
+> price off, which is too few to cut the ceiling with — so treat the number above as a new price and
+> bid well under it.
+
+That warning, and the cut, are the **only** two states the spoken line speaks in. Mixed comps under
+an unstated lot are the ordinary case, and a clause on every lot in exchange for a caveat the strip
+already carries would cost the line the one thing it is for.
+
+## Silence is never read as evidence
+
+Nothing said what condition the lot is in? Then nothing is assumed. The card is priced exactly as it
+was before this file existed, and it **asks** — naming both ends in dollars, so the question is
+worth answering:
+
+> Nothing says what condition this lot is in. The sales behind the ceiling run $100 for used to $200
+> for new — the ceiling is priced off the middle of that. Set Condition to the one you are looking at.
+
+One press then re-prices it, instantly, off comps already held. And when every classified comp is
+already the same band, the strip says so rather than staying quiet — that is the one state where the
+ceiling is provably the right *kind* of price.
+
+## The two cuts stack, they do not compete
+
+`LiveCondition.Discount(LiveTrend.Discount(resale, trend), condition)`. One ratio is what these have
+been fetching **lately**; the other is what they fetch **in this shape**. Both are measured off the
+same rows and both only ever cut, so applying one after the other is the two facts together rather
+than one opinion overwriting another. A test builds a card where both fire and asserts the resale
+price is the estimator's own figure times both multipliers.
+
+Only the three prices the ceiling is built out of move. The middle-half spread, the comp table, the
+sell-through, the confidence and the freshness note are **untouched** — those describe sales that
+really happened, and scaling them would be inventing sales nobody made. When nothing was cut,
+`Discount` returns the **same instance**, which is what makes "a card with no condition read is
+priced exactly as it was before this existed" a property of the code rather than a claim about it.
+
+## The box belongs to the lot, not to the show
+
+The shipping, the buyer's fee, the target and the bid step hold for a whole night and are remembered
+between lots. The **quantity** and the **condition** hold for one item, so they are emptied together
+every time the item changes — typed over, read off the show, or opened from the lot list. A stale
+"New / sealed" is the dangerous one: it would stop the next lot's used comps cutting anything.
+
+For the same reason the condition is **deliberately not sent** with a pasted lot list, exactly like
+the quantity. That box describes one item the seller is looking at; the list is a dozen items nobody
+has seen. Stamping "Used" across all of them would cut eleven ceilings on the strength of a keystroke
+about the twelfth. Each row is read off its own name, and opening one re-prices it with the box
+empty. A test pins the omission and the comment that explains it.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo`
+are all still registered and are asserted to be, and the live price still runs on
+`AnalyzeProductAsync`. The condition never reaches the query: `LiveSearchQuery` is handed the typed
+name and nothing else, and a test pins that too.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveCondition.cs` | New — the ladder, the vocabulary, the bands, the four gates, the cut and every sentence on the strip |
+| `ING eBay AutoLister/Models/LiveConditionModels.cs` | New — `LiveConditionRead`, `LiveConditionBandRead`, `LiveConditionBands`, `LiveConditionSources` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidRequest.Condition`; `LiveBidCard.Condition` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | `LiveWinRequest.Condition`, carried into `AsBid()` so a recorded win is valued the way the card on screen was |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read, the composed discount, and the one warning it is allowed to raise |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhatKindOfOne` — two states, straight after the trend |
+| `ING eBay AutoLister/Program.cs` | The band, its source, the matching comp count and the cut in the fresh-price log line |
+| `ING eBay AutoLister/wwwroot/index.html` | The `Condition` picker; `app.js?v=132`, `style.css?v=115` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, `wnCondition`/`wnResetLotBoxes`, `condition` on all three posts, the change binding, the clause on the resale tile |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-cond-*` — the bars, the two edges, the picker; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveConditionTests.cs` | New — 59 tests, including the 120-case grid that no cut ever raises a price or digs past the floor |
+| `ING eBay AutoLister.Tests/WhatsNotConditionAssetTests.cs` | New — 18 tests holding the six links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 7 new tests on what a real card does with the condition, including the two cuts stacking |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | 7 new tests on the two states the line speaks in and the four it does not |
+| `ING eBay AutoLister.Tests/WhatsNotLotUnitsAssetTests.cs`, `WhatsNotTrendAssetTests.cs`, `WhatsNotNextBidAssetTests.cs` | Re-pinned: the lot boxes are emptied as a pair, the strip order, the asset versions |
+| `whatsnot_condition_ask.png`, `whatsnot_condition_cut.png`, `whatsnot_condition_narrow.png` | The two states and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,203 passed**, 0 failed, 0 skipped (91 new; the previous commit was 4,112) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` and `/rebid` mocked in the shape the C# returns) | **31 checks, all passed.** With nothing stated: the strip **fifth child of the card**, under the trend and above the ladder, reading `Condition not stated · comps: 9 new at $200, 3 used at $100` with both bars on screen, **no** band highlighted, no cut tag, the resale tile at `$200.00`, and *"Set Condition to the one you are looking at"* in the warning list. Selecting **Used**: a red-edged strip with `CEILING CUT 50%`, the `USED 3 · $100` bar highlighted, `as you set it`, the resale tile down to `$100.00` noting `cut 50% for used`, the held-comps line reading *"Bid moved without re-reading eBay"*, and the spoken line carrying *"Priced as used — ceiling already cut 50% for it."* Selecting **New**: no cut, *"never raises it"*, the tile back at `$200.00`, and the spoken line silent about condition. Typing a new item emptied the picker. Comps that state almost no condition: *"only 1 of 12 sold comps say what condition they were in"*, no bars, no warning. At 560px `.wn-cond-strip` overflowed by **0px** and the picker stayed inside the row by **0px**. 0 JS errors; the only 404s were the eleven APIs a static server does not have. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every band, every median and every cut is exercised
+  against comps in the shape the hosted database returns. The action log now prints the band, where
+  it came from, how many comps matched it and what was cut, on every fresh price — which is where
+  the first real "the comps were all sealed and the lot was not" will show up.
+- **The condition column's coverage in the hosted database is unmeasured.** If most sold rows carry
+  no condition, most cards will say `Readable: false` and this will do nothing but print an honest
+  sentence. That failure is silent to the seller and loud in the log, which is the right way round,
+  but it means the feature's real reach is not yet known.
+- **Refurbished is filed under `used`.** It is arguably its own tier on eBay, and a certified-refurb
+  price is not a pre-owned price. It sits where `ComparableMatcher` has always put it, because one
+  answer across the app matters more than the right number of rungs.
+- **The lot's name is read for condition even though the auctioneer is describing a sale.** "As is"
+  in a lot title is read as for-parts, and a host saying "sold as is, no returns" about a mint item
+  will get a band it did not mean. The picker is the undo and it outranks the name, but it is a
+  keystroke the seller has to notice they need — the strip states the word it read, which is the only
+  brake.
+- **The cut is a median ratio, not a condition model.** Nine new sales and three used ones can differ
+  by more than condition — different sellers, different bundles, different months. The trend read
+  handles the months; nothing here separates the rest.
+- **One band per lot.** A live "mixed lot, some sealed some opened" is a real thing and this prices
+  it at whichever band the seller picked, which the worst-wins rule at least points downwards.

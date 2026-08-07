@@ -62,6 +62,19 @@ public sealed class LiveBidRequest
     public decimal? BidIncrement { get; set; }
 
     /// <summary>
+    /// What condition the thing on screen is in, when the seller has said: new | likenew | used |
+    /// broken. Null or anything unrecognised hands the question back to the lot's own name
+    /// (<see cref="Services.LiveCondition"/>), which is the usual case.
+    /// </summary>
+    /// <remarks>
+    /// It never changes what eBay is asked. The comp lookup is a boolean AND over sold titles and
+    /// eBay's condition is a field, so putting "used" in the query would return nothing about an
+    /// item with a perfectly good used market. This splits the comps already in hand by the
+    /// condition they stated — which is why picking it re-answers instantly, with no second read.
+    /// </remarks>
+    public string? Condition { get; set; }
+
+    /// <summary>
     /// Search eBay for the typed name exactly as written, instead of the cleaned-up version of it.
     /// The undo for a cleaning that took a word the seller wanted — see
     /// <see cref="Services.LiveSearchQuery"/> for what it takes out and why.
@@ -145,6 +158,14 @@ public sealed class LiveBidCard
     /// the per-unit versions live inside this block.
     /// </summary>
     public LiveLotUnits Units { get; set; } = new();
+
+    /// <summary>
+    /// What condition this lot is in, what condition the comps behind it were in, and what the gap
+    /// between those two did to the ceiling. Never null — a card that only mentions condition when
+    /// it found a mismatch is a card whose silence means both "the comps are the right condition"
+    /// and "nothing looked". See <see cref="Services.LiveCondition"/>.
+    /// </summary>
+    public LiveConditionRead Condition { get; set; } = new();
 
     /// <summary>
     /// Which way the sold price has been moving, and whether that moved the ceiling. Never null —

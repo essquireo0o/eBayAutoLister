@@ -10027,6 +10027,25 @@
     return whole >= 1 ? whole : null;
   }
 
+  /// What condition the seller says the thing on screen is in. Blank is null and means
+  /// "read it off the lot's name" — a different answer from picking the band the name
+  /// already implies, which is the seller confirming it with their own eyes.
+  function wnCondition() {
+    const picked = ($('wn-cond')?.value ?? '').trim();
+    return picked || null;
+  }
+
+  /// The two boxes that belong to the LOT rather than to the show, emptied together.
+  /// The shipping, the fee, the target and the bid step hold for a whole night; a
+  /// quantity and a condition hold for one item, and carrying either onto the next lot
+  /// is a wrong ceiling nobody asked for. A stale "New / sealed" is the dangerous one:
+  /// it stops the next lot's used comps cutting anything.
+  function wnResetLotBoxes() {
+    wnResetQty();
+    const cond = $('wn-cond');
+    if (cond) cond.value = '';
+  }
+
   // ── Moving the bid ───────────────────────────────────────────────────────────
   // The auctioneer raises the bid every two or three seconds. Re-reading eBay for
   // each one would spend the seconds the decision is made in to arrive at the same
@@ -10123,6 +10142,7 @@
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
+        condition: wnCondition(),
       });
       // The bid moved again while this was in flight. An older answer painted over a
       // newer one is the one failure that would make the card lie about the number
@@ -10322,10 +10342,11 @@
     setVal('wn-item', read.title);
     // A different item is a different question; the comps in hand answer the old one.
     wnDropToken();
-    // And a count belongs to the lot it was counted on. Carrying "3" onto the next lot
-    // would multiply a single item's ceiling by three, silently, on a screen the seller
-    // is reading in two seconds — the exact failure this whole reader is built to avoid.
-    wnResetQty();
+    // And a count — or a condition — belongs to the lot it was read on. Carrying "3" onto
+    // the next lot would multiply a single item's ceiling by three, silently, on a screen
+    // the seller is reading in two seconds; carrying "New / sealed" onto a used one stops
+    // its comps cutting anything. The exact failure this whole reader is built to avoid.
+    wnResetLotBoxes();
 
     // The page's price is where the bidding was when the page loaded — an opening
     // price as often as not, which the read says out loud. It is a starting point for
@@ -10536,6 +10557,7 @@
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
+        condition: wnCondition(),
         searchExact: wnAskedForExactly(item),
       });
       if (!res.ok) {
@@ -10746,6 +10768,38 @@
         ${t.readable && t.note ? `<p class="wn-trend-note">${esc(t.note)}</p>` : ''}
       </div>` : '';
 
+    // ── What KIND of one, against what kind the comps were ─────────────────────
+    // Every figure below stands on a median of everything that matched the name, and
+    // on eBay that routinely means sealed boxes and beaten-up used units in the same
+    // list. The median across them is the right price for neither — and the seller is
+    // the one person who can tell which is on screen, because they are looking at it.
+    //
+    // The bars are the whole point: "9 new at $120, 3 used at $55" is a sentence that
+    // takes a second to read and decides the bid. Rendered on every priced card, for
+    // the same reason as the trend strip — a block that only appears on a mismatch is
+    // a block whose absence means both "the comps are the right condition" and
+    // "nothing looked". Every word is the server's (Services/LiveCondition.cs);
+    // nothing here classifies, medians or divides anything.
+    const cond = c.condition || {};
+    const condStrip = (priced && cond.headline) ? `
+      <div class="wn-cond-strip wn-cond-${esc(cond.band || 'unstated')}${cond.discounted ? ' wn-cond-cut' : ''}${
+        cond.warning ? ' wn-cond-warn' : ''}">
+        <div class="wn-cond-line">
+          <span class="wn-cond-label">Condition</span>
+          <strong class="wn-cond-headline">${esc(cond.headline)}</strong>
+          ${cond.discounted ? `<span class="wn-cond-tag">ceiling cut ${cond.cutPercent}%</span>` : ''}
+          ${cond.source === 'seller' ? '<span class="wn-cond-src">as you set it</span>'
+            : (cond.evidence ? `<span class="wn-cond-src">read “${esc(cond.evidence)}” in the name</span>` : '')}
+        </div>
+        ${(cond.bands || []).length ? `<div class="wn-cond-bands">${
+          cond.bands.map(b => `<span class="wn-cond-band wn-cond-band-${esc(b.band)}${
+            b.isThisLot ? ' wn-cond-band-mine' : ''}" title="${esc(
+              `${b.count} of the sold comps were ${b.label} — median ${moneyExact(b.median)}`)}">` +
+            `<span class="wn-cond-band-name">${esc(b.label)}</span>` +
+            `<span class="wn-cond-band-fig">${b.count} · ${money(b.median)}</span></span>`).join('')}</div>` : ''}
+        ${cond.moneyNote ? `<p class="wn-cond-money">${esc(cond.moneyNote)}</p>` : ''}
+      </div>` : '';
+
     // ── How many things is this ────────────────────────────────────────────────
     // Sold comps are per unit everywhere in this app, so every figure on this card
     // is a per-unit figure until the lot's own name says otherwise. When it does,
@@ -10902,6 +10956,7 @@
       ${nextStrip}
       ${searchStrip}
       ${trendStrip}
+      ${condStrip}
       ${unitsStrip}
       ${ladder}
       ${meter}
@@ -10914,7 +10969,10 @@
           // Said on the tile as well as in the strip. This is the one figure on the card
           // the haircut actually moved, and a resale price quietly 22% lower than the comp
           // table under it is exactly the sort of thing a seller re-reads and distrusts.
-          (t.discounted ? ` · cut ${t.cutPercent}% for the slide` : ''))}
+          // Both cuts get a clause, in the order they were applied, because a tile that
+          // named one of two haircuts would understate the gap it is there to explain.
+          (t.discounted ? ` · cut ${t.cutPercent}% for the slide` : '') +
+          (cond.discounted ? ` · cut ${cond.cutPercent}% for ${(cond.bandLabel || '').toLowerCase()}` : ''))}
         ${wnStat('Middle half of sales', spread, u.isLot ? 'per unit — where one of these lands' : 'where these actually land')}
         ${wnStat('Sell-through', sellThrough, c.sellThroughLabel || '')}
         ${wnStat(u.isLot ? `Sells in · all ${u.count}` : 'Sells in',
@@ -11150,8 +11208,11 @@
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
         // A lot of three won at one hammer price is three units of stock. The row is costed
-        // by the same Build as the card, so it has to be asked the same question.
+        // by the same Build as the card, so it has to be asked the same question — and that
+        // includes what condition it was in, or the sheet would value a used win at the
+        // mixed-median price the card on screen had already cut.
         quantity: wnQty(),
+        condition: wnCondition(),
       });
 
       if (!res.ok) {
@@ -11315,6 +11376,11 @@
           // lands in the card above with its own numbers, and the presses left under the
           // ceiling should not change the moment it gets there.
           bidIncrement: wnNumber('wn-inc'),
+          // The condition box is deliberately NOT sent, exactly like the quantity. Both
+          // describe ONE item the seller is looking at, and this is a dozen items nobody
+          // has seen yet — stamping "Used" across a whole pasted list would cut eleven
+          // ceilings on the strength of a keystroke about the twelfth. Each row is read
+          // off its own name, and opening one re-prices it with the box empty.
         });
         if (run !== wnLotRun) return;
         if (res.ok) { row.state = WN_LOT_PRICED; row.card = body; }
@@ -11438,10 +11504,10 @@
 
     setVal('wn-item', row.card.item);
     setVal('wn-bid', row.card.bidWasKnown ? row.card.currentBid : '');
-    // This lot's count is whatever its own name said when the list was priced, and the
-    // re-price below reads it again off that name. A quantity left in the box from the
-    // last lot would land on this one instead.
-    wnResetQty();
+    // This lot's count and condition are whatever its own name said when the list was
+    // priced, and the re-price below reads them again off that name. A quantity or a
+    // condition left in the box from the last lot would land on this one instead.
+    wnResetLotBoxes();
     wnToken = row.card.token || '';
     wnTokenItem = row.card.item;
     wnRebidSeq++;
@@ -11577,7 +11643,7 @@
       $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
     });
 
-    // The six boxes that change the answer but not the comps. Typing in any of them
+    // The seven boxes that change the answer but not the comps. Typing in any of them
     // re-answers off the held sold history — no eBay, no spinner, no round trip past
     // this machine. Before anything is priced there is no token and this does nothing.
     //
@@ -11588,9 +11654,16 @@
     // The bid step is the sixth. It moves no price at all — only the count of presses
     // left under the ceiling — and it is the one figure on this screen the seller can
     // read off the show and the app cannot.
+    //
+    // The condition is the seventh, and it is the reason the whole re-price path is
+    // worth having: it never changes what eBay was asked, only which of the comps
+    // already in hand the ceiling stands on. A round trip to eBay for it would be a
+    // round trip to fetch rows this machine is already holding.
     ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('input', wnScheduleRebid);
     });
+    // A select fires change, not input, on every browser worth supporting.
+    $('wn-cond')?.addEventListener('change', wnScheduleRebid);
 
     // Up/down on the bid box steps by what the bidding is worth at that level rather
     // than by the input's own 1, and re-answers on the way — hands on the auction, not
@@ -11606,9 +11679,10 @@
     $('wn-item')?.addEventListener('input', () => {
       if (wnToken && ($('wn-item').value || '').trim() !== wnTokenItem) {
         wnDropToken();
-        // A count belongs to the lot it was counted on. Typing a new item with a stale 3
-        // still in the box would multiply the new lot's ceiling by three.
-        wnResetQty();
+        // A count and a condition belong to the lot they were read on. Typing a new item
+        // with a stale 3 still in the box would multiply the new lot's ceiling by three,
+        // and a stale "New / sealed" would stop a used lot's comps cutting anything.
+        wnResetLotBoxes();
       }
     });
 

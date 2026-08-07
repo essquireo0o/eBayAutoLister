@@ -38,6 +38,13 @@ public sealed class LiveWinRequest
     /// </summary>
     public int? Quantity { get; set; }
 
+    /// <summary>
+    /// Carried for the same reason again: the card on screen had already cut its ceiling to what
+    /// this condition actually fetches, and a row that valued the win at the mixed median would
+    /// report a resale the card had spent its arithmetic refusing.
+    /// </summary>
+    public string? Condition { get; set; }
+
     /// <summary>The same question the card answers, asked at the winning bid. Everything the row
     /// shows comes back through <see cref="Services.LiveBidAdvisor.Build"/> from this.</summary>
     public LiveBidRequest AsBid() => new()
@@ -48,6 +55,7 @@ public sealed class LiveWinRequest
         BuyerFeePercent = BuyerFeePercent,
         TargetRoiPercent = TargetRoiPercent,
         Quantity = Quantity,
+        Condition = Condition,
         Token = Token,
     };
 }

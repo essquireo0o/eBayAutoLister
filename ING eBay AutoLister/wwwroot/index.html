@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=114" />
+  <link rel="stylesheet" href="style.css?v=115" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2817,6 +2817,24 @@
                 <input id="wn-qty" type="number" min="1" step="1" inputmode="numeric" placeholder="1"
                        aria-describedby="wn-live-note" />
               </label>
+              <!-- What KIND of one it is. The comps behind the ceiling are whatever matched the
+                   name, and on eBay that routinely means sealed boxes and beaten-up used units in
+                   one median — the right price for neither. The seller is the only person who can
+                   tell which, because they are looking at it through the camera.
+                   It never changes what eBay is asked: the sold lookup is a boolean AND over
+                   titles and eBay's condition is a field, so "used" in the query would find
+                   nothing. This splits the comps already in hand, which is why picking it
+                   re-answers instantly with no second read. Blank reads the lot's own name. -->
+              <label class="wn-field wn-field-cond" title="What condition the thing on screen is in. Blank reads it off the lot's name.">
+                <span>Condition</span>
+                <select id="wn-cond" aria-describedby="wn-live-note">
+                  <option value="">from the name</option>
+                  <option value="new">New / sealed</option>
+                  <option value="likenew">Open box / like new</option>
+                  <option value="used">Used</option>
+                  <option value="broken">For parts</option>
+                </select>
+              </label>
               <label class="wn-field">
                 <span>Shipping</span>
                 <input id="wn-ship" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
@@ -2834,8 +2852,8 @@
             <p class="opp-hint wn-ask-hint" id="wn-live-note">
               Priced against the same eBay sold comps and sell-through the Opportunity Finder uses —
               no live eBay call, so it answers in about a second. Once it's priced, the comps are
-              held: moving the bid, the step, the shipping, the fee or the target re-answers
-              <strong>instantly</strong>, against that same sold history.
+              held: moving the bid, the step, the condition, the shipping, the fee or the target
+              re-answers <strong>instantly</strong>, against that same sold history.
               Changing the item reads eBay again.
             </p>
           </div>
@@ -5959,6 +5977,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=131"></script>
+  <script src="app.js?v=132"></script>
 </body>
 </html>

@@ -16595,7 +16595,8 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   text-transform: uppercase;
   color: var(--text-dim, #8b93a7);
 }
-.wn-field > input {
+.wn-field > input,
+.wn-field > select {
   width: 100%;
   min-width: 0;
 }
@@ -17026,6 +17027,126 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
+}
+
+/* ── What kind of one it is, against what kind the comps were ─────────────────
+   Directly under the trend strip and for the same reason: both are facts about what
+   the money below MEANS rather than facts about the money. A ceiling built on a
+   median of sealed boxes is a real ceiling for a sealed box, and the thing on screen
+   has been out of its box since 2019.
+
+   Quiet by default. Mixed comps under an unstated lot are the ordinary case and get
+   no colour at all — the bars carry it. The two edges that appear are the ones that
+   change the decision: a condition gap that took money off the ceiling, and one that
+   could not be priced away and left the badge knowingly optimistic. */
+.wn-cond-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* Something the seller has to act on: either the ceiling is already cut for the
+   condition, or it is a better-condition price and nothing could correct it. */
+.wn-cond-warn {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+.wn-cond-cut {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+.wn-cond-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-cond-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-cond-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-cond-cut .wn-cond-headline {
+  color: var(--danger, #d46a6a);
+}
+.wn-cond-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(212, 106, 106, .16);
+  color: var(--danger, #d46a6a);
+}
+/* Where the band came from — the seller's own eyes, or a word in the lot's name.
+   Never louder than the headline: it is provenance, not news. */
+.wn-cond-src {
+  font-size: 11.5px;
+  color: var(--text-dim, #8b93a7);
+}
+/* The bars. "9 new at $120 · 3 used at $55" is the whole feature in one glance —
+   the sentence that decides the bid, in the time there is to read it. */
+.wn-cond-bands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-cond-band {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+/* The band the lot is actually in — the rows the ceiling should be standing on.
+   The only one that gets a colour, because it is the only one being asked a
+   question. */
+.wn-cond-band-mine {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-cond-band-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-cond-band-mine .wn-cond-band-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-cond-band-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* What the read did, or did not do, to the ceiling. Said on every priced card, so
+   this is the line that is normally the whole block. */
+.wn-cond-money {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text, #d8dce6);
+}
+/* The picker itself, sized like the fixed-width boxes beside it. Wider than the
+   quantity because its answers are words rather than digits, and narrow enough that
+   it never takes width off the item name. */
+.wn-field-cond {
+  width: 148px;
 }
 
 /* ── How many things is this ──────────────────────────────────────────────────
@@ -17800,6 +17921,16 @@ p.wn-units-refused {
   .wn-next-line {
     flex-direction: column;
     gap: 1px;
+  }
+  /* Same again on the condition strip. The band bars below it stay side by side
+     as long as they fit and wrap when they do not — two or three of them are the
+     one thing on this block worth comparing at a glance. */
+  .wn-cond-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  .wn-field-cond {
+    width: 100%;
   }
   .wn-rung,
   .wn-stat,

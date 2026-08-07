@@ -49,9 +49,49 @@ public static class LiveBidSpeech
         if (card.Call == LiveBidCalls.NoData)
             return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.", YourOwnRecord(card));
 
-        return Join(Headline(card), HowMany(card), WhichWayItsGoing(card),
+        return Join(Headline(card), HowMany(card), WhichWayItsGoing(card), WhatKindOfOne(card),
             WhereTheBiddingIs(card), HowManyPressesLeft(card), WhatItResellsFor(card),
             YourOwnRecord(card));
+    }
+
+    /// <summary>
+    /// That the comps were not the same condition as the thing on screen, said fourth — after the
+    /// trend, before any dollar figure it changes the meaning of.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two states, both rare, both of which change what the hand does. The first is the cut: the
+    /// badge the seller just heard is lower than the comps under it and they are owed the reason.
+    /// The second is the sharper one — the lot is in worse shape than nearly everything it was
+    /// priced off and there were too few matching sales to correct it by, so the ceiling is
+    /// knowingly a better-condition price. That is the one moment on this screen where the number
+    /// in the badge is optimistic and only this sentence says so.
+    /// </para>
+    /// <para>
+    /// Silent everywhere else, including the very common "nothing said what condition this is".
+    /// Mixed comps are the normal case, and a clause on every lot in exchange for a caveat the
+    /// card's own strip already carries would cost the line the thing it is for.
+    /// </para>
+    /// </remarks>
+    private static string WhatKindOfOne(LiveBidCard card)
+    {
+        if (card.Condition is not { Readable: true } cond) return "";
+        if (cond.Band == LiveConditionBands.Unstated) return "";
+
+        var lot = LiveCondition.ShortLabel(cond.Band);
+
+        if (cond.Discounted)
+            return $"Priced as {lot} — ceiling already cut {Math.Round(cond.CutPercent):0}% for it.";
+
+        // Worse than the comps, with nothing honest to correct the ceiling by.
+        if (cond.MatchedComps < LiveCondition.MinBandComps
+            && LiveCondition.Rank(cond.DominantBand) > LiveCondition.Rank(cond.Band))
+        {
+            return $"That ceiling is a {LiveCondition.ShortLabel(cond.DominantBand)} price and this one is " +
+                   $"{lot} — bid under it.";
+        }
+
+        return "";
     }
 
     /// <summary>

@@ -323,6 +323,86 @@ public class LiveBidSpeechTests
         Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
     }
 
+    // ── What kind of one it is ────────────────────────────────────────────────
+
+    private static LiveConditionRead Cond(
+        string band = LiveConditionBands.Used, bool readable = true, bool discounted = false,
+        decimal cut = 0m, int matched = 5, string dominant = LiveConditionBands.New) => new()
+    {
+        Band = band,
+        BandLabel = LiveCondition.Label(band),
+        Readable = readable,
+        Discounted = discounted,
+        CutPercent = cut,
+        MatchedComps = matched,
+        DominantBand = dominant,
+    };
+
+    /// <summary>
+    /// The first of the two states this clause speaks in: the badge the seller just heard is lower
+    /// than the comps under it, and they are owed the reason in the same breath.
+    /// </summary>
+    [Fact]
+    public void A_ceiling_cut_for_condition_is_said_straight_after_the_trend()
+    {
+        var card = Card();
+        card.Condition = Cond(discounted: true, cut: 38.4m);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.Contains("Priced as used — ceiling already cut 38% for it.", said, StringComparison.Ordinal);
+        // Before the bidding, because it changes what the numbers after it mean.
+        Assert.True(said.IndexOf("Priced as used", StringComparison.Ordinal)
+                    < said.IndexOf("At $120", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The sharper state, and the only moment on this screen where the number in the badge is
+    /// knowingly optimistic: the lot is in worse shape than nearly everything it was priced off and
+    /// there were too few matching sales to correct it by.
+    /// </summary>
+    [Fact]
+    public void A_ceiling_that_is_a_better_conditions_price_says_so()
+    {
+        var card = Card();
+        card.Condition = Cond(matched: 1);
+
+        Assert.Contains("That ceiling is a new price and this one is used — bid under it.",
+            LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Silent everywhere else. Mixed comps under an unstated lot are the ordinary case, and a clause
+    /// on every lot in exchange for a caveat the card's own strip already carries would cost this
+    /// line the only thing it is for.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveConditionBands.Unstated, true, 5, LiveConditionBands.New)]   // nothing said
+    [InlineData(LiveConditionBands.Used, false, 1, LiveConditionBands.New)]      // comps unclassified
+    [InlineData(LiveConditionBands.Used, true, 6, LiveConditionBands.New)]       // enough, and no cut earned
+    [InlineData(LiveConditionBands.New, true, 1, LiveConditionBands.Used)]       // better than the comps
+    public void Every_other_condition_state_says_nothing(
+        string band, bool readable, int matched, string dominant)
+    {
+        var card = Card();
+        card.Condition = Cond(band, readable, matched: matched, dominant: dominant);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.DoesNotContain("Priced as", said, StringComparison.Ordinal);
+        Assert.DoesNotContain("That ceiling is a", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card built by something that never set the block at all still speaks.</summary>
+    [Fact]
+    public void A_card_with_no_condition_block_still_produces_a_line()
+    {
+        var card = Card();
+        card.Condition = null!;
+
+        Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_line_never_runs_on_or_ends_in_a_hanging_space()
     {

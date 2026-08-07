@@ -196,11 +196,13 @@ public class WhatsNotTrendAssetTests
         Assert.Contains("const trendStrip = t.headline ?", Js, StringComparison.Ordinal);
 
         // Order on the card: what was searched, then which way that search's answer is moving, then
-        // how many of the thing there are. Both of the first two are facts about what the money
-        // below MEANS; the third is what the money is multiplied by.
-        var search = Js.IndexOf("${searchStrip}\n      ${trendStrip}\n      ${unitsStrip}".Replace("\n", "\r\n"),
+        // what condition the things it answered about were in, then how many of the thing there
+        // are. The first three are facts about what the money below MEANS; the fourth is what the
+        // money is multiplied by.
+        var search = Js.IndexOf(
+            "${searchStrip}\n      ${trendStrip}\n      ${condStrip}\n      ${unitsStrip}".Replace("\n", "\r\n"),
             StringComparison.Ordinal);
-        Assert.True(search > 0, "the trend strip is no longer between the search strip and the units strip");
+        Assert.True(search > 0, "the trend strip is no longer between the search strip and the condition strip");
     }
 
     /// <summary>
@@ -210,7 +212,7 @@ public class WhatsNotTrendAssetTests
     [Fact]
     public void The_browser_computes_none_of_it()
     {
-        var strip = Section(Js, "const t = c.trend || {};", "// ── How many things is this");
+        var strip = Section(Js, "const t = c.trend || {};", "// ── What KIND of one");
 
         foreach (var arithmetic in new[] { "recentMedian /", "priorMedian", "* 100", "toFixed" })
             Assert.DoesNotContain(arithmetic, strip, StringComparison.Ordinal);

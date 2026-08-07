@@ -3060,6 +3060,11 @@ app.MapPost("/api/whatsnot/bid", async (
         $"searched \"{terms.Query}\"{(terms.Widened ? " (widened)" : "")}" +
         $"{(terms.Dropped.Count > 0 ? $" — dropped {string.Join(", ", terms.Dropped.Select(d => $"\"{d.Text}\""))}" : "")}; " +
         $"{(card.Units.IsLot ? $"{card.Units.Count} units ({card.Units.Source}); " : "")}" +
+        // What was being bid on, against what the comps were. The first real "the comps were all
+        // sealed and the lot was not" shows up here, in the seller's own log, on a real show.
+        $"condition {card.Condition.Band} ({card.Condition.Source})" +
+        $"{(card.Condition.Readable ? $", comps {card.Condition.MatchedComps}/{card.Condition.ClassifiedComps} matching" : ", comps unclassified")}" +
+        $"{(card.Condition.Discounted ? $", cut {card.Condition.CutPercent:0.#}%" : "")}; " +
         $"bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
         $"max bid {card.MaxBid:C} ({card.Call}); " +

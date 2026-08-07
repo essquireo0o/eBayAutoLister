@@ -1277,4 +1277,183 @@ public class LiveBidAdvisorTests
         Assert.True(three.NextBid.Amount <= three.MaxBid);
         Assert.Equal(19, three.NextBid.BidsLeft);   // 210 … 390; 400 is past the ceiling
     }
+
+    // ── What condition it is, against what condition the comps were ──────────────────────────
+
+    /// <summary>
+    /// The same analysis, plus a full comp set that states a condition on every row — the shape
+    /// <c>AnalyzeProductAsync</c> hands back from the hosted sold-comps database.
+    /// </summary>
+    private static MarketAnalysisResult WithConditions(int newCount, decimal newPrice, int usedCount, decimal usedPrice)
+    {
+        var analysis = Analysis();
+        for (var i = 0; i < newCount; i++)
+        {
+            analysis.AllSoldComparables.Add(new MarketplaceComparableResult
+            {
+                ItemId = $"n{i}", Title = Product, Condition = "Brand New",
+                SoldPrice = newPrice, TotalPrice = newPrice,
+            });
+        }
+        for (var i = 0; i < usedCount; i++)
+        {
+            analysis.AllSoldComparables.Add(new MarketplaceComparableResult
+            {
+                ItemId = $"u{i}", Title = Product, Condition = "Pre-Owned",
+                SoldPrice = usedPrice, TotalPrice = usedPrice,
+            });
+        }
+        return analysis;
+    }
+
+    private static LiveBidCard ConditionCard(MarketAnalysisResult analysis, string? picked, decimal? bid = null) =>
+        Advisor.Build(Product, analysis,
+            new LiveBidRequest { Title = Product, CurrentBid = bid, Condition = picked }, Fees, nowUtc: Now);
+
+    /// <summary>
+    /// The whole feature in one card. Nine sealed comps at $200 and three used ones at $100: the
+    /// blend the ceiling used to be built on is a $200 price, and the thing on screen is used.
+    /// </summary>
+    [Fact]
+    public void A_used_lot_priced_off_mostly_new_comps_has_its_ceiling_cut_to_the_used_median()
+    {
+        var mixed = WithConditions(9, 200m, 3, 100m);
+
+        var blind = ConditionCard(mixed, null);
+        var used = ConditionCard(mixed, LiveConditionBands.Used);
+
+        Assert.False(blind.Condition.Discounted);
+        Assert.True(used.Condition.Discounted);
+        Assert.Equal(50m, used.Condition.CutPercent);
+
+        // Half the resale, so a lower ceiling and a lower break-even. Nothing else on the card is a
+        // second opinion about the money — both come off the same Build.
+        Assert.Equal(Math.Round(blind.ResalePrice!.Value * 0.5m, 2), used.ResalePrice);
+        Assert.True(used.MaxBid < blind.MaxBid);
+        Assert.True(used.BreakEvenBid < blind.BreakEvenBid);
+    }
+
+    /// <summary>
+    /// The comps DESCRIBE sales that really happened. The cut scales what the ceiling is built out
+    /// of and touches none of the evidence — scaling a percentile or a comp count would be
+    /// inventing sales nobody made.
+    /// </summary>
+    [Fact]
+    public void The_cut_moves_the_ceiling_and_leaves_every_description_of_the_market_alone()
+    {
+        var mixed = WithConditions(9, 200m, 3, 100m);
+
+        var blind = ConditionCard(mixed, null);
+        var used = ConditionCard(mixed, LiveConditionBands.Used);
+
+        Assert.Equal(blind.PriceLow, used.PriceLow);
+        Assert.Equal(blind.PriceHigh, used.PriceHigh);
+        Assert.Equal(blind.CompCount, used.CompCount);
+        Assert.Equal(blind.SellThroughRate, used.SellThroughRate);
+        Assert.Equal(blind.ConfidenceScore, used.ConfidenceScore);
+        Assert.Equal(blind.Comps.Count, used.Comps.Count);
+        Assert.Equal(blind.FreshnessNote, used.FreshnessNote);
+    }
+
+    /// <summary>
+    /// A card whose comps state no condition is priced exactly as it was before any of this
+    /// existed. The whole existing suite runs on that analysis, which is the real assertion — this
+    /// says it out loud.
+    /// </summary>
+    [Fact]
+    public void Comps_that_state_no_condition_price_the_card_exactly_as_before()
+    {
+        var plain = Card(Analysis(), bid: 120m, fee: 8m, shipping: 12m);
+
+        Assert.NotNull(plain.Condition);
+        Assert.False(plain.Condition.Readable);
+        Assert.False(plain.Condition.Discounted);
+        Assert.Equal(200m, plain.ResalePrice);
+    }
+
+    /// <summary>
+    /// Present on every card, including the one nothing priced — the same discipline the next-bid
+    /// and trend blocks follow, for the same reason.
+    /// </summary>
+    [Fact]
+    public void Every_card_carries_the_condition_block()
+    {
+        Assert.NotNull(Card(null, bid: 40m).Condition);
+        Assert.NotNull(Card(Analysis()).Condition);
+        Assert.False(string.IsNullOrWhiteSpace(ConditionCard(WithConditions(9, 200m, 3, 100m), null).Condition.Headline));
+    }
+
+    /// <summary>
+    /// The warning belongs with the two other facts about what the money MEANS, and above the ones
+    /// about the money itself. A seller who reads the ceiling and stops reading has to have hit it.
+    /// </summary>
+    [Fact]
+    public void The_condition_warning_lands_above_the_warnings_about_the_money()
+    {
+        var card = ConditionCard(WithConditions(9, 200m, 3, 100m), LiveConditionBands.Used, bid: 20m);
+
+        var condition = card.Warnings.FindIndex(w => w.Contains("comps are mixed", StringComparison.OrdinalIgnoreCase));
+        var shipping = card.Warnings.FindIndex(w => w.StartsWith("No shipping cost", StringComparison.Ordinal));
+
+        Assert.True(condition >= 0, $"the condition warning is gone: {string.Join(" | ", card.Warnings)}");
+        Assert.True(shipping > condition, "the condition warning sank below the warnings about the money");
+    }
+
+    /// <summary>
+    /// A better condition than the comps never raises anything — and never quietly lowers anything
+    /// either. The card is the blind one, exactly.
+    /// </summary>
+    [Fact]
+    public void A_sealed_lot_over_mostly_used_comps_is_priced_identically_to_a_blind_one()
+    {
+        var mixed = WithConditions(3, 200m, 9, 100m);
+
+        var blind = ConditionCard(mixed, null, bid: 30m);
+        var sealedLot = ConditionCard(mixed, LiveConditionBands.New, bid: 30m);
+
+        Assert.False(sealedLot.Condition.Discounted);
+        Assert.Equal(blind.ResalePrice, sealedLot.ResalePrice);
+        Assert.Equal(blind.MaxBid, sealedLot.MaxBid);
+        Assert.Equal(blind.BreakEvenBid, sealedLot.BreakEvenBid);
+        Assert.Equal(blind.ProfitAtMaxBid, sealedLot.ProfitAtMaxBid);
+    }
+
+    /// <summary>
+    /// The two cuts compose rather than compete: one is what these fetch lately, the other is what
+    /// they fetch in this shape. Both come off the same rows, both only ever cut, and the resale
+    /// price is the product of the two — not the deeper of them and not the last one applied.
+    /// </summary>
+    [Fact]
+    public void The_condition_cut_stacks_on_the_trend_cut_rather_than_replacing_it()
+    {
+        var analysis = Analysis();
+        // A confirmed slide: five recent sales around $140, five earlier ones around $200 — the
+        // shape LiveTrendTests calls a 30% fall. Every row states a condition, so both read.
+        var recentDays = new[] { 3, 8, 14, 20, 27 };
+        var priorDays = new[] { 33, 39, 45, 51, 57 };
+        void Add(string id, int? daysAgo, decimal price, string condition) =>
+            analysis.AllSoldComparables.Add(new MarketplaceComparableResult
+            {
+                ItemId = id, Title = Product, Condition = condition,
+                SoldPrice = price, TotalPrice = price,
+                SoldDate = daysAgo is int d ? Now.AddDays(-d) : null,
+            });
+
+        for (var i = 0; i < recentDays.Length; i++) Add($"r{i}", recentDays[i], 140m + (2 - i), "Brand New");
+        for (var i = 0; i < priorDays.Length; i++) Add($"p{i}", priorDays[i], 200m + (2 - i), "Brand New");
+        // Undated on purpose. A condition band needs no date and the trend read only looks at rows
+        // that carry one, so these give the condition read something to price off without putting a
+        // second price cluster inside the trend's own windows.
+        for (var i = 0; i < 4; i++) Add($"u{i}", null, 60m, "Pre-Owned");
+
+        var used = ConditionCard(analysis, LiveConditionBands.Used);
+
+        Assert.True(used.Trend.Discounted);
+        Assert.True(used.Condition.Discounted);
+
+        // Both ratios, applied to the estimator's own expected sale price.
+        Assert.Equal(
+            Math.Round(200m * used.Trend.ResaleMultiplier * used.Condition.ResaleMultiplier, 2),
+            used.ResalePrice);
+    }
 }

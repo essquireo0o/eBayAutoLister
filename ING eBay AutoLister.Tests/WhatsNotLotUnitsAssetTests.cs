@@ -126,16 +126,25 @@ public class WhatsNotLotUnitsAssetTests
     {
         Assert.Contains("function wnResetQty()", Js, StringComparison.Ordinal);
 
+        // The count is emptied alongside the condition, because both belong to the LOT rather than
+        // to the show — the shipping, the fee, the target and the bid step hold for a whole night
+        // and these two hold for one item. Pinned through the pair rather than through wnResetQty
+        // directly so that a later split of the two cannot quietly drop one of them.
+        Assert.Contains("function wnResetLotBoxes()", Js, StringComparison.Ordinal);
+        var both = Section(Js, "function wnResetLotBoxes() {", "}");
+        Assert.Contains("wnResetQty();", both, StringComparison.Ordinal);
+        Assert.Contains("wn-cond", both, StringComparison.Ordinal);
+
         // Typed over, read off the show, and opened from the lot list — every way the item on
         // screen can become a different item.
         var typing = Section(Js, "$('wn-item')?.addEventListener('input', () => {", "});");
-        Assert.Contains("wnResetQty();", typing, StringComparison.Ordinal);
+        Assert.Contains("wnResetLotBoxes();", typing, StringComparison.Ordinal);
 
         var read = Section(Js, "setVal('wn-item', read.title);", "wnPriceItem();");
-        Assert.Contains("wnResetQty();", read, StringComparison.Ordinal);
+        Assert.Contains("wnResetLotBoxes();", read, StringComparison.Ordinal);
 
         var openLot = Section(Js, "function wnOpenLot(index) {", "wnScheduleRebid();");
-        Assert.Contains("wnResetQty();", openLot, StringComparison.Ordinal);
+        Assert.Contains("wnResetLotBoxes();", openLot, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -106,6 +106,15 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // The only thing on this card allowed to take money off the ceiling; see LiveTrend for the
         // two guards on that and for why a climb is never allowed to add any.
         var trend = LiveTrend.Read(analysis?.AllSoldComparables, now);
+
+        // What condition this is, against what condition the comps were in. Read off the SAME rows
+        // the resale figure came from — the condition eBay recorded on each sale, which nothing on
+        // this card has ever looked at. The second thing allowed to take money off the ceiling, and
+        // it composes with the trend rather than competing: one is what these fetch lately, the
+        // other is what they fetch in this shape. See LiveCondition for why a better condition is
+        // never allowed to add any.
+        var condition = LiveCondition.Read(item, request.Condition, analysis?.AllSoldComparables);
+
         var shipping = Math.Max(0m, request.ShippingCost ?? 0m);
         var feePercent = SanitizeBuyerFee(request.BuyerFeePercent);
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
@@ -123,6 +132,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             Item = item,
             Search = terms,
             Trend = trend,
+            Condition = condition,
             PricedAs = resale?.LookupTitle ?? terms.Query,
             CategoryLabel = category?.Label ?? "",
             CurrentBid = bid,
@@ -172,7 +182,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // these have actually been fetching lately. Everything the comps DESCRIBE stays as it was:
         // the middle-half spread, the comp table, the sell-through and the confidence are records
         // of sales that really happened, and scaling those would be inventing sales nobody made.
-        var bidAgainst = LiveTrend.Discount(resale, trend);
+        // Two ratios, stacked, in the order they were measured. The trend one says what these have
+        // been fetching lately; the condition one says what they fetch in the shape this one is in.
+        // Both come off the same rows and both only ever cut, so applying one after the other is
+        // the two facts together rather than one opinion overwriting another. When neither fired
+        // this is the same OBJECT as `resale`, which is what makes "a card with nothing to report
+        // is priced exactly as it was before either of these existed" a property of the code.
+        var bidAgainst = LiveCondition.Discount(LiveTrend.Discount(resale, trend), condition);
 
         // The resale price is the LOT's, because the bid it is measured against is the lot's — one
         // hammer buys all of them. The spread, the median and the quick-sale figure stay per unit:
@@ -515,6 +531,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // priced off a median that includes six weeks of higher sales is a real ceiling for a price
         // that has since stopped being paid. See LiveTrend.
         if (card.Trend is { Warning.Length: > 0 } trend) warnings.Add(trend.Warning);
+
+        // And then WHAT was sold at those prices. Same class of fact and the same place for it: a
+        // ceiling built on a median of sealed boxes is a real ceiling for a sealed box, and the
+        // thing on screen has been out of its box since 2019. This is the only line on the card
+        // that can be fixed with one keystroke and re-answered with no eBay read. See LiveCondition.
+        if (card.Condition is { Warning.Length: > 0 } condition) warnings.Add(condition.Warning);
 
         // The lot warnings come first. Everything under them is a number that means something
         // different depending on whether this is one thing or five, and a seller who reads the
