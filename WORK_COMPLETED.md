@@ -11756,3 +11756,171 @@ sell-through path the ceiling is built on. The panel is the container; the card 
 - **Nothing here makes a cross-origin frame readable.** It never will be. The feed inside the frame
   is still a picture the app cannot see, which is what 📡 Read the show is for — now reachable in
   one press from the refusal itself.
+
+---
+
+# The card priced the bid on screen. Nobody buys at that price (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Nine sessions have improved what the live card knows: what it searched for, how many things are in
+the lot, which way the price is going, what the seller's own book says. Every one of them made the
+**ceiling** better. This one is about the **press**, and the gap between those two has been on the
+screen since the first session with nothing able to name it.
+
+The bidding is at **$70**. The ceiling is **$73.10**. The card says `BID UP TO $73`, `ROOM LEFT
+$3.10`, and every number on it is correct. The seller presses bid — and the bid becomes **$75**,
+because a live show at that level goes up in fives. That is $1.90 past the ceiling the rest of the
+card spent its arithmetic protecting, on a purchase with no undo, and nothing on the screen could
+tell "the ceiling is above the bid" apart from "there is a bid left to make".
+
+The strip is on every card now, first under the badge:
+
+> **NEXT BID** **Don't press** `$75.00`
+> The bidding is at $70.00 and your ceiling is $73.10, but bids go up in $5.00 — pressing makes it
+> $75.00, $1.90 past it. There is no bid left to make on this lot.
+> *Assuming the bidding goes up in $5.00 at this level — type the show's own next-bid amount in Bid
+> step if it differs.*
+
+`ROOM LEFT $3.10` is still there, three inches below, still true. The strip is what explains it.
+
+## What it does
+
+`Services/LiveBidIncrement.cs` counts **presses**, which is the unit the hand acts in:
+
+| State | Headline | When |
+|---|---|---|
+| `press` | **6 more bids** | Two or more presses land at or under the ceiling |
+| `last` | **Last bid** | Exactly one does — and it names the one after it, and what it costs |
+| `stop` | **Don't press** | Room above the bid, and no press that stays inside it |
+| `over` | **Already past it** | The bidding has gone by the ceiling |
+| — | *Bidding hasn't started* | Nothing to cost yet, said rather than left blank |
+
+The count is the most glanceable figure this screen has ever carried, and deliberately so: it is an
+**integer**. Every other number on the card has to have a currency symbol read off it first.
+
+## Nothing here prices anything
+
+| Borrowed | From |
+|---|---|
+| The ceiling | `AuctionSniperAnalyzer.MaxBidDetail` — untouched |
+| What winning costs | `LiveBidAdvisor.LandedCost` — the card's own, not a second bid-plus-premium-plus-shipping |
+| The break-even the profit comes off | The same `breakEvenAllIn` the ceiling was derived from, so the profit at the next bid and the profit at the ceiling are one subtraction apart |
+| The comps, the sell-through, the badge, the spread | Untouched. This adds one input and reads the ceiling that was already there |
+| The lot list, the re-price, the win, the draft | Unchanged — every pasted lot goes back through `/api/whatsnot/bid`, so the list got this for free |
+
+It is read inside `LiveBidAdvisor.Build`, so a card re-priced against held comps re-runs the same
+reading. It costs **no lookup and no clock** — a test asserts the endpoint still reads eBay at most
+twice and that the file contains no `DateTime.UtcNow`, no `await`, no `HttpClient`.
+
+## The increment is an assumption, and the card says so
+
+No live platform publishes its bid ladder and hosts change it mid-show. So the default is a
+convention — the same ladder the − / + buttons have always stepped by — and three things follow from
+it being an assumption rather than a fact:
+
+- **It is stated back, in dollars, on every card**, with the way to overrule it. An assumption
+  nobody can see is one nobody can correct.
+- **There is a box for it.** The seller is looking at a screen that shows the next bid amount and
+  this app is not. `Bid step` sits beside the bid, is remembered between lots like the shipping and
+  the fee, and re-answers instantly off the held comps.
+- **A typed step is held flat all the way up.** The assumed ladder grows with the price — a $1 step
+  at $20 is a $5 step by $30, and a count that assumed otherwise would promise presses that will
+  never be offered. A step the *seller* typed is never talked upwards by that, because they are
+  watching the show. What makes that safe is that the count is not what anybody acts on: the **next**
+  press is costed exactly either way, and the whole card is re-answered every time the bid moves.
+
+## Everything rounds against the bidder
+
+The count is a floor. A press landing exactly on the ceiling counts; one a cent over does not. The
+presses after the first are **walked, not divided**, because `room / increment` over-counts every lot
+whose ceiling sits above the next rung — $20 to $60 in dollar steps is 12 presses, not 40. A property
+test walks every reported count over 630 combinations of bid, room and step and asserts it never ends
+above the ceiling.
+
+The one figure that is **not** clamped is the profit at the next bid. `ProfitAtMaxBid` is
+`Math.Max(0m, ...)` one file over; this is not, on purpose — a negative here is the figure's whole
+job, and `$0.00` would turn "this press loses money" into "this press makes none".
+
+## The call is the market's, and this is the hand's
+
+The badge does not change. A lot whose next press is over the ceiling still says `BID UP TO $73`,
+because the ceiling is a real ceiling and the card's job is to state it — the same reasoning that
+keeps the seller's own record from re-rating the badge. What the press is allowed to do is **say
+something**, in three places, ordered by how long the seller has:
+
+1. The strip, under the badge, coloured by what to do.
+2. The warning list — but only in the `stop` case, the one that contradicts the room figure printed
+   next to it. Placed after the lot warnings and before the ones about the money, and a test pins it
+   there.
+3. The spoken line, in exactly two states: *"Last bid you can make."* and *"The next bid is past the
+   ceiling — don't press."* Said straight after "At $70, $3 of room", because it is the clause that
+   can contradict the one before it. A count spoken on every card would be a clause on every lot in
+   exchange for what the room figure already carried.
+
+## One ladder, not two
+
+The count is made of the C# ladder and the **+** button moves by the JavaScript one, and a `+` that
+jumped to $50 under a card saying the next bid was $55 would be the app disagreeing with itself about
+the one number the whole block is for. So `wnStepSize` prefers, in order: the typed step, the
+server's own increment off the card on screen, then the local ladder — and an asset test parses both
+files and asserts the rungs are identical. Pressing **+** now means *"somebody bid"*, and it lands on
+exactly the figure the strip just promised.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+The bid step moves **no** price: a card priced with one stated has exactly the ceiling, break-even,
+profit, headroom and resale of a card priced without one, and a test asserts all five.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveBidIncrement.cs` | New — the ladder, the count, the four verdicts, the wording and the refusals |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveNextBid`, `LiveNextBidVerdicts`; `LiveBidCard.NextBid`; `LiveBidRequest.BidIncrement` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read, off the ceiling and break-even it had just computed, and the one warning it is allowed to raise |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `HowManyPressesLeft` — two states, straight after the room |
+| `ING eBay AutoLister/Program.cs` | The next bid and the presses left in the fresh-price log line |
+| `ING eBay AutoLister/wwwroot/index.html` | The `Bid step` box; `app.js?v=131`, `style.css?v=114` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, `wnStepSize`/`wnLastIncrement`, `bidIncrement` on all three posts, the step in the instant-re-price list and in the remembered settings |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-next-*` — green, amber, red by what to do; `.wn-field-inc`; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveBidIncrementTests.cs` | New — 40 tests, including the 630-case property that no reported press lands above the ceiling |
+| `ING eBay AutoLister.Tests/WhatsNotNextBidAssetTests.cs` | New — 16 tests holding the six links together, including the two ladders parsed out of both files |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 8 new tests on what a real card does with the press |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | 6 new tests on the two states the line speaks in and the four it does not |
+| `whatsnot_next_bid_stop.png`, `whatsnot_next_bid_last.png`, `whatsnot_next_bid_press.png`, `whatsnot_next_bid_narrow.png` | The three states and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,112 passed**, 0 failed, 0 skipped (70 new; the previous commit was 4,042) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` and `/rebid` mocked in the shape the C# returns) | **29 checks, all passed.** At $70: the red strip **second child of the card**, directly under a green `BID UP TO $73` badge, reading `Don't press $75.00` — with `ROOM LEFT $3.10` still on the ladder below it and the no-press warning **first** in the warning list. At $68: amber, `Last bid`, naming the $78 after it, spoken as *"Last bid you can make."*, and **no** warning. At $50: green, `4 more bids`, a `4 left` tag, and the spoken line silent about the press. Pressing **+** landed on `$55`, exactly the figure the strip had printed. Typing `1` into Bid step turned the $70 stop into `3 more bids` and the note into *"as you typed it"*, instantly, off held comps — and it was persisted on the next fresh price. At $90: `Already past it`, no count. With the bid cleared: *"Bidding hasn't started"*, no dollar figure and no ladder asserted. At 560px `.wn-next` overflowed by **0px**. 0 JS errors; the only 404s were the eleven APIs a static server does not have. |
+
+## Known limits
+
+- **The increment is a convention and has never been checked against a real show.** Everything here
+  is exercised against the ladder live sales conventionally use; the first real "the assumed step was
+  wrong" is still the first real evidence, and the action log now prints the next bid, the verdict
+  and the presses left on every fresh price, which is where it will show up.
+- **One ladder for every platform and every host.** Whatnot, a sports-card breaker and an estate
+  auctioneer do not use the same increments, and nothing here notices which one is on screen. The box
+  is the whole answer to that, and it is a keystroke the seller has to remember.
+- **A typed step is remembered between shows.** Like the shipping and the fee, and with the same
+  hazard: a $1 step carried in from last night quietly stays a $1 step. It is stated back on every
+  card, which is the only brake.
+- **Nothing knows about proxy or auto-bidding.** A seller using a live platform's max-bid feature is
+  not pressing once per increment, and the count means something different to them. It is not wrong,
+  it is just answering a question they are not asking.
+- **The count assumes the seller is the one bidding next.** In a real room the price often jumps two
+  increments while a card is on screen. The re-price handles that correctly the moment the bid box
+  moves; between updates the count is optimistic by however far the bidding has run ahead.
+- **`stop` and `over` are the same news for the seller and different rows in the code.** They are
+  kept apart because "there was room and you cannot use it" is worth explaining and "you are already
+  past it" is not, but a screen read at a glance may not thank anyone for the distinction.

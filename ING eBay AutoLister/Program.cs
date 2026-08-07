@@ -3062,7 +3062,11 @@ app.MapPost("/api/whatsnot/bid", async (
         $"{(card.Units.IsLot ? $"{card.Units.Count} units ({card.Units.Source}); " : "")}" +
         $"bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
-        $"max bid {card.MaxBid:C} ({card.Call}); {sw.ElapsedMilliseconds}ms");
+        $"max bid {card.MaxBid:C} ({card.Call}); " +
+        // The presses, not just the price. This is where the first real "the ceiling said yes and
+        // the next bid was already past it" will show up, on a real show, in the seller's own log.
+        $"next bid {(card.NextBid.Readable ? $"{card.NextBid.Amount:C} ({card.NextBid.Verdict}, {card.NextBid.BidsLeft} left)" : "n/a")}; " +
+        $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);
 });

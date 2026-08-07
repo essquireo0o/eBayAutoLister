@@ -50,8 +50,33 @@ public static class LiveBidSpeech
             return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.", YourOwnRecord(card));
 
         return Join(Headline(card), HowMany(card), WhichWayItsGoing(card),
-            WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+            WhereTheBiddingIs(card), HowManyPressesLeft(card), WhatItResellsFor(card),
+            YourOwnRecord(card));
     }
+
+    /// <summary>
+    /// Whether there is a press left to make, said immediately after where the bidding stands —
+    /// because it is the one clause that can contradict the one before it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "At $45, $1 of room" is true and is not permission: bids go up in fives, so pressing costs
+    /// $50. Those are the only two states this speaks in — the last press, and no press at all —
+    /// because they are the only two where hearing the sentence changes what the hand does. A count
+    /// spoken on every card ("six more bids") would be a clause on every lot in exchange for
+    /// information the room figure already carried.
+    /// </para>
+    /// <para>
+    /// It says nothing when the bidding is already past the ceiling: <see cref="WhereTheBiddingIs"/>
+    /// has just said so in dollars, and a second refusal in the same breath is the same fact twice.
+    /// </para>
+    /// </remarks>
+    private static string HowManyPressesLeft(LiveBidCard card) => card.NextBid?.Verdict switch
+    {
+        LiveNextBidVerdicts.Last => "Last bid you can make.",
+        LiveNextBidVerdicts.Stop => "The next bid is past the ceiling — don't press.",
+        _ => "",
+    };
 
     /// <summary>
     /// That the sold price has been moving, said third — after the badge and the unit count, before

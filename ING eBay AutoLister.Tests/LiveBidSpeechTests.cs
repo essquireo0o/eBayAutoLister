@@ -267,6 +267,62 @@ public class LiveBidSpeechTests
         Assert.Equal(LiveBidSpeech.Say(fresh), LiveBidSpeech.Say(reheld));
     }
 
+    // ── Whether there is a press left ─────────────────────────────────────────
+
+    private static LiveBidCard WithPress(string verdict)
+    {
+        var card = Card(currentBid: 235m, headroom: 5m);
+        card.NextBid = new LiveNextBid { Verdict = verdict };
+        return card;
+    }
+
+    /// <summary>
+    /// The one clause that can contradict the one before it. "At $235, $5 of room" is true and is
+    /// not permission, because pressing costs $10 more than the room there is.
+    /// </summary>
+    [Fact]
+    public void No_press_left_is_said_immediately_after_the_room()
+    {
+        var said = LiveBidSpeech.Say(WithPress(LiveNextBidVerdicts.Stop));
+
+        Assert.Contains($"of room. The next bid is past the ceiling — don't press.", said, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_last_press_is_said_as_the_last_one()
+    {
+        var said = LiveBidSpeech.Say(WithPress(LiveNextBidVerdicts.Last));
+
+        Assert.Contains("Last bid you can make.", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Silent in every other state. A count spoken on every card would be a clause on every lot in
+    /// exchange for something the room figure already carried — and this line is the only part of
+    /// the screen a seller can keep up with during a live sale.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveNextBidVerdicts.Press)]
+    [InlineData(LiveNextBidVerdicts.Over)]
+    [InlineData(LiveNextBidVerdicts.Unreadable)]
+    public void Every_other_state_says_nothing_about_the_press(string verdict)
+    {
+        var said = LiveBidSpeech.Say(WithPress(verdict));
+
+        Assert.DoesNotContain("press", said, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Last bid", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card built by something that never set the block at all still speaks.</summary>
+    [Fact]
+    public void A_card_with_no_press_block_still_produces_a_line()
+    {
+        var card = Card();
+        card.NextBid = null!;
+
+        Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_line_never_runs_on_or_ends_in_a_hanging_space()
     {

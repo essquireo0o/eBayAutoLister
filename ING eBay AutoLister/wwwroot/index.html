@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=113" />
+  <link rel="stylesheet" href="style.css?v=114" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2794,6 +2794,17 @@
                           title="Raise the bid (↑)" aria-label="Raise the bid">+</button>
                 </div>
               </label>
+              <!-- How much one press of the bid button costs. Nobody buys at the price on screen:
+                   pressing bid commits to the NEXT increment, and a lot with a dollar of room above
+                   the bid can have no press left that stays inside the ceiling. Blank assumes the
+                   usual live ladder for the level the bidding is at and the card says which figure
+                   it assumed — the seller can see the show's own next-bid amount and this app
+                   cannot, so a number typed here is used exactly as typed. -->
+              <label class="wn-field wn-field-inc" title="How much the bidding goes up by. Blank assumes the usual live-auction ladder.">
+                <span>Bid step</span>
+                <input id="wn-inc" type="number" min="0" step="1" inputmode="decimal" placeholder="auto"
+                       aria-describedby="wn-live-note" />
+              </label>
               <!-- How many things is the lot? Sold comps are per unit everywhere in this app, so
                    every figure on the card is a per-unit figure unless something says otherwise —
                    and a live show sells "3x Antminer S9" under one hammer price all night. The
@@ -2823,8 +2834,9 @@
             <p class="opp-hint wn-ask-hint" id="wn-live-note">
               Priced against the same eBay sold comps and sell-through the Opportunity Finder uses —
               no live eBay call, so it answers in about a second. Once it's priced, the comps are
-              held: moving the bid, the shipping, the fee or the target re-answers <strong>instantly</strong>,
-              against that same sold history. Changing the item reads eBay again.
+              held: moving the bid, the step, the shipping, the fee or the target re-answers
+              <strong>instantly</strong>, against that same sold history.
+              Changing the item reads eBay again.
             </p>
           </div>
 
@@ -5947,6 +5959,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=130"></script>
+  <script src="app.js?v=131"></script>
 </body>
 </html>

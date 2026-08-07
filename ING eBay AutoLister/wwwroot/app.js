@@ -9963,6 +9963,7 @@
     if (saved.ship != null) setVal('wn-ship', saved.ship);
     if (saved.fee != null) setVal('wn-fee', saved.fee);
     if (saved.target != null) setVal('wn-target', saved.target);
+    if (saved.inc != null) setVal('wn-inc', saved.inc);
   }
 
   function wnSaveSettings() {
@@ -9971,6 +9972,10 @@
         ship: $('wn-ship')?.value ?? '',
         fee: $('wn-fee')?.value ?? '',
         target: $('wn-target')?.value ?? '',
+        // Remembered like the other three, because a show's increments hold for the whole
+        // show. It is the one of the four that is visibly stated back on every card, so a
+        // figure carried in from last night cannot sit there unnoticed.
+        inc: $('wn-inc')?.value ?? '',
       }));
     } catch { /* private mode — the fields still work, they just don't persist */ }
   }
@@ -10043,6 +10048,12 @@
   /// What a bid step is worth at this level. A live sale goes up in dollars at $12
   /// and in twenties at $600, so a fixed step is wrong at one end or useless at the
   /// other. Presentation only — nothing here decides what anything is worth.
+  ///
+  /// The definition lives in Services/LiveBidIncrement.Assumed and this is the same
+  /// ladder, pinned by an asset test: the card counts the presses left under the
+  /// ceiling off that ladder, and a + button that jumped to $50 under a card saying
+  /// the next bid was $55 would be the app disagreeing with itself about the one
+  /// number the whole block is for.
   function wnBidStep(bid) {
     const at = Math.max(0, bid || 0);
     if (at < 25) return 1;
@@ -10052,11 +10063,24 @@
     return 100;
   }
 
+  /// The increment the +/− buttons move by, in the order the app trusts them: what the
+  /// seller typed, then the server's own figure off the card on screen, then the ladder
+  /// above. So pressing + means "somebody bid" and lands on exactly the number the card
+  /// just called the next bid.
+  let wnLastIncrement = 0;
+
+  function wnStepSize(current) {
+    const typed = wnNumber('wn-inc');
+    if (typed > 0) return typed;
+    if (wnLastIncrement > 0) return wnLastIncrement;
+    return wnBidStep(current);
+  }
+
   function wnStepBid(direction) {
     const box = $('wn-bid');
     if (!box) return;
     const current = Math.max(0, wnNumber('wn-bid') || 0);
-    const step = wnBidStep(current);
+    const step = wnStepSize(current);
     // Down snaps to the step below rather than subtracting from an odd number, so
     // stepping up and down again lands somewhere predictable.
     const next = direction > 0
@@ -10071,6 +10095,9 @@
   function wnDropToken() {
     wnToken = '';
     wnTokenItem = '';
+    // The server's increment came off a card that is no longer the question. The typed
+    // box and the ladder still answer, so the buttons keep working either way.
+    wnLastIncrement = 0;
     if (wnRebidTimer) { clearTimeout(wnRebidTimer); wnRebidTimer = null; }
     wnRebidSeq++;
   }
@@ -10094,6 +10121,7 @@
         shippingCost: wnNumber('wn-ship'),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
+        bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
       });
       // The bid moved again while this was in flight. An older answer painted over a
@@ -10506,6 +10534,7 @@
         shippingCost: wnNumber('wn-ship'),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
+        bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
         searchExact: wnAskedForExactly(item),
       });
@@ -10748,6 +10777,32 @@
           </div>` : ''}
       </div>` : '';
 
+    // ── The press, not the price ───────────────────────────────────────────────
+    // Every figure below compares the bid ON SCREEN against the ceiling, which
+    // answers whether the last bid was all right. Nobody buys at that price: pressing
+    // bid commits to the next increment, so a lot showing $1.00 of room can have no
+    // press left that stays inside it. This is the only block on the card about the
+    // thing the hand is about to do, and it is an integer — the one figure here that
+    // can be read without a currency symbol coming off it first.
+    //
+    // Every word and every dollar is the server's (Services/LiveBidIncrement.cs),
+    // including the count. The one thing kept here is the increment itself, so the
+    // − / + buttons step to exactly the number this strip calls the next bid.
+    const n = c.nextBid || {};
+    if (n.increment > 0) wnLastIncrement = n.increment;
+    const nextStrip = n.headline ? `
+      <div class="wn-next wn-next-${esc(n.verdict || 'unreadable')}">
+        <div class="wn-next-line">
+          <span class="wn-next-label">Next bid</span>
+          <strong class="wn-next-headline">${esc(n.headline)}</strong>
+          ${n.readable ? `<span class="wn-next-amount">${moneyExact(n.amount)}</span>` : ''}
+          ${n.readable && n.bidsLeft > 0
+            ? `<span class="wn-next-tag">${n.bidsLeftCapped ? `${n.bidsLeft}+` : n.bidsLeft} left</span>` : ''}
+        </div>
+        ${n.note ? `<p class="wn-next-note">${esc(n.note)}</p>` : ''}
+        ${n.incrementNote ? `<p class="wn-next-assumed">${esc(n.incrementNote)}</p>` : ''}
+      </div>` : '';
+
     const ladder = priced ? `
       <div class="wn-ladder">
         <div class="wn-rung"><span>Bid now</span><strong>${c.bidWasKnown ? money2(c.currentBid) : 'not started'}</strong></div>
@@ -10844,6 +10899,7 @@
           <p class="wn-call-reason">${esc(c.reason)}</p>
         </div>
       </div>
+      ${nextStrip}
       ${searchStrip}
       ${trendStrip}
       ${unitsStrip}
@@ -11255,6 +11311,10 @@
           shippingCost: wnNumber('wn-ship'),
           buyerFeePercent: wnNumber('wn-fee'),
           targetRoiPercent: wnNumber('wn-target'),
+          // Sent for the same reason the other three are: a lot opened from this list
+          // lands in the card above with its own numbers, and the presses left under the
+          // ceiling should not change the moment it gets there.
+          bidIncrement: wnNumber('wn-inc'),
         });
         if (run !== wnLotRun) return;
         if (res.ok) { row.state = WN_LOT_PRICED; row.card = body; }
@@ -11513,18 +11573,22 @@
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when
     // the held comps have been let go.
-    ['wn-item', 'wn-bid', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+    ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
     });
 
-    // The five boxes that change the ceiling but not the comps. Typing in any of them
+    // The six boxes that change the answer but not the comps. Typing in any of them
     // re-answers off the held sold history — no eBay, no spinner, no round trip past
     // this machine. Before anything is priced there is no token and this does nothing.
     //
     // The quantity is one of them, which is the point of it being a box rather than a
     // re-read: the host says "you're getting three" while the bidding is running, and
     // the ceiling triples in the time it takes to type a digit.
-    ['wn-bid', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+    //
+    // The bid step is the sixth. It moves no price at all — only the count of presses
+    // left under the ceiling — and it is the one figure on this screen the seller can
+    // read off the show and the app cannot.
+    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('input', wnScheduleRebid);
     });
 

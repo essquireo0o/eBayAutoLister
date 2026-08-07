@@ -16634,6 +16634,11 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-field-qty {
   width: 74px;
 }
+/* Narrow for the same reason, and next to the bid because it is a fact about the
+   bid: how far one press of the button moves it. Usually blank. */
+.wn-field-inc {
+  width: 86px;
+}
 
 .wn-price-btn {
   white-space: nowrap;
@@ -16835,6 +16840,104 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--accent, #d4a24a);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* ── The press, not the price ─────────────────────────────────────────────────
+   First under the badge, above everything else on the card, because it is the only
+   block about the thing the hand is about to do — and because it is the one block
+   that can contradict the room figure printed further down. The headline is an
+   integer where the rest of the card is dollars, which is what makes it readable in
+   the half-second a live sale gives you.
+
+   Coloured by what to do rather than by how the lot scored: green while there are
+   presses in hand, amber on the last one, red the moment there is no press left
+   that stays under the ceiling. */
+.wn-next {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-left: 3px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+.wn-next-press {
+  border-left-color: var(--success, #43c08f);
+}
+/* One press left. Amber rather than red: this is a bid the seller may still make,
+   and it is the last one. */
+.wn-next-last {
+  border-left-color: var(--warn, #e0b44a);
+}
+/* The gap this block exists for — room above the bid, and no press that stays
+   inside it — and the case where the bidding has already gone past. */
+.wn-next-stop,
+.wn-next-over {
+  border-left-color: var(--danger, #d46a6a);
+}
+.wn-next-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-next-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-next-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.wn-next-press .wn-next-headline {
+  color: var(--success, #43c08f);
+}
+.wn-next-last .wn-next-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-next-stop .wn-next-headline,
+.wn-next-over .wn-next-headline {
+  color: var(--danger, #d46a6a);
+}
+/* What pressing costs. Beside the headline rather than inside it, so the count and
+   the dollar figure are never mistaken for one another. */
+.wn-next-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text, #d8dce6);
+}
+.wn-next-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(139, 147, 167, .16);
+  color: var(--text-dim, #8b93a7);
+}
+.wn-next-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text, #d8dce6);
+}
+/* The increment itself, and how to overrule it. Dimmest line on the strip: it is
+   an assumption on most cards, and an assumption nobody can see is one nobody can
+   correct. */
+.wn-next-assumed {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
 }
 
 /* ── Which way the sold price has been going ──────────────────────────────────
@@ -17666,6 +17769,7 @@ p.wn-units-refused {
 @media (max-width: 620px) {
   .wn-field,
   .wn-field-bid,
+  .wn-field-inc,
   .wn-field-qty,
   .wn-field-wide {
     width: 100%;
@@ -17687,6 +17791,13 @@ p.wn-units-refused {
   /* Same trade on the trend strip: "LAST 30 DAYS" and "$180 → $140 median" do not
      both fit, and the headline is the half worth the width. */
   .wn-trend-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* And on the next-bid strip, where the headline is the count and the width is
+     wanted by "NEXT BID", the amount and the tag as well. The count keeps the
+     line. */
+  .wn-next-line {
     flex-direction: column;
     gap: 1px;
   }

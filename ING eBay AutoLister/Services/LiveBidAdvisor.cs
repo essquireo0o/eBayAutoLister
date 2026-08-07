@@ -214,6 +214,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         units.MaxBidPerUnit = count > 1 ? Math.Floor(maxBid / count * 100m) / 100m : maxBid;
         units.ProfitPerUnit = count > 1 ? Math.Round(card.ProfitAtMaxBid / count, 2) : card.ProfitAtMaxBid;
 
+        // The press, as opposed to the price. Everything above compares the bid ON SCREEN against
+        // the ceiling, which answers whether the last bid was all right; nobody buys at that price.
+        // Pressing bid commits to the next increment, and a lot with a dollar of room above the bid
+        // can have no press left that stays inside it. Read here, off the ceiling this method just
+        // computed and the same break-even it came from, so the profit at the next bid and the
+        // profit at the ceiling are one subtraction apart. See LiveBidIncrement.
+        card.NextBid = LiveBidIncrement.Read(card, breakEvenAllIn, request.BidIncrement);
+
         if (card.BidWasKnown)
         {
             var expected = bidAgainst.ExpectedSale is > 0 ? bidAgainst.ExpectedSale!.Value : bidAgainst.Median!.Value;
@@ -512,6 +520,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // different depending on whether this is one thing or five, and a seller who reads the
         // ceiling and stops reading has to have hit this line before the ceiling made sense.
         warnings.AddRange(LotWarnings(card));
+
+        // Then the one thing on this card that contradicts the room figure printed next to it: the
+        // ceiling is above the bid and there is no press that stays under it. Said here as well as
+        // on the strip because it is the case where a seller who reads "$1.00 of room" and acts on
+        // it spends four dollars they were told they had. See LiveBidIncrement.
+        if (card.NextBid is { Warning.Length: > 0 } press) warnings.Add(press.Warning);
 
         if (card.ShippingCost <= 0m)
         {

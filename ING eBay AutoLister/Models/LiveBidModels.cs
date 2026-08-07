@@ -51,6 +51,17 @@ public sealed class LiveBidRequest
     public int? Quantity { get; set; }
 
     /// <summary>
+    /// How much the bidding goes up by on this show, when the seller has said. Null assumes the
+    /// usual live-auction ladder for the level the bid is at (<see cref="Services.LiveBidIncrement"/>).
+    /// </summary>
+    /// <remarks>
+    /// The seller is looking at a screen that states the next bid amount and this app is not, so a
+    /// typed figure is used exactly as typed. It changes no price on the card — only the count of
+    /// presses left under the ceiling, which is the number the hand is actually about to act on.
+    /// </remarks>
+    public decimal? BidIncrement { get; set; }
+
+    /// <summary>
     /// Search eBay for the typed name exactly as written, instead of the cleaned-up version of it.
     /// The undo for a cleaning that took a word the seller wanted — see
     /// <see cref="Services.LiveSearchQuery"/> for what it takes out and why.
@@ -159,6 +170,15 @@ public sealed class LiveBidCard
     public decimal BreakEvenBid { get; set; }
     /// <summary>MaxBid − CurrentBid. Negative once the bidding has passed the ceiling.</summary>
     public decimal Headroom { get; set; }
+
+    /// <summary>
+    /// What pressing bid actually costs, and how many more presses fit under the ceiling. Never
+    /// null — a card that only mentions the next bid when it has bad news about it is a card whose
+    /// silence means both "press away" and "nothing looked". See
+    /// <see cref="Services.LiveBidIncrement"/> for why the room above the bid and the presses left
+    /// inside it are different questions.
+    /// </summary>
+    public LiveNextBid NextBid { get; set; } = new();
     public decimal ProfitAtMaxBid { get; set; }
     /// <summary>roi | cash — which of the two bars set the ceiling. A percentage has no size, so
     /// the cash floor binds on cheap items and the return binds on expensive ones.</summary>
@@ -478,6 +498,86 @@ public static class LiveTrendDirections
     public const string Steady = "steady";
     /// <summary>Not enough dated sold history on both sides of the window to say anything.</summary>
     public const string Unknown = "unknown";
+}
+
+/// <summary>
+/// The next press: what it costs, and how many more of them the ceiling has room for. See
+/// <see cref="Services.LiveBidIncrement"/>.
+/// </summary>
+/// <remarks>
+/// Present on every card. The distinction it carries is the one the rest of the card cannot make:
+/// the ceiling is a price and a bid is a press, and a lot with a dollar of room above the bid can
+/// have no bid left to make on it.
+/// </remarks>
+public sealed class LiveNextBid
+{
+    /// <summary>False when there is no next bid to cost — no ceiling, or the bidding has not
+    /// started. Every dollar figure below is then zero and <see cref="Headline"/> says which.</summary>
+    public bool Readable { get; set; }
+
+    /// <summary>press | last | stop | over | unreadable. What the hand should do.</summary>
+    public string Verdict { get; set; } = LiveNextBidVerdicts.Unreadable;
+
+    /// <summary>How much one bid goes up by, as used. Always positive on a readable read.</summary>
+    public decimal Increment { get; set; }
+
+    /// <summary>seller | assumed — whether anybody actually said. Assumed is the usual case and the
+    /// card states the figure either way, because an assumption nobody can see is one nobody can
+    /// correct.</summary>
+    public string IncrementSource { get; set; } = Services.LiveBidIncrement.SourceAssumed;
+
+    /// <summary>That, in a sentence, including how to overrule it.</summary>
+    public string IncrementNote { get; set; } = "";
+
+    /// <summary>The bid that pressing produces — current bid plus one increment.</summary>
+    public decimal Amount { get; set; }
+
+    /// <summary>What winning at that bid costs all in: the bid, the premium and the shipping.</summary>
+    public decimal Landed { get; set; }
+
+    /// <summary>What is left after eBay's cut and shipping it on, if it hammers at
+    /// <see cref="Amount"/>. Negative when the press would lose money — deliberately not clamped
+    /// at zero, unlike the profit at the ceiling.</summary>
+    public decimal Profit { get; set; }
+
+    /// <summary>How many more presses land at or under the ceiling. Zero is the case this whole
+    /// block exists for: room above the bid, and nothing to do with it.</summary>
+    public int BidsLeft { get; set; }
+
+    /// <summary>True when counting stopped at <see cref="Services.LiveBidIncrement.MaxBidsCounted"/>
+    /// rather than at the ceiling — the card then says "40+" instead of a number nobody counts.</summary>
+    public bool BidsLeftCapped { get; set; }
+
+    /// <summary>The glance version: "2 more bids", "Last bid", "Don't press".</summary>
+    public string Headline { get; set; } = "";
+
+    /// <summary>The same thing in this lot's own numbers, for the second glance.</summary>
+    public string Note { get; set; } = "";
+
+    /// <summary>Set only in the case worth interrupting the warning list for: the ceiling is above
+    /// the bid and no press stays under it.</summary>
+    public string Warning { get; set; } = "";
+}
+
+/// <summary>What to do with the bid button. Spelled once so the strip, the speech and the CSS
+/// agree.</summary>
+public static class LiveNextBidVerdicts
+{
+    /// <summary>Two or more presses left. The ordinary case.</summary>
+    public const string Press = "press";
+
+    /// <summary>Exactly one press left under the ceiling. The state nothing on this screen has ever
+    /// reported, and the one a bidder most needs to hear.</summary>
+    public const string Last = "last";
+
+    /// <summary>Still under the ceiling, and the next press is past it. No bid left to make.</summary>
+    public const string Stop = "stop";
+
+    /// <summary>The bidding is already past the ceiling.</summary>
+    public const string Over = "over";
+
+    /// <summary>Nothing to count — no ceiling, or no bidding yet.</summary>
+    public const string Unreadable = "unreadable";
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

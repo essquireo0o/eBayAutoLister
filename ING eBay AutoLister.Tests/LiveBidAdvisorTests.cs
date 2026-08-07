@@ -94,17 +94,17 @@ public class LiveBidAdvisorTests
 
     private static LiveBidRequest Ask(
         decimal? bid = null, decimal? shipping = null, decimal? fee = null, decimal? target = null,
-        int? quantity = null) =>
+        int? quantity = null, decimal? increment = null) =>
         new()
         {
             Title = Product, CurrentBid = bid, ShippingCost = shipping, BuyerFeePercent = fee,
-            TargetRoiPercent = target, Quantity = quantity,
+            TargetRoiPercent = target, Quantity = quantity, BidIncrement = increment,
         };
 
     private static LiveBidCard Card(
         MarketAnalysisResult? analysis, decimal? bid = null, decimal? shipping = null,
-        decimal? fee = null, decimal? target = null, int? quantity = null) =>
-        Advisor.Build(Product, analysis, Ask(bid, shipping, fee, target, quantity), Fees, nowUtc: Now);
+        decimal? fee = null, decimal? target = null, int? quantity = null, decimal? increment = null) =>
+        Advisor.Build(Product, analysis, Ask(bid, shipping, fee, target, quantity, increment), Fees, nowUtc: Now);
 
     // ── The ceiling ───────────────────────────────────────────────────────────
 
@@ -1132,5 +1132,149 @@ public class LiveBidAdvisorTests
         Assert.Equal(140m, one.ResalePrice);
         Assert.Equal(420m, three.ResalePrice);
         Assert.Equal(140m, three.Units.ResalePerUnit);
+    }
+
+    // ── The press, not the price ──────────────────────────────────────────────
+    // Every figure above compares the bid ON SCREEN against the ceiling. Nobody buys at that price:
+    // pressing bid commits to the next increment. See LiveBidIncrement.
+
+    /// <summary>
+    /// The case the whole block exists for, on a real card rather than a hand-built one: the room
+    /// figure says there is money above the bid and there is no press that stays inside it.
+    /// </summary>
+    [Fact]
+    public void A_card_can_show_room_above_the_bid_and_still_have_no_press_left()
+    {
+        var card = Card(Analysis(), bid: 70m);
+
+        Assert.Equal(73.10m, card.MaxBid);
+        Assert.True(card.Headroom > 0m, "the ceiling really is above the bid");
+        Assert.Equal(LiveBidCalls.Bid, card.Call);
+
+        // And pressing bid makes it $75, which is past it.
+        Assert.Equal(LiveNextBidVerdicts.Stop, card.NextBid.Verdict);
+        Assert.Equal(75m, card.NextBid.Amount);
+        Assert.Equal(0, card.NextBid.BidsLeft);
+    }
+
+    /// <summary>
+    /// And it reaches the warning list, above the money warnings, because it is the one line on this
+    /// card that contradicts the room figure printed next to it.
+    /// </summary>
+    [Fact]
+    public void The_no_press_left_case_is_warned_about_before_the_money_warnings()
+    {
+        var card = Card(Analysis(), bid: 70m);
+
+        var press = card.Warnings.FindIndex(w => w.Contains("no press", StringComparison.OrdinalIgnoreCase));
+        var shipping = card.Warnings.FindIndex(w => w.Contains("No shipping cost", StringComparison.Ordinal));
+
+        Assert.True(press >= 0, "the card never said there was no press left to make");
+        Assert.True(shipping > press, "the press warning has to be read before the ones about the money");
+    }
+
+    /// <summary>
+    /// One press below that, the same card has a bid left to make and says which one. Nothing about
+    /// the ceiling changed — only whether the hand can act on it.
+    /// </summary>
+    [Fact]
+    public void One_step_lower_the_same_ceiling_still_has_a_press_in_it()
+    {
+        var card = Card(Analysis(), bid: 68m);
+
+        Assert.Equal(73.10m, card.MaxBid);
+        Assert.Equal(LiveNextBidVerdicts.Last, card.NextBid.Verdict);
+        Assert.Equal(73m, card.NextBid.Amount);
+        Assert.Equal(1, card.NextBid.BidsLeft);
+        Assert.DoesNotContain(card.Warnings, w => w.Contains("no press", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The seller can see the show's own next-bid amount and this app cannot. A typed step is used
+    /// as typed — and on the very card that had no press left at the assumed ladder, it finds three.
+    /// </summary>
+    [Fact]
+    public void A_typed_bid_step_outranks_the_assumed_ladder_on_the_card()
+    {
+        var card = Card(Analysis(), bid: 70m, increment: 1m);
+
+        Assert.Equal(LiveBidIncrement.SourceSeller, card.NextBid.IncrementSource);
+        Assert.Equal(71m, card.NextBid.Amount);
+        Assert.Equal(3, card.NextBid.BidsLeft);   // 71, 72, 73
+        Assert.Equal(LiveNextBidVerdicts.Press, card.NextBid.Verdict);
+    }
+
+    /// <summary>
+    /// The step moves no price at all. It is a fact about the bid button, and a card priced with one
+    /// stated has exactly the ceiling, break-even and profit of a card priced without one.
+    /// </summary>
+    [Fact]
+    public void The_bid_step_changes_no_number_the_ceiling_is_made_of()
+    {
+        var assumed = Card(Analysis(), bid: 70m);
+        var stated = Card(Analysis(), bid: 70m, increment: 1m);
+
+        Assert.Equal(assumed.MaxBid, stated.MaxBid);
+        Assert.Equal(assumed.BreakEvenBid, stated.BreakEvenBid);
+        Assert.Equal(assumed.ProfitAtMaxBid, stated.ProfitAtMaxBid);
+        Assert.Equal(assumed.Headroom, stated.Headroom);
+        Assert.Equal(assumed.ResalePrice, stated.ResalePrice);
+    }
+
+    /// <summary>
+    /// The profit at the next bid and the profit at the ceiling are one subtraction apart, because
+    /// both are the same break-even minus a landed cost. Two break-evens on one card is how the
+    /// strip and the badge end up disagreeing about the same dollar.
+    /// </summary>
+    [Fact]
+    public void The_profit_at_the_next_bid_is_the_same_break_even_as_the_profit_at_the_ceiling()
+    {
+        var card = Card(Analysis(), bid: 55m, fee: 8m, shipping: 12m);
+
+        var atCeiling = LiveBidAdvisor.LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost);
+        var atNext = LiveBidAdvisor.LandedCost(card.NextBid.Amount, card.BuyerFeePercent, card.ShippingCost);
+
+        Assert.Equal(card.NextBid.Landed, atNext);
+        Assert.Equal(Math.Round(card.ProfitAtMaxBid - (atNext - atCeiling), 2), card.NextBid.Profit);
+    }
+
+    /// <summary>
+    /// Present on every card, including the ones nothing priced. A block that only appears when it
+    /// has something to say is a block whose silence means both "press away" and "nothing looked".
+    /// </summary>
+    [Fact]
+    public void Every_card_carries_the_block_even_when_nothing_priced_it()
+    {
+        var nothing = Card(null, bid: 40m);
+
+        Assert.NotNull(nothing.NextBid);
+        Assert.False(nothing.NextBid.Readable);
+        Assert.Equal(LiveNextBidVerdicts.Unreadable, nothing.NextBid.Verdict);
+        Assert.Equal("", nothing.NextBid.Headline);
+
+        // And before the bidding starts, on a card that priced perfectly well.
+        var notStarted = Card(Analysis());
+        Assert.False(notStarted.NextBid.Readable);
+        Assert.Equal("Bidding hasn't started", notStarted.NextBid.Headline);
+    }
+
+    /// <summary>
+    /// On a lot, the presses are counted against the LOT's ceiling — one hammer buys all of them, so
+    /// the bid on screen is a lot price and the ceiling it is compared with has to be too.
+    /// </summary>
+    [Fact]
+    public void On_a_lot_the_presses_are_counted_against_the_lots_own_ceiling()
+    {
+        var three = Card(Analysis(), bid: 200m, quantity: 3);
+
+        // The lot's ceiling, off the lot's own break-even — not one unit's ceiling times three.
+        Assert.Equal(
+            AuctionSniperAnalyzer.MaxBidDetail(Math.Round(173.10m * 3, 2), 0m, LiveBidAdvisor.DefaultTargetRoiPercent).MaxBid,
+            three.MaxBid);
+
+        Assert.Equal(LiveNextBidVerdicts.Press, three.NextBid.Verdict);
+        Assert.Equal(210m, three.NextBid.Amount);   // $10 steps at $200
+        Assert.True(three.NextBid.Amount <= three.MaxBid);
+        Assert.Equal(19, three.NextBid.BidsLeft);   // 210 … 390; 400 is past the ceiling
     }
 }
