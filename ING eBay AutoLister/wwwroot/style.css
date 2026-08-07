@@ -16609,6 +16609,11 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-field-bid {
   width: 168px;
 }
+/* One or two digits, never more — anything past this screen's cap is a spec. Narrow
+   on purpose: it is beside the bid, and the bid is the field the eye goes to. */
+.wn-field-qty {
+  width: 74px;
+}
 
 .wn-price-btn {
   white-space: nowrap;
@@ -16719,6 +16724,63 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-call-reason {
   margin: 2px 0 0;
+  color: var(--text-dim, #8b93a7);
+}
+
+/* ── How many things is this ──────────────────────────────────────────────────
+   Between the badge and the ladder, because it is what every number under it is a
+   number ABOUT: a ceiling for three miners looks exactly like a ceiling for one.
+   Three edges, and they mean three different things — a lot that was counted, a
+   lot whose size nobody stated (priced as ONE, and the seller can fix it), and a
+   count that was found and deliberately not used. */
+.wn-units {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-left: 3px solid var(--accent, #d4a24a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+}
+.wn-units-ask {
+  border-left-color: var(--warn, #e0b44a);
+}
+.wn-units-refused {
+  border-left-color: var(--border, #2a2f3a);
+}
+.wn-units-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 14px;
+}
+.wn-units-src {
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-units-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+p.wn-units-refused {
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--warn, #e0b44a);
+}
+/* What one of them is worth — the figure the seller carries between lots, while
+   everything above it is the figure the hammer is measured against. */
+.wn-units-each {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-dim, #8b93a7);
 }
 
@@ -17406,10 +17468,16 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 @media (max-width: 620px) {
   .wn-field,
   .wn-field-bid,
+  .wn-field-qty,
   .wn-field-wide {
     width: 100%;
     flex: 1 1 100%;
     min-width: 0;
+  }
+  /* Three per-unit figures on one line is three half-lines at this width. */
+  .wn-units-each {
+    flex-direction: column;
+    gap: 2px;
   }
   .wn-rung,
   .wn-stat,

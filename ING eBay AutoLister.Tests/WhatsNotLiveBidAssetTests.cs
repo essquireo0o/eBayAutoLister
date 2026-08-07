@@ -56,7 +56,17 @@ public class WhatsNotLiveBidAssetTests
     public void Moving_the_bid_reprices_without_reading_ebay_again()
     {
         Assert.Contains("safePost('/api/whatsnot/rebid', {", Js, StringComparison.Ordinal);
-        Assert.Contains("['wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach", Js, StringComparison.Ordinal);
+
+        // The boxes are named individually rather than pinned as a list: the list grew when the
+        // quantity box arrived, and an equality here is a test that fails on every addition and
+        // gets "fixed" by deletion. What matters is that each of them re-answers off held comps.
+        var start = Js.IndexOf("['wn-bid',", StringComparison.Ordinal);
+        Assert.True(start >= 0, "the boxes that re-price off held comps are no longer a list");
+        var boxes = Js[start..Js.IndexOf("].forEach", start, StringComparison.Ordinal)];
+
+        foreach (var id in new[] { "wn-bid", "wn-qty", "wn-ship", "wn-fee", "wn-target" })
+            Assert.Contains($"'{id}'", boxes, StringComparison.Ordinal);
+
         Assert.Contains("$(id)?.addEventListener('input', wnScheduleRebid);", Js, StringComparison.Ordinal);
         Assert.Contains("token: wnToken,", Js, StringComparison.Ordinal);
     }
@@ -70,7 +80,11 @@ public class WhatsNotLiveBidAssetTests
     public void Changing_the_item_throws_the_held_comps_away()
     {
         Assert.Contains("function wnDropToken()", Js, StringComparison.Ordinal);
-        Assert.Contains("!== wnTokenItem) wnDropToken();", Js, StringComparison.Ordinal);
+        // The handler grew a second statement — a stale quantity is dropped with the stale token,
+        // for the same reason — so this pins the condition and the drop rather than one line.
+        Assert.Contains("!== wnTokenItem) {", Js, StringComparison.Ordinal);
+        var onTyping = Section(Js, "$('wn-item')?.addEventListener('input', () => {", "});");
+        Assert.Contains("wnDropToken();", onTyping, StringComparison.Ordinal);
         // And a fresh price supersedes anything held, including an answer still in flight.
         Assert.Contains("wnSaveSettings();\n    // A fresh read supersedes anything held", Js.Replace("\r\n", "\n"), StringComparison.Ordinal);
     }
@@ -223,6 +237,17 @@ public class WhatsNotLiveBidAssetTests
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>A slice of an asset between two literals, both on the same terms — unlike
+    /// <see cref="Between"/>, which anchors its end to the start of a line.</summary>
+    private static string Section(string text, string from, string to)
+    {
+        var start = text.IndexOf(from, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"could not find \"{from}\"");
+        var end = text.IndexOf(to, start, StringComparison.Ordinal);
+        Assert.True(end > start, $"could not find \"{to}\" after \"{from}\"");
+        return text[start..end];
+    }
 
     /// <summary>The text of one route, from its map call to the first line that closes a lambda at
     /// column zero. Cheap, and enough to tell "inside this endpoint" from "somewhere in a 3,000-line

@@ -39,6 +39,18 @@ public sealed class LiveBidRequest
     public string? CategoryId { get; set; }
 
     /// <summary>
+    /// How many of the thing are in the lot, when the seller has said. Null lets the lot's own name
+    /// answer (<see cref="Services.LiveLotSize"/>), which is the usual case; a number typed here
+    /// outranks the name, including a 1 — that is the undo for a count read wrong.
+    /// </summary>
+    /// <remarks>
+    /// Sold comps are per unit everywhere in this app, so the whole card is a per-unit answer until
+    /// this says otherwise. On a live show that is wrong often enough to matter: "3x Antminer S9" is
+    /// three miners and one hammer price.
+    /// </remarks>
+    public int? Quantity { get; set; }
+
+    /// <summary>
     /// The handle on comps already read for this lot (<see cref="Services.LiveBidBoard"/>). Present
     /// on a re-price, absent on a first price. It buys speed and nothing else: the ceiling is
     /// recomputed in full, against the same sold history, by the same function.
@@ -101,6 +113,13 @@ public sealed class LiveBidCard
     /// <summary>The title the comp lookup actually ran against, when it differs from Item.</summary>
     public string PricedAs { get; set; } = "";
     public string CategoryLabel { get; set; } = "";
+
+    /// <summary>
+    /// How many things this lot is. Never null — a single item carries a block that says so. When
+    /// <see cref="LiveLotUnits.IsLot"/>, every dollar figure on this card is for the WHOLE lot and
+    /// the per-unit versions live inside this block.
+    /// </summary>
+    public LiveLotUnits Units { get; set; } = new();
 
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
@@ -224,6 +243,60 @@ public sealed class LiveBidCard
     /// on this side. On a single typed card it is computed and ignored, which costs nothing.
     /// </summary>
     public decimal LotRank { get; set; }
+}
+
+/// <summary>
+/// How many things the lot is, and what that does to the money. See
+/// <see cref="Services.LiveLotSize"/> for what it refuses to guess.
+/// </summary>
+/// <remarks>
+/// Present on every card, including single items — a block that only appears when the app thinks
+/// something is a lot is a block whose silence is indistinguishable from not having looked. On a
+/// single item it says "priced as a single item" and every per-unit figure equals its lot figure.
+/// </remarks>
+public sealed class LiveLotUnits
+{
+    /// <summary>Units the ceiling above was computed for. Never below 1.</summary>
+    public int Count { get; set; } = 1;
+
+    /// <summary>single | title | seller — where <see cref="Count"/> came from.</summary>
+    public string Source { get; set; } = Services.LiveLotSize.SourceSingle;
+
+    /// <summary>The text in the lot's name that stated the count — "3x", "(4)", "lot of 5". Empty
+    /// when the seller typed it or when there is no count.</summary>
+    public string Evidence { get; set; } = "";
+
+    /// <summary>What was priced, in one sentence. Said on every card.</summary>
+    public string Note { get; set; } = "";
+
+    /// <summary>True when this is more than one item, so the money below is lot money.</summary>
+    public bool IsLot => Count > 1;
+
+    /// <summary>
+    /// The name says "several" and never says how many, so it was priced as ONE. The seller can fix
+    /// this in a keystroke and nothing else on the screen can fix it at all.
+    /// </summary>
+    public bool CountUnstated { get; set; }
+    public string UnstatedNote { get; set; } = "";
+
+    /// <summary>Set when a count WAS found and deliberately not used — a spec caught by a count
+    /// pattern, or a quantity past what this screen will price in one lot.</summary>
+    public string Refused { get; set; } = "";
+
+    // ── The same money, per unit ─────────────────────────────────────────────
+    // The card's headline figures are the lot's. These are what one of them is worth, because that
+    // is the number the seller compares against the single unit they priced ten minutes ago.
+    public decimal? ResalePerUnit { get; set; }
+    public decimal MaxBidPerUnit { get; set; }
+    public decimal ProfitPerUnit { get; set; }
+
+    // ── What it costs in time ────────────────────────────────────────────────
+    /// <summary>Units divided by how many of them sell a month. Null with no dated sold history.</summary>
+    public decimal? MonthsToClear { get; set; }
+    /// <summary>How long until the LAST one is sold — the first sells at the market's ordinary
+    /// speed and each one after it waits for the demand the one before it used up.</summary>
+    public int? DaysToSellAll { get; set; }
+    public string AbsorptionNote { get; set; } = "";
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

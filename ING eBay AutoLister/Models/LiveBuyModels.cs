@@ -31,6 +31,13 @@ public sealed class LiveWinRequest
     public decimal? BuyerFeePercent { get; set; }
     public decimal? TargetRoiPercent { get; set; }
 
+    /// <summary>
+    /// Carried for the same reason the rest are: a lot of three won at one hammer price is three
+    /// units of stock and three units of resale, and a sheet that recorded it as one would report
+    /// the night's best buy as its worst.
+    /// </summary>
+    public int? Quantity { get; set; }
+
     /// <summary>The same question the card answers, asked at the winning bid. Everything the row
     /// shows comes back through <see cref="Services.LiveBidAdvisor.Build"/> from this.</summary>
     public LiveBidRequest AsBid() => new()
@@ -40,6 +47,7 @@ public sealed class LiveWinRequest
         ShippingCost = ShippingCost,
         BuyerFeePercent = BuyerFeePercent,
         TargetRoiPercent = TargetRoiPercent,
+        Quantity = Quantity,
         Token = Token,
     };
 }

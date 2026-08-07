@@ -42,7 +42,15 @@ public class WhatsNotArbitrageAssetTests
     [Fact]
     public void Enter_from_any_of_the_boxes_reprices()
     {
-        Assert.Contains("['wn-item', 'wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach", Js, StringComparison.Ordinal);
+        // Named individually rather than pinned to the whole list. The list has grown twice — the
+        // quantity box is the newest — and an equality here fails on every addition and gets
+        // "fixed" by deleting the assertion, which is the same reasoning three earlier sessions
+        // applied to their own pins.
+        var list = Section(Js, "['wn-item',", "].forEach");
+
+        foreach (var id in new[] { "wn-item", "wn-bid", "wn-qty", "wn-ship", "wn-fee", "wn-target" })
+            Assert.Contains($"'{id}'", list, StringComparison.Ordinal);
+
         Assert.Contains("if (e.key === 'Enter') wnPriceItem();", Js, StringComparison.Ordinal);
     }
 

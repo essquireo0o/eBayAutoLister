@@ -3026,7 +3026,8 @@ app.MapPost("/api/whatsnot/bid", async (
     card.ElapsedMs = sw.ElapsedMilliseconds;
 
     log.Add("Research", "Live bid ceiling",
-        $"\"{title}\"; bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
+        $"\"{title}\"; {(card.Units.IsLot ? $"{card.Units.Count} units ({card.Units.Source}); " : "")}" +
+        $"bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
         $"max bid {card.MaxBid:C} ({card.Call}); {sw.ElapsedMilliseconds}ms");
 

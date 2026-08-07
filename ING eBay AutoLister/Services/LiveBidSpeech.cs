@@ -47,9 +47,44 @@ public static class LiveBidSpeech
         // number this card does not have — and a spoken "$0 of room" on an item with no sold history
         // is the one failure this screen exists to avoid.
         if (card.Call == LiveBidCalls.NoData)
-            return Join(Headline(card), "No eBay sold history to bid against.", YourOwnRecord(card));
+            return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.", YourOwnRecord(card));
 
-        return Join(Headline(card), WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+        return Join(Headline(card), HowMany(card), WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+    }
+
+    /// <summary>
+    /// That this is several things, said second — immediately after the badge and before any other
+    /// number, because it is what every figure after it is a figure ABOUT.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A ceiling three times the size of the last lot's is the most surprising thing this line can
+    /// say, and the surprise is the point: a seller who hears "BID UP TO $240" on a miner they know
+    /// goes for $80 needs the next two words to be "for three".
+    /// </para>
+    /// <para>
+    /// The other case it speaks is the one where the screen knows it is showing the wrong number —
+    /// a name that says "bundle" without saying how many, priced as one. That is not a caveat to
+    /// leave in a warning list nobody reads mid-lot.
+    /// </para>
+    /// </remarks>
+    private static string HowMany(LiveBidCard card)
+    {
+        var units = card.Units;
+        if (units is null) return "";
+
+        if (units.IsLot)
+        {
+            // Rounded down, like every other figure in this line.
+            var each = units.MaxBidPerUnit > 0m
+                ? $", {Math.Floor(units.MaxBidPerUnit).ToString("C0")} each"
+                : "";
+            return $"For all {units.Count}{each}.";
+        }
+
+        return units.CountUnstated
+            ? "This reads as more than one — priced as ONE. Set the quantity."
+            : "";
     }
 
     /// <summary>

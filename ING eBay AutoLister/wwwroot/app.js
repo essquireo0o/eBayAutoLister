@@ -9847,6 +9847,29 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  /// The units block off the last card rendered. See wnUsePhotoTitle for the one thing
+  /// it is for; no money is ever computed from it.
+  let wnLastUnits = null;
+
+  /// The count belongs to the lot it was counted on, so anything that changes what is
+  /// being priced empties it. Blank hands the question back to the lot's own name, which
+  /// is the safe default — a stale 3 would multiply the next lot's ceiling by three.
+  function wnResetQty() {
+    const box = $('wn-qty');
+    if (box) box.value = '';
+  }
+
+  /// How many things the lot is, when the seller has said so. Blank is null and means
+  /// "read it off the name" — a different answer from 1, which means "I looked, and it
+  /// is one", and is the undo for a count the name got read wrong. Whole numbers only:
+  /// half a miner is not a lot size, and the server caps the rest.
+  function wnQty() {
+    const n = wnNumber('wn-qty');
+    if (n == null) return null;
+    const whole = Math.floor(n);
+    return whole >= 1 ? whole : null;
+  }
+
   // ── Moving the bid ───────────────────────────────────────────────────────────
   // The auctioneer raises the bid every two or three seconds. Re-reading eBay for
   // each one would spend the seconds the decision is made in to arrive at the same
@@ -9919,6 +9942,7 @@
         shippingCost: wnNumber('wn-ship'),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
+        quantity: wnQty(),
       });
       // The bid moved again while this was in flight. An older answer painted over a
       // newer one is the one failure that would make the card lie about the number
@@ -10118,6 +10142,10 @@
     setVal('wn-item', read.title);
     // A different item is a different question; the comps in hand answer the old one.
     wnDropToken();
+    // And a count belongs to the lot it was counted on. Carrying "3" onto the next lot
+    // would multiply a single item's ceiling by three, silently, on a screen the seller
+    // is reading in two seconds — the exact failure this whole reader is built to avoid.
+    wnResetQty();
 
     // The page's price is where the bidding was when the page loaded — an opening
     // price as often as not, which the read says out loud. It is a starting point for
@@ -10275,6 +10303,13 @@
   function wnUsePhotoTitle(title) {
     const name = (title || '').trim();
     if (!name) return;
+    // The photo names the PRODUCT, and a product name carries no count — so a lot the
+    // typed name had counted ("3x Antminer S9") would silently become one item the
+    // moment a better name landed in the box. The count is carried into the quantity
+    // box instead, where it goes on saying three until the seller says otherwise.
+    if (wnLastUnits && wnLastUnits.isLot && wnLastUnits.source === 'title' && wnQty() == null) {
+      setVal('wn-qty', wnLastUnits.count);
+    }
     setVal('wn-item', name);
     // A different item is a different question; the comps in hand answer the old one.
     wnDropToken();
@@ -10319,6 +10354,7 @@
         shippingCost: wnNumber('wn-ship'),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
+        quantity: wnQty(),
       });
       if (!res.ok) {
         // The headline alone is a diagnosis with no next move — "Nothing to price" without the
@@ -10474,6 +10510,37 @@
 
     const money2 = v => (v == null ? '—' : moneyExact(v));
 
+    // ── How many things is this ────────────────────────────────────────────────
+    // Sold comps are per unit everywhere in this app, so every figure on this card
+    // is a per-unit figure until the lot's own name says otherwise. When it does,
+    // the ceiling above is for the WHOLE lot and this strip is the only thing on
+    // screen that explains why it is suddenly three times bigger than the last one.
+    //
+    // Rendered on every card, including single items: a strip that only appears
+    // when the app decided something is a lot is a strip whose absence is
+    // indistinguishable from it never having looked. Every sentence is the
+    // server's (Services/LiveLotSize.cs) — nothing here divides anything.
+    const u = c.units || {};
+    // Kept only so a count read off the lot's NAME survives that name being replaced by a
+    // better one — see wnUsePhotoTitle. Nothing else reads it, and nothing computes from it.
+    wnLastUnits = u;
+    const unitsStrip = (u.isLot || u.countUnstated || u.refused) ? `
+      <div class="wn-units wn-units-${u.isLot ? 'lot' : (u.countUnstated ? 'ask' : 'refused')}">
+        <div class="wn-units-head">
+          ${u.isLot ? `<strong>${u.count} units</strong> — one hammer price` : '<strong>How many is it?</strong>'}
+          ${u.source === 'seller' ? '<span class="wn-units-src">from the quantity box</span>'
+            : (u.evidence ? `<span class="wn-units-src">read “${esc(u.evidence)}” in the name</span>` : '')}
+        </div>
+        <p class="wn-units-note">${esc(u.countUnstated ? (u.unstatedNote || u.note) : u.note)}</p>
+        ${u.refused ? `<p class="wn-units-refused">${esc(u.refused)}</p>` : ''}
+        ${u.isLot ? `
+          <div class="wn-units-each">
+            <span>Per unit: <strong>${money2(u.maxBidPerUnit)}</strong> to bid</span>
+            <span><strong>${money2(u.resalePerUnit)}</strong> resale</span>
+            <span><strong>${money2(u.profitPerUnit)}</strong> profit at the ceiling</span>
+          </div>` : ''}
+      </div>` : '';
+
     const ladder = priced ? `
       <div class="wn-ladder">
         <div class="wn-rung"><span>Bid now</span><strong>${c.bidWasKnown ? money2(c.currentBid) : 'not started'}</strong></div>
@@ -10570,15 +10637,20 @@
           <p class="wn-call-reason">${esc(c.reason)}</p>
         </div>
       </div>
+      ${unitsStrip}
       ${ladder}
       ${meter}
       ${wnOwnBlock(c.ownHistory)}
       ${won}
       <div class="wn-stats">
-        ${wnStat('eBay resale', money2(c.resalePrice), c.medianPrice ? `median ${money(c.medianPrice)}` : '')}
-        ${wnStat('Middle half of sales', spread, 'where these actually land')}
+        ${wnStat(u.isLot ? `eBay resale · all ${u.count}` : 'eBay resale', money2(c.resalePrice),
+          u.isLot ? `${u.count} × ${money2(u.resalePerUnit)} each`
+                  : (c.medianPrice ? `median ${money(c.medianPrice)}` : ''))}
+        ${wnStat('Middle half of sales', spread, u.isLot ? 'per unit — where one of these lands' : 'where these actually land')}
         ${wnStat('Sell-through', sellThrough, c.sellThroughLabel || '')}
-        ${wnStat('Sells in', velocity, velocityNote)}
+        ${wnStat(u.isLot ? `Sells in · all ${u.count}` : 'Sells in',
+          u.isLot ? (u.daysToSellAll ? `${u.daysToSellAll} days` : '—') : velocity,
+          u.isLot ? (u.daysToSellAll ? `one of them in ${velocity} · ${velocityNote}` : velocityNote) : velocityNote)}
         ${wnStat('Evidence', `${c.compCount} comp${c.compCount === 1 ? '' : 's'}`, `confidence ${c.confidenceScore} · ${c.confidenceLevel || '—'}`)}
       </div>
       <p class="wn-evidence wn-evidence-${esc(c.evidenceTier)}">${esc(c.evidenceNote)}</p>
@@ -10808,6 +10880,9 @@
         shippingCost: wnNumber('wn-ship'),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
+        // A lot of three won at one hammer price is three units of stock. The row is costed
+        // by the same Build as the card, so it has to be asked the same question.
+        quantity: wnQty(),
       });
 
       if (!res.ok) {
@@ -11090,6 +11165,10 @@
 
     setVal('wn-item', row.card.item);
     setVal('wn-bid', row.card.bidWasKnown ? row.card.currentBid : '');
+    // This lot's count is whatever its own name said when the list was priced, and the
+    // re-price below reads it again off that name. A quantity left in the box from the
+    // last lot would land on this one instead.
+    wnResetQty();
     wnToken = row.card.token || '';
     wnTokenItem = row.card.item;
     wnRebidSeq++;
@@ -11193,14 +11272,18 @@
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when
     // the held comps have been let go.
-    ['wn-item', 'wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+    ['wn-item', 'wn-bid', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
     });
 
-    // The four boxes that change the ceiling but not the comps. Typing in any of them
+    // The five boxes that change the ceiling but not the comps. Typing in any of them
     // re-answers off the held sold history — no eBay, no spinner, no round trip past
     // this machine. Before anything is priced there is no token and this does nothing.
-    ['wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+    //
+    // The quantity is one of them, which is the point of it being a box rather than a
+    // re-read: the host says "you're getting three" while the bidding is running, and
+    // the ceiling triples in the time it takes to type a digit.
+    ['wn-bid', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('input', wnScheduleRebid);
     });
 
@@ -11216,7 +11299,12 @@
     // A different item is a different question, and the comps in hand are the answer
     // to the old one.
     $('wn-item')?.addEventListener('input', () => {
-      if (wnToken && ($('wn-item').value || '').trim() !== wnTokenItem) wnDropToken();
+      if (wnToken && ($('wn-item').value || '').trim() !== wnTokenItem) {
+        wnDropToken();
+        // A count belongs to the lot it was counted on. Typing a new item with a stale 3
+        // still in the box would multiply the new lot's ceiling by three.
+        wnResetQty();
+      }
     });
 
     // ── Escape ────────────────────────────────────────────────────────────────

@@ -93,13 +93,18 @@ public class LiveBidAdvisorTests
     }
 
     private static LiveBidRequest Ask(
-        decimal? bid = null, decimal? shipping = null, decimal? fee = null, decimal? target = null) =>
-        new() { Title = Product, CurrentBid = bid, ShippingCost = shipping, BuyerFeePercent = fee, TargetRoiPercent = target };
+        decimal? bid = null, decimal? shipping = null, decimal? fee = null, decimal? target = null,
+        int? quantity = null) =>
+        new()
+        {
+            Title = Product, CurrentBid = bid, ShippingCost = shipping, BuyerFeePercent = fee,
+            TargetRoiPercent = target, Quantity = quantity,
+        };
 
     private static LiveBidCard Card(
         MarketAnalysisResult? analysis, decimal? bid = null, decimal? shipping = null,
-        decimal? fee = null, decimal? target = null) =>
-        Advisor.Build(Product, analysis, Ask(bid, shipping, fee, target), Fees, nowUtc: Now);
+        decimal? fee = null, decimal? target = null, int? quantity = null) =>
+        Advisor.Build(Product, analysis, Ask(bid, shipping, fee, target, quantity), Fees, nowUtc: Now);
 
     // ── The ceiling ───────────────────────────────────────────────────────────
 
@@ -629,5 +634,279 @@ public class LiveBidAdvisorTests
         // And the line still leads with the call and the ceiling — the record is the last clause,
         // never the first.
         Assert.StartsWith(proven.CallLabel, proven.Say, StringComparison.Ordinal);
+    }
+
+    // ── When the lot is more than one thing ───────────────────────────────────
+    // Sold comps are per unit everywhere in this app, so every figure above this line is a per-unit
+    // figure. A live show sells "3x Antminer S9" under one hammer price, and a ceiling for one of
+    // them is not a small error on that lot — it is the error that makes the seller pass on the
+    // best lot of the night, while the card looks exactly as confident as it always does.
+
+    /// <summary>
+    /// Three of them are worth three times as much, and the ceiling says so — with the per-unit
+    /// figure carried alongside, because that is the number the seller compares against the single
+    /// unit they priced ten minutes ago.
+    /// </summary>
+    [Fact]
+    public void A_lot_of_three_is_priced_as_three()
+    {
+        var one = Card(Analysis(), bid: 40m);
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Equal(3, three.Units.Count);
+        Assert.True(three.Units.IsLot);
+        Assert.Equal(one.ResalePrice!.Value * 3m, three.ResalePrice!.Value);
+
+        // At least three times the ceiling, and the per-unit figure is that ceiling divided back
+        // down. Never less: a lot is worth what its units are worth, and the app has no reason to
+        // pay less per unit for buying three at once than for buying one.
+        Assert.True(three.MaxBid >= one.MaxBid * 3m);
+        Assert.Equal(Math.Floor(three.MaxBid / 3m * 100m) / 100m, three.Units.MaxBidPerUnit);
+    }
+
+    /// <summary>
+    /// And on a cheap item it is worth <b>more</b> than three times, because the cash floor is
+    /// charged once for the lot. That is the whole reason multi-unit lots are where live buying
+    /// pays: a $73 ceiling on one $200 miner is the $100-of-profit bar eating most of the margin,
+    /// and three of them clear that bar between them with room to spare.
+    /// </summary>
+    [Fact]
+    public void A_lot_clears_the_cash_floor_the_single_item_was_stuck_under()
+    {
+        var one = Card(Analysis(), bid: 40m);
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Equal(AuctionSniperAnalyzer.CeilingByCash, one.CeilingBoundBy);
+        Assert.Equal(AuctionSniperAnalyzer.CeilingByRoi, three.CeilingBoundBy);
+        Assert.True(three.MaxBid > one.MaxBid * 3m);
+    }
+
+    [Fact]
+    public void The_ceiling_scales_exactly_when_the_target_return_is_what_binds_it()
+    {
+        // With the cash floor out of the way at both sizes, three of something is worth precisely
+        // three times as much — there is no lot premium and no lot discount in this arithmetic.
+        var one = Card(Analysis(expected: 900m, p25: 800m, p75: 1000m), bid: 40m);
+        var three = Card(Analysis(expected: 900m, p25: 800m, p75: 1000m), bid: 40m, quantity: 3);
+
+        Assert.Equal(AuctionSniperAnalyzer.CeilingByRoi, one.CeilingBoundBy);
+
+        // Within a cent or two of exactly three times, and never under it. Both ceilings are
+        // truncated to the cent — the lot's once, the single item's once and then multiplied — so
+        // the two arithmetics differ by the fraction of a cent each of them threw away.
+        Assert.InRange(three.MaxBid - one.MaxBid * 3m, 0m, 0.03m);
+        Assert.InRange(one.MaxBid - three.Units.MaxBidPerUnit, -0.01m, 0.01m);
+    }
+
+    /// <summary>
+    /// The break-even multiplies too, so the walk-away line and the ceiling stay the same distance
+    /// apart in relative terms. A ceiling that scaled while the break-even did not would put the
+    /// seller past the point of losing money at three times the speed.
+    /// </summary>
+    [Fact]
+    public void The_walk_away_line_multiplies_with_the_ceiling()
+    {
+        var one = Card(Analysis(), bid: 40m);
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Equal(one.BreakEvenBid * 3m, three.BreakEvenBid);
+        Assert.True(three.MaxBid < three.BreakEvenBid);
+    }
+
+    /// <summary>
+    /// The cash floor is charged once for the lot rather than once per unit.
+    /// </summary>
+    /// <remarks>
+    /// The floor exists because "finding it, listing it and packing it costs the same hour whatever
+    /// it cost to buy" — and of those three, the packing and the label on each unit are already
+    /// money inside the break-even (ProfitCalculator bills packaging and labour per unit). What is
+    /// left is the hour of finding it and deciding, which happens once for the whole lot. Charging
+    /// it N times would refuse most multi-unit lots on a bar nobody ever agreed to.
+    /// </remarks>
+    [Fact]
+    public void The_cash_floor_is_charged_once_for_the_lot()
+    {
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+        var breakEvenPerUnit = Hunter.BreakEvenBuyPrice(
+            ResalePricing.From(Analysis(), Product), Fees);
+
+        Assert.Equal(
+            AuctionSniperAnalyzer.MaxBidFor(breakEvenPerUnit * 3m, shippingCost: 0m),
+            three.MaxBid);
+    }
+
+    [Fact]
+    public void The_shipping_and_the_premium_stay_the_lots_own()
+    {
+        // One shipment and one premium, however many things are in the box — both are charged on
+        // the hammer price, not per unit.
+        var three = Card(Analysis(), bid: 100m, shipping: 20m, fee: 8m, quantity: 3);
+
+        Assert.Equal(20m, three.ShippingCost);
+        Assert.Equal(8m, three.BuyerFee);                              // 8% of 100, once
+        Assert.Equal(LiveBidAdvisor.LandedCost(100m, 8m, 20m), three.LandedCostNow);
+    }
+
+    [Fact]
+    public void The_profit_at_the_bid_on_screen_is_the_whole_lots()
+    {
+        var three = Card(Analysis(), bid: 90m, quantity: 3);
+
+        Assert.NotNull(three.ProfitNow);
+        // Three units of resale against one landed cost. The single-unit card at a third of the
+        // bid is the same trade, so the return is the same and the cash is three times.
+        var oneAtAThird = Card(Analysis(), bid: 30m);
+        Assert.Equal(oneAtAThird.RoiNow, three.RoiNow);
+        Assert.Equal(oneAtAThird.ProfitNow!.Value * 3m, three.ProfitNow!.Value);
+    }
+
+    /// <summary>
+    /// The market statistics stay per unit, because they are descriptions of sales that happened —
+    /// of ONE of the thing. Multiplying a percentile by three would be inventing a lot nobody sold.
+    /// </summary>
+    [Fact]
+    public void The_spread_and_the_median_are_not_multiplied()
+    {
+        var one = Card(Analysis(), bid: 40m);
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Equal(one.MedianPrice, three.MedianPrice);
+        Assert.Equal(one.PriceLow, three.PriceLow);
+        Assert.Equal(one.PriceHigh, three.PriceHigh);
+        Assert.Equal(one.SellThroughRate, three.SellThroughRate);
+        Assert.Equal(one.CompCount, three.CompCount);
+    }
+
+    [Fact]
+    public void The_call_says_what_the_lot_costs_and_what_one_of_them_costs()
+    {
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Contains("for all 3", three.Reason, StringComparison.Ordinal);
+        Assert.Contains($"{three.Units.MaxBidPerUnit:C} each", three.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_spoken_line_says_how_many_before_it_says_anything_else()
+    {
+        // A seller who hears "BID UP TO $500" on a miner they know goes for $170 needs the next two
+        // words to be "for three".
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.StartsWith(three.CallLabel, three.Say, StringComparison.Ordinal);
+        Assert.Contains("For all 3", three.Say, StringComparison.Ordinal);
+        Assert.True(
+            three.Say.IndexOf("For all 3", StringComparison.Ordinal)
+            < three.Say.IndexOf("Resells around", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_lot_is_warned_about_being_a_lot()
+    {
+        var three = Card(Analysis(), bid: 40m, quantity: 3);
+
+        Assert.Contains(three.Warnings, w => w.Contains("sell all 3", StringComparison.Ordinal));
+        // And what one unsold unit costs, in cash, because that is the risk the ceiling assumes away.
+        Assert.Contains(three.Warnings, w => w.Contains($"{three.Units.ProfitPerUnit:C} of this gone", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_lot_bigger_than_the_market_says_how_long_the_money_is_in_it()
+    {
+        // Four of these sell a month. Twelve of them is a quarter of a year of listing, and nothing
+        // else on this card says so — the days-to-sell figure is the wait for the FIRST one.
+        var twelve = Card(Analysis(), bid: 40m, quantity: 12);
+
+        Assert.Equal(3m, twelve.Units.MonthsToClear);
+        Assert.True(twelve.Units.DaysToSellAll > twelve.DaysToSell);
+        Assert.Contains(twelve.Warnings, w => w.Contains("months of selling", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void The_resale_price_is_never_discounted_for_being_several()
+    {
+        // The lot pays for itself in TIME, which is measured, and not in a haircut off the one
+        // figure on this card that comes from real sales.
+        var one = Card(Analysis(), bid: 40m);
+        var five = Card(Analysis(), bid: 40m, quantity: 5);
+
+        Assert.Equal(one.ResalePrice!.Value * 5m, five.ResalePrice!.Value);
+        Assert.Equal(one.ResalePrice, five.Units.ResalePerUnit);
+    }
+
+    [Fact]
+    public void A_lot_ranks_above_the_same_item_on_its_own()
+    {
+        // The list is ordered by what a lot is worth at its own ceiling, and three of something is
+        // worth three times as much of the night as one of it.
+        Assert.True(Card(Analysis(), quantity: 3).LotRank > Card(Analysis()).LotRank);
+    }
+
+    [Fact]
+    public void The_count_comes_off_the_lots_own_name_when_nobody_typed_one()
+    {
+        var card = Advisor.Build("3x " + Product, Analysis(), new LiveBidRequest { Title = "3x " + Product },
+            Fees, nowUtc: Now);
+
+        Assert.Equal(3, card.Units.Count);
+        Assert.Equal(LiveLotSize.SourceTitle, card.Units.Source);
+    }
+
+    [Fact]
+    public void A_single_item_is_untouched_by_any_of_this()
+    {
+        // The whole compatibility property, stated once: with no count anywhere, every figure is
+        // the figure this card has always shown, and the block says so rather than being absent.
+        var card = Card(Analysis(), bid: 40m);
+
+        Assert.Equal(1, card.Units.Count);
+        Assert.False(card.Units.IsLot);
+        Assert.Equal("Priced as a single item.", card.Units.Note);
+        Assert.Equal(card.MaxBid, card.Units.MaxBidPerUnit);
+        Assert.Equal(card.ResalePrice, card.Units.ResalePerUnit);
+        Assert.Equal(card.ProfitAtMaxBid, card.Units.ProfitPerUnit);
+        Assert.DoesNotContain("for all", card.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("For all", card.Say, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_lot_whose_size_nobody_stated_is_priced_as_one_and_says_so_out_loud()
+    {
+        var card = Advisor.Build("MYSTERY MINER LOT", Analysis(), new LiveBidRequest { Title = "MYSTERY MINER LOT" },
+            Fees, nowUtc: Now);
+
+        Assert.Equal(1, card.Units.Count);
+        Assert.True(card.Units.CountUnstated);
+        Assert.Contains(card.Warnings, w => w.Contains("priced as ONE", StringComparison.Ordinal));
+        Assert.Contains("priced as ONE", card.Say, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_sellers_own_record_stays_on_the_per_unit_scale()
+    {
+        // Their record is a record of selling ONE of these at a time — one listing, one buyer, one
+        // fee. Measured against a ceiling for three it would report their own history as a third of
+        // what it is, on the card where it is the strongest evidence there is.
+        var own = OwnRecord(Sold(300m, 20), Sold(300m, 40));
+        var one = Advisor.Build(Product, Analysis(), Ask(bid: 40m), Fees, nowUtc: Now, own: own);
+        var three = Advisor.Build(Product, Analysis(), Ask(bid: 40m, quantity: 3), Fees, nowUtc: Now, own: own);
+
+        Assert.Equal(one.OwnHistory!.OwnMaxBid, three.OwnHistory!.OwnMaxBid);
+        Assert.Contains(three.Warnings, w => w.Contains("per unit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_typed_one_puts_a_lot_back_to_a_single_item()
+    {
+        // The undo. A name this read as three, said by the host to be one, is priced as one — and
+        // the ceiling goes back to exactly what it would have been with no count anywhere.
+        var lot = Advisor.Build("3x " + Product, Analysis(), new LiveBidRequest { Title = "3x " + Product },
+            Fees, nowUtc: Now);
+        var single = Advisor.Build("3x " + Product, Analysis(),
+            new LiveBidRequest { Title = "3x " + Product, Quantity = 1 }, Fees, nowUtc: Now);
+
+        Assert.Equal(3, lot.Units.Count);
+        Assert.Equal(1, single.Units.Count);
+        Assert.Equal(Card(Analysis()).MaxBid, single.MaxBid);
     }
 }

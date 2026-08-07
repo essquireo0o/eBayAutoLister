@@ -11052,3 +11052,213 @@ for.
 - **`Differs` cannot say which one is right.** It says the two names disagree and offers both. On a
   lot where the host photographed the wrong unit, the *title* is the true one — and this panel has no
   way to know that.
+
+---
+
+# When the lot is three of them: the ceiling for what is actually in the box
+
+## The question this answers
+
+Six sessions have made the live card faster, better-named and better-evidenced. Every one of them
+improved an answer that has been quietly wrong on a whole class of lots since the first one.
+
+Sold comps in this app are **per unit**. `MarketPriceEstimator` normalises them that way on purpose —
+"lot of 10 sold at $500" is a $50 comparable — so the resale price, the break-even, the ceiling, the
+room and the badge are all the answer for **one** of the thing. That is right for the lot a live show
+sells most often, and silently wrong for the one it sells second-most often:
+
+> **3x Bitmain Antminer S9** · **(4) Goldshell Mini Doge** · **LOT OF 5 GPU RISERS**
+
+One hammer price buys all of them. The card said **BID UP TO $73** on three $200 miners, and it said
+it with the same green badge, the same five stat tiles and the same confidence it uses on a single
+unit. There was nothing on screen to argue with, so the seller passes — on the best lot of the night,
+every time one comes up.
+
+It is worse than a third of the answer, because the **cash floor** is what binds on a cheap item:
+$100 of profit is most of the margin on one $200 miner and a rounding error across three. Priced
+properly, that lot's ceiling is not $219. It is **$399**.
+
+## What it does
+
+A **Qty** box beside the bid, and a strip between the badge and the ladder:
+
+> 🟨 **3 units** — one hammer price   *read "3x" in the name*
+>
+> Priced as 3 units — "3x" in the lot's name. Every figure below is for the whole lot. Not a lot? Set
+> the quantity to 1.
+>
+> Per unit: **$133.15** to bid · **$200.00** resale · **$39.95** profit at the ceiling
+
+Everything above the strip is now the **lot's**: the ceiling, the break-even, the room, the profit at
+the bid on screen. Everything one of them is worth is inside the strip. The spoken line says it
+second, immediately after the badge and before any other number — a seller who hears "BID UP TO $399"
+on a miner they know goes for $170 needs the next two words to be *for three*.
+
+The count comes off the lot's own name. The box overrides it, **including a 1** — that is the undo,
+and it re-answers off comps already held, so it costs a keystroke and no eBay read.
+
+## Stated counts only
+
+The two mistakes are not symmetrical, and the whole reader is built around that.
+
+| | What it costs |
+|---|---|
+| Reading a count that is not there | The ceiling is multiplied by a number nobody wrote down, and the seller **overpays** with seconds to notice |
+| Missing a count that is there | The ceiling stays where it has always been and the seller **passes** |
+
+So `LiveLotSize` reads a count only from wording that states one — `3x`, `x3`, `(4)`, `lot of 5`,
+`set of 3`, `8 pcs` — and everything that merely *means* "several" produces a **prompt** instead:
+
+> This reads as more than one item, but the name never says how many — so it is priced as ONE, and
+> the ceiling below is the ceiling for one. Ask the host how many are in it and set the quantity.
+
+That is the case the seller can fix in one keystroke and nothing else on the screen can fix at all.
+The host is holding the lot and talking right now.
+
+## Why it is not `LiquidationParser.ReadUnits`
+
+The app already reads unit counts off listing titles, for pallets. That reader is deliberately not
+reused whole, and the reason is one lot:
+
+> **Pokemon 151 booster box — 36 packs sealed**
+
+`LiquidationSelectors.CountUnits` reads `36 pack` as thirty-six units, and on a pallet of dish soap it
+is right. On a live show *pack*, *box* and *case* are the **names of the products** — a sealed booster
+box is one item and its sold comps are comps for that box — so a shared reader would have put a
+$7,000 ceiling on a $200 lot at the exact moment somebody was deciding whether to bid. `pcs`,
+`pieces` and `units` are read; `pack`, `ct`, `count`, `box of` and `case of` are not, and the last two
+reach the seller as a prompt instead. The pattern that is safe in both places —
+`LiquidationSelectors.LeadingCount`, a bracketed count in front of the product, measured across 801
+real lots — is shared rather than copied, as is the bracketed-count-inside-bulk-wording rule.
+
+Four more refusals, each pinned by a test:
+
+- **A spec is never a count.** `104TH`, `128GB`, `3080`, `1080x1920`, `2x4` — none of them match.
+- **An `x` next to a spec word is not read at all.** `16x PCIe riser`, `10x optical zoom`. Read-and-warn
+  would be a warning printed on a card that had already multiplied the money by sixteen.
+- **A pair is asked about, never assumed to be two.** A pair of speakers is two things and a pair of
+  AirPods is one, and nothing in a name tells them apart.
+- **A count above 60 is a spec.** Refused out loud — "if it really is 400 of them, set the quantity" —
+  because silence there is indistinguishable from not having looked. A lot that big is a pallet, and
+  the Liquidation Lot Analyzer is the screen for it.
+
+## The money, and the one bar that does not multiply
+
+The break-even arrives per unit from `JackpotHunter.BreakEvenBuyPrice`, unchanged, and is multiplied
+by the count. `AuctionSniperAnalyzer.MaxBidDetail` then produces the ceiling, unchanged — so there is
+still exactly one function in this app that decides what a bid is worth, and a live lot of three
+cannot disagree with three single items about the same money.
+
+**The $100 cash floor is charged once for the lot, not once per unit.** That is a judgement and it is
+the load-bearing one, so here is the reasoning: the floor exists because "finding it, listing it and
+packing it costs the same hour whatever it cost to buy" — and of those three, the packing, the label
+and the handling on each unit are *already money inside the break-even*, billed per unit by
+`ProfitCalculator`. What the floor is left standing for is the hour of finding it and deciding, which
+happens once for the whole lot however many things are in it. Charging it N times would refuse most
+multi-unit lots on a bar nobody agreed to.
+
+Which produces the property the feature exists for, pinned by its own test: on a cheap item the
+single unit is bound by the cash floor and the lot is bound by the target return, so **three of them
+are worth more than three times one of them**.
+
+| Stays the lot's | Stays per unit |
+|---|---|
+| Ceiling, break-even, room, profit at the ceiling, profit at the bid, fees, shipping | Median, the middle half of sold prices, sell-through, comp count, confidence |
+| eBay resale (labelled `· all 3`, with `3 × $200.00 each` under it) | The seller's own record — one listing, one buyer, one fee |
+
+The market statistics are descriptions of sales that happened, of one of the thing. Multiplying a
+percentile by three would be inventing a lot nobody sold.
+
+## What a lot costs, and what it is not charged
+
+No haircut is taken off the resale price for being several. A "multi-unit discount" is a number nobody
+measured, quietly shading the one figure on the card that comes from real sales.
+
+What *is* charged is **time**, measured from the sell-through data already on the card:
+
+> About 4 of these sell a month on eBay, so 12 of them is roughly about 3 months of selling — the last
+> one is cash in about 195 days, not 30.
+
+Five identical items do not sell five times as fast as one; they queue behind each other in the same
+demand. The days-to-sell figure the card has always shown is the wait for the **first** one.
+
+## Reuse, not reinvention
+
+| Borrowed | From |
+|---|---|
+| The break-even, and the ceiling on top of it | `JackpotHunter.BreakEvenBuyPrice` + `AuctionSniperAnalyzer.MaxBidDetail`, both untouched |
+| Per-unit comps to multiply in the first place | `MarketPriceEstimator`'s existing normalisation |
+| A bracketed count in front of the product | `LiquidationSelectors.LeadingCount` / `BracketedCount` |
+| How long N of something takes to sell | `SellThroughAnalysis.EstimatedMonthlySales`, already on the card |
+| Fees, packaging and labour per unit | `ProfitCalculator`, called with the real quantity |
+| The list, the win, the sheet and the draft | Unchanged — they all run the same `Build` |
+
+The lot list gets counts for free: every pasted line goes through the same `/api/whatsnot/bid`, which
+reads that line's own name. Nothing about the list needed changing.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+A single item with no count anywhere is priced by exactly the arithmetic it has always been priced
+by, and a test says so field by field — including that the strip is not rendered at all.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveLotSize.cs` | New — the reader, the refusals, the divergence from the liquidation vocabulary, and the absorption sentence (deliberately carrying no money) |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidRequest.Quantity`; `LiveLotUnits` and `LiveBidCard.Units` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | `LiveWinRequest.Quantity`, carried into `AsBid()` so a won lot is recorded at its real size |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The lot break-even, the per-unit figures, the lot wording in the call, `LotWarnings`, and the own-record scale |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `HowMany` — said second, before any other number |
+| `ING eBay AutoLister/Program.cs` | The fresh-price log line names the count and where it came from |
+| `ING eBay AutoLister/wwwroot/index.html` | The Qty box; `app.js?v=127`, `style.css?v=110` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnQty`, `wnResetQty`, the units strip, the two re-labelled tiles, quantity on all three posts, and the count dropped on every way the lot can change |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-units-*` — three outcome edges and the per-unit line, folded at 620px |
+| `ING eBay AutoLister.Tests/LiveLotSizeTests.cs` | New — 56 tests, most of them refusals |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 17 new tests on the lot money, plus `quantity` on the two fixtures |
+| `ING eBay AutoLister.Tests/WhatsNotLotUnitsAssetTests.cs` | New — 21 tests holding the six links together |
+| `WhatsNotArbitrageAssetTests.cs`, `WhatsNotLiveBidAssetTests.cs` | Three pins loosened from whole-list equality to "each of these boxes is in it" — the same reasoning three earlier sessions applied to theirs, and the same failure mode: a test that fails on every addition gets "fixed" by deletion |
+| `whatsnot_lot_units.png`, `whatsnot_lot_units_narrow.png` | The strip on a lot of three, and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,906 passed**, 0 failed, 0 skipped (94 new; the previous commit was 3,812) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `bid` / `rebid` mocked in the shape the C# returns) | A lot of three: **one `/api/whatsnot/bid` call**, the strip on the accent edge, the head reading "3 units — one hammer price · read "3x" in the name", the server's sentence character-for-character, the three per-unit figures, `EBAY RESALE · ALL 3 $600.00 / 3 × $200.00 each`, the spread tile labelled `per unit`, `SELLS IN · ALL 3 29 days / one of them in 14 days`, and the spoken line leading `BID UP TO $399. For all 3, $133 each.` Typing **1** into Qty: **`/api/whatsnot/rebid` the only request made**, the strip gone and the badge back to `BID UP TO $133`. Typing a new item **emptied the Qty box**. A "bundle" with no number: the warning edge, the priced-as-ONE sentence, and the same sentence in the spoken line. Nothing overflowed at 560px. |
+
+The only page errors are the frame's own pre-existing `X-Frame-Options` refusal from Whatnot — the
+panel demonstrating the thing it was built to explain, exactly as the last four sessions recorded it.
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked. That exercises the whole render, the posts, the keyboard
+and the narrow layout, but not the arithmetic underneath it — which is what the 73 new C# tests are
+for.
+
+## Known limits
+
+- **It has never been run against a real Whatnot lot name.** The reader is exercised against the
+  conventions live shows use, and the screen against mocks. The first real "3x" is still the first
+  real evidence.
+- **The comp lookup still runs on the whole name, "3x" and all.** Comps are normalised per unit
+  whichever way that search lands, so the arithmetic holds — but a search on `3x Antminer S9` and one
+  on `Antminer S9` do not necessarily match the same comps, and nothing here strips the count before
+  looking it up.
+- **A lot of three *different* things is priced as three of the first one.** `LiveLotSize` counts;
+  it does not read a manifest. A live "mixed lot" that states a number gets a confident ceiling built
+  on one product's comps, and only the per-unit strip hints at it. The pasted-manifest analyzer is the
+  screen that handles this properly, and nothing joins the two.
+- **The won lot becomes one draft.** `/api/whatsnot/list` drafts the lot under its own name at the
+  lot's resale price, which is right for a seller who relists it as a lot and wrong for one who splits
+  it into three listings. Nothing splits it.
+- **The absorption estimate assumes the seller is the only one listing them.** Three of something on
+  eBay at once compete with each other as well as with everyone else, and this counts only the queue.
+- **The cash-floor-once judgement is a judgement.** It is argued from what the break-even already
+  charges per unit, and it is the difference between a $219 ceiling and a $399 one on the example
+  above. A seller who thinks three listings deserve three times the floor has no setting for it.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=109" />
+  <link rel="stylesheet" href="style.css?v=110" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2793,6 +2793,18 @@
                   <button id="wn-bid-up" class="wn-step" type="button" tabindex="-1"
                           title="Raise the bid (↑)" aria-label="Raise the bid">+</button>
                 </div>
+              </label>
+              <!-- How many things is the lot? Sold comps are per unit everywhere in this app, so
+                   every figure on the card is a per-unit figure unless something says otherwise —
+                   and a live show sells "3x Antminer S9" under one hammer price all night. The
+                   lot's own name answers this when it states a count ("3x", "(4)", "lot of 5");
+                   this box is for the host saying it out loud, and it outranks the name, including
+                   a 1 — that is the undo for a count read wrong. Changing it re-answers instantly
+                   off the comps already held. -->
+              <label class="wn-field wn-field-qty" title="How many of the item are in this lot. Blank reads the count off the lot's name.">
+                <span>Qty</span>
+                <input id="wn-qty" type="number" min="1" step="1" inputmode="numeric" placeholder="1"
+                       aria-describedby="wn-live-note" />
               </label>
               <label class="wn-field">
                 <span>Shipping</span>
@@ -5919,6 +5931,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=126"></script>
+  <script src="app.js?v=127"></script>
 </body>
 </html>

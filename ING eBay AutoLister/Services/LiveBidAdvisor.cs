@@ -93,8 +93,15 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
         var bid = Math.Max(0m, request.CurrentBid ?? 0m);
 
+        // How many things is this? Sold comps are per unit everywhere in this app, so every figure
+        // below is a per-unit figure until this says otherwise — and on a live show it says
+        // otherwise often enough to matter. See LiveLotSize for what it refuses to guess.
+        var units = LiveLotSize.Read(item, request.Quantity);
+        var count = Math.Max(1, units.Count);
+
         var card = new LiveBidCard
         {
+            Units = units,
             Item = item,
             PricedAs = resale?.LookupTitle ?? "",
             CategoryLabel = category?.Label ?? "",
@@ -135,14 +142,27 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             return card;
         }
 
-        card.ResalePrice = resale.ExpectedSale ?? resale.Median;
+        // The resale price is the LOT's, because the bid it is measured against is the lot's — one
+        // hammer buys all of them. The spread, the median and the quick-sale figure stay per unit:
+        // those are descriptions of the sold comps, which are sales of one of the thing, and
+        // multiplying a percentile by three would be inventing a lot that nobody sold.
+        var perUnitResale = resale.ExpectedSale ?? resale.Median;
+        units.ResalePerUnit = perUnitResale;
+        card.ResalePrice = perUnitResale is decimal each ? Math.Round(each * count, 2) : null;
         card.MedianPrice = resale.Median;
         card.QuickSalePrice = resale.QuickSale;
 
         // The money. Every figure below is one subtraction away from this: net profit falls exactly
         // one dollar for every dollar of landed cost, which is what makes the ceiling arithmetic
         // rather than a rule of thumb.
-        var breakEvenAllIn = hunter.BreakEvenBuyPrice(resale, fees);
+        //
+        // The break-even arrives per unit and is multiplied by the count. The cash floor inside the
+        // ceiling below is deliberately NOT multiplied: the per-unit work — the packing, the label,
+        // the handling — is already charged inside this break-even by ProfitCalculator, and what
+        // the floor is left standing for is the hour of finding it and deciding, which happens once
+        // for the whole lot however many things are in it.
+        var breakEvenPerUnit = hunter.BreakEvenBuyPrice(resale, fees);
+        var breakEvenAllIn = Math.Round(breakEvenPerUnit * count, 2);
         var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(breakEvenAllIn, shipping, target, feePercent);
 
         card.BreakEvenBid = BreakEvenBid(breakEvenAllIn, feePercent, shipping);
@@ -150,28 +170,50 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.CeilingBoundBy = boundBy;
         card.CeilingNote = boundBy == AuctionSniperAnalyzer.CeilingByCash
             ? $"Ceiling set by the {LocalArbitrageAnalyzer.SolidProfit:C0} cash floor — a percentage has no size, " +
-              "and finding it, listing it and packing it costs the same hour whatever it cost to buy."
+              "and finding it, listing it and packing it costs the same hour whatever it cost to buy." +
+              (units.IsLot ? $" The floor is charged once for the lot, not {count} times: the packing and the " +
+                             "label on each of them is already in the break-even above it." : "")
             : $"Ceiling set by your {target:0.#}% target return.";
         card.Headroom = Math.Round(maxBid - bid, 2);
         card.ProfitAtMaxBid = Math.Round(Math.Max(0m, breakEvenAllIn - LandedCost(maxBid, feePercent, shipping)), 2);
 
+        // The same ceiling divided back down, because the number a seller carries between lots is
+        // "what is one of these worth to me". Truncated like the ceiling it comes from.
+        units.MaxBidPerUnit = count > 1 ? Math.Floor(maxBid / count * 100m) / 100m : maxBid;
+        units.ProfitPerUnit = count > 1 ? Math.Round(card.ProfitAtMaxBid / count, 2) : card.ProfitAtMaxBid;
+
         if (card.BidWasKnown)
         {
             var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
+            // The landed cost is the lot's — one bid, one premium, one shipment — and it is divided
+            // across the units so the calculator prices each unit's own sale. Quantity then puts
+            // the lot back together, which is what keeps the ROI on a lot of three identical to the
+            // ROI on one of them bought at a third of the price.
             var profit = profitCalc.Calculate(
-                supplierUnitCost: card.LandedCostNow, quantity: 1, expectedSalePrice: expected,
+                supplierUnitCost: Math.Round(card.LandedCostNow / count, 2), quantity: count,
+                expectedSalePrice: expected,
                 quickSalePrice: resale.QuickSale ?? expected,
                 buyerPaidShipping: resale.AvgCompShipping, fees: fees,
                 actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
 
-            card.ProfitNow = profit.NetProfitPerUnit;
+            card.ProfitNow = count > 1 ? profit.TotalPotentialProfit : profit.NetProfitPerUnit;
             card.RoiNow = profit.RoiPercent;
             card.MarginNow = profit.MarginPercent;
-            card.EstimatedFees = profit.MarketplaceFeeTotal;
-            card.EstimatedShipCost = profit.FulfilmentCostTotal;
+            card.EstimatedFees = Math.Round(profit.MarketplaceFeeTotal * count, 2);
+            card.EstimatedShipCost = Math.Round(profit.FulfilmentCostTotal * count, 2);
         }
 
         ApplySpeed(card, resale);
+
+        // What N of them costs in TIME. The only price this screen charges for a multi-unit lot:
+        // no haircut is taken off the resale figure, because a "multi-unit discount" is a number
+        // nobody measured, while the queue behind the first sale is measurable from the same
+        // sell-through data already on the card.
+        var (months, daysAll, absorption) = LiveLotSize.Absorption(
+            count, resale.EstimatedMonthlySales, card.DaysToSell);
+        units.MonthsToClear = months;
+        units.DaysToSellAll = daysAll;
+        units.AbsorptionNote = absorption;
 
         var (call, label, reason) = Judge(card);
         card.Call = call;
@@ -204,11 +246,26 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     {
         if (own is null) return;
 
+        // Priced against the PER-UNIT ceiling and the per-unit resale on a multi-unit lot. The
+        // seller's own record is a record of selling one of these at a time — one listing, one
+        // buyer, one fee — so measuring it against a ceiling for three of them would report their
+        // own history as a third of what it is, on the card where it is the strongest evidence
+        // there is. The lot warning below says which of the two scales this block is on.
         card.OwnHistory = OwnTrackRecord.Price(
             own, card.ShippingCost, card.BuyerFeePercent, card.TargetRoiPercent,
-            card.MaxBid, card.ResalePrice);
+            card.Units.IsLot ? card.Units.MaxBidPerUnit : card.MaxBid,
+            card.Units.IsLot ? card.Units.ResalePerUnit : card.ResalePrice);
 
         card.Warnings.AddRange(OwnTrackRecord.Warnings(card.OwnHistory));
+
+        // Which scale that block is on. Said here rather than in LotWarnings because it is only
+        // true once there is a record to be on a scale at all.
+        if (card.Units.IsLot)
+        {
+            card.Warnings.Add(
+                $"Your own record below is per unit — one listing, one buyer, one fee. This lot is " +
+                $"{card.Units.Count} of them, so its ceiling is per unit too.");
+        }
     }
 
     /// <summary>
@@ -347,7 +404,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                       "before it loses money, but not enough left to be worth the work.");
         }
 
-        var ceiling = $"Bid up to {card.MaxBid:C}" +
+        // On a lot, the ceiling is for all of them and the per-unit figure follows it. Both, always,
+        // in that order: the bid on screen is a lot price, so the lot figure is the one being
+        // compared against it, and the per-unit figure is the one the seller carries between lots.
+        var forAll = card.Units.IsLot
+            ? $" for all {card.Units.Count} ({card.Units.MaxBidPerUnit:C} each)"
+            : "";
+
+        var ceiling = $"Bid up to {card.MaxBid:C}{forAll}" +
                       (card.BuyerFeePercent > 0m || card.ShippingCost > 0m
                           ? $" ({LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost):C} landed)"
                           : "");
@@ -386,6 +450,11 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var warnings = new List<string>();
 
         if (card.Call == LiveBidCalls.NoData) return warnings;
+
+        // The lot warnings come first. Everything under them is a number that means something
+        // different depending on whether this is one thing or five, and a seller who reads the
+        // ceiling and stops reading has to have hit this line before the ceiling made sense.
+        warnings.AddRange(LotWarnings(card));
 
         if (card.ShippingCost <= 0m)
         {
@@ -426,6 +495,39 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
 
         if (!string.IsNullOrWhiteSpace(resale.DisagreementMessage))
             warnings.Add(resale.DisagreementMessage!);
+
+        return warnings;
+    }
+
+    /// <summary>
+    /// What being several things does to the answer. Said on every card that is one, because a
+    /// ceiling three times the size of the last one is the single most surprising thing this screen
+    /// can put in front of somebody mid-lot.
+    /// </summary>
+    /// <remarks>
+    /// The refusals get a line too — <see cref="LiveLotUnits.CountUnstated"/> is the case where the
+    /// screen is knowingly showing the wrong ceiling (one unit's, for a lot of unknown size) and the
+    /// seller is the only one who can fix it, which makes it the most actionable warning here.
+    /// </remarks>
+    public static List<string> LotWarnings(LiveBidCard card)
+    {
+        var units = card.Units;
+        var warnings = new List<string>();
+
+        if (units.Refused.Length > 0) warnings.Add(units.Refused);
+        if (units.CountUnstated) warnings.Add(units.UnstatedNote);
+
+        if (!units.IsLot) return warnings;
+
+        warnings.Add(
+            $"{units.Note} It assumes you sell all {units.Count} of them — the ceiling is what the lot is " +
+            $"worth, and one unsold unit is {units.ProfitPerUnit:C} of this gone.");
+
+        // The one real cost of buying several. Only said when it is long enough to be a decision.
+        if (units.MonthsToClear is decimal months && months >= LiveLotSize.SlowClearanceMonths)
+            warnings.Add(units.AbsorptionNote);
+        else if (units.MonthsToClear is null && units.AbsorptionNote.Length > 0)
+            warnings.Add(units.AbsorptionNote);
 
         return warnings;
     }
