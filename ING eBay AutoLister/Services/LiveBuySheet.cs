@@ -95,6 +95,47 @@ public sealed class LiveBuySheet
         }
     }
 
+    /// <summary>One row, by its own id. Null when it is not on the sheet — cleared, trimmed, or a
+    /// stale id from a screen that has been open since the last show.</summary>
+    public WonLot? Find(string? id)
+    {
+        var key = (id ?? "").Trim();
+        if (key.Length == 0) return null;
+        lock (_gate) return Load().FirstOrDefault(l => string.Equals(l.Id, key, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Marks a row as having become a draft listing, and returns the whole sheet.
+    /// </summary>
+    /// <remarks>
+    /// Written down rather than derived, because the draft is a file on the seller's desktop that
+    /// this app does not watch: the only moment it is knowable that <i>this</i> row became
+    /// <i>that</i> draft is now. It is also what stops the button making a second draft of one item
+    /// — <see cref="WonLot.ListedDraftFile"/> is the record that it has already been done.
+    /// </remarks>
+    public BuySheet MarkListed(string? id, string draftFile, string title, decimal? price, string sku,
+                               long dealId, DateTime? nowUtc = null)
+    {
+        var key = (id ?? "").Trim();
+        lock (_gate)
+        {
+            var lots = Load();
+            var row = lots.FirstOrDefault(l => string.Equals(l.Id, key, StringComparison.Ordinal));
+            if (row is null) return Compose(lots);
+
+            row.ListedDraftFile = draftFile ?? "";
+            row.ListedTitle = title ?? "";
+            row.ListedPrice = price;
+            row.ListedSku = sku ?? "";
+            row.DealId = dealId;
+            row.ListedAtUtc = nowUtc ?? DateTime.UtcNow;
+            row.Say = SayRow(row);
+
+            Save(lots);
+            return Compose(lots);
+        }
+    }
+
     /// <summary>Removes one row — recorded by mistake, or outbid after all. Unknown ids are not an
     /// error; the row is already gone, which is what was being asked for.</summary>
     public BuySheet Remove(string? id)
@@ -192,7 +233,8 @@ public sealed class LiveBuySheet
             : ".";
 
         if (!lot.Priced || lot.ResalePrice is not { } resale)
-            return line + " Nothing on eBay priced it, so this is a cost with no resale figure behind it.";
+            return line + " Nothing on eBay priced it, so this is a cost with no resale figure behind it."
+                        + Drafted(lot);
 
         line += $" Resells around {Math.Floor(resale).ToString("C0")}";
 
@@ -209,7 +251,23 @@ public sealed class LiveBuySheet
         if (lot.PaidOverCeiling > 0m)
             line += $" Paid {Math.Ceiling(lot.PaidOverCeiling).ToString("C0")} over the ceiling the app gave.";
 
-        return line;
+        return line + Drafted(lot);
+    }
+
+    /// <summary>
+    /// The clause that says this lot is already a listing draft. Last in the sentence, because it
+    /// is what happens next rather than what happened — and empty on a row that is still a box in a
+    /// hallway, which is the state the button exists to change.
+    /// </summary>
+    private static string Drafted(WonLot lot)
+    {
+        if (lot.ListedDraftFile.Length == 0) return "";
+
+        // The ask rounds DOWN, like every other figure this app tells a seller about money coming
+        // in: the draft must never be described as asking more than it does.
+        return lot.ListedPrice is { } ask
+            ? $" Drafted at {Math.Floor(ask).ToString("C0")}."
+            : " Drafted, with no price on it.";
     }
 
     // ── The totals ────────────────────────────────────────────────────────────
@@ -236,6 +294,7 @@ public sealed class LiveBuySheet
             // counting unknown as bad is how a screen teaches a seller to ignore it.
             LosingCount = rows.Count(l => l.Priced && (l.ProjectedProfit ?? 0m) <= 0m),
             UnpricedCount = rows.Count(l => !l.Priced),
+            ListedCount = rows.Count(l => l.ListedDraftFile.Length > 0),
             FirstWonUtc = rows.Count == 0 ? null : rows.Min(l => l.WonAtUtc),
             LastWonUtc = rows.Count == 0 ? null : rows.Max(l => l.WonAtUtc),
         };
@@ -283,6 +342,13 @@ public sealed class LiveBuySheet
 
         if (sheet.UnpricedCount > 0)
             line += $" {sheet.UnpricedCount} with no resale figure.";
+
+        // Only once some of the night has been listed. Mid-show every row is unlisted and saying so
+        // after each win would be a nag; the moment the first draft exists, how much of the night is
+        // still in boxes becomes the useful number — none of that resale figure arrives until it is
+        // on eBay.
+        if (sheet.ListedCount > 0)
+            line += $" {sheet.ListedCount} of {sheet.LotCount} drafted.";
 
         return line;
     }

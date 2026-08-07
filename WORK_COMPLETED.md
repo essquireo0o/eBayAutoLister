@@ -10218,3 +10218,140 @@ home screen's setup wizard behind the overlay and predates this session.
   a mistyped premium can only be fixed by removing the row and recording it again.
 - **`Clear` is confirmed by `confirm()`**, the browser's own dialog, rather than by anything this
   app styles.
+
+---
+
+# The lot that never got listed: 🏷 List it, from the buy sheet to the listing editor
+
+## The question this answers
+
+The buy sheet ends the night with a sentence: *9 lots won, $1,240 spent, resells for about $2,880.*
+
+None of that $2,880 exists yet. It arrives only when the boxes get listed, and the gap between
+winning a lot at 11pm and listing it is exactly where live buying quietly stops paying. By the time
+the seller opens the listing editor, the screen that knew what the item was, what it cost all in,
+and what eBay actually pays for it has been closed. So the title gets retyped from memory, the price
+gets guessed at, and the cost basis is never entered at all — which is why **Money Made** could never
+say whether the show made money.
+
+The previous session's own write-up named this: *"The won lot does not become a listing. It is also
+where the rest of the money is."*
+
+## What it does
+
+Every row on the buy sheet grows one button:
+
+> 🏷 **List it**
+
+One press, and the row becomes:
+
+* **a listing draft** in the eBayListing folder — the item's title, the comps-derived asking price,
+  a starting description, one unit, fixed price;
+* **a deal card at Bought** on the Deal Pipeline, carrying the real cash: hammer plus buyer's
+  premium as the unit cost, shipping as the inbound freight;
+* **a row that now offers the draft** — `📄 Draft $341.99` — instead of the button that made it.
+
+The line above the card says what happened, in the server's words:
+
+> Draft saved: Bitmain Antminer S19j Pro 104TH at $341, the price the sold comps support. It's on the
+> deal board too, at what you paid. Set the condition and add photos. Neither is knowable from a live
+> feed, so the draft opens on the app's defaults.
+
+And a fifth tile joins the totals: **Still to list**, counting down as the night gets drafted —
+because none of the resale figure beside it arrives while the lots are in boxes.
+
+## The property that makes it legitimate
+
+**It prices nothing.** The ask is `WonLotListing.AskingPrice` — the card's own comps-derived resale
+figure, put through **the same `InventoryHealthAnalyzer.Charm`** rounding the repricer and the
+relister use, floored at the lot's landed cost so the rounding can never take the ask under what the
+thing cost. There is still one function in this app that turns sold comps into money, and this is
+not a second one: the app bids on a valuation and lists on the same valuation.
+
+A lot nothing could price gets a draft with **no price on it** rather than an invented one, and the
+result says so out loud.
+
+**It publishes nothing.** A file on the desktop and a card on the board. No eBay call at all — no
+read, no write — which is also why it answers instantly: everything it needs is already on the row.
+
+**It writes once.** A row that is already a draft hands back the draft that exists
+(`AlreadyListed`). Two files for one item is two listings of one item, and the second one sells
+something that has already gone. The deal card is keyed on `(whatsnot, lot id)`, so a second press
+updates one card instead of putting the same capital on the board twice.
+
+**It refuses to invent.** The condition, the photos and the eBay category are not knowable from a
+live feed — a draft that guessed them would make a claim to a buyer on the seller's behalf. They are
+left blank, and `Notes` names each one. The card's category is deliberately not written into the
+draft: that is a *resale* category (the thing that decides which sold comps count), not an eBay
+category id, and writing one into the other would file the listing in the wrong department silently.
+
+## Where the money actually lands
+
+The deal card is the half that pays later. `PurchasePrice` is the hammer plus the premium and
+`PurchaseExtraCost` is the shipping — exactly the split `CostBasisStore` wants — so when the listing
+goes live and the pipeline moves the card to **Listed** with a listing ID, the existing
+`ApplyDealCostBasis` writes a real cost basis. From there Inventory Health has a true break-even
+floor for the item and Money Made counts the sale as real profit. Nothing new was built for that; it
+is the pipeline that already existed, finally being fed by the screen that knows the number.
+
+The ceiling the app gave before the hammer rides along as `MaxBuyPrice`, so tonight's discipline
+survives the sheet being cleared: the board already flags a deal bought over its own maximum.
+
+## Additive
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots` and
+`/api/whatsnot/embed-check` are all still registered and are asserted to be. The Copilot's own
+drafts still open the way they always did — `openCopilotDrafts` grew one optional sentence for the
+activity feed, not a new behaviour, and the WhatsNot draft opens through that same shared path
+rather than a second copy of it.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/WonLotListing.cs` | New — the pure builder: title, SKU, ask, description, notes, the draft and the deal card |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | `Find`, `MarkListed`, `ListedCount`, and the row/night sentences' new clauses |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | `WonLot` remembers its draft; `BuySheet.ListedCount`; `LiveListRequest` / `LiveListResult` |
+| `ING eBay AutoLister/Program.cs` | `POST /api/whatsnot/list` — a draft, a deal card, and provably no eBay |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnListLot` / `wnOpenDraft`, the row's two states, the Still-to-list tile, `openCopilotDrafts(filenames, said)` |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-sheet-draft` and its listed state, folded at 620px |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=122`, `style.css?v=105` |
+| `ING eBay AutoLister.Tests/WonLotListingTests.cs` | New — 27 tests on the ask, the title, the SKU, the deal split and what the sheet remembers |
+| `ING eBay AutoLister.Tests/WhatsNotListItAssetTests.cs` | New — 24 tests holding the endpoint and the screen to what they refuse to do |
+| `whatsnot_list_it.png` | The sheet with one lot drafted and one still to list |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,534 passed**, 0 failed, 0 skipped (51 new; the previous commit was 3,483) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the endpoints mocked in the shape the C# returns) | **18/18 checks.** Two won lots read on open, both offering **List it**, "Still to list 2". Pressing it on the priced lot posts to `/api/whatsnot/list`, the line above the card becomes the server's sentence plus its notes, the row turns into `📄 Draft $341.99`, is marked listed, and the tile counts down to 1. The row's `aria-label` gains "Drafted at $341." The unpriced lot drafts with no price and says so. Opening the draft goes through `/api/local-drafts/load/` and lands in the listing editor. Nothing overflows at 560px. **No page errors.** |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked — which exercises the whole render, wiring and row-state
+path but not the arithmetic underneath it, which is what the 51 new C# tests are for.
+
+## Known limits
+
+- **The cost basis is not written until the listing is live.** The deal card holds the cash, but
+  `CostBasisStore` is keyed on a listing ID or SKU that eBay only mints at publish — so the seller
+  still has to move the card to **Listed** with its listing ID for Money Made to count the sale as
+  profit. That step is the pipeline's, and it is one drag on a board, but it is a step.
+- **The SKU on the draft is not the SKU eBay publishes.** `EbayService` mints its own
+  `SKU-{guid}` at publish time, so `WN-20260806-A1B2C3` is currently a label on the deal card and
+  the sheet rather than a key that follows the item onto eBay. Carrying the draft's SKU through the
+  publish call is the obvious next thread, and it is what would make the cost basis automatic.
+- **No photos.** A listing without images does not sell, and this draft has none — the lot was on
+  somebody else's video. The seller photographs the item; the draft is waiting when they do.
+- **The condition is the app's default.** Live lots are usually used, but "usually" is not a claim
+  this app is entitled to make about somebody's item, so the draft opens on the default and the
+  notes say to set it.
+- **Removing a row does not delete its draft.** The file stays on the desktop, which is the safe
+  direction — the alternative is a button on a buy sheet that deletes a listing the seller may have
+  spent twenty minutes on — but it does mean a mistaken **List it** leaves a file to throw away.
+- **It is one lot at a time.** A nine-lot night is nine presses. A "draft everything" button is
+  trivial to add on top of this endpoint and was deliberately not added yet: nine drafts made in one
+  press, each needing photos and a condition, is a queue nobody finishes.

@@ -10216,6 +10216,9 @@
     }
 
     const roi = sheet.projectedRoiPercent == null ? '—' : `${sheet.projectedRoiPercent.toFixed(0)}%`;
+    // None of the resale figure above arrives while the lots are in boxes, so how many are still
+    // unlisted sits beside it as a number rather than as something to notice row by row.
+    const toList = Math.max(0, (sheet.lotCount || 0) - (sheet.listedCount || 0));
     totals.innerHTML =
       wnSheetTile('Spent', money(sheet.spent),
         `${sheet.lotCount} lot${sheet.lotCount === 1 ? '' : 's'}, everything in`) +
@@ -10225,6 +10228,11 @@
           : 'on the comps behind each lot') +
       wnSheetTile('Projected profit', money(sheet.projectedProfit),
         `${roi} return on the priced lots`, sheet.projectedProfit >= 0 ? 'good' : 'bad') +
+      wnSheetTile('Still to list', `${toList}`,
+        toList === 0
+          ? 'every lot is a draft'
+          : `${sheet.listedCount || 0} drafted — none of the resale price arrives until they're listed`,
+        toList === 0 ? 'good' : '') +
       wnSheetTile('Over the ceiling', money(sheet.overpaidBy),
         sheet.overpaidCount > 0
           ? `${sheet.overpaidCount} lot${sheet.overpaidCount === 1 ? '' : 's'} won above the app's maximum`
@@ -10246,13 +10254,27 @@
         when,
       ].filter(Boolean).join(' · ');
 
-      return `<li class="wn-sheet-row${l.paidOverCeiling > 0 ? ' wn-sheet-row-over' : ''}"
+      // A row is either still a box in a hallway or already a draft. The listed one offers the
+      // draft rather than the button that made it, because pressing it twice is how a seller ends
+      // up with two listings of one item.
+      const listed = !!l.listedDraftFile;
+      const action = listed
+        ? `<button type="button" class="wn-sheet-draft wn-sheet-draft-done" data-open-draft="${esc(l.listedDraftFile)}"
+                   title="Open the draft this lot became"
+                   aria-label="Open the draft for ${esc(l.item)}${l.listedPrice == null ? '' : `, asking ${moneyExact(l.listedPrice)}`}">📄 Draft${
+                     l.listedPrice == null ? '' : ` ${moneyExact(l.listedPrice)}`}</button>`
+        : `<button type="button" class="wn-sheet-draft" data-list="${esc(l.id)}"
+                   title="Make a listing draft from this lot"
+                   aria-label="List ${esc(l.item)}${l.resalePrice == null ? '' : `, comps say ${money(l.resalePrice)}`}">🏷 List it</button>`;
+
+      return `<li class="wn-sheet-row${l.paidOverCeiling > 0 ? ' wn-sheet-row-over' : ''}${listed ? ' wn-sheet-row-listed' : ''}"
                   aria-label="${esc(l.say || l.item)}">
         <span class="wn-sheet-row-main">
           <span class="wn-sheet-row-title">${esc(l.item)}</span>
           <span class="wn-sheet-row-sub">${esc(sub)}</span>
         </span>
         <span class="wn-sheet-row-profit${(l.projectedProfit ?? 0) < 0 ? ' wn-neg' : ''}">${esc(profit)}</span>
+        ${action}
         <button type="button" class="wn-sheet-remove" data-unwin="${esc(l.id)}"
                 title="Take this lot off the sheet"
                 aria-label="Remove ${esc(l.item)} from tonight's buys">✕</button>
@@ -10261,6 +10283,68 @@
 
     rows.querySelectorAll('[data-unwin]').forEach(el => {
       el.addEventListener('click', () => wnRemoveWin(el.dataset.unwin));
+    });
+    rows.querySelectorAll('[data-list]').forEach(el => {
+      el.addEventListener('click', () => wnListLot(el.dataset.list));
+    });
+    rows.querySelectorAll('[data-open-draft]').forEach(el => {
+      el.addEventListener('click', () => wnOpenDraft(el.dataset.openDraft));
+    });
+  }
+
+  // ── WhatsNot: the won lot becomes a listing ──────────────────────────────────
+  // The only thing on this screen that turns the night's projected resale into money
+  // actually coming back. Everything the listing editor would ask for is already on
+  // the row, so this is one press: /api/whatsnot/list writes the draft with the
+  // comps-derived price on it and puts the cash already spent on the deal board.
+  //
+  // No pricing happens here. The ask is the same resale figure the bid was made on,
+  // charm-rounded on the server next to the arithmetic — see Services/WonLotListing.cs.
+
+  async function wnListLot(id) {
+    if (!id) return;
+
+    const btn = $('wn-sheet-rows')?.querySelector(`[data-list="${CSS.escape(id)}"]`);
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+
+    try {
+      const { res, body } = await safePost('/api/whatsnot/list', { id });
+
+      if (!res.ok) {
+        const headline = body.error || "That didn't become a draft.";
+        wnSayLine(`${headline} ${body.failure?.whatToDo || ''}`.trim());
+        return;
+      }
+
+      // The sheet comes back with the row already marked, so the button that was just
+      // pressed is replaced by the draft it made — there is nothing to re-derive here.
+      if (body.sheet) wnRenderSheet(body.sheet);
+      wnSayLine([body.say, ...(body.notes || [])].filter(Boolean).join(' '));
+      $('wn-sheet')?.setAttribute('open', '');
+
+      addActivity(`Drafted ${body.title || 'a won lot'}`,
+                  body.price == null
+                    ? 'No comps priced it — set a price before you publish'
+                    : `Asking ${moneyExact(body.price)}, on the sold comps it was bought against`);
+
+      // The keyboard was on a button that no longer exists. Hand it to the draft that
+      // replaced it, which is also the thing to press next.
+      $('wn-sheet-rows')?.querySelector(`[data-open-draft]`)?.focus();
+    } catch (err) {
+      wnSayLine(errorText(err, "That didn't become a draft."));
+    } finally {
+      if (btn && btn.isConnected) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    }
+  }
+
+  /// The draft opens in the listing editor through the SAME path the Copilot's rewrites
+  /// use — tab, form, policies and focus — so a WhatsNot draft and any other local draft
+  /// are the same screen with the same behaviour.
+  function wnOpenDraft(filename) {
+    if (!filename) return;
+    openCopilotDrafts([filename], {
+      title: 'Opened a won lot',
+      detail: 'Add photos, set the condition, check the price, then publish',
     });
   }
 
@@ -13879,7 +13963,11 @@
     pick('nl-return-sel',      data.returnPolicyId);
   }
 
-  async function openCopilotDrafts(filenames) {
+  // `said` lets a second caller describe its own drafts in the activity feed. The Copilot's are
+  // rewrites of live listings; WhatsNot's are lots won an hour ago. Everything else about opening a
+  // local draft — the tab, the form, the policies, where the keyboard lands — is identical, and a
+  // second copy of it is a second set of bugs.
+  async function openCopilotDrafts(filenames, said) {
     const wanted = (filenames || []).filter(Boolean);
     if (!wanted.length) return;
 
@@ -13929,8 +14017,8 @@
       overlay?.querySelector('.nl-form-panel')?.scrollIntoView({ block: 'start' });
       $('nl-title')?.focus({ preventScroll: true });
     });
-    addActivity(`Opened ${wanted.length} rewritten draft${wanted.length === 1 ? '' : 's'}`,
-                'Review the new title, description and item specifics, then publish');
+    addActivity(said?.title || `Opened ${wanted.length} rewritten draft${wanted.length === 1 ? '' : 's'}`,
+                said?.detail || 'Review the new title, description and item specifics, then publish');
   }
 
   // Reading a whole account is eBay's bulk listing call plus three policy calls — seconds on a small

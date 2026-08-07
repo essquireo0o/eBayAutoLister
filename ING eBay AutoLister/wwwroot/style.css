@@ -16974,6 +16974,48 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+/* The button that turns a won lot into money coming back. Quiet enough not to compete with
+   the profit figure beside it, loud enough to be the obvious next thing on the row — because
+   an unlisted lot is the one state on this sheet that costs the seller something. */
+.wn-sheet-draft {
+  flex: 0 0 auto;
+  border: 1px solid var(--accent, #4a8fe7);
+  background: rgba(74, 143, 231, .12);
+  color: var(--text, #e6e9ef);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.wn-sheet-draft:hover {
+  background: rgba(74, 143, 231, .22);
+}
+.wn-sheet-draft[disabled] {
+  opacity: .55;
+  cursor: default;
+}
+/* Already a draft: it opens the listing instead of making a second one, and says so by
+   stepping back out of the accent colour. */
+.wn-sheet-draft-done {
+  border-color: var(--border, #2a2f3a);
+  background: none;
+  color: var(--text-dim, #8b93a7);
+  font-weight: 500;
+}
+.wn-sheet-draft-done:hover {
+  background: var(--panel-2, rgba(255, 255, 255, .04));
+  color: var(--text, #e6e9ef);
+}
+.wn-sheet-row-listed {
+  border-color: rgba(93, 176, 117, .35);
+}
+.wn-sheet-draft:focus-visible {
+  outline: 2px solid var(--accent, #4a8fe7);
+  outline-offset: 2px;
+}
 .wn-sheet-remove {
   flex: 0 0 auto;
   border: 1px solid transparent;
@@ -17030,13 +17072,20 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   .wn-sheet-tile {
     flex: 1 1 calc(50% - 4px);
   }
-  /* The profit and the remove button move under the lot rather than being squeezed
-     beside a title that has nowhere left to go. */
+  /* The profit, List it and the remove button move under the lot rather than being
+     squeezed beside a title that has nowhere left to go. */
   .wn-sheet-row {
     flex-wrap: wrap;
   }
   .wn-sheet-row-main {
     flex: 1 1 100%;
+  }
+  /* List it takes the width the title gave back, so the one action that turns tonight's
+     spend into money is still a full-sized target down the side of a stream. */
+  .wn-sheet-draft {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 7px 9px;
   }
   .wn-say {
     font-size: 13px;

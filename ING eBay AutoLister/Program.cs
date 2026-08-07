@@ -3101,6 +3101,111 @@ app.MapPost("/api/whatsnot/sheet/remove", (
     LiveSheetRowRequest req, LiveBuySheet sheet, CredentialsStore store, LicenseService license) =>
     TrialGuard(store, license) ?? Results.Ok(sheet.Remove(req.Id)));
 
+// ── WhatsNot: the won lot becomes a listing ───────────────────────────────────────────────────
+// The sheet says the night is worth $3,100. None of that arrives until the boxes are listed, and
+// the gap between winning a lot at 11pm and listing it is where live buying quietly stops paying:
+// by then the screen that knew the item name, what it cost all in and what eBay pays for it has
+// been closed, so the title gets retyped from memory, the price gets guessed, and the cost is never
+// entered at all — which is what leaves Money Made unable to say whether the show made money.
+//
+// This is that screen writing it down instead. One press turns a won row into:
+//
+//   * a local draft (DraftStore, unchanged) with the title and the comps-derived asking price —
+//     WonLotListing.AskingPrice is the SAME resale figure the card was bid on, charm-rounded by the
+//     SAME InventoryHealthAnalyzer.Charm the repricer uses, floored at what the lot cost;
+//   * a deal card at Bought (DealStore, unchanged) carrying the real cash — hammer plus premium as
+//     the unit cost, shipping as the extra — which is the shape CostBasisStore wants when the
+//     existing pipeline writes the basis at Listed. That step needs a listing ID, so it stays where
+//     it is: nothing here publishes anything.
+//
+// No eBay read, no Claude call, no comps needed: everything is already on the row. It answers
+// instantly, and it never makes a second draft of a lot it has already drafted.
+app.MapPost("/api/whatsnot/list", (
+    LiveListRequest req, LiveBuySheet sheet, DraftStore drafts, DealStore deals,
+    CredentialsStore store, LicenseService license, ActionLog log) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var lot = sheet.Find(req.Id);
+    if (lot is null)
+    {
+        return BadInputJson("That lot isn't on the sheet",
+            "The row this was for is no longer there — removed, or the sheet was cleared.",
+            "Price the item again and record the win, then list it.");
+    }
+
+    // Already drafted. The draft on disk is the one the seller has been editing; making a second
+    // one would leave two files for one item and no way to tell which is the real listing.
+    if (lot.ListedDraftFile.Length > 0)
+    {
+        return Results.Ok(new LiveListResult
+        {
+            LotId = lot.Id,
+            DraftFile = lot.ListedDraftFile,
+            Title = lot.ListedTitle,
+            Sku = lot.ListedSku,
+            Price = lot.ListedPrice,
+            AlreadyListed = true,
+            DealId = lot.DealId,
+            Say = WonLotListing.Say(lot, lot.ListedPrice, alreadyListed: true, onDealBoard: lot.DealId > 0),
+            Sheet = sheet.Read(),
+        });
+    }
+
+    var now = DateTime.UtcNow;
+    var draft = WonLotListing.Draft(lot);
+    var price = WonLotListing.AskingPrice(lot);
+    var sku = WonLotListing.Sku(lot);
+
+    string filename;
+    try
+    {
+        filename = drafts.SaveDraft(draft);
+    }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Storage);
+        log.Add("Warning", "Could not draft a won lot", $"\"{lot.Item}\": {failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+
+    // The board card is the bookkeeping; the draft is the point. A board that refuses this row —
+    // a validation rule this lot happens to trip — must not cost the seller the listing, so it is
+    // reported as not tracked rather than failing the whole press.
+    long dealId = 0;
+    try
+    {
+        var deal = DealStore.FromRequest(WonLotListing.Deal(lot, now));
+        deals.Upsert(deal);
+        dealId = deal.Id;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Won lot not tracked on the deal board",
+            $"\"{lot.Item}\": {ex.Message}");
+    }
+
+    var updated = sheet.MarkListed(lot.Id, filename, draft.Title, price, sku, dealId, now);
+
+    log.Add("Info", "Won lot drafted",
+        $"\"{draft.Title}\" at {(price is { } p ? $"{p:C}" : "no price")} " +
+        $"({lot.LandedCost:C} all in); draft {filename}" +
+        (dealId > 0 ? $"; deal #{dealId}" : "; not on the deal board"));
+
+    return Results.Ok(new LiveListResult
+    {
+        LotId = lot.Id,
+        DraftFile = filename,
+        Title = draft.Title,
+        Sku = sku,
+        Price = price,
+        DealId = dealId,
+        Say = WonLotListing.Say(lot, price, alreadyListed: false, onDealBoard: dealId > 0),
+        Notes = WonLotListing.Notes(lot),
+        Sheet = updated,
+    });
+});
+
 // The show ended. The next win starts a new sheet — the screen asks first, because this is the only
 // button here that throws away something the seller cannot get back by pressing anything.
 app.MapPost("/api/whatsnot/sheet/clear", (

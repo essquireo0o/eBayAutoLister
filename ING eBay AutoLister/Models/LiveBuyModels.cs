@@ -103,6 +103,32 @@ public sealed class WonLot
     public decimal? SellThroughRate { get; set; }
     public string EvidenceTier { get; set; } = "";
 
+    // ── What happened to it after the show ───────────────────────────────────
+    // A won lot is money that has left, sitting in a box. It only comes back by being listed, so
+    // the sheet remembers whether that has happened yet — and a row that has been listed says so
+    // rather than offering to list it a second time and leaving two drafts of one item on disk.
+
+    /// <summary>The local draft file this lot became. Empty until it has been listed.</summary>
+    public string ListedDraftFile { get; set; } = "";
+
+    /// <summary>The title the draft carries — the item name, cut to what eBay will accept.</summary>
+    public string ListedTitle { get; set; } = "";
+
+    /// <summary>What the draft asks. The comps' resale price, charm-rounded, never under what the
+    /// lot cost. Null on a lot nothing could price: the draft is still made, with the price left
+    /// for the seller.</summary>
+    public decimal? ListedPrice { get; set; }
+
+    /// <summary>The SKU minted for this lot, carried on the draft and on the deal card so the two
+    /// are about the same object.</summary>
+    public string ListedSku { get; set; } = "";
+
+    public DateTime? ListedAtUtc { get; set; }
+
+    /// <summary>The deal-board card carrying this lot's capital. 0 when the board refused it —
+    /// the draft is the point, the card is the bookkeeping.</summary>
+    public long DealId { get; set; }
+
     /// <summary>The row in one sentence, written beside the money for the same reason
     /// <see cref="LiveBidCard.Say"/> is. It is the row's accessible label.</summary>
     public string Say { get; set; } = "";
@@ -144,9 +170,60 @@ public sealed class BuySheet
     /// <summary>Rows with no resale side at all.</summary>
     public int UnpricedCount { get; set; }
 
+    /// <summary>Rows that have become a draft listing. The rest are boxes in a hallway.</summary>
+    public int ListedCount { get; set; }
+
     public DateTime? FirstWonUtc { get; set; }
     public DateTime? LastWonUtc { get; set; }
 
     /// <summary>The sheet in one sentence. Written on the server, next to the arithmetic.</summary>
     public string Say { get; set; } = "";
+}
+
+// ── Turning a won lot into a listing (see Services/WonLotListing.cs) ──────────────────────────
+// A lot that is won and never listed is a loss with a receipt. The sheet knows what the item is,
+// what it cost all in, and what the eBay sold comps say it resells for — which is every field the
+// listing editor would otherwise ask the seller to type back in at midnight, from memory, having
+// already closed the screen that knew them.
+
+/// <summary>"List that one." Names one row on the buy sheet.</summary>
+public sealed class LiveListRequest
+{
+    public string? Id { get; set; }
+}
+
+/// <summary>What listing a won lot did — the draft on disk, the card on the deal board, and the
+/// sheet with the row now marked.</summary>
+public sealed class LiveListResult
+{
+    public string Status { get; set; } = "ok";
+
+    public string LotId { get; set; } = "";
+
+    /// <summary>The draft's filename under the eBayListing folder, which is what opens it.</summary>
+    public string DraftFile { get; set; } = "";
+
+    public string Title { get; set; } = "";
+    public string Sku { get; set; } = "";
+
+    /// <summary>What the draft asks, or null when nothing priced the lot and the seller has to.</summary>
+    public decimal? Price { get; set; }
+
+    /// <summary>True when this row was already a draft. Nothing is written twice: pressing the
+    /// button again opens the draft that exists rather than making a second one.</summary>
+    public bool AlreadyListed { get; set; }
+
+    /// <summary>The deal-board card this lot's capital went onto. 0 when the board refused it.</summary>
+    public long DealId { get; set; }
+
+    /// <summary>What was done, in one sentence, for the line above the card.</summary>
+    public string Say { get; set; } = "";
+
+    /// <summary>What the draft could not decide and the seller must — the condition, and the price
+    /// on a lot nothing could price. Said out loud rather than left to be discovered on eBay.</summary>
+    public List<string> Notes { get; set; } = [];
+
+    /// <summary>The whole sheet, recomposed. The row's state moved, so handing back the row alone
+    /// would leave the screen to work out the totals in JavaScript.</summary>
+    public BuySheet Sheet { get; set; } = new();
 }
