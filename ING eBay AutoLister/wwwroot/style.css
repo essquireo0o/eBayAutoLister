@@ -16828,6 +16828,181 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-size: 15px;
 }
 
+/* ── Won it, and the buy sheet ───────────────────────────────────────────────
+   The button sits inside the card, under the meter, where the decision was just
+   made — the hammer falls two seconds after the last bid and there is no time to
+   go looking for it. It is deliberately not the card's loudest thing: the badge
+   and the ceiling are what get read while the bidding runs, and this is what gets
+   pressed after. */
+.wn-won {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.wn-won-btn {
+  font-weight: 700;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--panel, rgba(255, 255, 255, .04));
+  color: inherit;
+}
+.wn-won-btn:hover {
+  border-color: var(--accent, #d4a24a);
+}
+/* Won above the ceiling the app gave. Recorded either way — the sheet's whole
+   discipline half depends on that — but the button says so before it is pressed. */
+.wn-won-btn-over {
+  border-color: rgba(224, 121, 106, .55);
+  color: var(--danger, #e0796a);
+}
+.wn-won-note {
+  font-size: 11px;
+  color: var(--text-dim, #8b93a7);
+  flex: 1 1 200px;
+}
+
+.wn-sheet {
+  margin: 0 0 14px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+/* The night's sentence sits in the summary, so the answer is readable with the
+   panel shut. It wraps rather than truncating: half a sentence about money is a
+   different claim from the whole of it. */
+.wn-sheet-summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.45;
+  list-style: none;
+}
+.wn-sheet-summary::-webkit-details-marker { display: none; }
+.wn-sheet-summary::before {
+  content: '▸ ';
+  opacity: 0.7;
+}
+.wn-sheet[open] > .wn-sheet-summary::before { content: '▾ '; }
+.wn-sheet-summary:focus-visible,
+.wn-sheet-remove:focus-visible {
+  outline: 2px solid var(--accent, #d4a24a);
+  outline-offset: 2px;
+}
+.wn-sheet-body {
+  padding: 0 12px 12px;
+}
+.wn-sheet-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wn-sheet-tile {
+  flex: 1 1 130px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--panel, rgba(255, 255, 255, .03));
+}
+/* Colour is the second thing these say, never the only one — the note under every
+   tile carries the same fact in words. */
+.wn-sheet-tile-good {
+  border-color: rgba(90, 200, 130, .35);
+}
+.wn-sheet-tile-bad {
+  border-color: rgba(224, 121, 106, .45);
+}
+.wn-sheet-tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-sheet-tile-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wn-sheet-tile-note {
+  font-size: 11px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-sheet-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wn-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.wn-sheet-row-over {
+  border-color: rgba(224, 121, 106, .45);
+}
+.wn-sheet-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wn-sheet-row-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wn-sheet-row-sub {
+  display: block;
+  font-size: 11px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wn-sheet-row-profit {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wn-sheet-remove {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-dim, #8b93a7);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.wn-sheet-remove:hover {
+  color: var(--danger, #e0796a);
+  border-color: rgba(224, 121, 106, .45);
+}
+.wn-sheet-empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.wn-sheet-hint {
+  margin-top: 6px;
+}
+
 @media (max-width: 860px) {
   .wn-field {
     width: calc(50% - 4px);
@@ -16851,8 +17026,17 @@ a.copilot-open-draft:hover { text-decoration: underline; }
     min-width: 0;
   }
   .wn-rung,
-  .wn-stat {
+  .wn-stat,
+  .wn-sheet-tile {
     flex: 1 1 calc(50% - 4px);
+  }
+  /* The profit and the remove button move under the lot rather than being squeezed
+     beside a title that has nowhere left to go. */
+  .wn-sheet-row {
+    flex-wrap: wrap;
+  }
+  .wn-sheet-row-main {
+    flex: 1 1 100%;
   }
   .wn-say {
     font-size: 13px;

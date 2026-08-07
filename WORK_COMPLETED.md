@@ -10055,3 +10055,166 @@ wiring path but not the arithmetic underneath it, which is what the 52 new C# te
 - **`LiveBidSpeech` is called from nowhere but `Build`.** A card assembled by some future endpoint
   that does not go through the advisor would reach the screen speechless, and only an asset test
   counting two assignments would notice.
+
+---
+
+# What the show cost: the buy sheet, and the first fact on the WhatsNot screen
+
+## The question this answers
+
+Every WhatsNot session so far has answered the same question better: *what is the most I can bid on
+this?* The card gives a ceiling, the meter shows how close the bidding is to it, the lot list gives
+the twelve behind it, and one line says all of it out loud.
+
+Then the hammer falls, and the app has nothing further to say.
+
+Which leaves the two questions that actually decide whether live buying is worth doing unanswered:
+**how much have I spent tonight**, and **what is it all worth**. Both lived in the seller's head and
+in a stack of Whatnot receipts to be reconciled a week later, if ever. A night can be profitable in
+aggregate and still be losing money on the two lots somebody got carried away on, and nothing on
+this screen could tell you which night you were having while you could still change it.
+
+## What it does
+
+**🔨 Won it**, on the card, at the moment the hammer falls — and the lot lands on a buy sheet under
+the lot list:
+
+> 🧾 Tonight's buys — 9 lots won, $1,240 spent. Resells for about $2,880 — $840 profit, 67% return.
+> 2 won above the ceiling, $95 over in total.
+
+Four tiles: **spent** (all in, every lot), **resells for**, **projected profit** with the return on
+it, and **over the ceiling**. Then the rows, newest first, each with what was paid, what it is worth,
+and what it made.
+
+## The property that makes it legitimate
+
+**A won lot is not a new calculation.** `/api/whatsnot/won` takes the token, finds the comps already
+held for that lot, and runs **the same `LiveBidAdvisor.Build`** over them at the price it hammered
+at. The row's landed cost, resale price, profit and return are that card's own figures, copied.
+
+A row saying $84 profit beside a card saying $60 about one lot at one price is worse than no row at
+all — the seller acts on whichever they read last. So there is still exactly one function in this
+app that turns sold comps into money, and this is not a second one. An asset test holds the endpoint
+to `advisor.Build(...)` and to containing no `AnalyzeProductAsync`, no repository, and no `await`.
+
+That is also why it is instant. The comps are in hand; recording a win is arithmetic and a file
+write, which is the only speed a button pressed two seconds after a hammer is allowed to work at.
+
+## The number worth reading tomorrow
+
+**`CeilingAtWin` — what the app said *before* the bidding.** Twenty minutes later the comps are let
+go and there is no way back to it, so it is written down at the moment it is still knowable. The
+overpay on a row is measured against that, not against anything recomputed afterwards, which is what
+makes "2 won above the ceiling, $95 over" a fact about what happened rather than an opinion formed
+later.
+
+**A lot won above its ceiling is recorded, never refused.** The button turns red and says
+`That's $30.60 over your ceiling — it will be recorded as such`, and then records it. A discipline
+figure that only counts the lots you were disciplined on is not one.
+
+## What it refuses to claim
+
+- **A lot nothing could price is still a real spend.** It counts in `Spent` — the figure the bank
+  statement will agree with — and its resale side is *absent*, not zero. A zero would drag every
+  total down as though the thing were established to be worthless.
+- **The return is a return on the money that has evidence behind it.** `PricedSpend`, not `Spent`.
+  Dividing by the whole spend would report a lower number than the evidence supports and dress it
+  up as caution.
+- **Unknown is not bad.** An unpriced lot is not counted as a losing one. Counting unknown as bad is
+  how a screen teaches a seller to stop reading it.
+- **No ceiling at all is not an overpay of the whole bid.** A card with no maximum has no line to be
+  over, and "$180 past it" would invite the reading that some smaller bid was fine.
+- **A rate with no denominator is not carried onto the row.** The card shows a dash for it; the row
+  stores null.
+- **A night with nothing priced says nothing about resale or return** — not "$0, 0%".
+
+## Every figure rounds against the seller
+
+Same rule as `LiveBidSpeech`, and for the same reason: what was paid rounds **up**, what it is worth
+rounds **down**, profit rounds **down**, a loss rounds **up**, an overpay rounds **up**. A loss is
+stated as `$41 down` rather than `-$40 profit` — a negative profit is a sentence a reader can take
+the wrong way at a glance, which is the only way this line is ever read.
+
+## The words about money are the server's
+
+`LiveBuySheet.Say` writes the night's sentence and `SayRow` writes each lot's, both next to the
+arithmetic they describe. The browser paints `sheet.say` verbatim into the collapsed summary — which
+is the only part of this most sellers will read — and uses `lot.say` as each row's accessible name.
+Nothing about the night's money is assembled in JavaScript.
+
+**Nor is there a second live region.** What was recorded and what the night now stands at both reach
+`#wn-say`, the one line above the card, because a seller who pressed the button from the keyboard
+with a stream running is not looking down here. The panel itself carries no `aria-live` and no
+`role="status"`, and a test pins that.
+
+**And the sentence is rebuilt from the numbers on load**, never trusted from the file — a row
+hand-edited, or written by an older build, must not put words on screen its own figures no longer
+support.
+
+## Persisted, because a show is longer than a session
+
+A live sale runs for hours. An app restarted in the middle of one coming back to an empty panel
+would quietly understate what has already been spent, which is the one thing this feature exists to
+get right. The sheet is written through `AtomicFile` under `AppPaths.DataHome` and read on every
+open of the tab.
+
+**It is a buy record and never a comp source.** These are prices *this* seller paid at auction on
+one night; letting them near the pricing pipeline would be the app quoting itself, and nothing would
+fail loudly — every estimate would simply drift. A test asserts `LiveBuySheet.cs` names no
+repository, no matcher and no estimator.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/lots` and `/api/whatsnot/embed-check` are all still registered
+and asserted to be, along with the 90ms re-price debounce, the sequence guard, the lot run and the
+spoken line. This session added an endpoint group and a panel and changed none of them.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | New — the win, the won lot, the sheet and its totals |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | New — the ledger, the arithmetic, the two sentences, the atomic file |
+| `ING eBay AutoLister/Program.cs` | `LiveBuySheet` registered; `POST /api/whatsnot/won`, `GET /api/whatsnot/sheet`, `POST /api/whatsnot/sheet/remove`, `POST /api/whatsnot/sheet/clear` |
+| `ING eBay AutoLister/wwwroot/index.html` | `#wn-sheet` panel under the lot list; `app.js?v=121`, `style.css?v=104` |
+| `ING eBay AutoLister/wwwroot/app.js` | `🔨 Won it` on the card (delegated, because the card is replaced whole), `wnRenderSheet` / `wnRecordWin` / `wnLoadSheet` / `wnRemoveWin` / `wnClearSheet`, the sheet read on open |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-won*`, `.wn-sheet*`, and the 620px fold |
+| `ING eBay AutoLister.Tests/LiveBuySheetTests.cs` | New — 29 tests, led by the row being the card's own money |
+| `ING eBay AutoLister.Tests/WhatsNotBuySheetAssetTests.cs` | New — 24 tests holding the screen and the endpoints to what they refuse to do |
+| `whatsnot_buy_sheet.png`, `whatsnot_buy_sheet_rows.png` | The card with Won it above the ceiling, and the sheet with its totals and rows |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,483 passed**, 0 failed, 0 skipped (53 new; the previous commit was 3,430) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the endpoints mocked in the shape the C# returns) | **25/25 checks.** The sheet is read on open and says "nothing won yet". A priced card grows **🔨 Won it at $120.00**; pressing it posts to `/api/whatsnot/won`, opens the panel, and renders four tiles and one row. The collapsed head is the server's sentence character-for-character, the row's `aria-label` is the server's row sentence, and `#wn-say` carries both. Raising the bid to $210 turns the button red — "That's $30.60 over your ceiling" — and winning it marks the row, counts the overpay tile and adds "1 won above the ceiling, $31 over in total". Removing a row posts to `/sheet/remove`. A full reload comes back to the money. Nothing in the WhatsNot screen overflows at 560px. **No page errors.** |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked — which exercises the whole render, wiring and
+persistence-on-reload path but not the arithmetic underneath it, which is what the 53 new C# tests
+are for. The page-level 49px of horizontal overflow the harness measures at 560px comes from the
+home screen's setup wizard behind the overlay and predates this session.
+
+## Known limits
+
+- **A win needs comps that are still held.** Twenty minutes after pricing a lot, the way to record
+  it is to press Price it and then Won it. That is the honest version — the alternative is a row
+  with an invented resale price on it — but a seller who wins four lots and records them at the end
+  of the show will re-read eBay four times.
+- **Nothing knows what the lot actually sold for.** Every resale figure here is a projection off
+  sold comps. The sheet says what tonight *should* be worth; it does not follow the item through to
+  a real sale, and until it does the projected profit is exactly as good as the comps under it.
+- **The won lot does not become a listing.** The obvious next step — a row that opens the listing
+  editor with the title, the comps-derived asking price and the cost basis already in it — is not
+  here. It is also where the rest of the money is.
+- **The sheet is one show, not a history.** Clear ends it and there is no archive, so a seller who
+  wants last Thursday's numbers has to have written them down. The action log records each win.
+- **The rows keep the settings they were won at**, like the lot list — changing shipping or the
+  buyer's premium afterwards does not move a row, which is correct (it was a real cost) but means
+  a mistyped premium can only be fixed by removing the row and recording it again.
+- **`Clear` is confirmed by `confirm()`**, the browser's own dialog, rather than by anything this
+  app styles.

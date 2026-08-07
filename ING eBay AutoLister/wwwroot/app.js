@@ -9767,6 +9767,10 @@
     setActiveNavItem('whatsnot');
     markWorkspaceTabOpen('whatsnot');
     wnRenderRecents();
+    // What has already been spent tonight. Read on every open rather than once, because the
+    // sheet outlives the session — a restart mid-show must come back to the money, not to a
+    // blank panel that reads as a night nobody has bought anything on.
+    wnLoadSheet();
     // Load the feed on first open; a frame already showing a live stream is left alone on
     // return so tabbing away and back doesn't tear down what the seller is watching.
     const frame = $('wn-frame');
@@ -10091,6 +10095,28 @@
       </div>`;
     })() : '';
 
+    // ── The hammer ─────────────────────────────────────────────────────────────
+    // Only while the comps are held, because that is what the server records a win
+    // against: a win with no sold history behind it would be a real spend sitting
+    // next to an invented resale price, and the night's totals would carry it.
+    //
+    // The label tracks the bid box, so the button always says the price it is about
+    // to write down. Past the ceiling it says so — a lot can be won above it, and
+    // the sheet's whole discipline half depends on that being recorded rather than
+    // refused.
+    const overCeiling = c.bidWasKnown && c.maxBid > 0 && c.currentBid > c.maxBid;
+    const won = c.token ? `
+      <div class="wn-won">
+        <button type="button" data-won="1"
+                class="btn wn-won-btn${overCeiling ? ' wn-won-btn-over' : ''}"
+                title="Record this lot as won at the bid above — it goes on tonight's buy sheet">
+          🔨 Won it${c.bidWasKnown ? ` at ${moneyExact(c.currentBid)}` : ''}
+        </button>
+        <span class="wn-won-note">${overCeiling
+          ? `That's ${moneyExact(c.currentBid - c.maxBid)} over your ceiling — it will be recorded as such.`
+          : 'Costed at the bid you paid, against these same comps. No eBay read.'}</span>
+      </div>` : '';
+
     // Where the resale price came from, and when. A re-priced card is the same
     // computation as a fresh one — what it is not is a fresh READ, and the seller
     // has to be able to see the difference without being told twice.
@@ -10127,6 +10153,7 @@
       </div>
       ${ladder}
       ${meter}
+      ${won}
       <div class="wn-stats">
         ${wnStat('eBay resale', money2(c.resalePrice), c.medianPrice ? `median ${money(c.medianPrice)}` : '')}
         ${wnStat('Middle half of sales', spread, 'where these actually land')}
@@ -10144,6 +10171,189 @@
         ${c.soldSearchUrl ? `<a href="${esc(c.soldSearchUrl)}" target="_blank" rel="noopener noreferrer">See the sold listings on eBay ↗</a> · ` : ''}
         answered in ${Math.max(1, Math.round(c.elapsedMs || 0))} ms
       </p>`;
+  }
+
+  // ── WhatsNot: the show's buy sheet ───────────────────────────────────────────
+  // Everything above stops at the hammer. This is what happened after it.
+  //
+  // Pressing Won it sends the token and the hammer price to /api/whatsnot/won, which
+  // re-asks the SAME card at that price against the comps already held and writes the
+  // row. So nothing here computes money: the row's cost, resale, profit and return are
+  // the card's own figures, and the two sentences this screen speaks about a win —
+  // the row's and the night's — are both written on the server, next to the
+  // arithmetic they describe. See Services/LiveBuySheet.cs.
+  //
+  // There is no second live region for any of it. The one line above the card says
+  // what was recorded and what the night now stands at, because a seller who pressed
+  // Won it from the keyboard with a stream running is not looking down here.
+
+  function wnSheetTile(label, value, note, mod) {
+    return `<div class="wn-sheet-tile${mod ? ` wn-sheet-tile-${mod}` : ''}">` +
+           `<div class="wn-sheet-tile-label">${esc(label)}</div>` +
+           `<div class="wn-sheet-tile-value">${esc(value)}</div>` +
+           `<div class="wn-sheet-tile-note">${esc(note || '')}</div></div>`;
+  }
+
+  function wnRenderSheet(sheet) {
+    const head = $('wn-sheet-head');
+    const totals = $('wn-sheet-totals');
+    const rows = $('wn-sheet-rows');
+    if (!head || !totals || !rows) return;
+
+    const lots = sheet?.lots || [];
+
+    // The collapsed line is the server's own sentence, painted verbatim — the same rule
+    // the card's line follows. A summary assembled here out of spent and profit would be
+    // a second opinion about the night's money, and it would be the one on screen while
+    // the panel is shut.
+    head.textContent = lots.length ? (sheet.say || '') : 'nothing won yet';
+
+    if (!lots.length) {
+      totals.innerHTML = '';
+      rows.innerHTML = '<p class="wn-sheet-empty">Nothing recorded yet. When you win a lot, press ' +
+        '<strong>🔨 Won it</strong> on its card and it lands here, costed against the comps it was priced on.</p>';
+      return;
+    }
+
+    const roi = sheet.projectedRoiPercent == null ? '—' : `${sheet.projectedRoiPercent.toFixed(0)}%`;
+    totals.innerHTML =
+      wnSheetTile('Spent', money(sheet.spent),
+        `${sheet.lotCount} lot${sheet.lotCount === 1 ? '' : 's'}, everything in`) +
+      wnSheetTile('Resells for', money(sheet.projectedResale),
+        sheet.unpricedCount > 0
+          ? `${sheet.unpricedCount} lot${sheet.unpricedCount === 1 ? '' : 's'} nothing could price`
+          : 'on the comps behind each lot') +
+      wnSheetTile('Projected profit', money(sheet.projectedProfit),
+        `${roi} return on the priced lots`, sheet.projectedProfit >= 0 ? 'good' : 'bad') +
+      wnSheetTile('Over the ceiling', money(sheet.overpaidBy),
+        sheet.overpaidCount > 0
+          ? `${sheet.overpaidCount} lot${sheet.overpaidCount === 1 ? '' : 's'} won above the app's maximum`
+          : 'every lot stayed inside its ceiling',
+        sheet.overpaidCount > 0 ? 'bad' : 'good');
+
+    // A real list, so a screen reader says "3 of 9" rather than reading nine unnumbered
+    // paragraphs. Each row's accessible name is the server's own sentence about it.
+    rows.innerHTML = `<ul class="wn-sheet-list">${lots.map(l => {
+      const when = l.wonAtUtc
+        ? new Date(l.wonAtUtc).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : '';
+      const profit = l.projectedProfit == null ? '—' : moneyExact(l.projectedProfit);
+      const sub = [
+        `paid ${moneyExact(l.winningBid)}${l.landedCost > l.winningBid ? `, ${moneyExact(l.landedCost)} all in` : ''}`,
+        l.resalePrice == null ? 'no resale figure' : `resells ${money(l.resalePrice)}`,
+        l.projectedRoiPercent == null ? '' : `${l.projectedRoiPercent.toFixed(0)}% return`,
+        l.paidOverCeiling > 0 ? `${moneyExact(l.paidOverCeiling)} over the ceiling` : '',
+        when,
+      ].filter(Boolean).join(' · ');
+
+      return `<li class="wn-sheet-row${l.paidOverCeiling > 0 ? ' wn-sheet-row-over' : ''}"
+                  aria-label="${esc(l.say || l.item)}">
+        <span class="wn-sheet-row-main">
+          <span class="wn-sheet-row-title">${esc(l.item)}</span>
+          <span class="wn-sheet-row-sub">${esc(sub)}</span>
+        </span>
+        <span class="wn-sheet-row-profit${(l.projectedProfit ?? 0) < 0 ? ' wn-neg' : ''}">${esc(profit)}</span>
+        <button type="button" class="wn-sheet-remove" data-unwin="${esc(l.id)}"
+                title="Take this lot off the sheet"
+                aria-label="Remove ${esc(l.item)} from tonight's buys">✕</button>
+      </li>`;
+    }).join('')}</ul>`;
+
+    rows.querySelectorAll('[data-unwin]').forEach(el => {
+      el.addEventListener('click', () => wnRemoveWin(el.dataset.unwin));
+    });
+  }
+
+  /// Read when the tab opens. A show runs for hours and the app may be restarted in the
+  /// middle of one; coming back to an empty sheet would quietly understate what has
+  /// already been spent, which is the one thing this panel exists to get right.
+  async function wnLoadSheet() {
+    try {
+      const sheet = await fetch('/api/whatsnot/sheet').then(r => (r.ok ? r.json() : null));
+      if (sheet) wnRenderSheet(sheet);
+    } catch {
+      // Offline or mid-restart. The panel keeps whatever it last showed rather than
+      // announcing an empty night.
+    }
+  }
+
+  async function wnRecordWin() {
+    // No held comps, so the server has nothing to cost the win against and will say so.
+    // Said here first because the answer is the same and this way it costs no round trip.
+    if (!wnToken) {
+      wnSayLine('Those comps have been let go — press Price it to read eBay again, then record the win.');
+      return;
+    }
+
+    const bid = wnNumber('wn-bid');
+    if (!bid || bid <= 0) {
+      wnSayLine('What did it go for? Put the hammer price in the bid box, then press Won it.');
+      $('wn-bid')?.focus();
+      return;
+    }
+
+    const btn = $('wn-card')?.querySelector('[data-won]');
+    const hadFocus = document.activeElement === btn;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+
+    try {
+      const { res, body } = await safePost('/api/whatsnot/won', {
+        token: wnToken,
+        title: wnTokenItem,
+        winningBid: bid,
+        shippingCost: wnNumber('wn-ship'),
+        buyerFeePercent: wnNumber('wn-fee'),
+        targetRoiPercent: wnNumber('wn-target'),
+      });
+
+      if (!res.ok) {
+        const headline = body.error || "That didn't record.";
+        const whatToDo = body.failure?.whatToDo || '';
+        wnSayLine(whatToDo ? `${headline} ${whatToDo}` : headline);
+        return;
+      }
+
+      wnRenderSheet(body);
+      $('wn-sheet')?.setAttribute('open', '');
+      // Both halves of this are the server's own sentences: what was just written down,
+      // and what the night now stands at.
+      const just = (body.lots || [])[0];
+      wnSayLine(`${just?.say ? `${just.say} ` : ''}${body.say || ''}`.trim());
+    } catch (err) {
+      wnSayLine(errorText(err, "That didn't record."));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        // The card is not re-rendered by a win, so this is the same button — but focus is
+        // handed back the same way Price it hands it back, because a disabled focused
+        // button drops the keyboard to <body> mid-show.
+        if (hadFocus) btn.focus();
+      }
+    }
+  }
+
+  async function wnRemoveWin(id) {
+    if (!id) return;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/sheet/remove', { id });
+      if (res.ok) {
+        wnRenderSheet(body);
+        // The keyboard was on a button that no longer exists. Hand it somewhere real.
+        $('wn-sheet-clear')?.focus();
+      }
+    } catch { /* the row is still on screen and still true */ }
+  }
+
+  /// The one button here that throws away something no other press can bring back, so it
+  /// asks first — and says what it is about to discard, in the night's own numbers.
+  async function wnClearSheet() {
+    const head = $('wn-sheet-head')?.textContent || '';
+    if (!confirm(`Clear tonight's buy sheet?\n\n${head}\n\nThis cannot be undone.`)) return;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/sheet/clear', {});
+      if (res.ok) wnRenderSheet(body);
+    } catch { /* nothing was cleared, and the sheet on screen is still the truth */ }
   }
 
   // ── WhatsNot: the show's lot list ────────────────────────────────────────────
@@ -10440,6 +10650,14 @@
     // priced at, and opening one re-prices that lot alone off its held comps.
     on('wn-lots-price', 'click', wnPriceLotList);
     on('wn-lots-clear', 'click', wnClearLotList);
+
+    // The buy sheet. Won it lives inside the card, which is replaced whole every time the
+    // bid moves — so the click is caught on the card itself rather than on a button that
+    // stops existing two seconds after it was bound.
+    $('wn-card')?.addEventListener('click', e => {
+      if (e.target.closest('[data-won]')) wnRecordWin();
+    });
+    on('wn-sheet-clear', 'click', wnClearSheet);
 
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when

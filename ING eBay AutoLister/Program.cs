@@ -467,6 +467,12 @@ builder.Services.AddSingleton<LiveBidBoard>();
 // turns X-Frame-Options / CSP frame-ancestors into a sentence.
 builder.Services.AddSingleton<FrameEmbedPolicy>();
 
+// What the show cost and what it is worth. The card stopped at the hammer; this is the other end of
+// the same decision — a won lot is the SAME card, built by the same advisor against the same held
+// comps, at the price it actually hammered at. Persisted, because a live sale outlasts a session
+// and the record of $1,200 already spent is not something a seller can type back in.
+builder.Services.AddSingleton<LiveBuySheet>();
+
 // ── Deal Radar: the board that reads itself ───────────────────────────────────
 // Every sourcing screen above is a button. This is the same local-arbitrage scan, saved with a
 // profit bar on it and run on a human cadence, so the $400 miner three miles away doesn't need
@@ -3026,6 +3032,86 @@ app.MapPost("/api/whatsnot/rebid", (
     // one screen's re-prices is a log nobody can find anything else in. The fresh price above is
     // logged, and it is the one that read eBay.
     return Results.Ok(card);
+});
+
+// ── WhatsNot: won it ──────────────────────────────────────────────────────────────────────────
+// The hammer falls. Everything above this line was advice; this is the first thing on the screen
+// that is a fact, and it is the one the seller's bank account will agree with.
+//
+// A won lot is NOT a new calculation. It is the same card — same LiveBidAdvisor.Build, same held
+// comps, same break-even — asked again at the price it actually hammered at. That is what stops the
+// buy sheet becoming a second opinion about money: a row saying $84 profit and a card saying $60
+// about the same lot at the same price is worse than no row at all.
+//
+// It also costs no eBay read, which is what lets it happen mid-show. The comps are already in hand;
+// this is arithmetic and a file write.
+app.MapPost("/api/whatsnot/won", (
+    LiveWinRequest req, LiveBidAdvisor advisor, LiveBidBoard board, LiveBuySheet sheet,
+    FeeProfile feeProfile, CredentialsStore store, LicenseService license, ActionLog log) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var bid = req.WinningBid ?? 0m;
+    if (bid <= 0m)
+    {
+        return BadInputJson("What did it go for?",
+            "A won lot with no price is a spend the sheet cannot count.",
+            "Put the hammer price in the bid box and press Won it again.");
+    }
+
+    // The comps are required, not optional. A win recorded without the sold history behind it would
+    // be a real spend sitting next to an invented resale price — and the totals would carry it.
+    var quote = board.Find(req.Token);
+    if (quote is null)
+    {
+        return BadInputJson("Those comps have been let go",
+            "The sold history behind this card is no longer held — a card is kept for " +
+            $"{LiveBidBoard.HoldFor.TotalMinutes:0} minutes, or until {LiveBidBoard.Capacity} newer ones replace it.",
+            "Press Price it to read eBay again, then record the win.");
+    }
+
+    // Same guard as the re-price: a token records the lot it was issued for and no other.
+    var typed = (req.Title ?? "").Trim();
+    if (typed.Length > 0 && !string.Equals(typed, quote.Item, StringComparison.OrdinalIgnoreCase))
+    {
+        return BadInputJson("That's a different item",
+            $"These comps were read for \"{quote.Item}\".",
+            "Press Price it to read eBay for what you've typed, then record the win.");
+    }
+
+    var card = advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category);
+    var result = sheet.Record(card);
+
+    log.Add("Research", "Live lot won",
+        $"\"{quote.Item}\" at {card.CurrentBid:C} ({card.LandedCostNow:C} all in); " +
+        $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")}; " +
+        $"ceiling was {card.MaxBid:C}{(card.CurrentBid > card.MaxBid && card.MaxBid > 0m ? " — OVER" : "")}; " +
+        $"sheet now {result.LotCount} lot(s), {result.Spent:C} spent");
+
+    return Results.Ok(result);
+});
+
+// The sheet as it stands. Read when the tab opens, so a restart mid-show comes back to the money
+// already spent rather than to an empty screen.
+app.MapGet("/api/whatsnot/sheet", (LiveBuySheet sheet, CredentialsStore store, LicenseService license) =>
+    TrialGuard(store, license) ?? Results.Ok(sheet.Read()));
+
+// Outbid after all, or a mistyped price. One row, by its own id.
+app.MapPost("/api/whatsnot/sheet/remove", (
+    LiveSheetRowRequest req, LiveBuySheet sheet, CredentialsStore store, LicenseService license) =>
+    TrialGuard(store, license) ?? Results.Ok(sheet.Remove(req.Id)));
+
+// The show ended. The next win starts a new sheet — the screen asks first, because this is the only
+// button here that throws away something the seller cannot get back by pressing anything.
+app.MapPost("/api/whatsnot/sheet/clear", (
+    LiveBuySheet sheet, ActionLog log, CredentialsStore store, LicenseService license) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+    var before = sheet.Read();
+    var cleared = sheet.Clear();
+    if (before.LotCount > 0)
+        log.Add("Research", "Buy sheet cleared", $"{before.LotCount} won lot(s), {before.Spent:C} spent");
+    return Results.Ok(cleared);
 });
 
 // ── WhatsNot: the show's lot list ─────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=103" />
+  <link rel="stylesheet" href="style.css?v=104" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2801,6 +2801,38 @@
                 instantly, off comps already in hand.
               </p>
               <div id="wn-lots-rows" class="wn-lot-rows"></div>
+            </div>
+          </details>
+
+          <!-- ── The show's buy sheet ──────────────────────────────────────────────────────
+               Everything above this stops at the hammer. This is what happened after it: the
+               lots actually won, what they cost all-in, and what the same sold comps say they
+               are worth — so "did tonight make money?" is answered while there is still time
+               to change the answer.
+               A won lot is not a second calculation. Pressing Won it re-asks the SAME card, at
+               the price it hammered at, against the comps already held — so a row here and the
+               card it came from cannot disagree, and recording a win costs no eBay read.
+               The sheet is kept on disk: a show runs for hours and an app restarted in the
+               middle of one must not lose the record of what has already been spent. -->
+          <details id="wn-sheet" class="wn-sheet">
+            <summary class="wn-sheet-summary">
+              🧾 Tonight's buys — <span id="wn-sheet-head">nothing won yet</span>
+            </summary>
+            <div class="wn-sheet-body">
+              <div id="wn-sheet-totals" class="wn-sheet-totals"></div>
+              <div id="wn-sheet-rows" class="wn-sheet-rows"></div>
+              <div class="wn-sheet-actions">
+                <button id="wn-sheet-clear" class="btn btn-ghost" type="button"
+                        title="End the show — the next win starts a new sheet">Clear the sheet</button>
+              </div>
+              <p class="opp-hint wn-sheet-hint">
+                Press <strong>🔨 Won it</strong> on a card the moment the hammer falls and the lot
+                lands here, costed at the bid you actually paid — bid, buyer's premium and shipping
+                all in — against the same eBay sold comps the ceiling came from. The
+                <strong>over the ceiling</strong> figure is the one worth reading tomorrow: it is
+                measured against the maximum this app gave you <em>before</em> the bidding, which is
+                the only moment that number is still honest. Clear it when the show ends.
+              </p>
             </div>
           </details>
 
@@ -5828,6 +5860,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=120"></script>
+  <script src="app.js?v=121"></script>
 </body>
 </html>
