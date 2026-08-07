@@ -909,4 +909,96 @@ public class LiveBidAdvisorTests
         Assert.Equal(1, single.Units.Count);
         Assert.Equal(Card(Analysis()).MaxBid, single.MaxBid);
     }
+
+    // ── What the card says it searched for ────────────────────────────────────
+    // Five statistics stand on a keyword lookup the seller never sees. On a live show the name and
+    // the search stopped being the same string, so the card carries both. See LiveSearchQuery.
+
+    [Fact]
+    public void Every_card_says_what_the_sold_search_asked_for()
+    {
+        var card = Card(Analysis());
+
+        Assert.Equal(Product, card.Search.Typed);
+        Assert.Equal(Product, card.Search.Query);
+        Assert.False(card.Search.Changed);
+        // And it is what PricedAs has always claimed to be: the title the lookup ran against.
+        Assert.Equal(card.Search.Query, card.PricedAs);
+    }
+
+    [Fact]
+    public void A_card_built_without_a_search_still_cannot_claim_one_that_nothing_would_run()
+    {
+        // The advisor is handed the terms by the endpoint. Called without them it falls back to what
+        // the builder WOULD ask for, rather than to the typed name — a card claiming a search of
+        // "🔥3x Antminer S9 NO RESERVE" would be describing a lookup that returns nothing.
+        var card = Advisor.Build("🔥3x " + Product + " NO RESERVE", Analysis(),
+            new LiveBidRequest { Title = "🔥3x " + Product + " NO RESERVE" }, Fees, nowUtc: Now);
+
+        Assert.Equal(Product, card.Search.Query);
+        Assert.True(card.Search.Changed);
+        Assert.Contains(card.Search.Dropped, d => d.Text == "NO RESERVE");
+    }
+
+    [Fact]
+    public void The_search_the_endpoint_ran_is_the_search_the_card_reports()
+    {
+        // The endpoint decides what to ask (and whether to widen); the card only reports it. A card
+        // that re-derived the query would eventually disagree with the lookup that produced its
+        // comps, which is the one thing on this screen nothing can check.
+        var asked = LiveSearchQuery.Exact("🔥 " + Product + " NO RESERVE");
+        var card = Advisor.Build("🔥 " + Product + " NO RESERVE", Analysis(),
+            new LiveBidRequest { Title = "🔥 " + Product + " NO RESERVE" }, Fees, nowUtc: Now, search: asked);
+
+        Assert.Equal(asked.Query, card.Search.Query);
+        Assert.True(card.Search.AskedForExactly);
+        Assert.Equal(asked.Query, card.PricedAs);
+    }
+
+    [Fact]
+    public void A_widened_search_is_a_warning_and_not_a_footnote()
+    {
+        // The ceiling is then a real ceiling for a slightly different thing, which changes what
+        // every other number on the card means. It goes at the TOP of the warnings for that reason.
+        var wide = LiveSearchQuery.Widen(LiveSearchQuery.Build("Pokemon 151 Ultra Premium Collection sealed"))!;
+        var card = Advisor.Build("Pokemon 151 Ultra Premium Collection sealed", Analysis(),
+            new LiveBidRequest { Title = "Pokemon 151 Ultra Premium Collection sealed" }, Fees,
+            nowUtc: Now, search: wide);
+
+        Assert.True(card.Search.Widened);
+        Assert.Contains("Pokemon 151 Ultra", card.Warnings[0], StringComparison.Ordinal);
+        Assert.Contains("not for the whole name", card.Warnings[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_card_that_was_not_widened_says_nothing_about_widening()
+    {
+        Assert.DoesNotContain(Card(Analysis()).Warnings,
+            w => w.Contains("widened", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Nothing_matched_names_the_words_that_matched_nothing()
+    {
+        // "No sold history matched this item" is a diagnosis with no next move. The words the search
+        // actually used are one the seller can act on in a single press.
+        var card = Advisor.Build("🔥3x " + Product + " NO RESERVE", analysis: null,
+            new LiveBidRequest { Title = "🔥3x " + Product + " NO RESERVE" }, Fees, nowUtc: Now);
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Contains(Product, card.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("NO RESERVE", card.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_sold_search_link_opens_the_search_that_was_actually_run()
+    {
+        // The bidder's own eyes are the last check on a thin card, and a link that reproduces the
+        // query that found nothing is a link that shows them an empty eBay page.
+        var card = Advisor.Build("🔥3x " + Product + " NO RESERVE", Analysis(),
+            new LiveBidRequest { Title = "🔥3x " + Product + " NO RESERVE" }, Fees, nowUtc: Now);
+
+        Assert.DoesNotContain("RESERVE", card.SoldSearchUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Antminer", card.SoldSearchUrl, StringComparison.OrdinalIgnoreCase);
+    }
 }

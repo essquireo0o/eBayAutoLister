@@ -64,9 +64,14 @@ public sealed class LiveBidBoard
     /// on screen, and re-reading two SQLite tables for every keystroke of a climbing bid spends the
     /// seconds this whole screen exists to save.
     /// </param>
+    /// <param name="search">
+    /// What the sold search asked eBay for. Held with the comps because it is the question they are
+    /// the answer to — a re-price that forgot it would print a widened card as though the whole
+    /// name had matched.
+    /// </param>
     public LiveBidQuote Hold(
         string item, MarketAnalysisResult analysis, ResaleCategory? category,
-        DateTime? nowUtc = null, OwnSalesEvidence? own = null)
+        DateTime? nowUtc = null, OwnSalesEvidence? own = null, LiveSearchTerms? search = null)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var quote = new LiveBidQuote
@@ -76,6 +81,7 @@ public sealed class LiveBidBoard
             Analysis = analysis,
             Category = category,
             Own = own,
+            Search = search,
             PricedAtUtc = now,
         };
 
@@ -154,6 +160,13 @@ public sealed class LiveBidQuote
     /// every keystroke. Null when nothing read it.
     /// </summary>
     public OwnSalesEvidence? Own { get; init; }
+
+    /// <summary>
+    /// The search these comps came back from, including whether it had to be widened to find any.
+    /// Null only for a quote held before this was recorded, in which case the card falls back to
+    /// what the typed name would be searched as.
+    /// </summary>
+    public LiveSearchTerms? Search { get; init; }
 
     /// <summary>When the comps were read — the age printed on every re-priced card.</summary>
     public DateTime PricedAtUtc { get; init; }

@@ -70,13 +70,16 @@ public class WhatsNotOwnRecordAssetTests
     {
         // The bid climbs every two or three seconds. Re-reading two SQLite tables per keystroke to
         // arrive at a history that cannot have changed is the cost this screen refuses to pay.
-        Assert.Contains("board.Hold(title, analysis, category, nowUtc: null, own: own)", Program, StringComparison.Ordinal);
+        // Pinned as prefixes. What ELSE is held with the comps grows every session — the search
+        // that found them, the category, the seller's own book — and a pin that fails on every
+        // addition is a pin that gets "fixed" by deletion, taking the property with it.
+        Assert.Contains("board.Hold(title, analysis, category, nowUtc: null, own: own", Program, StringComparison.Ordinal);
         Assert.Contains("public OwnSalesEvidence? Own { get; init; }", Board, StringComparison.Ordinal);
 
         // And both of the endpoints that price against held comps pass it back in.
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own)",
+        Assert.Contains("quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own",
             Program, StringComparison.Ordinal);
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own)",
+        Assert.Contains("quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own",
             Program, StringComparison.Ordinal);
     }
 

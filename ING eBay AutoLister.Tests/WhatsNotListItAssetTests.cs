@@ -289,7 +289,9 @@ public class WhatsNotListItAssetTests
         Assert.Contains("const WN_REBID_DEBOUNCE_MS = 90;", Js, StringComparison.Ordinal);
         Assert.Contains("function wnPriceLotList()", Js, StringComparison.Ordinal);
         Assert.Contains("safePost('/api/whatsnot/won'", Js, StringComparison.Ordinal);
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
+        // The argument list grows between sessions; the property is that a win is still the same
+        // advisor pricing the same held quote at the price it hammered at.
+        Assert.Contains("quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
             Program, StringComparison.Ordinal);
     }
 

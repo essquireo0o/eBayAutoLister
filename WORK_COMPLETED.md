@@ -11262,3 +11262,197 @@ for.
 - **The cash-floor-once judgement is a judgement.** It is argued from what the break-even already
   charges per unit, and it is the difference between a $219 ceiling and a $399 one on the example
   above. A seller who thinks three listings deserve three times the floor has no setting for it.
+
+---
+
+# The question the card never showed you: what the sold search actually asked eBay for
+
+## The question this answers
+
+Seven sessions have made the live card faster, better-named, better-evidenced and correctly priced
+for a lot of three. Every one of them improved an **answer**. This one is about the **question**,
+which has been asked wrong on a whole class of lots since the first session, and asked wrong in the
+one way nothing on the screen could show.
+
+The comp lookup behind every number on that card is a keyword search against the hosted sold-comps
+database, and that search is a **boolean AND**: every word in the query has to appear in a sold
+listing's title. What the seller types is what a live host just said, which is this:
+
+> **🔥3x Bitmain Antminer S9 13.5TH — NO RESERVE!! ships free 📦**
+
+No eBay listing in history contains the words *NO RESERVE* and *ships free* and *3x* and *Antminer*.
+So the search returns nothing, the card says **CAN'T PRICE IT**, and the seller — who has about
+eight seconds — reads that as "this thing has no market". It has a market. Three of them just sold
+this week. The question was unanswerable, and the card had no way to say which of those two it was.
+
+The strip is on every card now:
+
+> **SEARCHED EBAY FOR** **Bitmain Antminer S9 13.5TH**
+> ~~3x~~  ~~NO RESERVE~~  ~~ships free~~  ~~🔥—!📦~~
+> *Search my exact words instead*
+
+## What it does
+
+`Services/LiveSearchQuery.cs` takes the words that describe the **sale** out of the query and keeps
+every word that describes the **item**. What went, and why, is on the card as a struck-through chip
+with the reason on it, and one press puts the typed name back.
+
+| Taken out | Because |
+|---|---|
+| `3x`, `(4)`, `LOT OF 5`, `8 pcs` | The ceiling is already for all of them — `LiveLotSize` counted it. Asking eBay for a sold title containing "3x" as well is asking twice |
+| `NO RESERVE`, `going once`, `starting at $1`, `giveaway`, `@handle` | About the sale |
+| `free shipping`, `ships free`, `no returns` | About the seller |
+| `Lot 12:`, `Item #4` | About tonight's running order |
+| 🔥 📦 `!!` `•` | Decoration, counted as one chip rather than eleven |
+
+## The asymmetry the vocabulary is built around
+
+The two mistakes cost completely different things, and the whole design falls out of that:
+
+| | What it costs |
+|---|---|
+| Dropping a word that mattered | The comps are for a slightly different thing and the price is **quietly** wrong. Nothing on screen says so |
+| Keeping a word that didn't | The search returns nothing and the card says **CAN'T PRICE IT** — loudly, where the seller can see it and press the button |
+
+The recoverable failure is the loud one, so this drops **conservatively**. Condition, completeness
+and authenticity are never touched — *sealed*, *graded*, *PSA 10*, *for parts*, *tested*, *NIB*,
+*vintage*, *authentic* are what decide which end of the price spread a thing lands on, and a search
+that dropped them would compare a sealed box to an opened one and call the difference profit. Eight
+of them are pinned by a test that asserts the query comes back **character-for-character identical**
+to what was typed.
+
+Two words were taken back out of the hype vocabulary after asking what a live feed actually sells:
+
+- **`hot`** — Hot Wheels is one of the biggest categories on Whatnot.
+- **`fire`** — Amazon Fire, Fire Emblem.
+
+The 🔥 that means the same thing is a symbol and is dropped as decoration; the words are product
+names and are kept. `set of` goes and a bare `set` stays, because a chess set and a drum set are
+products.
+
+And the property that makes the whole thing checkable in the two seconds available: **no word
+appears in the query that the seller did not type.** This only ever removes. A cleaner that could
+add or reorder words would be one you have to read the whole of, rather than diff against what you
+typed — and there is a test that asserts exactly that, word by word.
+
+## When the whole name matches nothing anyway
+
+A cleaned name is still an AND, and a long one still misses:
+
+> Pokemon 151 Ultra Premium Collection sealed English 2024
+
+`LiveSearchQuery.Widen` cuts it back to its first three identifying words — **once**, only when the
+first search came back with fewer comps than the app will bid on, and only kept if it actually found
+more. That is a real trade made in one direction, **evidence for precision**, so the card says so in
+three places: a `WIDENED` tag beside the query, the sentence under it, and the **first** warning on
+the card — above the money, because it changes what every number under it means.
+
+> These comps are for "Pokemon 151 Ultra", not for the whole name on screen — the full name matched
+> nothing that has sold. They are the right ballpark and not necessarily the right configuration, so
+> read them before you trust the ceiling.
+
+The app's own evidence grading does the rest without being asked: comps that no longer carry the
+model token come back identity-unverified, `GradeEvidence` drops the tier, and the badge goes amber
+by itself. The widening costs a second lookup **on the thin path only** — a card that already found
+enough never makes it — and it is refused entirely on a name that is already three words, because a
+two-word query would price an S19j Pro off "Antminer".
+
+## The undo, and why it is scoped to the lot
+
+Anything the app quietly edits, the seller has to be able to un-edit. **Search my exact words
+instead** re-reads eBay with the typed name verbatim; the button then offers to take the auction
+wording back out again.
+
+It is held as **the item it was asked for** rather than as a flag — `wnExactFor`, the same trick as
+`wnTokenItem`. A bare flag would still be on three lots later, quietly searching an unrelated name
+with the last lot's auction talk left in it, on a screen nobody re-reads between lots.
+
+## Reuse, not reinvention
+
+| Borrowed | From |
+|---|---|
+| Which words are worth matching on at all | `MarketplaceMatcher.ImportantWords` — the same stop-word list the scoring uses |
+| The count that comes out of the query | `LiveLotSize.Read`, the reader that PRICES the count. One reader, so a lot cannot be priced for three and searched as one |
+| Whether a search found enough to price on | `LiveBidAdvisor.CompCountOf` — extracted, so the count that decides to widen is the count the card prints |
+| The comps, the ceiling, the sell-through, the badge | Untouched. `AnalyzeProductAsync` is simply asked a better question |
+| The lot list, the re-price, the win, the draft | Unchanged — every pasted line goes back through `/api/whatsnot/bid`, so the list got this for free |
+
+`PricedAs` finally means what it has always said it means — "the title the comp lookup actually ran
+against" — and the **See the sold listings on eBay** link opens the search that was really run,
+rather than reproducing the one that found nothing.
+
+## A bug the search builder found in the count reader
+
+`LiveLotSize`'s "3x" pattern required the count to follow a space or one of six punctuation marks.
+A live seller decorates the front of a lot name, so **🔥3x Bitmain Antminer S9** was read as **one**
+miner — on exactly the lot that reader exists for, with the ceiling a third of what it should be.
+The leading boundary is now "not a letter, digit or decimal point", written as a lookbehind so the
+evidence quoted back to the seller is `3x` rather than `🔥3x`. The decimal point stays excluded on
+purpose: `1.5x` is a magnification, not one and a half of something. Six new tests hold both halves.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo`
+are all still registered and are asserted to be, and the live price still runs on
+`AnalyzeProductAsync`. A clean product name is searched exactly as typed, produces no chips, and is
+priced by precisely the arithmetic it has always been priced by — a test says so.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveSearchQuery.cs` | New — the vocabulary, the refusals, the widening and the undo |
+| `ING eBay AutoLister/Services/LiveLotSize.cs` | The leading boundary on the two "3x" patterns — the decorated-name bug |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveSearchTerms`, `LiveSearchDrop`, `LiveSearchDropKinds`; `LiveBidCard.Search`; `LiveBidRequest.SearchExact` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The terms on the card, `PricedAs` off the query, the widened warning first, `CompCountOf` extracted, and the nothing-matched sentence naming the words that matched nothing |
+| `ING eBay AutoLister/Services/LiveBidBoard.cs` | The search held with the comps it answered |
+| `ING eBay AutoLister/Program.cs` | The cleaned lookup, the one widening, the exact-words override, and the query in the log line |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=128`, `style.css?v=111` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, the chips, the undo button, `wnExactFor`, and `searchExact` on the price post |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-search-*` — quiet by default, an amber edge when widened, folded at 620px |
+| `ING eBay AutoLister.Tests/LiveSearchQueryTests.cs` | New — 43 tests, most of them about what may never be dropped |
+| `ING eBay AutoLister.Tests/WhatsNotSearchAssetTests.cs` | New — 16 tests holding the five links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 7 new tests on what the card reports about its own search |
+| `ING eBay AutoLister.Tests/LiveLotSizeTests.cs` | 6 new tests on the decorated-name bug and the decimal it still refuses |
+| `WhatsNotBuySheetAssetTests.cs`, `WhatsNotListItAssetTests.cs`, `WhatsNotOwnRecordAssetTests.cs` | Four pins loosened from a whole argument list to the property inside it — the same reasoning the last session applied to three of its own, and the same failure mode: a test that fails on every addition gets "fixed" by deletion |
+| `whatsnot_search_terms.png`, `whatsnot_search_widened.png`, `whatsnot_search_narrow.png` | The strip, the widened card, and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,980 passed**, 0 failed, 0 skipped (74 new; the previous commit was 3,906) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `bid` / `rebid` mocked in the shape the C# returns) | The decorated miner lot: the strip between the badge and the units block, `SEARCHED EBAY FOR Bitmain Antminer S9 13.5TH`, four chips carrying the server's reasons as their tooltips. **Search my exact words instead** posted `searchExact: true` and came back with the accent edge and a button offering to take the wording back out; pressing that posted `false`. With the overrule ON, typing a different item and pricing it posted `searchExact: false` — the flag does not follow the seller to the next lot. The widened card: the `WIDENED` tag, the amber edge, the given-up words as a chip, the server's sentence, and the widening warning as the **first** item in the warning list, above the money. At 560px the label sits above the query, the chips wrap, and `.wn-search` overflowed by **0px**. No page errors. |
+
+The installed app holds port 9332 and this build has no port override, so the screen was driven
+against a static server with the endpoints mocked. That exercises the whole render, the posts, the
+overrule and the narrow layout, but not the cleaning underneath it — which is what the 43 new
+`LiveSearchQuery` tests are for.
+
+## Known limits
+
+- **It has never been run against the real comps API.** Everything here is reasoning about a
+  boolean AND from the outside: the queries are exercised against the conventions live shows use,
+  and the screen against mocks. The first real "CAN'T PRICE IT that should not have been" is still
+  the first real evidence, and the action log now prints the query and every dropped word on each
+  fresh price, which is where that evidence will show up.
+- **The vocabulary is a list, and lists are always short.** "Hammer time", "smash the buy button"
+  and whatever a live show says next month are not in it. What limits the damage is that an unknown
+  phrase leaves the search exactly as broken as it was before this existed — never worse.
+- **The widening is three words and the leading ones.** A name that puts its brand last ("Sealed
+  booster box — Pokemon 151") widens to the wrong three. Nothing reorders, on purpose, but nothing
+  notices either.
+- **A widened card's confidence is the pipeline's, not this feature's.** The comps come back
+  identity-unverified and the badge turns amber by itself — which is right, and is also the only
+  brake. Nothing here refuses a widened answer outright, however far the comps drift.
+- **The re-price cannot change the search.** Moving the bid, the quantity or the target re-answers
+  off held comps; overruling the search re-reads eBay, because it is a different question. That is
+  correct and it costs a round trip mid-lot, which is the one place on this screen where a press is
+  slow.
+- **Nothing cleans the name the seller's OWN record is matched on.** `ReadOwnTrackRecord` still
+  runs on the typed name, so a decorated lot name may fail to find the seller's own sales of the
+  same product while the market comps find plenty.

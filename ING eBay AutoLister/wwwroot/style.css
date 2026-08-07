@@ -16727,6 +16727,96 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── What was actually asked ──────────────────────────────────────────────────
+   One quiet line, first, because everything under it is the answer to it: the sold
+   lookup is a boolean AND, and a live lot's name is half auction talk. Quiet by
+   default (it is on every card), and it grows an edge only when the search had to
+   be widened to find any sold history at all — which is the case where the comps
+   are for a broader question than the lot on screen. */
+.wn-search {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+.wn-search-wide {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+.wn-search-exact-on {
+  border-left: 3px solid var(--accent, #d4a24a);
+}
+.wn-search-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-search-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-search-query {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wn-search-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+/* What was left out, struck through, with the reason on the chip. The seller has
+   seconds and one glance has to answer "did it drop something I meant?". */
+.wn-search-drops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.wn-search-drop {
+  font-size: 12px;
+  padding: 1px 7px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 999px;
+  color: var(--text-dim, #8b93a7);
+  cursor: help;
+}
+.wn-search-drop-count {
+  border-color: rgba(212, 162, 74, .45);
+}
+.wn-search-drop-widened {
+  border-color: rgba(224, 180, 74, .45);
+  color: var(--warn, #e0b44a);
+}
+.wn-search-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-search-undo {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--accent, #d4a24a);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ── How many things is this ──────────────────────────────────────────────────
    Between the badge and the ladder, because it is what every number under it is a
    number ABOUT: a ceiling for three miners looks exactly like a ceiling for one.
@@ -17478,6 +17568,13 @@ p.wn-units-refused {
   .wn-units-each {
     flex-direction: column;
     gap: 2px;
+  }
+  /* "SEARCHED EBAY FOR" and a long query share a line until there is no line to
+     share. Below that the label sits above the query rather than pushing it into a
+     one-word column. */
+  .wn-search-line {
+    flex-direction: column;
+    gap: 1px;
   }
   .wn-rung,
   .wn-stat,

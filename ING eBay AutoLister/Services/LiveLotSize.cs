@@ -66,13 +66,22 @@ public static partial class LiveLotSize
     /// typing a lot name one-handed between lots.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Both boundaries matter. <c>1080x1920</c>, <c>4x4</c> and <c>2x4</c> are not counts and none
     /// of them match, because a digit on the far side of the x is not a word boundary.
+    /// </para>
+    /// <para>
+    /// The leading boundary is "not a letter, digit or decimal point", written as a lookbehind so it
+    /// is not part of the evidence quoted back to the seller. It was a list of the punctuation a
+    /// count is usually written after, and a live seller decorates the front of a lot name — a
+    /// <c>🔥3x</c> was read as one item, on exactly the lot this reader exists for. The decimal point
+    /// stays excluded on purpose: <c>1.5x</c> is a magnification, not one and a half of something.
+    /// </para>
     /// </remarks>
-    [GeneratedRegex(@"(?:^|[\s(\[,·—-])(\d{1,3})\s*x(?![\w])", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<![\w.])(\d{1,3})\s*x(?![\w])", RegexOptions.IgnoreCase)]
     private static partial Regex CountXRegex();
 
-    [GeneratedRegex(@"(?:^|[\s(\[,·—-])x\s*(\d{1,3})(?![\w])", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<![\w.])x\s*(\d{1,3})(?![\w])", RegexOptions.IgnoreCase)]
     private static partial Regex XCountRegex();
 
     /// <summary>

@@ -9851,6 +9851,20 @@
   /// it is for; no money is ever computed from it.
   let wnLastUnits = null;
 
+  /// ── "Search my exact words" ─────────────────────────────────────────────────
+  /// The sold search is a boolean AND, so the auction talk in a live lot's name is
+  /// taken out of it before eBay is asked (Services/LiveSearchQuery.cs). The card
+  /// shows what was dropped and offers this, which is the seller overruling it.
+  ///
+  /// Held as the ITEM it was asked for rather than as a flag, so it cannot leak onto
+  /// the next lot: three lots later, an unrelated name would otherwise still be being
+  /// searched with the last lot's auction talk left in it. Same as wnTokenItem.
+  let wnExactFor = '';
+
+  function wnAskedForExactly(item) {
+    return wnExactFor !== '' && wnExactFor === (item || '').trim();
+  }
+
   /// The count belongs to the lot it was counted on, so anything that changes what is
   /// being priced empties it. Blank hands the question back to the lot's own name, which
   /// is the safe default — a stale 3 would multiply the next lot's ceiling by three.
@@ -10355,6 +10369,7 @@
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
         quantity: wnQty(),
+        searchExact: wnAskedForExactly(item),
       });
       if (!res.ok) {
         // The headline alone is a diagnosis with no next move — "Nothing to price" without the
@@ -10510,6 +10525,34 @@
 
     const money2 = v => (v == null ? '—' : moneyExact(v));
 
+    // ── What was actually asked ────────────────────────────────────────────────
+    // Every number below stands on a keyword search the seller never sees, and on a
+    // live show the name and the search are not the same string: the sold lookup is
+    // a boolean AND, so "NO RESERVE", "3x", "ships free" and 🔥 are taken out before
+    // eBay is asked (Services/LiveSearchQuery.cs). What went, why, and the way back.
+    //
+    // Rendered on every card, including the ones where nothing changed — a line that
+    // only appears when the app edited the question is a line whose absence means two
+    // different things. Every sentence on it is the server's.
+    const s = c.search || {};
+    const searchStrip = s.query ? `
+      <div class="wn-search${s.widened ? ' wn-search-wide' : ''}${s.askedForExactly ? ' wn-search-exact-on' : ''}">
+        <div class="wn-search-line">
+          <span class="wn-search-label">Searched eBay for</span>
+          <strong class="wn-search-query">${esc(s.query)}</strong>
+          ${s.widened ? '<span class="wn-search-tag">widened</span>' : ''}
+        </div>
+        ${(s.dropped || []).length ? `<div class="wn-search-drops">${
+          s.dropped.map(d => `<span class="wn-search-drop wn-search-drop-${esc(d.kind)}" title="${esc(d.why)}">` +
+            `<s>${esc(d.text)}</s></span>`).join('')}</div>` : ''}
+        ${s.widenedNote ? `<p class="wn-search-note">${esc(s.widenedNote)}</p>` : ''}
+        ${s.refused ? `<p class="wn-search-note">${esc(s.refused)}</p>` : ''}
+        ${s.changed || s.askedForExactly ? `
+          <button type="button" class="wn-search-undo" data-exact="${s.askedForExactly ? 'off' : 'on'}">
+            ${s.askedForExactly ? 'Take the auction wording back out' : 'Search my exact words instead'}
+          </button>` : ''}
+      </div>` : '';
+
     // ── How many things is this ────────────────────────────────────────────────
     // Sold comps are per unit everywhere in this app, so every figure on this card
     // is a per-unit figure until the lot's own name says otherwise. When it does,
@@ -10637,6 +10680,7 @@
           <p class="wn-call-reason">${esc(c.reason)}</p>
         </div>
       </div>
+      ${searchStrip}
       ${unitsStrip}
       ${ladder}
       ${meter}
@@ -11265,7 +11309,16 @@
     // bid moves — so the click is caught on the card itself rather than on a button that
     // stops existing two seconds after it was bound.
     $('wn-card')?.addEventListener('click', e => {
-      if (e.target.closest('[data-won]')) wnRecordWin();
+      if (e.target.closest('[data-won]')) { wnRecordWin(); return; }
+
+      // Overruling the search, either way. Both directions re-read eBay, because the
+      // question being asked of it is the thing that changed — a re-price off the
+      // held comps would answer the old question with a new label on it.
+      const exact = e.target.closest('[data-exact]');
+      if (exact) {
+        wnExactFor = exact.getAttribute('data-exact') === 'on' ? ($('wn-item')?.value || '').trim() : '';
+        wnPriceItem();
+      }
     });
     on('wn-sheet-clear', 'click', wnClearSheet);
 

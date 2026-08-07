@@ -51,6 +51,13 @@ public sealed class LiveBidRequest
     public int? Quantity { get; set; }
 
     /// <summary>
+    /// Search eBay for the typed name exactly as written, instead of the cleaned-up version of it.
+    /// The undo for a cleaning that took a word the seller wanted — see
+    /// <see cref="Services.LiveSearchQuery"/> for what it takes out and why.
+    /// </summary>
+    public bool? SearchExact { get; set; }
+
+    /// <summary>
     /// The handle on comps already read for this lot (<see cref="Services.LiveBidBoard"/>). Present
     /// on a re-price, absent on a first price. It buys speed and nothing else: the ceiling is
     /// recomputed in full, against the same sold history, by the same function.
@@ -113,6 +120,13 @@ public sealed class LiveBidCard
     /// <summary>The title the comp lookup actually ran against, when it differs from Item.</summary>
     public string PricedAs { get; set; } = "";
     public string CategoryLabel { get; set; } = "";
+
+    /// <summary>
+    /// What the sold search asked eBay for, and every word of the typed name that was left out of
+    /// it. Never null — a card that does not say what it searched for is a card whose comps cannot
+    /// be argued with. See <see cref="Services.LiveSearchQuery"/>.
+    /// </summary>
+    public LiveSearchTerms Search { get; set; } = new();
 
     /// <summary>
     /// How many things this lot is. Never null — a single item carries a block that says so. When
@@ -297,6 +311,76 @@ public sealed class LiveLotUnits
     /// speed and each one after it waits for the demand the one before it used up.</summary>
     public int? DaysToSellAll { get; set; }
     public string AbsorptionNote { get; set; } = "";
+}
+
+/// <summary>
+/// What the sold search actually ran on. See <see cref="Services.LiveSearchQuery"/> for the rule
+/// that decides what comes out of a live lot's name and what may never be touched.
+/// </summary>
+/// <remarks>
+/// Present on every card, including the ones where nothing was changed. The seller is trusting five
+/// statistics to a keyword search they cannot see; a screen that only mentions the search when it
+/// edited something is a screen whose silence means two different things.
+/// </remarks>
+public sealed class LiveSearchTerms
+{
+    /// <summary>The lot's name exactly as it was typed or pasted.</summary>
+    public string Typed { get; set; } = "";
+
+    /// <summary>What eBay's sold history was actually asked for.</summary>
+    public string Query { get; set; } = "";
+
+    /// <summary>True when the two differ — the card then offers to search the typed name instead.</summary>
+    public bool Changed => !string.Equals(Typed.Trim(), Query.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Every word taken out, with the reason. Shown struck through on the card.</summary>
+    public List<LiveSearchDrop> Dropped { get; set; } = [];
+
+    /// <summary>Why the search looks like that, in one sentence.</summary>
+    public string Note { get; set; } = "";
+
+    /// <summary>
+    /// Set when the cleaning was refused whole because it would have left nothing to search on.
+    /// The typed name was used exactly as written.
+    /// </summary>
+    public string Refused { get; set; } = "";
+
+    /// <summary>
+    /// True when the whole name matched no sold history and the search was cut back to its first
+    /// few words to find any at all. The comps are then a ballpark for the model rather than for
+    /// the exact lot, and both the card and <see cref="LiveBidCard.Warnings"/> say so.
+    /// </summary>
+    public bool Widened { get; set; }
+    public string WidenedNote { get; set; } = "";
+
+    /// <summary>True when the seller asked for their exact words and nothing was cleaned.</summary>
+    public bool AskedForExactly { get; set; }
+}
+
+/// <summary>One piece of a live lot's name that the sold search did not ask for.</summary>
+public sealed class LiveSearchDrop
+{
+    /// <summary>The words themselves, as typed.</summary>
+    public string Text { get; set; } = "";
+    /// <summary>count | chatter | logistics | decoration | widened.</summary>
+    public string Kind { get; set; } = "";
+    /// <summary>Why it is not part of the search. Shown on the chip.</summary>
+    public string Why { get; set; } = "";
+}
+
+/// <summary>The five reasons a word is not part of the search. Spelled once.</summary>
+public static class LiveSearchDropKinds
+{
+    /// <summary>How many of them there are — priced by <see cref="Services.LiveLotSize"/> instead.</summary>
+    public const string Count = "count";
+    /// <summary>Auction and show talk: "no reserve", "going once", a price, a handle.</summary>
+    public const string Chatter = "chatter";
+    /// <summary>Shipping, returns and payment terms.</summary>
+    public const string Logistics = "logistics";
+    /// <summary>Emoji and punctuation.</summary>
+    public const string Decoration = "decoration";
+    /// <summary>Cut to find any sold history at all. See <see cref="Services.LiveSearchQuery.Widen"/>.</summary>
+    public const string Widened = "widened";
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

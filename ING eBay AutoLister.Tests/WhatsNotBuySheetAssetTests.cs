@@ -51,10 +51,12 @@ public class WhatsNotBuySheetAssetTests
     {
         var won = WonEndpoint();
 
-        // Pinned as a prefix: the property is that the win is priced by the advisor, from the held
-        // quote, at the price it hammered at. What the advisor is additionally handed to price it
-        // with grows between sessions.
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
+        // Pinned as the pieces rather than as one string: the property is that the win is priced by
+        // the advisor, from the held quote, at the price it hammered at. What the advisor is
+        // additionally handed to price it with grows between sessions — and a pin that fails on
+        // every addition is a pin that gets "fixed" by deletion, taking the property with it.
+        Assert.Contains("advisor.Build(", won, StringComparison.Ordinal);
+        Assert.Contains("quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
             won, StringComparison.Ordinal);
         Assert.Contains("sheet.Record(card)", won, StringComparison.Ordinal);
     }
@@ -219,7 +221,12 @@ public class WhatsNotBuySheetAssetTests
     [Fact]
     public void The_win_click_is_caught_on_the_card_rather_than_on_the_button()
     {
-        Assert.Contains("if (e.target.closest('[data-won]')) wnRecordWin();", Js, StringComparison.Ordinal);
+        // The property is delegation: the button is inside a card that is replaced whole every time
+        // the bid moves, so the listener has to be on the card. What ELSE that listener catches
+        // grows between sessions, which is why this pins the branch and not the whole line.
+        Assert.Contains("$('wn-card')?.addEventListener('click'", Js, StringComparison.Ordinal);
+        Assert.Contains("e.target.closest('[data-won]')", Js, StringComparison.Ordinal);
+        Assert.Contains("wnRecordWin();", Js, StringComparison.Ordinal);
     }
 
     /// <summary>

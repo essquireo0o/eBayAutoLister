@@ -2988,6 +2988,14 @@ app.MapPost("/api/whatsnot/bid", async (
     var category = ResaleCategoryCatalog.Classify(
         listing, req.CategoryId is { Length: > 0 } ? ResaleCategoryCatalog.Resolve(req.CategoryId) : null);
 
+    // ── What to actually ask eBay ────────────────────────────────────────────────────────────
+    // The sold lookup is a boolean AND: every word in the query has to appear in a sold title. A
+    // live host's lot name is half auction talk — "NO RESERVE", "ships free", "3x", 🔥 — and none
+    // of that has ever appeared in an eBay title, so the search returns nothing and the card says
+    // CAN'T PRICE IT about an item with a perfectly good market. This takes out the words that
+    // describe the SALE and keeps every word that describes the ITEM, and the card shows both.
+    var terms = req.SearchExact == true ? LiveSearchQuery.Exact(title) : LiveSearchQuery.Build(title);
+
     MarketAnalysisResult analysis;
     try
     {
@@ -2996,11 +3004,33 @@ app.MapPost("/api/whatsnot/bid", async (
             // bid plus the platform's premium plus shipping — which only LiveBidAdvisor knows how to
             // assemble. Handing the bare bid in here would produce a second, lower-cost profit
             // figure on the same object, and one of the two would end up on screen.
-            title, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            terms.Query, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
             activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
             allowRealTerapeakScrape: false,
             normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
             opportunityScorer, confidenceScorer, log, ct);
+
+        // Still nothing worth pricing on. One shorter search — the first few identifying words —
+        // before giving up, because "no comps" and "no comps for that exact wording" are different
+        // answers and only one of them is true often enough to show. It costs a second lookup on
+        // the thin path only, and it is kept only if it actually found more; a widening that found
+        // nothing extra is not reported as having happened.
+        if (LiveBidAdvisor.CompCountOf(analysis) < LiveBidAdvisor.MinCompsToBid
+            && LiveSearchQuery.Widen(terms) is { } wider)
+        {
+            var widened = await AnalyzeProductAsync(
+                wider.Query, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+                activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+                allowRealTerapeakScrape: false,
+                normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+                opportunityScorer, confidenceScorer, log, ct);
+
+            if (LiveBidAdvisor.CompCountOf(widened) > LiveBidAdvisor.CompCountOf(analysis))
+            {
+                analysis = widened;
+                terms = wider;
+            }
+        }
     }
     catch (OperationCanceledException) { throw; }
     catch (Exception ex)
@@ -3015,18 +3045,21 @@ app.MapPost("/api/whatsnot/bid", async (
     // carries the fee eBay actually charged THEM, on THIS product, in their own listings.
     var own = ReadOwnTrackRecord(title, earnings, costBasis, earningsCalc, deals, feeProfile, log);
 
-    var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own);
+    var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own, search: terms);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
     // rides along for the same reason: it cannot change while a lot is being sold.
-    var quote = board.Hold(title, analysis, category, nowUtc: null, own: own);
+    var quote = board.Hold(title, analysis, category, nowUtc: null, own: own, search: terms);
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.ElapsedMs = sw.ElapsedMilliseconds;
 
     log.Add("Research", "Live bid ceiling",
-        $"\"{title}\"; {(card.Units.IsLot ? $"{card.Units.Count} units ({card.Units.Source}); " : "")}" +
+        $"\"{title}\"; " +
+        $"searched \"{terms.Query}\"{(terms.Widened ? " (widened)" : "")}" +
+        $"{(terms.Dropped.Count > 0 ? $" — dropped {string.Join(", ", terms.Dropped.Select(d => $"\"{d.Text}\""))}" : "")}; " +
+        $"{(card.Units.IsLot ? $"{card.Units.Count} units ({card.Units.Source}); " : "")}" +
         $"bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
         $"max bid {card.MaxBid:C} ({card.Call}); {sw.ElapsedMilliseconds}ms");
@@ -3081,7 +3114,7 @@ app.MapPost("/api/whatsnot/rebid", (
     }
 
     var now = DateTime.UtcNow;
-    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own);
+    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search);
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3139,7 +3172,8 @@ app.MapPost("/api/whatsnot/won", (
             "Press Price it to read eBay for what you've typed, then record the win.");
     }
 
-    var card = advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own);
+    var card = advisor.Build(
+        quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own, quote.Search);
     var result = sheet.Record(card);
 
     log.Add("Research", "Live lot won",

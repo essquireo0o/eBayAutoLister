@@ -82,12 +82,23 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// request's terms and attached to the card — never allowed to move the call, which stays the
     /// market's answer. See <see cref="OwnTrackRecord"/>.
     /// </param>
+    /// <param name="search">
+    /// What the sold search actually asked eBay for. Carried onto the card and never used to price
+    /// anything — the seller has to be able to see the question the five statistics answer. Null
+    /// falls back to what <see cref="LiveSearchQuery"/> would have asked for, so a card can never
+    /// claim a search that nothing would run.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
-        ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null)
+        ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
+        LiveSearchTerms? search = null)
     {
         var now = nowUtc ?? DateTime.UtcNow;
-        var resale = analysis is null ? null : ResalePricing.From(analysis, item);
+        var terms = search ?? LiveSearchQuery.Build(item);
+        // The lookup title is the QUERY, not the typed name — PricedAs has always meant "what the
+        // comp lookup ran against", and on a live show those two stopped being the same thing the
+        // moment the auction wording started being taken out of it.
+        var resale = analysis is null ? null : ResalePricing.From(analysis, terms.Query);
         var shipping = Math.Max(0m, request.ShippingCost ?? 0m);
         var feePercent = SanitizeBuyerFee(request.BuyerFeePercent);
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
@@ -103,7 +114,8 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         {
             Units = units,
             Item = item,
-            PricedAs = resale?.LookupTitle ?? "",
+            Search = terms,
+            PricedAs = resale?.LookupTitle ?? terms.Query,
             CategoryLabel = category?.Label ?? "",
             CurrentBid = bid,
             BidWasKnown = bid > 0m,
@@ -131,7 +143,11 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // move, from "nothing matched at all". Its own wording is about an ask rather than a
             // bid, so the nothing-matched case gets a bid-shaped sentence of its own.
             card.Reason = card.EvidenceTier == LocalArbitrageAnalyzer.EvidenceNone
-                ? "No eBay sold history matched this item, so there is no resale price to bid against."
+                // Named, because "this item" and "the words the search actually used" are different
+                // things on a live show, and which one found nothing is the whole next move: a
+                // seller looking at a query with a word in it they did not mean can fix it in one
+                // press, and a seller told "no sold history" cannot do anything at all.
+                ? $"No eBay sold history matched “{terms.Query}”, so there is no resale price to bid against."
                 : card.EvidenceNote;
             // Attached even here — especially here. A card the market could not price is exactly
             // the card on which "you have sold four of these yourself" is the only evidence there
@@ -309,6 +325,21 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         _ => 0,
     };
 
+    /// <summary>
+    /// How many sold comps an analysis is standing on — the count the card prints and the count
+    /// that decides whether a search was worth running at all.
+    /// </summary>
+    /// <remarks>
+    /// Written once and read twice: here, and by the endpoint deciding whether the first search
+    /// found enough to price on or whether it has to widen. A second count computed at the decision
+    /// point is how a card ends up saying "4 comps" under a badge that was chosen because there
+    /// were two.
+    /// </remarks>
+    public static int CompCountOf(MarketAnalysisResult analysis) =>
+        analysis.Sources.PricedOnCompCount > 0
+            ? analysis.Sources.PricedOnCompCount + analysis.Sources.TerapeakComparableCount
+            : analysis.Sources.LocalComparableCount + analysis.Sources.TerapeakComparableCount;
+
     // The resale statistics, straight off the analysis. Deliberately a copy and not a second
     // calculation: the spread, the sell-through and the confidence on this card are the same
     // figures the Opportunity Finder shows for the same title, or they are worth nothing.
@@ -329,9 +360,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.EstimatedMonthlySales = sellThrough.EstimatedMonthlySales;
         card.LiquidityLevel = sellThrough.LiquidityLevel;
 
-        card.CompCount = analysis.Sources.PricedOnCompCount > 0
-            ? analysis.Sources.PricedOnCompCount + analysis.Sources.TerapeakComparableCount
-            : analysis.Sources.LocalComparableCount + analysis.Sources.TerapeakComparableCount;
+        card.CompCount = CompCountOf(analysis);
         card.ConfidenceScore = analysis.Confidence.Score;
         card.ConfidenceLevel = analysis.Confidence.Level;
         card.IdentityVerified = analysis.Sources.IdentityVerified;
@@ -450,6 +479,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var warnings = new List<string>();
 
         if (card.Call == LiveBidCalls.NoData) return warnings;
+
+        // Before anything about the money: what question these numbers are the answer to. A ceiling
+        // built on comps for the first three words of the name is a real ceiling for a slightly
+        // different thing, and that is the one fact on this card that changes what all the others
+        // mean. See LiveSearchQuery.Widen for the trade it is reporting.
+        if (LiveSearchQuery.WidenedWarning(card.Search) is { Length: > 0 } widened) warnings.Add(widened);
 
         // The lot warnings come first. Everything under them is a number that means something
         // different depending on whether this is one thing or five, and a seller who reads the

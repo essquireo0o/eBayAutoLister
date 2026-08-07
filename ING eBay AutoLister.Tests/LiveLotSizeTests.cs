@@ -100,6 +100,36 @@ public class LiveLotSizeTests
     }
 
     [Theory]
+    [InlineData("🔥3x Bitmain Antminer S9", 3)]
+    [InlineData("🔥 3x Bitmain Antminer S9", 3)]
+    [InlineData("**3x** Bitmain Antminer S9", 3)]
+    [InlineData("!!! LOT: 4x Goldshell Mini Doge", 4)]
+    public void A_decorated_lot_name_still_states_its_count(string title, int expected)
+    {
+        // Found by the search builder, on exactly the lot this reader exists for. The leading
+        // boundary was a list of the punctuation a count is usually written after, and a live seller
+        // decorates the front of a name — so "🔥3x" was three miners priced as one.
+        var units = LiveLotSize.Read(title, null);
+
+        Assert.Equal(expected, units.Count);
+        Assert.Equal(LiveLotSize.SourceTitle, units.Source);
+        // And the evidence quoted back is the count, not the decoration in front of it.
+        Assert.Equal($"{expected}x", units.Evidence, ignoreCase: true);
+    }
+
+    [Theory]
+    [InlineData("Canon EF 1.5x teleconverter")]
+    [InlineData("Sigma 2.0x extender")]
+    public void A_decimal_in_front_of_the_x_is_a_magnification(string title)
+    {
+        // The one character the widened boundary still refuses: 1.5x is one and a half of nothing.
+        var units = LiveLotSize.Read(title, null);
+
+        Assert.Equal(1, units.Count);
+        Assert.False(units.IsLot);
+    }
+
+    [Theory]
     [InlineData("Bitmain Antminer S19j Pro 104TH")]   // a hashrate
     [InlineData("iPhone 12 Pro 128GB unlocked")]      // a capacity
     [InlineData("RTX 3080 Ti Founders Edition")]      // a model
