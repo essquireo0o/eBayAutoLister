@@ -144,9 +144,10 @@ public class WhatsNotStockAssetTests
         var template = Js.Replace("\r\n", "\n");
         Assert.Contains("${unitsStrip}\n      ${stockStrip}", template, StringComparison.Ordinal);
         // The shelf-time strip sits immediately under this one, because it prices the wait this
-        // pile causes and its first sentence only makes sense after the count. The freight strip
-        // follows, then the ladder. See WhatsNotHoldAssetTests and WhatsNotShipAssetTests.
-        Assert.Contains("${stockStrip}\n      ${holdStrip}\n      ${shipStrip}\n      ${ladder}",
+        // pile causes and its first sentence only makes sense after the count. The two strips about
+        // what winning costs follow — freight, then the tax on the hammer — and then the ladder.
+        // See WhatsNotHoldAssetTests, WhatsNotShipAssetTests and WhatsNotTaxAssetTests.
+        Assert.Contains("${stockStrip}\n      ${holdStrip}\n      ${shipStrip}\n      ${taxStrip}\n      ${ladder}",
             template, StringComparison.Ordinal);
     }
 
@@ -296,8 +297,8 @@ public class WhatsNotStockAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=135", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=118", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=136", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=119", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

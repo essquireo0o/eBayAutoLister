@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=118" />
+  <link rel="stylesheet" href="style.css?v=119" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2863,9 +2863,33 @@
                   <input id="wn-ship-add" type="number" min="0" step="0.5" inputmode="decimal" placeholder="—" />
                 </label>
               </div>
-              <label class="wn-field" title="The live platform's buyer premium, charged on top of the winning bid">
-                <span>Buyer fee %</span>
-                <input id="wn-fee" type="number" min="0" step="0.5" inputmode="decimal" placeholder="8" />
+              <!-- The two things the platform bills on top of the hammer, side by side because
+                   they are the same shape of cost and they are charged on the same base. The tax
+                   one is the fourth part of the landed cost and the last one to arrive: a live
+                   marketplace is a facilitator, so it collects the buyer's combined state and
+                   local sales tax at checkout and nobody gets to decline it. Blank charges
+                   NOTHING and says how big that silence is — an assumed rate would quietly refuse
+                   lots over a cost most resellers don't pay — and a typed 0 is a real answer, for
+                   the five states that levy none. -->
+              <div class="wn-field-pair">
+                <label class="wn-field" title="The live platform's buyer premium, charged on top of the winning bid">
+                  <span>Buyer fee %</span>
+                  <input id="wn-fee" type="number" min="0" step="0.5" inputmode="decimal" placeholder="8" />
+                </label>
+                <label class="wn-field wn-field-tax"
+                       title="Your combined state + local sales tax rate. The marketplace collects it on the winning bid and the premium. Blank charges nothing and warns; 0 means no sales tax where you buy.">
+                  <span>Sales tax %</span>
+                  <input id="wn-tax" type="number" min="0" step="0.25" inputmode="decimal" placeholder="—" />
+                </label>
+              </div>
+              <!-- The one box that makes the tax a state rather than a rate. Most resellers have a
+                   certificate on file and pay no sales tax on anything they buy to resell, and a
+                   ceiling cut for a cost they don't pay is a ceiling that loses them lots. Ticked,
+                   it outranks whatever is in the rate box. -->
+              <label class="wn-field wn-field-exempt"
+                     title="Tick if a resale certificate is on file with the platform. Nothing is charged in sales tax whatever rate is entered beside it.">
+                <span>Resale cert</span>
+                <input id="wn-exempt" type="checkbox" />
               </label>
               <label class="wn-field" title="The return you want on the money. Blank uses the app's own 30% bar.">
                 <span>Target %</span>
@@ -2876,8 +2900,8 @@
             <p class="opp-hint wn-ask-hint" id="wn-live-note">
               Priced against the same eBay sold comps and sell-through the Opportunity Finder uses —
               no live eBay call, so it answers in about a second. Once it's priced, the comps are
-              held: moving the bid, the step, the condition, the shipping, the fee or the target
-              re-answers <strong>instantly</strong>, against that same sold history.
+              held: moving the bid, the step, the condition, the shipping, the fee, the sales tax
+              or the target re-answers <strong>instantly</strong>, against that same sold history.
               Changing the item reads eBay again.
             </p>
           </div>
@@ -6001,6 +6025,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=135"></script>
+  <script src="app.js?v=136"></script>
 </body>
 </html>

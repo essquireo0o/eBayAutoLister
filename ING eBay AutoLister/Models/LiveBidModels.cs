@@ -56,6 +56,26 @@ public sealed class LiveBidRequest
     /// and changes without notice.</summary>
     public decimal? BuyerFeePercent { get; set; }
 
+    /// <summary>
+    /// The seller's combined state + local sales tax rate, as a percentage. A live marketplace is a
+    /// facilitator and collects it on the winning bid at checkout, so it is part of what winning
+    /// costs — not something taken out of the profit afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Null is "nobody said" and charges nothing, with a warning saying how big that silence is; a
+    /// typed <b>zero is a real answer</b> — five states levy no sales tax at all. The same
+    /// distinction the extra-item shipping box draws, and for the same reason. See
+    /// <see cref="Services.LiveSalesTax"/>.
+    /// </remarks>
+    public decimal? SalesTaxPercent { get; set; }
+
+    /// <summary>
+    /// Whether a resale certificate is on file with the platform. True charges no sales tax whatever
+    /// is in <see cref="SalesTaxPercent"/> — which is the true answer for most resellers on most
+    /// lots, and the reason the tax is a state rather than a rate.
+    /// </summary>
+    public bool? TaxExempt { get; set; }
+
     /// <summary>The return the seller wants on the money, as a percentage. Null uses the app's own
     /// "worth doing" bar (<see cref="Services.LocalArbitrageAnalyzer.SolidRoiPercent"/>).</summary>
     public decimal? TargetRoiPercent { get; set; }
@@ -225,6 +245,14 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveShipRead Ship { get; set; } = new();
 
+    /// <summary>
+    /// What sales tax adds to winning this lot. Never null — a block that only appeared once a rate
+    /// was entered would be a block whose silence meant both "you are exempt" and "nobody ever
+    /// asked". It is the fourth part of the landed cost and the only one that was missing from it.
+    /// See <see cref="Services.LiveSalesTax"/>.
+    /// </summary>
+    public LiveTaxRead Tax { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }
@@ -238,7 +266,11 @@ public sealed class LiveBidCard
     public decimal BuyerFeePercent { get; set; }
     /// <summary>The premium on the CURRENT bid, in cash. Zero when no premium was stated.</summary>
     public decimal BuyerFee { get; set; }
-    /// <summary>Bid + premium + shipping — what winning at the current bid actually costs.</summary>
+    /// <summary>The sales tax on the CURRENT bid, in cash — charged on the hammer plus the premium.
+    /// Zero in three of the four states <see cref="Tax"/> can be in.</summary>
+    public decimal SalesTax { get; set; }
+    /// <summary>Bid + premium + sales tax + shipping — what winning at the current bid actually
+    /// costs.</summary>
     public decimal LandedCostNow { get; set; }
 
     /// <summary>The highest bid that still clears the target. The number to stop at.</summary>

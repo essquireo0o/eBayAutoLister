@@ -3105,6 +3105,13 @@ app.MapPost("/api/whatsnot/bid", async (
         $"freight {card.Ship.Verdict} — charged {card.Ship.Marginal:C} of {card.Ship.FirstItemShipping:C}" +
         $"{(card.Ship.ShowNamed ? $" on \"{card.Ship.ShowName}\" ({card.Ship.LotsWonFromShow} lot(s) tonight)" : "")}" +
         $"{(card.Ship.Applied ? $", {card.Ship.Saved:C} more to bid" : "")}; " +
+        // And the fourth part of the landed cost. This is where the first real "the app said stop on
+        // a lot because it charged 9.5% tax the seller's certificate covers" shows up, in the
+        // seller's own log, with the rate and the cash it was worked out from.
+        $"tax {card.Tax.Verdict}" +
+        $"{(card.Tax.Applied ? $" — {card.Tax.RatePercent:0.##}% on {card.Tax.TaxableBase:C} = {card.Tax.Charged:C}, " +
+                               $"ceiling {card.Tax.CutPercent:0.#}% lower" : "")}" +
+        $"{(card.Tax.Exposure > 0m ? $" — about {card.Tax.Exposure:C} uncosted at the US average" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);

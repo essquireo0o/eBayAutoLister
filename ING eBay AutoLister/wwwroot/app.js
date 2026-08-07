@@ -9968,6 +9968,13 @@
     // think to fill in twice. Deliberately restored even when it is "0" — free combined
     // shipping is a real answer and an empty box is a different one.
     if (saved.shipAdd != null) setVal('wn-ship-add', saved.shipAdd);
+    // The sales tax rate is a fact about where the seller lives, so it is the single most
+    // stable box on this row — and like the extra-item rate it is restored even when it is
+    // "0", because "no sales tax in Oregon" and "nobody asked me" are the same number and
+    // completely different cards.
+    if (saved.tax != null) setVal('wn-tax', saved.tax);
+    const exempt = $('wn-exempt');
+    if (exempt) exempt.checked = saved.exempt === true;
     // The show itself is NOT remembered. It is the one field on this row that is only
     // true for tonight, and a handle carried in from last week would quietly combine
     // this lot's shipping with somebody else's box.
@@ -9979,6 +9986,9 @@
         ship: $('wn-ship')?.value ?? '',
         shipAdd: $('wn-ship-add')?.value ?? '',
         fee: $('wn-fee')?.value ?? '',
+        tax: $('wn-tax')?.value ?? '',
+        // A certificate is on file or it is not, and that does not change between shows.
+        exempt: $('wn-exempt')?.checked === true,
         target: $('wn-target')?.value ?? '',
         // Remembered like the other three, because a show's increments hold for the whole
         // show. It is the one of the four that is visibly stated back on every card, so a
@@ -10004,6 +10014,21 @@
     if (!raw) return null;
     const n = parseFloat(raw);
     return Number.isFinite(n) ? n : null;
+  }
+
+  /// ── What the marketplace bills in tax ───────────────────────────────────────
+  /// The two fields that decide the buy-side sales tax, sent together everywhere a lot
+  /// is costed — the card, the re-price, a win and the lot list — because they are
+  /// facts about the BUYER and the box, not about the item, exactly like the buyer's
+  /// premium and the shipping beside them.
+  ///
+  /// The rate is null when the box is empty, which charges nothing and makes the server
+  /// say how big that silence is; a typed 0 is a real answer for the five states that
+  /// levy none. The certificate is always sent as a real boolean rather than omitted
+  /// when unticked — it outranks the rate box, so "not exempt" has to be something the
+  /// request says. Nothing here computes tax; see Services/LiveSalesTax.cs.
+  function wnTaxFields() {
+    return { salesTaxPercent: wnNumber('wn-tax'), taxExempt: $('wn-exempt')?.checked === true };
   }
 
   /// The units block off the last card rendered. See wnUsePhotoTitle for the one thing
@@ -10157,6 +10182,7 @@
         additionalItemShipping: wnNumber('wn-ship-add'),
         showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
+        ...wnTaxFields(),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
@@ -10581,6 +10607,7 @@
         additionalItemShipping: wnNumber('wn-ship-add'),
         showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
+        ...wnTaxFields(),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
         quantity: wnQty(),
@@ -10971,6 +10998,46 @@
         ${sh.note ? `<p class="wn-ship-note">${esc(sh.note)}</p>` : ''}
       </div>` : '';
 
+    // ── What the marketplace bills on top ──────────────────────────────────────
+    // The fourth part of the landed cost, and the last one to arrive. A live platform
+    // is a marketplace facilitator: it collects the buyer's combined state and local
+    // sales tax at checkout, on the hammer and the premium, and nobody declines it.
+    // Left out, every ceiling this app produced was too high by roughly the size of
+    // the premium — in the one direction that costs money, since a ceiling that is too
+    // high says bid on a lot that then loses.
+    //
+    // Nothing is assumed: most resellers file a certificate and pay none, so an empty
+    // box is charged nothing and the strip says how big that silence is instead. Every
+    // word and every dollar is the server's (Services/LiveSalesTax.cs); the browser
+    // multiplies nothing and never decides that a seller is exempt.
+    const tx = c.tax || {};
+    const taxStrip = tx.headline ? `
+      <div class="wn-tax wn-tax-${esc(tx.verdict || 'none')}">
+        <div class="wn-tax-line">
+          <span class="wn-tax-label">Sales tax</span>
+          <strong class="wn-tax-headline">${esc(tx.headline)}</strong>
+          ${tx.applied ? `<span class="wn-tax-tag">−${tx.cutPercent}% to bid</span>` : ''}
+          ${tx.verdict === 'none' && tx.exposure > 0
+            ? `<span class="wn-tax-src">about ${moneyExact(tx.exposure)} uncosted</span>` : ''}
+        </div>
+        ${tx.applied ? `
+          <div class="wn-tax-box">
+            <span class="wn-tax-cell" title="What the platform bills the tax on — the bid plus the buyer's premium, not the shipping">
+              <span class="wn-tax-cell-name">Taxed on</span>
+              <span class="wn-tax-cell-fig">${moneyExact(tx.taxableBase)}</span>
+            </span>
+            <span class="wn-tax-cell" title="Your combined state and local rate, as you entered it">
+              <span class="wn-tax-cell-name">Your rate</span>
+              <span class="wn-tax-cell-fig">${tx.ratePercent}%</span>
+            </span>
+            <span class="wn-tax-cell wn-tax-cell-this" title="What the tax adds to winning at the bid on screen — part of the landed cost the ceiling above was worked out from">
+              <span class="wn-tax-cell-name">Adds</span>
+              <span class="wn-tax-cell-fig">${moneyExact(tx.charged)}</span>
+            </span>
+          </div>` : ''}
+        ${tx.note ? `<p class="wn-tax-note">${esc(tx.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The press, not the price ───────────────────────────────────────────────
     // Every figure below compares the bid ON SCREEN against the ceiling, which
     // answers whether the last bid was all right. Nobody buys at that price: pressing
@@ -11101,6 +11168,7 @@
       ${stockStrip}
       ${holdStrip}
       ${shipStrip}
+      ${taxStrip}
       ${ladder}
       ${meter}
       ${wnOwnBlock(c.ownHistory)}
@@ -11354,6 +11422,7 @@
         additionalItemShipping: wnNumber('wn-ship-add'),
         showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
+        ...wnTaxFields(),
         targetRoiPercent: wnNumber('wn-target'),
         // A lot of three won at one hammer price is three units of stock. The row is costed
         // by the same Build as the card, so it has to be asked the same question — and that
@@ -11526,6 +11595,7 @@
           additionalItemShipping: wnNumber('wn-ship-add'),
           showName: wnShow(),
           buyerFeePercent: wnNumber('wn-fee'),
+          ...wnTaxFields(),
           targetRoiPercent: wnNumber('wn-target'),
           // Sent for the same reason the other three are: a lot opened from this list
           // lands in the card above with its own numbers, and the presses left under the
@@ -11794,7 +11864,8 @@
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when
     // the held comps have been let go.
-    ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-target']
+    ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-tax',
+     'wn-target']
       .forEach(id => {
         $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
       });
@@ -11820,11 +11891,18 @@
     // two that can move the ceiling UP. A seller three lots into a show types one rate
     // and watches every ceiling for the rest of the night rise by what the box is
     // already paying for — off the same held comps, with no eBay in it.
-    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-target'].forEach(id => {
-      $(id)?.addEventListener('input', wnScheduleRebid);
-    });
-    // A select fires change, not input, on every browser worth supporting.
+    // The sales tax is the tenth, and it is the one that costs the most to leave blank.
+    // Typing a rate mid-show drops every ceiling by the tax on it, and ticking the
+    // certificate beside it puts them all straight back — off the same held comps, in
+    // the seconds between two lots.
+    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-tax', 'wn-target']
+      .forEach(id => {
+        $(id)?.addEventListener('input', wnScheduleRebid);
+      });
+    // A select fires change, not input, on every browser worth supporting — and so does a
+    // checkbox, which is why the certificate is bound here rather than above.
     $('wn-cond')?.addEventListener('change', wnScheduleRebid);
+    $('wn-exempt')?.addEventListener('change', wnScheduleRebid);
 
     // Up/down on the bid box steps by what the bidding is worth at that level rather
     // than by the input's own 1, and re-answers on the way — hands on the auction, not

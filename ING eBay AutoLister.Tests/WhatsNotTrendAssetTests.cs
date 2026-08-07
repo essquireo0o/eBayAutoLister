@@ -182,7 +182,8 @@ public class WhatsNotTrendAssetTests
     public void The_cut_changes_the_price_and_not_the_ceiling_function()
     {
         Assert.Contains("hunter.BreakEvenBuyPrice(bidAgainst, fees)", Advisor, StringComparison.Ordinal);
-        Assert.Contains("AuctionSniperAnalyzer.MaxBidDetail(breakEvenAllIn, shipping, target, feePercent)",
+        Assert.Contains("AuctionSniperAnalyzer.MaxBidDetail(", Advisor, StringComparison.Ordinal);
+        Assert.Contains("breakEvenAllIn, shipping, target, feePercent, taxPercent)",
             Advisor, StringComparison.Ordinal);
         Assert.DoesNotContain("ResaleMultiplier", Advisor, StringComparison.Ordinal);
     }

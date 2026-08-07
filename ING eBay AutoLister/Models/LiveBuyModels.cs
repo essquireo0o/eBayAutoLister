@@ -32,6 +32,16 @@ public sealed class LiveWinRequest
     public decimal? TargetRoiPercent { get; set; }
 
     /// <summary>
+    /// Both carried for the same reason as the rest, and this pair decides what the night actually
+    /// cost: the marketplace collects sales tax on the hammer and the premium at checkout, so a row
+    /// recorded without it reports a spend the seller's bank statement will disagree with — by about
+    /// the size of the premium, on every lot. A ticked certificate is carried too, because "exempt"
+    /// and "nobody said" are the same zero and different facts.
+    /// </summary>
+    public decimal? SalesTaxPercent { get; set; }
+    public bool? TaxExempt { get; set; }
+
+    /// <summary>
     /// Both carried for the same reason again, and this pair matters more than the rest: the card
     /// this lot was won off may have costed it at the show's extra-item rate because it rides in a
     /// box already going out (<see cref="Services.LiveShipShare"/>). A row recorded without them
@@ -66,6 +76,8 @@ public sealed class LiveWinRequest
         AdditionalItemShipping = AdditionalItemShipping,
         ShowName = ShowName,
         BuyerFeePercent = BuyerFeePercent,
+        SalesTaxPercent = SalesTaxPercent,
+        TaxExempt = TaxExempt,
         TargetRoiPercent = TargetRoiPercent,
         Quantity = Quantity,
         Condition = Condition,

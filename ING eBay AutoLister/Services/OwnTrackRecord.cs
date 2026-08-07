@@ -240,9 +240,14 @@ public static class OwnTrackRecord
     /// The comps ceiling from the same card, for the comparison only. Zero when nothing priced the
     /// item — which is the case where the seller's own record becomes the only ceiling on screen.
     /// </param>
+    /// <param name="salesTaxPercent">
+    /// The sales tax the card's own ceiling was costed at (<see cref="LiveSalesTax"/>). Zero unless
+    /// the seller stated a rate. Passed through for one reason: this block is a SECOND ceiling on
+    /// the same card, and two ceilings costed on different terms is worse than one.
+    /// </param>
     public static LiveOwnHistory Price(
         OwnSalesEvidence? evidence, decimal shipping, decimal buyerFeePercent, decimal targetRoiPercent,
-        decimal compsMaxBid, decimal? compsResale)
+        decimal compsMaxBid, decimal? compsResale, decimal salesTaxPercent = 0m)
     {
         var e = evidence ?? new OwnSalesEvidence();
         var history = new LiveOwnHistory
@@ -268,7 +273,7 @@ public static class OwnTrackRecord
             : e.UnitsHeld > 0 ? OwnTrackVerdicts.Holding
             : OwnTrackVerdicts.None;
 
-        ApplyCeiling(history, e, shipping, buyerFeePercent, targetRoiPercent, compsMaxBid);
+        ApplyCeiling(history, e, shipping, buyerFeePercent, targetRoiPercent, compsMaxBid, salesTaxPercent);
         history.Headline = Headline(history, e);
         history.Notes.AddRange(Notes(history, e, compsResale));
 
@@ -277,7 +282,8 @@ public static class OwnTrackRecord
 
     private static void ApplyCeiling(
         LiveOwnHistory history, OwnSalesEvidence e,
-        decimal shipping, decimal buyerFeePercent, decimal targetRoiPercent, decimal compsMaxBid)
+        decimal shipping, decimal buyerFeePercent, decimal targetRoiPercent, decimal compsMaxBid,
+        decimal salesTaxPercent)
     {
         // Three refusals, in the order that matters: the wrong product, too little of it, and a
         // break-even that is only high because a postage cost is missing.
@@ -294,10 +300,11 @@ public static class OwnTrackRecord
             return;
         }
 
-        var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(proceeds, shipping, targetRoiPercent, buyerFeePercent);
+        var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(
+            proceeds, shipping, targetRoiPercent, buyerFeePercent, salesTaxPercent);
         history.OwnMaxBid = maxBid;
         history.OwnCeilingBoundBy = boundBy;
-        history.OwnBreakEvenBid = LiveBidAdvisor.BreakEvenBid(proceeds, buyerFeePercent, shipping);
+        history.OwnBreakEvenBid = LiveBidAdvisor.BreakEvenBid(proceeds, buyerFeePercent, shipping, salesTaxPercent);
 
         if (maxBid <= 0m)
         {

@@ -16651,6 +16651,11 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-field-shipadd {
   width: 108px;
 }
+/* The seller's own combined rate, beside the premium and no wider — the two things
+   the platform bills on top of the hammer read as one pair. */
+.wn-field-tax {
+  width: 108px;
+}
 /* And the two of them wrap together or not at all. Split across two lines by the
    row's own flex-wrap they stop being a pair, and "Each extra" on its own is a
    figure with nothing to be extra to. */
@@ -16658,6 +16663,24 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   display: flex;
   gap: 8px;
   align-items: flex-end;
+}
+/* The one tick on this row. It is not a figure, so it does not get a figure's
+   column: the label sits beside the box rather than above it, and the whole
+   thing is only as wide as the two words it holds. Bottom-aligned so it sits on
+   the same baseline as the inputs it qualifies rather than floating above them. */
+.wn-field-exempt {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  align-self: flex-end;
+  padding-bottom: 7px;
+  white-space: nowrap;
+}
+.wn-field-exempt > input {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
 }
 
 .wn-price-btn {
@@ -17620,6 +17643,128 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── What the marketplace bills on top ───────────────────────────────────────
+   The fourth part of the landed cost. A live platform is a marketplace
+   facilitator and collects the buyer's sales tax at checkout, so this is money
+   that leaves the wallet on every win — and for fifteen versions of this card it
+   was in none of them. Drawn immediately under the shipping strip because the
+   two are the same kind of fact: what winning costs beyond the hammer. */
+.wn-tax {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* Nothing entered, so the ceiling above is costing the lot as though the
+   platform collected nothing. Real money, missing — the same red the shipping
+   strip uses for the same silence. */
+.wn-tax-none {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+/* A rate is charged and the ceiling came down for it. Not an error and not good
+   news: it is the card being right, which is what the neutral warn edge says. */
+.wn-tax-charged {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Charged nothing, correctly — a certificate on file, or a state that levies
+   none. Both are ordinary states of an accurate card and get the ordinary edge. */
+.wn-tax-exempt,
+.wn-tax-free {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-tax-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-tax-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-tax-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-tax-none .wn-tax-headline {
+  color: var(--danger, #d46a6a);
+}
+.wn-tax-charged .wn-tax-headline {
+  color: var(--warn, #e0b44a);
+}
+/* How much lower the ceiling is for the tax — which is not the rate, because the
+   tax multiplies the landed cost and the ceiling divides by it. */
+.wn-tax-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+/* The size of the silence, in the one state that has one. Dim, because it is a
+   figure nothing was charged at — it exists to say whether filling the box in is
+   worth the four seconds. */
+.wn-tax-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The arithmetic in three figures: what it is charged on, at what rate, and what
+   that adds. The last one is the money the ceiling above was costed with, so it
+   is the one drawn loud. */
+.wn-tax-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-tax-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-tax-cell-this {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-tax-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-tax-cell-this .wn-tax-cell-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-tax-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-tax-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 .wn-ladder {
   display: flex;
   flex-wrap: wrap;
@@ -18367,7 +18512,20 @@ p.wn-units-refused {
     flex-direction: column;
     gap: 1px;
   }
+  /* And on the tax strip, where "SALES TAX" and "$8.64 tax at 8%" want the same
+     line and only one of them is the sentence. The three cells below wrap on
+     their own; side by side they are the arithmetic, kept while they fit. */
+  .wn-tax-line {
+    flex-direction: column;
+    gap: 1px;
+  }
   .wn-field-cond {
+    width: 100%;
+  }
+  /* The certificate is a tick, not a figure, and its label is two words. Given
+     the whole line so the box and its words stay on one row rather than the
+     label wrapping under a checkbox. */
+  .wn-field-exempt {
     width: 100%;
   }
   /* The show is a name, not a figure, and it is the one box on this row that

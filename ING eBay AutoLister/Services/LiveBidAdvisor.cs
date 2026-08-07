@@ -19,9 +19,10 @@ namespace ING_eBay_AutoLister.Services;
 /// </para>
 /// <para>
 /// What is genuinely different from every other screen is the shape of the price. It is a
-/// <b>bid</b>: it moves while the card is on screen, a buyer's premium sits on top of it, and
-/// shipping is part of what winning costs rather than something taken out of the profit afterwards.
-/// So the output is a ceiling and a headroom, not a verdict on a number somebody has agreed to.
+/// <b>bid</b>: it moves while the card is on screen, a buyer's premium and the marketplace's sales
+/// tax sit on top of it, and shipping is part of what winning costs rather than something taken out
+/// of the profit afterwards. So the output is a ceiling and a headroom, not a verdict on a number
+/// somebody has agreed to.
 /// </para>
 /// <para>
 /// Pure except <see cref="Build"/>, which delegates every dollar to the shared
@@ -56,17 +57,29 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     public static decimal SanitizeBuyerFee(decimal? raw) =>
         raw is not decimal value || value <= 0m ? 0m : Math.Min(value, MaxBuyerFeePercent);
 
-    /// <summary>What winning at this bid actually costs: the bid, the platform's cut of it, and
-    /// getting it delivered.</summary>
-    public static decimal LandedCost(decimal bid, decimal buyerFeePercent, decimal shipping) =>
-        Math.Round(bid * (1m + Math.Max(0m, buyerFeePercent) / 100m) + Math.Max(0m, shipping), 2);
+    /// <summary>What winning at this bid actually costs: the bid, the platform's cut of it, the
+    /// sales tax on both, and getting it delivered.</summary>
+    /// <param name="salesTaxPercent">
+    /// What the marketplace collects in sales tax, charged on the hammer plus the premium and not on
+    /// the shipping — <see cref="LotAnalyzer.CostOf"/>'s rule, which is the app's only sales-tax
+    /// arithmetic. Zero unless the seller stated a rate; see <see cref="LiveSalesTax"/> for the four
+    /// states and for why nothing is ever assumed here.
+    /// </param>
+    public static decimal LandedCost(
+        decimal bid, decimal buyerFeePercent, decimal shipping, decimal salesTaxPercent = 0m)
+    {
+        var taxed = bid * (1m + Math.Max(0m, buyerFeePercent) / 100m) * (1m + Math.Max(0m, salesTaxPercent) / 100m);
+        return Math.Round(taxed + Math.Max(0m, shipping), 2);
+    }
 
-    /// <summary>The highest bid that breaks even, with the premium and the shipping already taken
-    /// out of it — so it is a number to bid to, not a budget to spend.</summary>
-    public static decimal BreakEvenBid(decimal breakEvenAllIn, decimal buyerFeePercent, decimal shipping)
+    /// <summary>The highest bid that breaks even, with the premium, the tax and the shipping already
+    /// taken out of it — so it is a number to bid to, not a budget to spend.</summary>
+    public static decimal BreakEvenBid(
+        decimal breakEvenAllIn, decimal buyerFeePercent, decimal shipping, decimal salesTaxPercent = 0m)
     {
         if (breakEvenAllIn <= 0m) return 0m;
-        var bid = (breakEvenAllIn - Math.Max(0m, shipping)) / (1m + Math.Max(0m, buyerFeePercent) / 100m);
+        var perBidDollar = (1m + Math.Max(0m, buyerFeePercent) / 100m) * (1m + Math.Max(0m, salesTaxPercent) / 100m);
+        var bid = (breakEvenAllIn - Math.Max(0m, shipping)) / perBidDollar;
         // Truncated like the ceiling above it, and for the same reason: a walk-away line rounded up
         // is a walk-away line that quietly permits the bid it exists to refuse.
         return bid <= 0m ? 0m : Math.Floor(bid * 100m) / 100m;
@@ -143,6 +156,16 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
         var bid = Math.Max(0m, request.CurrentBid ?? 0m);
 
+        // And the fourth part of the landed cost, which until now was not in it at all. A live
+        // marketplace is a facilitator: it collects the buyer's sales tax at checkout on the hammer
+        // and the premium, and nobody gets to decline it. Left out, every ceiling on this screen was
+        // too high by roughly the size of the premium — in the one direction that costs money, since
+        // a ceiling that is too high says bid on a lot that then loses. Charged nothing unless the
+        // seller stated a rate, because most resellers file a certificate and pay none; see
+        // LiveSalesTax for the four states and for what is never assumed.
+        var tax = LiveSalesTax.Read(request.SalesTaxPercent, request.TaxExempt == true, bid, feePercent);
+        var taxPercent = tax.RatePercent;
+
         // How many things is this? Sold comps are per unit everywhere in this app, so every figure
         // below is a per-unit figure until this says otherwise — and on a live show it says
         // otherwise often enough to matter. See LiveLotSize for what it refuses to guess.
@@ -157,6 +180,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             Trend = trend,
             Condition = condition,
             Ship = freight,
+            Tax = tax,
             PricedAs = resale?.LookupTitle ?? terms.Query,
             CategoryLabel = category?.Label ?? "",
             CurrentBid = bid,
@@ -164,7 +188,8 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             ShippingCost = shipping,
             BuyerFeePercent = feePercent,
             BuyerFee = Math.Round(bid * feePercent / 100m, 2),
-            LandedCostNow = LandedCost(bid, feePercent, shipping),
+            SalesTax = tax.Charged,
+            LandedCostNow = LandedCost(bid, feePercent, shipping, taxPercent),
             TargetRoiPercent = target,
             SoldSearchUrl = ResaleValuationLinks.SoldSearchUrl(
                 category ?? ResaleCategoryCatalog.Resolve(request.CategoryId),
@@ -267,9 +292,10 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // for the whole lot however many things are in it.
         var breakEvenPerUnit = hunter.BreakEvenBuyPrice(bidAgainst, fees);
         var breakEvenAllIn = Math.Round(breakEvenPerUnit * count, 2);
-        var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(breakEvenAllIn, shipping, target, feePercent);
+        var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(
+            breakEvenAllIn, shipping, target, feePercent, taxPercent);
 
-        card.BreakEvenBid = BreakEvenBid(breakEvenAllIn, feePercent, shipping);
+        card.BreakEvenBid = BreakEvenBid(breakEvenAllIn, feePercent, shipping, taxPercent);
         card.MaxBid = maxBid;
         card.CeilingBoundBy = boundBy;
         card.CeilingNote = boundBy == AuctionSniperAnalyzer.CeilingByCash
@@ -279,7 +305,8 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                              "label on each of them is already in the break-even above it." : "")
             : $"Ceiling set by your {target:0.#}% target return.";
         card.Headroom = Math.Round(maxBid - bid, 2);
-        card.ProfitAtMaxBid = Math.Round(Math.Max(0m, breakEvenAllIn - LandedCost(maxBid, feePercent, shipping)), 2);
+        card.ProfitAtMaxBid = Math.Round(
+            Math.Max(0m, breakEvenAllIn - LandedCost(maxBid, feePercent, shipping, taxPercent)), 2);
 
         // The same ceiling divided back down, because the number a seller carries between lots is
         // "what is one of these worth to me". Truncated like the ceiling it comes from.
@@ -372,10 +399,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // buyer, one fee — so measuring it against a ceiling for three of them would report their
         // own history as a third of what it is, on the card where it is the strongest evidence
         // there is. The lot warning below says which of the two scales this block is on.
+        // Priced at the same tax as the ceiling above it, for the same reason as the shipping and
+        // the premium: the seller's own record is being shown as a second ceiling, and two ceilings
+        // on one card costed on different terms is worse than one.
         card.OwnHistory = OwnTrackRecord.Price(
             own, card.ShippingCost, card.BuyerFeePercent, card.TargetRoiPercent,
             card.Units.IsLot ? card.Units.MaxBidPerUnit : card.MaxBid,
-            card.Units.IsLot ? card.Units.ResalePerUnit : card.ResalePrice);
+            card.Units.IsLot ? card.Units.ResalePerUnit : card.ResalePrice,
+            card.Tax.RatePercent);
 
         card.Warnings.AddRange(OwnTrackRecord.Warnings(card.OwnHistory));
 
@@ -541,7 +572,8 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             resale.EstimatedDaysToSell, resale.EstimatedMonthlySales,
             card.ProfitAtMaxBid,
             card.MaxBid > 0m && card.ProfitAtMaxBid > 0m
-                ? Math.Round(card.ProfitAtMaxBid / LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost) * 100m, 1)
+                ? Math.Round(card.ProfitAtMaxBid / LandedCost(
+                    card.MaxBid, card.BuyerFeePercent, card.ShippingCost, card.Tax.RatePercent) * 100m, 1)
                 : card.RoiNow);
 
         card.DaysToSell = estimate.DaysToSell;
@@ -581,8 +613,8 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             : "";
 
         var ceiling = $"Bid up to {card.MaxBid:C}{forAll}" +
-                      (card.BuyerFeePercent > 0m || card.ShippingCost > 0m
-                          ? $" ({LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost):C} landed)"
+                      (card.BuyerFeePercent > 0m || card.ShippingCost > 0m || card.Tax.Applied
+                          ? $" ({LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost, card.Tax.RatePercent):C} landed)"
                           : "");
 
         if (card.CompCount < MinCompsToBid || card.EvidenceTier != LocalArbitrageAnalyzer.EvidenceConfident)
@@ -661,6 +693,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             warnings.Add("No buyer's premium entered. Most live-selling platforms add one to the winning " +
                          "bid, and it comes straight off this margin.");
         }
+
+        // And the other half of what the platform bills. Said in exactly one state — nothing
+        // entered — because that is the only one where the ceiling above is wrong: an exempt buyer
+        // and a seller in a no-tax state are both charged nothing correctly, and a warning on either
+        // would be a warning about a card that is right. LiveSalesTax owns the sentence, so the
+        // strip and the warning list cannot describe the same tax differently.
+        if (card.Tax is { Warning.Length: > 0 } tax) warnings.Add(tax.Warning);
 
         if (card.NewestCompAgeDays is int age && age > StaleCompDays)
         {

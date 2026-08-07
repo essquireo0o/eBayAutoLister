@@ -90,9 +90,16 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
     /// which charges the buyer nothing; live-selling platforms charge it, and it has to be divided
     /// back out of the ceiling or the quoted bid costs more than the arithmetic behind it allowed.
     /// </param>
+    /// <param name="salesTaxPercent">
+    /// Sales tax the marketplace collects on the hammer and the premium, as a percentage. Zero on
+    /// eBay auctions, where this analyzer's own rows are priced; a live marketplace is a facilitator
+    /// and charges it at checkout, so it multiplies the bid exactly as the premium does and divides
+    /// back out of the ceiling with it. Same <c>k = (1+premium)(1+tax)</c> as
+    /// <see cref="LotAnalyzer.MaxAsk"/>, which is the app's other auction ceiling.
+    /// </param>
     public static (decimal MaxBid, string BoundBy) MaxBidDetail(
         decimal breakEvenAllIn, decimal shippingCost,
-        decimal? targetRoiPercent = null, decimal buyerFeePercent = 0m)
+        decimal? targetRoiPercent = null, decimal buyerFeePercent = 0m, decimal salesTaxPercent = 0m)
     {
         if (breakEvenAllIn <= 0) return (0m, "");
 
@@ -102,8 +109,10 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
         var boundBy = byRoi <= byProfit ? CeilingByRoi : CeilingByCash;
 
         // Everything above is a ceiling on the ALL-IN cost. Shipping is spent whatever the bid is,
-        // so it comes off the top; the premium is a multiple of the bid, so it divides out.
-        var worthIt = (Math.Min(byRoi, byProfit) - shippingCost) / (1m + Math.Max(0m, buyerFeePercent) / 100m);
+        // so it comes off the top; the premium and the tax are both multiples of the bid, so they
+        // divide out together.
+        var perBidDollar = (1m + Math.Max(0m, buyerFeePercent) / 100m) * (1m + Math.Max(0m, salesTaxPercent) / 100m);
+        var worthIt = (Math.Min(byRoi, byProfit) - shippingCost) / perBidDollar;
         return worthIt <= 0 ? (0m, boundBy) : (Math.Floor(worthIt * 100m) / 100m, boundBy);
     }
 

@@ -12710,3 +12710,166 @@ of it is no part of that.
   card with nothing on the shelf is priced byte-for-byte as it was before the file existed. What is
   new is that the reason for the cut is a *projection*, and a seller who disagrees with it has no way
   to turn it off — the only lever is the shelf count itself, which is a fact rather than a setting.
+
+---
+
+# The bid, the premium, the shipping — and the tax nobody charged (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Every dollar on the live card hangs off a **landed cost**, and for fifteen sessions that cost has
+been three things: the bid, the platform's buyer premium, and getting the thing delivered. Sessions
+have gone into sharpening all three — the premium divides out of the ceiling instead of coming off
+the margin, and the shipping is the *marginal* cost of adding one lot to a box already going out.
+
+A live marketplace in the United States charges a **fourth**. It is a marketplace facilitator, so it
+collects the buyer's combined state and local sales tax at checkout and remits it. The buyer does not
+get to decline it; it is on the same receipt as the hammer price.
+
+It is not a rounding error. The premium this card already charges is around 8%. Combined US sales tax
+averages **7.5%** and runs past 10% in parts of Louisiana, Tennessee and Alabama. So the ceiling has
+been leaving out a cost the size of the largest one it charges — and leaving it out in the one
+direction that costs money, because a ceiling that is too high is a ceiling that says **bid** on a lot
+the seller then loses on.
+
+There is now a strip on every card, directly under the freight:
+
+> **SALES TAX** **$3.89 tax at 9%** `−8.3% TO BID`
+> `TAXED ON $43.20`  `YOUR RATE 9%`  `ADDS $3.89`
+> Charged on the $43.20 the platform bills you — the hammer and the premium on it, not the shipping,
+> which is how this app has costed an auction's tax since the liquidation board. The ceiling above is
+> what you can bid with that tax already inside it.
+
+## Why it is a state and not a rate
+
+A reseller can be **exempt**. Whatnot accepts a resale certificate, and a seller who has filed one
+pays no sales tax on anything bought to resell — which is most of this app's users on most of these
+lots. Charging every card a default rate would quietly refuse good lots over a cost the seller does
+not pay, and refusing a good lot on a live show costs real money: there is another one in four
+minutes and somebody else wins this one.
+
+So `Services/LiveSalesTax.cs` answers one question — *what does the marketplace bill on top, and what
+does charging it take off the ceiling* — in four states.
+
+| State | When | What the ceiling is charged |
+|---|---|---|
+| `none` | Nothing entered | nothing, said out loud, with the size of the silence beside it |
+| `exempt` | A resale certificate is on file | nothing, and why |
+| `free` | A rate of **0** was typed | nothing — five states levy none, and a stated zero is an answer |
+| `charged` | A real rate | the tax on the hammer plus the premium |
+
+The certificate is judged **first**, so it outranks whatever is in the rate box: a seller who filed
+one and then typed their state's rate is still exempt. A test asserts the ordering rather than the
+behaviour, because the ordering is the reason.
+
+## Nothing is assumed, which is what keeps every other card unchanged
+
+`RatePercent` is initialised to zero on the read and set on **exactly one line** — the charged state —
+which is asserted by a test that counts `read.RatePercent = rate;` and finds one. So a card with an
+empty tax box is priced byte-for-byte as it was before this file existed, and every pre-existing
+ceiling test in the suite still passes on its original figures.
+
+The US average appears in exactly one place and is never charged to anything: sizing the silence.
+The `none` state prints *"about $3.24 uncosted"* beside its headline and puts the same figure in the
+warning list — the seller can see whether filling the box in is worth the four seconds, without the
+app having decided on their behalf that it is.
+
+## The cut is smaller than the rate, and the strip says the true one
+
+The tax multiplies the whole landed cost, so the highest affordable bid **divides** by `1 + rate`. A
+7.5% rate takes 6.98% off the ceiling, not 7.5%. The tag beside the strip says `−8.3% TO BID` on a 9%
+rate, and a test measures the two ceilings and asserts the tag equals the difference between them.
+Quoting the rate there would overstate what this block costs the seller, on the one figure they use
+to decide whether to believe it.
+
+## One ceiling function, one tax arithmetic
+
+`AuctionSniperAnalyzer.MaxBidDetail` gained one optional parameter and now divides by
+`k = (1 + premium)(1 + tax)` — which is `LotAnalyzer.MaxAsk`'s expression, the app's other auction
+ceiling, unchanged since the liquidation board. Defaulting to zero keeps every eBay auction row
+byte-identical. `LiveBidAdvisor.LandedCost` and `BreakEvenBid` took the same parameter, and the
+press strip and the seller's own-record ceiling are both costed at the card's own rate: two figures
+on one card costed on different terms is worse than one.
+
+The tax is charged on the **hammer plus the premium** and not on the freight. That is
+`LotAnalyzer.CostOf`'s rule and the only sales-tax arithmetic this app has ever had, and it is the
+honest reading of a rule that genuinely differs by state — roughly half tax delivery charges and the
+rest do not, so taxing shipping here would invent a charge for the sellers in the states that do not.
+
+## It moves the cost side and leaves the market alone
+
+A test builds the same lot taxed and untaxed off one analysis and asserts the resale price, the
+median, the middle half, the sell-through, the comp count and the **query eBay was asked** are all
+identical. Where the buyer lives is not a fact about what the thing fetches, and a card that quietly
+re-rated the market for a tax rate would be inventing sales nobody made. `LiveSalesTax` never sees a
+comp — asserted by a test that finds no `MarketAnalysisResult`, no `Comparable` and no `ResalePricing`
+anywhere in the file.
+
+## It follows the lot onto the buy sheet
+
+`LiveWinRequest` carries both fields and hands them to `AsBid()`, so a recorded win is costed at the
+card's own terms. Without that, the night's spend would be the figure the seller's bank statement
+disagrees with — by about the size of the premium, on every lot.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveSalesTax.cs` | New — the four states, the certificate's precedence, the base, the ceiling cut and every sentence |
+| `ING eBay AutoLister/Models/LiveTaxModels.cs` | New — `LiveTaxRead`, `LiveTaxVerdicts` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidRequest.SalesTaxPercent`, `.TaxExempt`; `LiveBidCard.Tax`, `.SalesTax` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | The same two on `LiveWinRequest`, carried by `AsBid()` |
+| `ING eBay AutoLister/Services/AuctionSniperAnalyzer.cs` | `MaxBidDetail` divides by `(1+premium)(1+tax)`; zero by default, so no other caller moves |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read, the fourth part of the landed cost, the taxed ceiling and walk-away line, the warning |
+| `ING eBay AutoLister/Services/LiveBidIncrement.cs` | The next press landed at the card's own rate |
+| `ING eBay AutoLister/Services/OwnTrackRecord.cs` | The second ceiling costed at the same rate as the first |
+| `ING eBay AutoLister/Program.cs` | The verdict, the rate, the base, the cash and the ceiling cut in the fresh-price log line |
+| `ING eBay AutoLister/wwwroot/index.html` | The rate box, the certificate tick, `app.js?v=136`, `style.css?v=119` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnTaxFields()` into all four payloads, both boxes re-priced off held comps, both remembered, the strip |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-tax-*` — the four edges, the three cells, the tag; `.wn-field-tax`, `.wn-field-exempt`; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveSalesTaxTests.cs` | New — 17 tests on the states, the base, the cut and everything it refuses to charge |
+| `ING eBay AutoLister.Tests/WhatsNotTaxAssetTests.cs` | New — 19 tests holding the seven links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 10 new tests on what a real card does with a tax rate, including that an exempt card is priced as an untaxed one |
+| `WhatsNotShipAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotHoldAssetTests.cs`, `WhatsNotConditionAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotLotUnitsAssetTests.cs`, `WhatsNotTrendAssetTests.cs`, `WhatsNotOwnRecordAssetTests.cs` | Re-pinned asset versions, the strip order and the two widened signatures |
+| `whatsnot_tax_charged.png`, `whatsnot_tax_none.png`, `whatsnot_tax_exempt.png`, `whatsnot_tax_narrow.png` | The state that charges, the two that must look free, and the charging one at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,466 passed**, 0 failed, 0 skipped (46 new; the previous commit was 4,420) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` mocked in the shape the C# returns) | **25 checks, all passed.** On the charging card: a warn-edged strip reading `$3.89 tax at 9%`, a `−8.3% TO BID` tag, three cells reading `TAXED ON $43.20 / YOUR RATE 9% / ADDS $3.89` with the last drawn loud, and the strip **immediately above the ladder**. On `none`: a red edge, **no cells and no tag**, `about $3.24 uncosted` beside the headline, and the sentence on the warning list. On `exempt`: the ordinary border, no cells, no tag and **nothing on the warning list** — the "an accurate card is not warned about" property drawn rather than asserted. The rate box's placeholder is a dash and not `7.5`, which is the "nothing is assumed" property visible on the form. At 560px `.wn-tax` overflowed the card by **0px**, the three cells stayed inside the strip by **0px**, and the headline took the line back from the label. 0 JS errors beyond Whatnot's own X-Frame-Options refusal, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every state and every dollar is exercised against
+  requests built in tests and a mocked endpoint. The action log now prints the verdict, the rate, the
+  base, the cash and the ceiling cut on every fresh price, which is where the first real *"the app
+  said stop because it charged 9% my certificate covers"* will show up.
+- **The rate is the seller's, typed once, and nothing checks it.** There is no lookup from a ZIP to a
+  combined rate and no read of what the platform actually charged at checkout. A seller who types 7
+  and lives somewhere charging 9.5 gets a ceiling that is too high by the difference — smaller than
+  the error this replaces, and in the same direction.
+- **The shipping is not taxed, and in about half the states it is.** The choice is deliberate and
+  consistent with the app's only other sales-tax arithmetic, but it under-charges by the tax on one
+  parcel — on a $12 box at 7.5%, ninety cents — and it under-charges in the direction that argues for
+  bidding.
+- **The certificate is a claim, not a verified fact.** The app knows only that the box is ticked. A
+  seller who has filed with their state but not with the marketplace is charged tax at checkout and
+  will not see it here; the strip's own sentence says so, and that is the whole of the defence.
+- **A rate typed for one platform is used for the next.** It is remembered like the premium, and it is
+  a fact about where the buyer lives rather than about the show, so that is right — but a seller who
+  buys through a platform that does not collect tax at all has to clear the box themselves.
+- **It cuts, which means it can cost the seller a lot they should have won.** The defence is that this
+  cut is not a judgement: unlike the trend, condition and shelf-time reads, nothing here is estimated
+  from evidence that could be read another way. It is a rate the seller typed, multiplied by a price
+  the platform will bill. The exposure is a wrong rate, and the box that fixes it is on screen.

@@ -107,9 +107,13 @@ public class WhatsNotOwnRecordAssetTests
     {
         var record = ReadSource("Services/OwnTrackRecord.cs");
 
-        Assert.Contains("AuctionSniperAnalyzer.MaxBidDetail(proceeds, shipping, targetRoiPercent, buyerFeePercent)",
+        // Both take the card's own sales-tax rate too, because this block is a SECOND ceiling on the
+        // same card and two ceilings costed on different terms is worse than one.
+        Assert.Contains("AuctionSniperAnalyzer.MaxBidDetail(", record, StringComparison.Ordinal);
+        Assert.Contains("proceeds, shipping, targetRoiPercent, buyerFeePercent, salesTaxPercent)",
             record, StringComparison.Ordinal);
-        Assert.Contains("LiveBidAdvisor.BreakEvenBid(proceeds, buyerFeePercent, shipping)", record, StringComparison.Ordinal);
+        Assert.Contains("LiveBidAdvisor.BreakEvenBid(proceeds, buyerFeePercent, shipping, salesTaxPercent)",
+            record, StringComparison.Ordinal);
 
         // No arithmetic of its own for the ceiling — the two calls above and nothing beside them.
         Assert.DoesNotContain("/ (1m + target", record, StringComparison.Ordinal);

@@ -192,13 +192,14 @@ public static class LiveBidIncrement
 
         read.Readable = true;
         read.Amount = Math.Round(card.CurrentBid + increment, 2);
-        read.Landed = LiveBidAdvisor.LandedCost(read.Amount, card.BuyerFeePercent, card.ShippingCost);
+        read.Landed = LiveBidAdvisor.LandedCost(
+            read.Amount, card.BuyerFeePercent, card.ShippingCost, card.Tax.RatePercent);
         // Not clamped at zero, unlike ProfitAtMaxBid. A negative here is the whole point of the
         // figure: it is what the press would cost, and rendering it as $0.00 would turn the one
         // number that says "this press loses money" into one that says "this press makes none".
         read.Profit = Math.Round(breakEvenAllIn - read.Landed, 2);
 
-        var landed = card.BuyerFeePercent > 0m || card.ShippingCost > 0m
+        var landed = card.BuyerFeePercent > 0m || card.ShippingCost > 0m || card.Tax.Applied
             ? $" ({read.Landed:C} landed)"
             : "";
 

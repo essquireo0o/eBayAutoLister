@@ -94,17 +94,21 @@ public class LiveBidAdvisorTests
 
     private static LiveBidRequest Ask(
         decimal? bid = null, decimal? shipping = null, decimal? fee = null, decimal? target = null,
-        int? quantity = null, decimal? increment = null) =>
+        int? quantity = null, decimal? increment = null, decimal? tax = null, bool exempt = false) =>
         new()
         {
             Title = Product, CurrentBid = bid, ShippingCost = shipping, BuyerFeePercent = fee,
             TargetRoiPercent = target, Quantity = quantity, BidIncrement = increment,
+            SalesTaxPercent = tax, TaxExempt = exempt,
         };
 
     private static LiveBidCard Card(
         MarketAnalysisResult? analysis, decimal? bid = null, decimal? shipping = null,
-        decimal? fee = null, decimal? target = null, int? quantity = null, decimal? increment = null) =>
-        Advisor.Build(Product, analysis, Ask(bid, shipping, fee, target, quantity, increment), Fees, nowUtc: Now);
+        decimal? fee = null, decimal? target = null, int? quantity = null, decimal? increment = null,
+        decimal? tax = null, bool exempt = false) =>
+        Advisor.Build(
+            Product, analysis, Ask(bid, shipping, fee, target, quantity, increment, tax, exempt),
+            Fees, nowUtc: Now);
 
     // ── The ceiling ───────────────────────────────────────────────────────────
 
@@ -1901,5 +1905,198 @@ public class LiveBidAdvisorTests
         Assert.Equal(6, card.Hold.UnitsAhead);
         Assert.False(card.Hold.Discounted);
         Assert.NotEmpty(card.Hold.Headline);
+    }
+
+    // ── The tax the marketplace collects ──────────────────────────────────────
+    //
+    // The fourth part of the landed cost, and the only one that was missing from it. A live platform
+    // is a marketplace facilitator: it charges the buyer's combined sales tax on the hammer and the
+    // premium at checkout, and nobody declines it. Left out, every ceiling here was too high by
+    // roughly the size of the premium — which is the direction that says bid on a lot that loses.
+
+    /// <summary>
+    /// Nothing is assumed. An empty tax box charges the same zero a resale certificate does, so a
+    /// card built without one is priced exactly as it was before this existed — and the difference
+    /// between the two silences is carried in words rather than in money.
+    /// </summary>
+    [Fact]
+    public void An_empty_tax_box_charges_nothing()
+    {
+        var card = Card(Analysis(), bid: 40m, fee: 8m);
+
+        Assert.Equal(LiveTaxVerdicts.None, card.Tax.Verdict);
+        Assert.Equal(0m, card.SalesTax);
+        Assert.Equal(0m, card.Tax.RatePercent);
+        Assert.False(card.Tax.Applied);
+        // 40 + 8% premium, and nothing else.
+        Assert.Equal(43.20m, card.LandedCostNow);
+    }
+
+    /// <summary>
+    /// The ceiling comes down for a stated rate, and the landed cost at that ceiling still clears the
+    /// bar the ceiling was set by — which is the whole property. A ceiling that quoted a bid whose
+    /// tax then broke the target would be the exact failure this feature exists to avoid.
+    /// </summary>
+    [Fact]
+    public void A_stated_rate_lowers_the_ceiling_and_the_landed_cost_at_it_still_clears_the_bar()
+    {
+        var untaxed = Card(Analysis(), bid: 40m, fee: 8m);
+        var taxed = Card(Analysis(), bid: 40m, fee: 8m, tax: 9m);
+
+        Assert.Equal(LiveTaxVerdicts.Charged, taxed.Tax.Verdict);
+        Assert.True(taxed.MaxBid < untaxed.MaxBid,
+            $"taxed ceiling {taxed.MaxBid} is not below the untaxed {untaxed.MaxBid}");
+
+        // What winning at the taxed ceiling really costs, worked out independently of the card.
+        var landed = Math.Round(taxed.MaxBid * 1.08m * 1.09m, 2);
+        Assert.Equal(landed, LiveBidAdvisor.LandedCost(taxed.MaxBid, 8m, 0m, 9m));
+
+        // And the profit at it is still the app's own bar or better.
+        Assert.True(taxed.ProfitAtMaxBid >= LocalArbitrageAnalyzer.SolidProfit - 0.01m,
+            $"only {taxed.ProfitAtMaxBid} left at the taxed ceiling");
+    }
+
+    /// <summary>
+    /// A certificate on file prices the lot exactly as an untaxed one, whatever is in the rate box.
+    /// Most resellers have one, and a ceiling cut for a cost they do not pay is a ceiling that loses
+    /// them lots somebody else wins.
+    /// </summary>
+    [Fact]
+    public void A_resale_certificate_prices_the_lot_as_though_no_tax_existed()
+    {
+        var exempt = Card(Analysis(), bid: 40m, fee: 8m, tax: 9m, exempt: true);
+        var untaxed = Card(Analysis(), bid: 40m, fee: 8m);
+
+        Assert.Equal(LiveTaxVerdicts.Exempt, exempt.Tax.Verdict);
+        Assert.Equal(untaxed.MaxBid, exempt.MaxBid);
+        Assert.Equal(untaxed.BreakEvenBid, exempt.BreakEvenBid);
+        Assert.Equal(untaxed.LandedCostNow, exempt.LandedCostNow);
+        Assert.Equal(untaxed.ProfitAtMaxBid, exempt.ProfitAtMaxBid);
+    }
+
+    /// <summary>
+    /// The tax is on the COST side and nothing else. What these resell for on eBay, what the middle
+    /// half runs, how fast they move and how many comps there are do not change because of where the
+    /// buyer lives — and a card that quietly re-rated the market for a tax rate would be inventing
+    /// sales nobody made.
+    /// </summary>
+    [Fact]
+    public void The_tax_moves_the_cost_side_and_leaves_the_market_alone()
+    {
+        var untaxed = Card(Analysis(), bid: 40m, fee: 8m);
+        var taxed = Card(Analysis(), bid: 40m, fee: 8m, tax: 9m);
+
+        Assert.Equal(untaxed.ResalePrice, taxed.ResalePrice);
+        Assert.Equal(untaxed.MedianPrice, taxed.MedianPrice);
+        Assert.Equal(untaxed.PriceLow, taxed.PriceLow);
+        Assert.Equal(untaxed.PriceHigh, taxed.PriceHigh);
+        Assert.Equal(untaxed.SellThroughRate, taxed.SellThroughRate);
+        Assert.Equal(untaxed.CompCount, taxed.CompCount);
+        Assert.Equal(untaxed.Search.Query, taxed.Search.Query);
+    }
+
+    /// <summary>
+    /// Charged on the hammer plus the premium — <see cref="LotAnalyzer.CostOf"/>'s rule, which is the
+    /// app's only sales-tax arithmetic — and added onto the shipping rather than charged on it.
+    /// </summary>
+    [Fact]
+    public void The_landed_cost_carries_the_tax_on_the_bid_and_the_premium_but_not_the_freight()
+    {
+        var card = Card(Analysis(), bid: 100m, shipping: 12m, fee: 8m, tax: 9m);
+
+        Assert.Equal(108m, card.Tax.TaxableBase);
+        Assert.Equal(9.72m, card.SalesTax);
+        Assert.Equal(9.72m, card.Tax.Charged);
+        // 100 + 8 premium + 9.72 tax + 12 shipping — the freight untaxed.
+        Assert.Equal(129.72m, card.LandedCostNow);
+    }
+
+    /// <summary>
+    /// The walk-away line takes the tax out too. A break-even bid quoted before the tax is a
+    /// walk-away line that quietly permits a bid which loses money — the exact thing it exists to
+    /// refuse.
+    /// </summary>
+    [Fact]
+    public void The_break_even_bid_has_the_tax_taken_out_of_it()
+    {
+        var untaxed = Card(Analysis(), bid: 40m, fee: 8m);
+        var taxed = Card(Analysis(), bid: 40m, fee: 8m, tax: 9m);
+
+        Assert.True(taxed.BreakEvenBid < untaxed.BreakEvenBid);
+        Assert.True(taxed.BreakEvenBid > 0m);
+
+        // Winning at the taxed break-even costs no more than the untaxed one did, all in.
+        Assert.True(
+            LiveBidAdvisor.LandedCost(taxed.BreakEvenBid, 8m, 0m, 9m)
+            <= LiveBidAdvisor.LandedCost(untaxed.BreakEvenBid, 8m, 0m) + 0.01m);
+    }
+
+    /// <summary>
+    /// The press is costed at the same tax as the price. The room above the bid and the presses left
+    /// inside it are different questions, and a next-bid strip landed without the tax would tell the
+    /// hand there is a press left that the ceiling above it had already refused.
+    /// </summary>
+    [Fact]
+    public void The_next_press_is_landed_with_the_tax_in_it()
+    {
+        var card = Card(Analysis(), bid: 40m, fee: 8m, tax: 9m, increment: 5m);
+
+        Assert.True(card.NextBid.Readable);
+        Assert.Equal(45m, card.NextBid.Amount);
+        Assert.Equal(LiveBidAdvisor.LandedCost(45m, 8m, 0m, 9m), card.NextBid.Landed);
+    }
+
+    /// <summary>
+    /// The silence is warned about and the two accurate zeroes are not. A warning on an exempt card
+    /// would be a warning about a card that is right, and this screen spends its warning list on the
+    /// things that change the answer.
+    /// </summary>
+    [Fact]
+    public void Only_the_unentered_tax_reaches_the_warning_list()
+    {
+        Assert.Contains(Card(Analysis(), bid: 40m, fee: 8m).Warnings,
+            w => w.Contains("No sales tax entered", StringComparison.Ordinal));
+
+        Assert.DoesNotContain(Card(Analysis(), bid: 40m, fee: 8m, exempt: true).Warnings,
+            w => w.Contains("sales tax", StringComparison.OrdinalIgnoreCase));
+
+        Assert.DoesNotContain(Card(Analysis(), bid: 40m, fee: 8m, tax: 0m).Warnings,
+            w => w.Contains("sales tax", StringComparison.OrdinalIgnoreCase));
+
+        Assert.DoesNotContain(Card(Analysis(), bid: 40m, fee: 8m, tax: 9m).Warnings,
+            w => w.Contains("No sales tax entered", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A card the market could not price still reads the tax and still says so. It is the one card
+    /// with no ceiling to cut, and the strip has to render the honest state rather than vanishing —
+    /// which on that card would read as "nothing is charged".
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_card_still_reads_the_tax()
+    {
+        var card = Card(analysis: null, bid: 40m, fee: 8m, tax: 9m);
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(LiveTaxVerdicts.Charged, card.Tax.Verdict);
+        Assert.Equal(43.20m, card.Tax.TaxableBase);
+        Assert.Equal(3.89m, card.SalesTax);
+        Assert.Equal(47.09m, card.LandedCostNow);
+    }
+
+    /// <summary>
+    /// What the ceiling loses is smaller than the rate, because the tax multiplies the landed cost
+    /// and the ceiling divides by it. The tag beside the strip says the smaller, true figure.
+    /// </summary>
+    [Fact]
+    public void The_ceiling_loses_less_than_the_rate()
+    {
+        var untaxed = Card(Analysis(), bid: 40m, fee: 8m);
+        var taxed = Card(Analysis(), bid: 40m, fee: 8m, tax: 10m);
+
+        var actualCut = Math.Round((untaxed.MaxBid - taxed.MaxBid) / untaxed.MaxBid * 100m, 1);
+
+        Assert.Equal(9.1m, taxed.Tax.CutPercent);   // 10 / 110
+        Assert.Equal(taxed.Tax.CutPercent, actualCut);
     }
 }
