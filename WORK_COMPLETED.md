@@ -13022,3 +13022,167 @@ all still registered and are asserted to be, and the live price still runs on `A
   actionable cut on the card and the only one whose fix takes one keystroke: the ceiling comes
   straight back the moment the budget is raised, off the same held comps, with no eBay read. What it
   cannot do is know that the seller has money somewhere the sheet cannot see.
+
+---
+
+# The count of past sales that would actually have paid for this win (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Seventeen sessions of the live card have answered one question — **what is the thing on screen
+worth** — and every one of them has answered it with a **middle**. The resale price is the expected
+sale. The spread is the middle *half*. The ceiling is the bid that keeps the middle clearing a
+target return, after the premium, the tax, the freight, the trend, the condition, the shelf time and
+the night's remaining cash.
+
+A middle is the right answer to "what are these worth" and a dangerous answer to "should I bid on
+**this** one", because half the sales came in under it. On a board where the seller picks the best of
+forty rows and lives with the average, that is fine — the averages are the product. At a live sale it
+is not: the seller is buying one object, once, in the next eleven seconds, and it either resells
+above what winning cost or it does not.
+
+The card has always carried the evidence that answers it and has never once counted it. So:
+
+> **ODDS** **only 3 of 10 past sales cover a $40.00 win** `30%`
+> `MUST FETCH $64.09`  `TYPICAL SALE $59.00`  `RAN $40–$340`
+> It has to fetch $64.09 for this to break even after eBay's cut, the packing and posting it on.
+> These 10 sold between $40.00 and $340.00, typically $59.00.
+
+Directly under the meter, because it is the answer to the question the meter raises. The badge above
+it on that exact card still reads **BID UP TO $56**, and it is right — the ladder says the item
+resells for $200 and breaks even at a $149 bid. Both statements are true, and only one of them is
+about the object the seller is going to end up holding.
+
+## It is the only figure on the card that moves with the bidding
+
+Everything else on this screen is a fact about the item, so it is the same at $20 and at $200: the
+ceiling is a line the bid crosses once, the comps do not change, the shelf does not change. This
+number falls **every time somebody else raises**, because the bar it is counted against is what a
+unit has to fetch to break even *at the bid on screen*.
+
+Watching `9 of 12` become `4 of 12` is watching the arbitrage close, in the unit that actually
+decides it. That is a thing the seller can act on with a countdown running, and it is why the bar is
+drawn: at a glance it is a width that shortens.
+
+## It borrows both of its numbers and invents neither
+
+The bar is `ProfitBreakdown.BreakEvenSalePrice` — the app's own "what does this have to sell for",
+solved by `ProfitCalculator` from the landed cost the card had already computed, with the same final
+value fee, promoted rate, payment processing, packaging, labour, reserves and postage every other
+screen charges. It is **called, not inverted a second time**: a test asserts the read's bar equals
+that calculator's answer for the same inputs, because two break-evens is how a strip ends up
+disagreeing with the ceiling six lines above it.
+
+And each past sale is re-priced to what *yours* would fetch by the same stacked cut the ceiling was
+built with — `LiveTrend` × `LiveCondition` × `LiveHoldCost` — taken from the **prices themselves**
+rather than re-multiplied out of the three reads' multipliers. A ratio rebuilt from
+`ResaleMultiplier` would be a second opinion about the same cut, and the first time one of those
+reads changed its guards the count would quietly stop matching the number above it. A test builds a
+card whose condition read cuts the price and asserts the two ratios agree to a fraction of a penny.
+
+## It counts, and it never charges
+
+Nothing here moves a ceiling, a resale price, a median, a spread, a sell-through, a break-even or a
+call. A test builds the same lot with and without the sold rows on the analysis and asserts eleven
+figures are identical, including the call, the badge and the reason.
+
+That is a decision and not an omission. A wide spread is already reported — the middle-half warning
+has said "sold prices are scattered, condition decides which end you get" since the first session —
+and taking a haircut for it here would be charging twice for one fact, on the one figure on the card
+that comes from real sales. What this spends is the seller's attention, and only when most of the
+evidence is under the line.
+
+## What it refuses to claim
+
+**A percentage under five sales.** Three comps are enough to price an item (`MinCompsToBid`) and four
+are not enough for a rate — one row moves it twenty-five points. The count is still shown, because
+"three of four" is a true sentence; the `thin` state withholds the *claim that it is odds*, and the
+strip drops the percentage tag with it rather than printing a number the read refused.
+
+**A count against nothing.** No sold rows, or a break-even the fee profile made unreachable, is
+`none`: the strip is absent rather than reading "0 of 0", which on the one card with no resale figure
+would be read as a market verdict.
+
+**Undated evidence is still evidence.** Unlike the trend, this counts every row with a price on it,
+dated or not — a sale that happened is a sale that happened, and the question here is where in the
+distribution it fell, not when.
+
+## Only the worst of three states interrupts
+
+| State | When | What it does |
+|---|---|---|
+| `strong` | 70%+ covered | says so, in green, and nothing else |
+| `even` | 40–70% | says `only 6 of 12…` on the strip and **stays off the warning list** |
+| `long` | under 40% | one warning, and one clause in the spoken line |
+| `thin` | under 5 sales | the count, no rate, no warning |
+
+A coin flip the seller can read on the strip is a decision; interrupting for it would be interrupting
+on the ordinary lot, and a card that warns about everything warns about nothing. The spoken line is
+stricter still — it says nothing on `even`, because a spoken "six of twelve" under a countdown is
+heard as a refusal. In the one state it does speak, it lands immediately after the resale price it
+qualifies, which is the number it exists to qualify:
+
+> *"BID UP TO $56. At $40, $16 of room. Resells around $200, 80% sell-through, on 10 comps. **But only
+> 3 of 10 past sales cover it at this bid.**"*
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+It costs **no lookup**: the rows are the ones already held on `LiveBidBoard`, so a held-comps re-price
+re-counts them in the milliseconds a climbing bid leaves.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveOdds.cs` | New — the count, the bar it borrows, the ratio it reads off the prices, the five states and every sentence |
+| `ING eBay AutoLister/Models/LiveOddsModels.cs` | New — `LiveOddsRead`, `LiveOddsVerdicts` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.Odds` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read at the bid on screen or at the ceiling, the per-unit landed cost, and the one warning |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `HowOftenItPays` — one clause, one state, straight after the resale price |
+| `ING eBay AutoLister/Services/MarketPriceEstimator.cs` | `UnitSoldPrice` made public and called by its own normaliser, so "what did one of a multi-pack comp go for" is one rule with two readers |
+| `ING eBay AutoLister/Program.cs` | The verdict, the count, the bar and the spread in the log line |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=138`, `style.css?v=121` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, drawn under the meter — headline, tag, bar, three cells, note |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-odds-*` — the four edges, the bar, the three cells; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveOddsTests.cs` | New — 17 tests on the count, the bar, the ratio, the states and what it refuses |
+| `ING eBay AutoLister.Tests/WhatsNotOddsAssetTests.cs` | New — 18 tests holding the seven links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 9 new tests on what a real card does with it, including that a counted card is figure-for-figure the uncounted one |
+| `WhatsNotTaxAssetTests.cs`, `WhatsNotShipAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotHoldAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotConditionAssetTests.cs`, `WhatsNotBudgetAssetTests.cs` | Re-pinned asset versions |
+| `whatsnot_odds_long.png`, `whatsnot_odds_strong.png`, `whatsnot_odds_narrow.png` | The state that warns, the state that reassures, and the warning one at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,554 passed**, 0 failed, 0 skipped (44 new; the previous commit was 4,510) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` answered with card JSON **serialised out of the real `LiveBidAdvisor`** rather than hand-written) | **17 checks, all passed.** On the `long` card: a warn-edged strip reading `only 3 of 10 past sales cover a $40.00 win`, a `30%` tag, a bar measured at **30.0%** of its track, three cells reading `$64.09` / `$59.00` / `$40–$340`, the strip **immediately after the meter** in the card's own child order, exactly **one** warning and it is the read's own sentence, the badge still `BID UP TO $56`, and the spoken line carrying the count. On `strong`: the good edge, no "only" in the headline, `80%`, **nothing** on the warning list about odds and nothing in the spoken line — the "an accurate card is not warned about" property drawn rather than asserted. At 560px the strip overflowed the card by **0px** and the cells overflowed the strip by **0px**. 0 JS errors beyond the 403 on Whatnot's own embed, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every count is exercised against rows built in tests
+  and a card serialised out of the real advisor. The action log now prints the verdict, the count,
+  the bar and the spread on every fresh price, which is where the first real *"the app said BID and
+  only 3 of 14 comps covered it"* will show up.
+- **It counts the rows the lookup returned, not the rows the price was computed from.** The identity
+  guard, the outlier trim and the strong-match filter run inside `MarketPriceEstimator`, and what
+  reaches `AllSoldComparables` is the set before them — the same set `LiveTrend` and `LiveCondition`
+  read, so this is consistent with the rest of the card rather than newly wrong. What it means is
+  that a stray cheap row that never touched the resale price still counts against the odds, in the
+  cautious direction.
+- **Every sale is weighted the same.** A sale from last week and one from ten weeks ago count once
+  each, and a 90%-match row counts like a 100% one. The pricing path weights both; this deliberately
+  does not, because the output is a **count** — "nine of twelve" with fractional rows in it would be
+  a score wearing a count's clothes, and the whole point of the strip is that a seller can check it
+  against the comp table underneath.
+- **The re-pricing ratio is one number applied to every row.** The condition cut is measured off the
+  band medians, so applying it to each individual sale assumes the sealed ones and the used ones
+  scale the same way. Where the bands are far apart this understates the spread it is counting.
+- **It is silent on the two states a seller might most want a number for.** A `thin` count states no
+  rate and an `even` count states no warning, both on purpose — but a seller who wanted "60%" said
+  out loud on a coin flip has to read the strip rather than hear it.

@@ -1,4 +1,4 @@
-namespace ING_eBay_AutoLister.Tests;
+﻿namespace ING_eBay_AutoLister.Tests;
 
 /// <summary>
 /// What the queue costs reaches the live card through six links, and five of them are the sort of
@@ -331,8 +331,8 @@ public class WhatsNotHoldAssetTests
     [Fact]
     public void The_asset_versions_are_bumped()
     {
-        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

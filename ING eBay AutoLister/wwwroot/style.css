@@ -18006,6 +18006,163 @@ p.wn-units-refused {
   color: var(--success, #5ac882);
 }
 
+/* ── And how much of the evidence agrees ─────────────────────────────────────
+   Drawn directly under the meter, because it is the answer to the question the
+   meter raises: the ceiling on that track is the bid that keeps the MIDDLE of the
+   sold prices clearing a target, and half the sales came in under the middle.
+   This is the count of the ones that would actually have paid for the win.
+
+   It is the only block on the card that moves with the bidding rather than with
+   the item, so the bar is the part that matters: a seller watching it shorten as
+   somebody else raises is watching the arbitrage close. */
+.wn-odds {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* Most of the evidence is behind the bid. The only good-news edge on this strip,
+   and the one state that needs no explaining. */
+.wn-odds-strong {
+  border-left: 3px solid var(--success, #5ac882);
+}
+/* A coin flip, and drawn as one. Deliberately NOT on the card's warning list —
+   a count the seller can see is a decision, and an interruption for it would be
+   an interruption on the ordinary lot. */
+.wn-odds-even {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+/* Most of the past sales came in under what winning costs. The ceiling above is
+   right and is still the wrong thing to act on alone, which is exactly what the
+   neutral warn edge means everywhere else on this screen. */
+.wn-odds-long {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Too few sales for the count to be odds. The count is still true and still
+   shown; what is withheld is the percentage, so the edge is the quiet one. */
+.wn-odds-thin {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-odds-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-odds-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-odds-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-odds-strong .wn-odds-headline {
+  color: var(--success, #5ac882);
+}
+.wn-odds-long .wn-odds-headline {
+  color: var(--warn, #e0b44a);
+}
+/* The share, as a number. Absent on a thin count rather than rounded up out of
+   four rows — the strip says the fraction there and refuses the percentage. */
+.wn-odds-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel, rgba(255, 255, 255, .06));
+  color: var(--text-dim, #8b93a7);
+  font-variant-numeric: tabular-nums;
+}
+.wn-odds-strong .wn-odds-tag {
+  background: rgba(90, 200, 130, .16);
+  color: var(--success, #5ac882);
+}
+.wn-odds-long .wn-odds-tag {
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+.wn-odds-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The count, as one width. This is the part read in the half-second a climbing
+   bid leaves, and it is the only thing on the card that shortens while the seller
+   is looking at it. */
+.wn-odds-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--danger-soft, rgba(224, 121, 106, .22));
+}
+.wn-odds-bar-covered {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #6ea8fe);
+  transition: width .18s ease-out;
+}
+.wn-odds-strong .wn-odds-bar-covered {
+  background: var(--success, #5ac882);
+}
+.wn-odds-long .wn-odds-bar-covered {
+  background: var(--warn, #e0b44a);
+}
+/* The three figures the count came out of: the line each sale had to clear, the
+   middle one, and the whole range. The first is the one the count was made
+   against, so it is the one drawn loud. */
+.wn-odds-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-odds-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-odds-cell-this {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-odds-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-odds-cell-this .wn-odds-cell-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-odds-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-odds-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 /* Where the answer came from. Quiet on a fresh card, and it has to stay quiet —
    it is a note about the evidence, not a warning about the number. */
 .wn-held {
@@ -18676,6 +18833,14 @@ p.wn-units-refused {
      want the same line and only one of them is the sentence. The bar and the
      three cells below it wrap on their own. */
   .wn-budget-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* And on the odds strip, where "ODDS" and "only 4 of 12 past sales cover a $46
+     win" want the same line and only one of them is the sentence. The bar keeps
+     its full width — it is the part read at a glance — and the three cells below
+     wrap on their own. */
+  .wn-odds-line {
     flex-direction: column;
     gap: 1px;
   }

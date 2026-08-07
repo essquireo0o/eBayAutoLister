@@ -1,4 +1,4 @@
-namespace ING_eBay_AutoLister.Tests;
+﻿namespace ING_eBay_AutoLister.Tests;
 
 /// <summary>
 /// What condition the lot is in reaches the live card through six links, and five of them are the
@@ -242,8 +242,8 @@ public class WhatsNotConditionAssetTests
                  })
             Assert.Contains(rule, Css, StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
     }
 
     /// <summary>

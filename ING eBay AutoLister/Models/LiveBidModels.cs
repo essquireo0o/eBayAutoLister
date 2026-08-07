@@ -275,6 +275,14 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveBudgetRead Budget { get; set; } = new();
 
+    /// <summary>
+    /// How many of the sold comps behind this card would actually have covered what winning it
+    /// costs. Never null. It moves no price, no ceiling and no call — every other block here answers
+    /// "what is this worth" and this one answers "how much of the evidence agrees at the bid on
+    /// screen", which is the question a middle cannot answer. See <see cref="Services.LiveOdds"/>.
+    /// </summary>
+    public LiveOddsRead Odds { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }

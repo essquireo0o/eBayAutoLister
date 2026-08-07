@@ -52,7 +52,8 @@ public static class LiveBidSpeech
 
         return Join(Headline(card), HowMany(card), WhoseCeilingThatIs(card), WhichWayItsGoing(card),
             WhatKindOfOne(card), WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
-            WhatItResellsFor(card), YourOwnRecord(card), HowManyYoudHave(card), WhatTheWaitCosts(card));
+            WhatItResellsFor(card), HowOftenItPays(card), YourOwnRecord(card),
+            HowManyYoudHave(card), WhatTheWaitCosts(card));
     }
 
     /// <summary>
@@ -413,6 +414,34 @@ public static class LiveBidSpeech
             line += $", on {card.CompCount} comp{(card.CompCount == 1 ? "" : "s")}";
 
         return line + ".";
+    }
+
+    /// <summary>
+    /// How much of the evidence agrees, said immediately after the resale price it qualifies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One state speaks, and it is the one the resale figure in front of it is most misleading on:
+    /// most of the past sales came in under what winning at this bid costs. "Resells around $90" is
+    /// true and is a middle, and a listener who hears only that on a lot whose sales ran $40 to $190
+    /// has heard the one number that hides the risk.
+    /// </para>
+    /// <para>
+    /// Silent on the even state — a count the seller can read on the strip is a decision, and a
+    /// spoken "six of twelve" under a countdown is heard as a warning. Silent on the strong state,
+    /// where the middle is the whole story, and silent whenever there were too few sales to be odds
+    /// at all. So it says nothing on nearly every lot, which is what makes it worth hearing.
+    /// </para>
+    /// <para>
+    /// Two figures, because a count is two figures or it is not a count. Neither is rounded: they
+    /// are integers, and they are the only integers in this line.
+    /// </para>
+    /// </remarks>
+    private static string HowOftenItPays(LiveBidCard card)
+    {
+        if (card.Odds is not { Verdict: LiveOddsVerdicts.Long } odds) return "";
+
+        return $"But only {odds.Covered} of {odds.Total} past sales cover it at this bid.";
     }
 
     private static string Join(params string[] parts) =>

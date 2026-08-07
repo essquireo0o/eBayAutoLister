@@ -3126,6 +3126,14 @@ app.MapPost("/api/whatsnot/bid", async (
                                  $"{card.Budget.LotsWon} lot(s), {card.Budget.Remaining:C} left" : "")}" +
         $"{(card.Budget.Applied ? $", ceiling {card.Budget.MarketCeiling:C} -> {card.Budget.Ceiling:C} " +
                                   $"({card.Budget.CutPercent:0.#}% off)" : "")}; " +
+        // And how much of the evidence agreed at this bid. Every figure above is a middle; this is
+        // the count of the sold rows that would actually have paid for the win, and it is the line
+        // that makes "the app said BID and only 3 of 14 comps covered it" checkable after the show.
+        $"odds {card.Odds.Verdict}" +
+        $"{(card.Odds.Readable ? $" — {card.Odds.Covered}/{card.Odds.Total} cover {card.Odds.NeedPerUnit:C}/unit " +
+                                 $"at a {card.Odds.AtBid:C}{(card.Odds.AtCeiling ? " ceiling" : "")} win " +
+                                 $"({card.Odds.LowSale:C}-{card.Odds.HighSale:C}" +
+                                 $"{(card.Odds.Repriced ? $", cut {card.Odds.CutPercent}%" : "")})" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);

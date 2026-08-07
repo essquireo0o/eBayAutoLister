@@ -1,4 +1,4 @@
-namespace ING_eBay_AutoLister.Tests;
+﻿namespace ING_eBay_AutoLister.Tests;
 
 /// <summary>
 /// What a lot really costs to get delivered reaches the live card through seven links, and six of
@@ -352,8 +352,8 @@ public class WhatsNotShipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

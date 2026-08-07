@@ -2296,4 +2296,228 @@ public class LiveBidAdvisorTests
         var clear = Budgeted(budget: 5_000m, spent: 100m, lots: 2, bid: 10m);
         Assert.DoesNotContain("remaining", clear.Say, StringComparison.Ordinal);
     }
+
+    // ── How much of the evidence agrees ───────────────────────────────────────
+    // Every figure above this line is a MIDDLE, and the seller is buying one object out of the
+    // spread it is the middle of. These pin the count of the sold rows that would actually have
+    // covered the win — that it is made against the app's own break-even, that it falls as the
+    // bidding climbs, and that finding nothing to like about it never moves a price.
+
+    /// <summary>The same analysis, with the whole sold set on it rather than the five the table
+    /// shows. Nothing else in this file sets that, which is why every other card here is counted
+    /// against nothing and priced exactly as it always was.</summary>
+    private static MarketAnalysisResult WithSold(
+        MarketAnalysisResult analysis, decimal[] prices, string? condition = null)
+    {
+        analysis.AllSoldComparables =
+            [.. prices.Select((p, i) => new MarketplaceComparableResult
+            {
+                ItemId = $"s{i}", Title = Product, SoldPrice = p, TotalPrice = p, Condition = condition,
+                SoldDate = Now.AddDays(-20 - i),
+            })];
+        return analysis;
+    }
+
+    private static MarketAnalysisResult WithSold(MarketAnalysisResult analysis, params decimal[] prices) =>
+        WithSold(analysis, prices, condition: null);
+
+    /// <summary>
+    /// The bar the count is made against is the app's own "what does this have to sell for" at this
+    /// landed cost — <see cref="ProfitCalculator"/>'s break-even, not a second arithmetic living on
+    /// the strip. Two of those is how a count ends up disagreeing with the ceiling above it.
+    /// </summary>
+    [Fact]
+    public void The_count_is_made_against_the_profit_calculators_own_break_even()
+    {
+        var card = Card(WithSold(Analysis(), 150m, 180m, 200m, 210m, 260m), bid: 60m, fee: 8m, shipping: 12m);
+
+        Assert.True(card.Odds.Readable);
+        Assert.Equal(5, card.Odds.Total);
+        Assert.Equal(
+            Profit.Calculate(card.LandedCostNow, 1, 200m, 170m, 0m, Fees).BreakEvenSalePrice,
+            card.Odds.NeedPerUnit);
+        Assert.Equal(card.LandedCostNow, card.Odds.LandedPerUnit);
+    }
+
+    /// <summary>
+    /// The count falls as the bidding climbs, which is the whole reason it is on a live card: the
+    /// ceiling is a line the bid crosses once, and this is a number that gets worse every time
+    /// somebody else raises. The item did not change; what winning it costs did.
+    /// </summary>
+    [Fact]
+    public void The_count_falls_as_the_bidding_climbs()
+    {
+        var sold = new[] { 120m, 160m, 190m, 210m, 240m, 300m };
+
+        var cheap = Card(WithSold(Analysis(), sold), bid: 20m);
+        var dear = Card(WithSold(Analysis(), sold), bid: 120m);
+
+        Assert.True(dear.Odds.Covered < cheap.Odds.Covered,
+            $"{dear.Odds.Covered} covered at $120 is not fewer than {cheap.Odds.Covered} at $20");
+        Assert.Equal(cheap.Odds.Total, dear.Odds.Total);
+        Assert.True(dear.Odds.NeedPerUnit > cheap.Odds.NeedPerUnit);
+    }
+
+    /// <summary>
+    /// Before anybody has bid, the count is for a win at the card's own ceiling — the only price
+    /// there is to count against — and the line says so. "If you win at $46" is not true of a lot
+    /// nobody has bid on.
+    /// </summary>
+    [Fact]
+    public void Before_the_first_bid_the_count_is_for_a_win_at_the_ceiling()
+    {
+        var card = Card(WithSold(Analysis(), 150m, 180m, 200m, 210m, 260m));
+
+        Assert.False(card.BidWasKnown);
+        Assert.True(card.Odds.AtCeiling);
+        Assert.Equal(card.MaxBid, card.Odds.AtBid);
+        Assert.Contains("ceiling", card.Odds.Headline, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// It counts and it never charges. A wide spread is already reported by the middle-half warning;
+    /// shading the ceiling for it here would be charging twice for one fact, and the ceiling would
+    /// stop being checkable against the comps printed under it.
+    /// </summary>
+    [Fact]
+    public void Counting_the_evidence_moves_no_figure_on_the_card()
+    {
+        // The same analysis twice, one of them carrying the sold rows the count is made from.
+        var blind = Card(Analysis(), bid: 60m);
+        var counted = Card(WithSold(Analysis(), 40m, 45m, 50m, 55m, 300m, 320m), bid: 60m);
+
+        Assert.Equal(LiveOddsVerdicts.None, blind.Odds.Verdict);
+        Assert.Equal(LiveOddsVerdicts.Long, counted.Odds.Verdict);
+
+        Assert.Equal(blind.MaxBid, counted.MaxBid);
+        Assert.Equal(blind.BreakEvenBid, counted.BreakEvenBid);
+        Assert.Equal(blind.ResalePrice, counted.ResalePrice);
+        Assert.Equal(blind.MedianPrice, counted.MedianPrice);
+        Assert.Equal(blind.PriceLow, counted.PriceLow);
+        Assert.Equal(blind.PriceHigh, counted.PriceHigh);
+        Assert.Equal(blind.SellThroughRate, counted.SellThroughRate);
+        Assert.Equal(blind.ProfitAtMaxBid, counted.ProfitAtMaxBid);
+        Assert.Equal(blind.Call, counted.Call);
+        Assert.Equal(blind.CallLabel, counted.CallLabel);
+        Assert.Equal(blind.Reason, counted.Reason);
+    }
+
+    /// <summary>
+    /// One state reaches the warning list, and the sentence there is the read's own — the strip and
+    /// the warnings cannot describe the same count in two ways.
+    /// </summary>
+    [Fact]
+    public void Only_a_long_count_reaches_the_warning_list()
+    {
+        var over = Card(WithSold(Analysis(), 40m, 45m, 50m, 55m, 300m, 320m), bid: 60m);
+        Assert.Contains(over.Odds.Warning, over.Warnings);
+
+        var behind = Card(WithSold(Analysis(), 220m, 240m, 260m, 280m, 300m, 320m), bid: 60m);
+        Assert.Equal(LiveOddsVerdicts.Strong, behind.Odds.Verdict);
+        Assert.Equal("", behind.Odds.Warning);
+        Assert.DoesNotContain(behind.Warnings, w => w.Contains("past sales", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Each past sale is counted as what YOURS would fetch, using the ratio the ceiling above it was
+    /// built with. A card whose condition read cut the price 30% and whose count did not would be
+    /// two opinions about one item, on one screen, six lines apart.
+    /// </summary>
+    [Fact]
+    public void The_past_sales_are_counted_at_the_same_cut_the_ceiling_was_built_with()
+    {
+        // Mostly sealed comps, an item stated as used — the condition read cuts the resale price to
+        // what the used ones fetched, and the sold rows have to be re-priced by exactly that cut
+        // before they are counted.
+        var analysis = Analysis();
+        analysis.AllSoldComparables =
+        [
+            .. new[] { 240m, 250m, 260m, 270m, 280m }.Select((p, i) => new MarketplaceComparableResult
+            {
+                ItemId = $"n{i}", Title = Product, SoldPrice = p, TotalPrice = p, Condition = "New",
+                SoldDate = Now.AddDays(-20 - i),
+            }),
+            .. new[] { 150m, 160m, 170m, 180m }.Select((p, i) => new MarketplaceComparableResult
+            {
+                ItemId = $"u{i}", Title = Product, SoldPrice = p, TotalPrice = p, Condition = "Used",
+                SoldDate = Now.AddDays(-30 - i),
+            }),
+        ];
+
+        var card = Advisor.Build(
+            Product, analysis,
+            new LiveBidRequest { Title = Product, CurrentBid = 40m, Condition = "used" },
+            Fees, nowUtc: Now);
+
+        Assert.True(card.Condition.Discounted, "this test is only about a card whose condition cut the price");
+        Assert.True(card.Odds.Repriced);
+
+        // The ratio is the STACK the ceiling was built with — what these fetch lately, what they
+        // fetch in this shape, and what they fetch when yours sells — and not any one of the three.
+        // Read off the prices rather than re-multiplied, so a penny of rounding is allowed and a
+        // whole cut going missing is not.
+        var stacked =
+            (card.Trend.Discounted ? card.Trend.ResaleMultiplier : 1m) *
+            (card.Condition.Discounted ? card.Condition.ResaleMultiplier : 1m) *
+            (card.Hold.Discounted ? card.Hold.ResaleMultiplier : 1m);
+
+        Assert.True(Math.Abs(card.Odds.RepriceRatio - stacked) < 0.005m,
+            $"the count re-priced the comps at {card.Odds.RepriceRatio} and the ceiling was built at {stacked}");
+
+        // The middle of the nine sales is $240, counted at what one of yours is worth.
+        Assert.Equal(Math.Round(240m * card.Odds.RepriceRatio, 2), card.Odds.TypicalSale);
+        Assert.True(card.Odds.TypicalSale < 240m);
+    }
+
+    /// <summary>
+    /// A card nothing could price counts nothing. There is no break-even to measure a sale against,
+    /// and "0 of 0 cover it" on the one card with no resale figure would read as a market verdict.
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_card_counts_nothing()
+    {
+        var card = Card(null, bid: 40m);
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.False(card.Odds.Readable);
+        Assert.Equal(LiveOddsVerdicts.None, card.Odds.Verdict);
+        Assert.Equal("", card.Odds.Headline);
+    }
+
+    /// <summary>
+    /// On a lot the count stays per unit, because the sold rows are sales of one of the thing. What
+    /// is divided is the landed cost — one hammer, one premium, one shipment, spread across what is
+    /// in the box.
+    /// </summary>
+    [Fact]
+    public void On_a_lot_the_count_is_per_unit_and_the_cost_is_divided()
+    {
+        var card = Card(WithSold(Analysis(), 150m, 180m, 200m, 210m, 260m), bid: 120m, quantity: 3);
+
+        Assert.True(card.Units.IsLot);
+        Assert.Equal(3, card.Odds.LotUnits);
+        Assert.Equal(Math.Round(card.LandedCostNow / 3m, 2), card.Odds.LandedPerUnit);
+        Assert.Equal(5, card.Odds.Total);
+    }
+
+    /// <summary>
+    /// The spoken line says it in exactly one state — the one where the resale price it follows is
+    /// most misleading. A listener who hears "resells around $200" on a lot whose sales ran $40 to
+    /// $320 has heard the one number that hides the risk.
+    /// </summary>
+    [Fact]
+    public void The_spoken_line_says_the_count_only_when_most_of_the_evidence_is_under_it()
+    {
+        var over = Card(WithSold(Analysis(), 40m, 45m, 50m, 55m, 300m, 320m), bid: 60m);
+        Assert.Equal(LiveOddsVerdicts.Long, over.Odds.Verdict);
+        Assert.Contains("But only 2 of 6 past sales cover it at this bid.", over.Say, StringComparison.Ordinal);
+
+        // Wait — a card the evidence is behind says nothing about odds at all.
+        var behind = Card(WithSold(Analysis(), 220m, 240m, 260m, 280m, 300m, 320m), bid: 60m);
+        Assert.DoesNotContain("past sales", behind.Say, StringComparison.Ordinal);
+
+        // And neither does a card with nothing counted, which is every card built without the whole
+        // sold set — including every other one in this file.
+        Assert.DoesNotContain("past sales", Card(Analysis(), bid: 60m).Say, StringComparison.Ordinal);
+    }
 }

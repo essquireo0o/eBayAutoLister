@@ -380,6 +380,36 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             card.EstimatedShipCost = Math.Round(profit.FulfilmentCostTotal * count, 2);
         }
 
+        // ── And how much of the evidence agrees, at the bid on screen ──────────────────────────
+        // Everything above this line is a MIDDLE: the resale price is the expected sale, the spread
+        // is the middle half, the ceiling is the bid that keeps the middle clearing a target. That
+        // is the right answer to "what are these worth" and a dangerous one to "should I bid on
+        // THIS one", because half the sales came in under it and the seller is buying one object,
+        // once, in the next few seconds.
+        //
+        // So the sold rows the price came out of are counted against the one figure that decides
+        // the win — what a unit has to fetch to break even at this bid — after being re-priced by
+        // the same stacked cut the ceiling was built with. It borrows both numbers and invents
+        // neither, it costs no lookup, and it is the only figure on the card that falls every time
+        // somebody else raises. Nothing here moves a price; see LiveOdds for why the scatter is
+        // reported rather than charged for.
+        if (card.BidWasKnown || card.MaxBid > 0m)
+        {
+            var oddsBid = card.BidWasKnown ? bid : card.MaxBid;
+            var oddsLanded = Math.Round(
+                (card.BidWasKnown ? card.LandedCostNow : LandedCost(card.MaxBid, feePercent, shipping, taxPercent))
+                / count, 2);
+
+            card.Odds = LiveOdds.Read(
+                // Non-null by the time execution reaches here — a null analysis produced a null
+                // `resale` and returned above — but written to survive that guard being reordered,
+                // because the honest answer to "no rows" is already an unread strip.
+                analysis?.AllSoldComparables,
+                LiveOdds.NeedPerUnit(profitCalc, oddsLanded, bidAgainst, fees),
+                LiveOdds.RepriceRatio(resale, bidAgainst),
+                oddsBid, atCeiling: !card.BidWasKnown, oddsLanded, count);
+        }
+
         ApplySpeed(card, bidAgainst);
 
         // What N of them costs in TIME. The only price this screen charges for a multi-unit lot:
@@ -785,6 +815,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             warnings.Add($"Sell-through is {rate:0.#}% — for every one that sells there are several sitting " +
                          "unsold. Expect to wait, or to cut the price.");
         }
+
+        // And then how often the evidence would actually have paid for the win. Every warning above
+        // is about something that could be WRONG with the price; this one is about the spread around
+        // a price that is right — a median is the middle of a range, and the seller is buying one
+        // object out of it. Said in exactly one state, where most of the past sales came in under
+        // what winning costs. LiveOdds owns the sentence, so the strip and the warning list cannot
+        // describe the same count differently.
+        if (card.Odds is { Warning.Length: > 0 } odds) warnings.Add(odds.Warning);
 
         // A middle half this wide is not a price, it is a range the item lands somewhere in
         // depending on condition, completeness and what the photos hid.

@@ -1,4 +1,4 @@
-namespace ING_eBay_AutoLister.Tests;
+﻿namespace ING_eBay_AutoLister.Tests;
 
 /// <summary>
 /// The night's money reaches the live card through eight links, and most of them are the sort of
@@ -306,8 +306,8 @@ public class WhatsNotBudgetAssetTests
         var none = Css[Css.IndexOf(".wn-budget-none {", StringComparison.Ordinal)..];
         Assert.Contains("var(--border", none[..none.IndexOf('}')], StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=120", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=137", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
     }
 
     /// <summary>It folds on a narrow card, like every strip above it — this screen is used as a

@@ -151,12 +151,25 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
     private static string Norm(string? s) =>
         new string((s ?? "").ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());
 
+    /// <summary>
+    /// What ONE of a sold comp went for. A comp row is whatever the seller listed — a single card,
+    /// or a box of twenty — and the price on it is the box's.
+    /// </summary>
+    /// <remarks>
+    /// Public because the pricing path is no longer the only reader of these rows: anything that
+    /// compares a raw comp against a per-unit figure (Services/LiveOdds.cs counts them against a
+    /// break-even) has to divide it the same way this does, and two "what did one of them sell for"
+    /// rules is how a strip ends up disagreeing with the price above it.
+    /// </remarks>
+    public static decimal UnitSoldPrice(MarketplaceComparableResult c) =>
+        c.Quantity <= 1 ? c.SoldPrice : Math.Round(c.SoldPrice / c.Quantity, 2);
+
     private static MarketplaceComparableResult NormalizeToUnitPrice(MarketplaceComparableResult c)
     {
         if (c.Quantity <= 1) return c;
         return new MarketplaceComparableResult
         {
-            ItemId = c.ItemId, Title = c.Title, SoldPrice = Math.Round(c.SoldPrice / c.Quantity, 2),
+            ItemId = c.ItemId, Title = c.Title, SoldPrice = UnitSoldPrice(c),
             Shipping = c.Shipping, TotalPrice = Math.Round((c.SoldPrice + c.Shipping) / c.Quantity, 2),
             Condition = c.Condition, SoldDate = c.SoldDate, Seller = c.Seller, ItemUrl = c.ItemUrl,
             ImageUrl = c.ImageUrl, MatchScore = c.MatchScore, Epid = c.Epid, IsFixedPrice = c.IsFixedPrice,

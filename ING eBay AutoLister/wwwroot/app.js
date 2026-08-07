@@ -11173,6 +11173,53 @@
       </div>`;
     })() : '';
 
+    // ── And how much of the evidence agrees ────────────────────────────────────
+    // The ladder and the meter above are built out of MIDDLES: the resale price is
+    // the expected sale, the ceiling is the bid that keeps that middle clearing a
+    // target. Half the sales came in under it. That is the right answer to "what are
+    // these worth" and the wrong one to "should I bid on THIS one" — the seller is
+    // buying one object, once, and it either resells above what winning cost or it
+    // does not.
+    //
+    // So this counts the actual sold rows against what a unit has to fetch to break
+    // even at the bid on screen. It is the one figure on the card that falls every
+    // time somebody else raises: 9 of 12 becoming 4 of 12 is the arbitrage closing,
+    // in the unit that decides it. Directly under the meter because it is the answer
+    // to the question the meter's ceiling raises.
+    //
+    // Every word, every dollar and the count itself are the server's
+    // (Services/LiveOdds.cs). The browser counts nothing and re-prices no comp; the
+    // bar below is a width.
+    const od = c.odds || {};
+    const oddsStrip = od.headline ? `
+      <div class="wn-odds wn-odds-${esc(od.verdict || 'none')}">
+        <div class="wn-odds-line">
+          <span class="wn-odds-label">Odds</span>
+          <strong class="wn-odds-headline">${esc(od.headline)}</strong>
+          ${od.stated ? `<span class="wn-odds-tag">${od.percent}%</span>` : ''}
+          ${od.repriced ? `<span class="wn-odds-src">comps cut ${od.cutPercent}% to yours</span>` : ''}
+        </div>
+        <div class="wn-odds-bar" role="img"
+             aria-label="${esc(`${od.covered} of ${od.total} past sales cover it`)}">
+          <div class="wn-odds-bar-covered" style="width:${Math.max(0, Math.min(100, od.percent))}%"></div>
+        </div>
+        <div class="wn-odds-box">
+          <span class="wn-odds-cell wn-odds-cell-this" title="What one of these has to sell for so this win breaks even — after eBay's cut, the packing, the labour and posting it on">
+            <span class="wn-odds-cell-name">Must fetch</span>
+            <span class="wn-odds-cell-fig">${moneyExact(od.needPerUnit)}</span>
+          </span>
+          <span class="wn-odds-cell" title="The middle of the past sales, re-priced to what yours is worth">
+            <span class="wn-odds-cell-name">Typical sale</span>
+            <span class="wn-odds-cell-fig">${moneyExact(od.typicalSale)}</span>
+          </span>
+          <span class="wn-odds-cell" title="Where the past sales actually ran, low to high — the spread the ceiling above is the middle of">
+            <span class="wn-odds-cell-name">Ran</span>
+            <span class="wn-odds-cell-fig">${money(od.lowSale)}–${money(od.highSale)}</span>
+          </span>
+        </div>
+        ${od.note ? `<p class="wn-odds-note">${esc(od.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The hammer ─────────────────────────────────────────────────────────────
     // Only while the comps are held, because that is what the server records a win
     // against: a win with no sold history behind it would be a real spend sitting
@@ -11241,6 +11288,7 @@
       ${budgetStrip}
       ${ladder}
       ${meter}
+      ${oddsStrip}
       ${wnOwnBlock(c.ownHistory)}
       ${won}
       <div class="wn-stats">
