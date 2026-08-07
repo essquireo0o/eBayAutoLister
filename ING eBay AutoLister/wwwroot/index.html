@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=116" />
+  <link rel="stylesheet" href="style.css?v=117" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2835,10 +2835,34 @@
                   <option value="broken">For parts</option>
                 </select>
               </label>
-              <label class="wn-field">
-                <span>Shipping</span>
-                <input id="wn-ship" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+              <!-- Which show this is. It buys one thing and nothing else: tonight's buy sheet can
+                   hold lots from three different sellers, and only lots from the SAME show ride in
+                   the same box. Filled in for you when you read a show, and matched loosely enough
+                   that the show's address and the host's handle are the same answer. -->
+              <label class="wn-field wn-field-show"
+                     title="Which show this is — the host's handle, or the show's address. Lots from the same show ship in one box, so this is what lets the app charge the extra-item rate instead of full shipping.">
+                <span>Show</span>
+                <input id="wn-show" type="text" spellcheck="false" autocomplete="off"
+                       placeholder="who's selling" aria-describedby="wn-live-note" />
               </label>
+              <!-- The two shipping rates, and they are two rates because a live seller posts ONE
+                   box per show and charges a first-item rate plus a smaller one for each extra
+                   thing in it. Charging every lot of the night the first-item rate overstates
+                   what winning the fourth one costs — by the whole difference, on the cheap lots
+                   where that is most of the margin. Blank in "each extra" means nobody said and
+                   the ceiling stays on full freight; a typed 0 means free combined shipping,
+                   which is the commonest live-selling arrangement there is. -->
+              <div class="wn-field-pair">
+                <label class="wn-field" title="What this show charges to post the first thing you win">
+                  <span>Shipping</span>
+                  <input id="wn-ship" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+                </label>
+                <label class="wn-field wn-field-shipadd"
+                       title="What this show charges for each extra lot in the same box. Blank means nobody said — leave it and every lot is charged full shipping. 0 means the extras ride free.">
+                  <span>Each extra</span>
+                  <input id="wn-ship-add" type="number" min="0" step="0.5" inputmode="decimal" placeholder="—" />
+                </label>
+              </div>
               <label class="wn-field" title="The live platform's buyer premium, charged on top of the winning bid">
                 <span>Buyer fee %</span>
                 <input id="wn-fee" type="number" min="0" step="0.5" inputmode="decimal" placeholder="8" />
@@ -5977,6 +6001,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=133"></script>
+  <script src="app.js?v=134"></script>
 </body>
 </html>

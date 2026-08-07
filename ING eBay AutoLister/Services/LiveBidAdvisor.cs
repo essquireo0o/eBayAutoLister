@@ -94,10 +94,18 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// priced identically and simply counts one fewer thing. It changes no figure here — see
     /// <see cref="LiveStockDepth"/> for why saturation is reported in months rather than in dollars.
     /// </param>
+    /// <param name="ship">
+    /// What tonight's buy sheet has already committed to THIS show's box
+    /// (<see cref="LiveBuySheet.ShippingOnShow"/>). Default is nothing, so a card built without a
+    /// sheet is charged full freight — which is exactly what every card was charged before
+    /// <see cref="LiveShipShare"/> existed. Unlike everything else attached here it CAN move money,
+    /// upward, and only when the show is named, its extra-item rate is stated, and a lot from that
+    /// same show is already on the sheet.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
         ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
-        LiveSearchTerms? search = null, LiveStockTonight tonight = default)
+        LiveSearchTerms? search = null, LiveStockTonight tonight = default, LiveShipTonight ship = default)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var terms = search ?? LiveSearchQuery.Build(item);
@@ -121,7 +129,16 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // never allowed to add any.
         var condition = LiveCondition.Read(item, request.Condition, analysis?.AllSoldComparables);
 
-        var shipping = Math.Max(0m, request.ShippingCost ?? 0m);
+        // What getting THIS lot delivered actually adds. A live seller posts one box per show, not
+        // one per lot, so the fourth win of a night costs the show's extra-item rate and not its
+        // first-item rate — and charging the full rate four times has been overstating the landed
+        // cost of exactly the lots where the difference is most of the margin. The only read on this
+        // card that can raise a ceiling, which is why it is gated on three facts the seller can see;
+        // fail any one and this is the typed figure, unchanged. See LiveShipShare.
+        var freight = LiveShipShare.Read(
+            request.ShowName, Math.Max(0m, request.ShippingCost ?? 0m), request.AdditionalItemShipping, ship);
+        var shipping = freight.Marginal;
+
         var feePercent = SanitizeBuyerFee(request.BuyerFeePercent);
         var target = SanitizeTargetRoi(request.TargetRoiPercent);
         var bid = Math.Max(0m, request.CurrentBid ?? 0m);
@@ -139,6 +156,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             Search = terms,
             Trend = trend,
             Condition = condition,
+            Ship = freight,
             PricedAs = resale?.LookupTitle ?? terms.Query,
             CategoryLabel = category?.Label ?? "",
             CurrentBid = bid,
@@ -593,11 +611,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // it spends four dollars they were told they had. See LiveBidIncrement.
         if (card.NextBid is { Warning.Length: > 0 } press) warnings.Add(press.Warning);
 
-        if (card.ShippingCost <= 0m)
-        {
-            warnings.Add("No shipping cost entered. Live sellers charge it on top of the bid — if it turns " +
-                         "out to be $12, take $12 off the ceiling.");
-        }
+        // Then what getting it delivered costs, in the two states worth interrupting for: nothing
+        // was entered at all, and a second full charge for a box that is already going out. Both
+        // sentences are LiveShipShare's own, so the strip and the warning list cannot describe the
+        // same freight differently. It is silent on the ordinary case and on the case it just saved
+        // money on — a saving is good news, and good news belongs on the strip, not in a warning.
+        if (card.Ship is { Warning.Length: > 0 } freight) warnings.Add(freight.Warning);
 
         if (card.BuyerFeePercent <= 0m)
         {

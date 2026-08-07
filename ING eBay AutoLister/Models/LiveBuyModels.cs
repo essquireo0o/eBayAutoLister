@@ -32,6 +32,17 @@ public sealed class LiveWinRequest
     public decimal? TargetRoiPercent { get; set; }
 
     /// <summary>
+    /// Both carried for the same reason again, and this pair matters more than the rest: the card
+    /// this lot was won off may have costed it at the show's extra-item rate because it rides in a
+    /// box already going out (<see cref="Services.LiveShipShare"/>). A row recorded without them
+    /// would put the full first-item rate back on and report the night as costing more than the
+    /// seller's bank statement will — and it is the show name that lets the NEXT lot know this box
+    /// exists at all.
+    /// </summary>
+    public decimal? AdditionalItemShipping { get; set; }
+    public string? ShowName { get; set; }
+
+    /// <summary>
     /// Carried for the same reason the rest are: a lot of three won at one hammer price is three
     /// units of stock and three units of resale, and a sheet that recorded it as one would report
     /// the night's best buy as its worst.
@@ -52,6 +63,8 @@ public sealed class LiveWinRequest
         Title = Title,
         CurrentBid = WinningBid,
         ShippingCost = ShippingCost,
+        AdditionalItemShipping = AdditionalItemShipping,
+        ShowName = ShowName,
         BuyerFeePercent = BuyerFeePercent,
         TargetRoiPercent = TargetRoiPercent,
         Quantity = Quantity,
@@ -88,10 +101,29 @@ public sealed class WonLot
     /// </remarks>
     public int Units { get; set; } = 1;
 
+    /// <summary>
+    /// Which show this lot came off, as the seller named it. Empty on rows written before this field
+    /// existed and on any night the seller did not say — both of which simply mean the row cannot be
+    /// matched to a box, so the next lot from that show is costed at full freight.
+    /// </summary>
+    /// <remarks>
+    /// This is the field that makes a shipment a shipment. A live seller posts one box per show, so
+    /// "what has already shipped from here tonight" is the question that decides what winning the
+    /// next lot really adds — see <see cref="Services.LiveBuySheet.ShippingOnShow"/>.
+    /// </remarks>
+    public string ShowName { get; set; } = "";
+
     // ── What it cost ─────────────────────────────────────────────────────────
     public decimal WinningBid { get; set; }
     public decimal BuyerFeePercent { get; set; }
     public decimal BuyerFee { get; set; }
+
+    /// <summary>
+    /// What this lot was charged to get delivered — the MARGINAL cost, which on a lot riding along
+    /// in a box already going out is the show's extra-item rate. That is what makes
+    /// <see cref="BuySheet.Spent"/> the figure the seller's bank statement will agree with: charging
+    /// six lots the full first-item rate would report a $17 shipping bill as $72.
+    /// </summary>
     public decimal ShippingCost { get; set; }
     /// <summary>Bid + premium + shipping. The number that has to be earned back before any of this
     /// was worth doing.</summary>

@@ -16640,6 +16640,25 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-field-inc {
   width: 86px;
 }
+/* Who is selling. Wider than the money boxes because it holds a handle or a pasted
+   address, and it sits immediately before the two shipping rates because the three
+   of them are one fact together: which box this lot is arriving in. */
+.wn-field-show {
+  width: 150px;
+}
+/* The extra-item rate. Beside Shipping, and no wider — the pair is meant to read as
+   "first one / each one after". */
+.wn-field-shipadd {
+  width: 108px;
+}
+/* And the two of them wrap together or not at all. Split across two lines by the
+   row's own flex-wrap they stop being a pair, and "Each extra" on its own is a
+   figure with nothing to be extra to. */
+.wn-field-pair {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
 
 .wn-price-btn {
   white-space: nowrap;
@@ -17332,6 +17351,131 @@ p.wn-units-refused {
 /* The arithmetic behind the headline. Said on every card, so this is normally the
    whole block. */
 .wn-stock-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
+/* ── What this lot costs to get delivered ────────────────────────────────────
+   A live seller posts one box per show, not one per lot. This is the only strip
+   on the card that can raise a ceiling — everything else here either describes
+   the market or takes money off — so it is the only one drawn in the positive
+   colour, and only in the state where money really moved. */
+.wn-ship {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* The one good edge on this card: the lot rides in a box already going out, so
+   the ceiling above is genuinely higher than the one the first lot got. */
+.wn-ship-combined {
+  border-left: 3px solid var(--ok, #5fbf7f);
+}
+/* Repeated wins from one show with no extra-item rate entered — the ceiling is
+   knowingly charging full freight for a box already on its way, and only the
+   seller can fix it. */
+.wn-ship-unstated {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Nothing entered at all, so the ceiling is costing the lot as though it arrived
+   free. Real money, missing. */
+.wn-ship-none {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+.wn-ship-alone,
+.wn-ship-first {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-ship-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-ship-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-ship-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-ship-combined .wn-ship-headline {
+  color: var(--ok, #5fbf7f);
+}
+.wn-ship-unstated .wn-ship-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-ship-none .wn-ship-headline {
+  color: var(--danger, #d46a6a);
+}
+/* What combining is worth on this lot, in dollars of extra room under the
+   ceiling. The one badge on this card that is good news. */
+.wn-ship-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(95, 191, 127, .16);
+  color: var(--ok, #5fbf7f);
+}
+/* Which show the box belongs to. Provenance, never news. */
+.wn-ship-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The box, in three figures: what tonight's shipment already costs, what this lot
+   adds to it, and what it becomes. The middle one is the number the ceiling above
+   was actually costed at, so it is the one drawn loud. */
+.wn-ship-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-ship-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-ship-cell-this {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-ship-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-ship-cell-this .wn-ship-cell-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-ship-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-ship-note {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
@@ -18069,8 +18213,30 @@ p.wn-units-refused {
     flex-direction: column;
     gap: 1px;
   }
+  /* And on the shipping strip, where "SHIPPING" and "Ships with your other 3 —
+     $1, not $12" want the same line and only one of them is the sentence. The
+     three box figures below wrap on their own; side by side they are the whole
+     comparison, and they are kept that way as long as they fit. */
+  .wn-ship-line {
+    flex-direction: column;
+    gap: 1px;
+  }
   .wn-field-cond {
     width: 100%;
+  }
+  /* The show is a name, not a figure, and it is the one box on this row that
+     needs room to be read back. The two rates split the line under it — still a
+     pair, still side by side, and each still wide enough for a price. */
+  .wn-field-show {
+    width: 100%;
+  }
+  .wn-field-pair {
+    width: 100%;
+  }
+  .wn-field-pair > .wn-field {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
   }
   .wn-rung,
   .wn-stat,

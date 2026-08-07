@@ -12324,3 +12324,203 @@ nor `Stock`.
 - **It never moves the ceiling, by design, and that is also its weakness.** A seller who reads the
   strip and bids anyway gets exactly the card they would have got without it. The evidence for going
   further — a measured discount on the Nth duplicate — does not exist in this app yet.
+
+---
+
+# Six lots, one box. The app charged shipping six times (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Twelve sessions have improved what the live card knows about the **thing on screen**: what it
+searched for, how many are in it, what condition it is in, which way the price is going, how many
+presses are left, what the seller's own book says, how deep the shelf would get. Every one of them
+sharpened the resale side.
+
+Nothing has ever looked at the other side of the landed cost. Every dollar on this card hangs off
+**bid + buyer's premium + shipping**, and two of those three are exact. The third has been one figure
+typed once and charged in full to every lot of the night.
+
+A live seller does not post twelve parcels. They post **one box**, at the end of the show, and charge
+a first-item rate plus a much smaller rate for each extra thing in it — $12 first, $1 each after, or
+free. So a seller who wins six lots at "$12 shipping" pays **$17**, and this app has been costing all
+six ceilings at $12: **$72**.
+
+The error runs entirely one way. Overcharging freight lowers a ceiling, so every lot after the first
+has looked worse than it is — and the ones it made look worst are the cheap ones, where eleven
+dollars is most of the margin. That is precisely backwards. On a live show the second lot from a
+seller you are **already** buying from is the cheapest thing on the screen, and until now this app
+quietly argued against it.
+
+There is now a strip on every card, directly under the pile:
+
+> **SHIPPING** **Ships with your other 3 lots — $1, not $12** `+$11.00 TO BID` IngMining
+> `BOX SO FAR $14.00`  `THIS LOT ADDS $1.00`  `BOX WITH IT $15.00`
+> 3 lots from IngMining are already on tonight's sheet, so this one goes in the same box. The ceiling
+> above was costed at $1 to deliver rather than $12, which is $11 more you can bid on it than the
+> first one of the night.
+
+**`+$11.00 to bid` is the first good news this card has ever had for anyone.** Every other read on it
+either describes the market or takes money off.
+
+## What it does
+
+`Services/LiveShipShare.cs` answers one question — *what does winning THIS lot add to the shipping
+bill* — and hands one number back to the ceiling. Two new boxes on the screen feed it: **Show** and
+**Each extra**.
+
+| State | When | What the ceiling is charged |
+|---|---|---|
+| `none` | No shipping entered at all | nothing, and it says so loudly |
+| `alone` | Shipping stated, but the show or its extra-item rate is not | the full first-item rate |
+| `first` | Both rates known, nothing won from this show yet | the full first-item rate |
+| `combined` | Both rates known **and** a lot from this show is on tonight's sheet | **the extra-item rate** |
+| `unstated` | Lots won from this show, no extra-item rate entered | the full rate again — and a warning |
+
+## It is the only read on this card that can raise a ceiling, so it fails closed
+
+`LiveTrend` and `LiveCondition` may only ever cut. This may only ever *un*-cut, which is a more
+dangerous power: a ceiling raised on freight that is not actually shared is a ceiling that loses
+money. So it is gated on **three facts the seller can see** — the show is named, its extra-item rate
+is entered, and tonight's buy sheet already holds a lot from that same show. Miss any one and the
+marginal cost is the full first-item rate, which is exactly what every card was charged before this
+file existed.
+
+`Marginal` is initialised to the full rate and there is exactly **one** assignment that lowers it, in
+the one state that earned it — asserted by a test that counts `read.Marginal =` in the file and finds
+one. A test builds a card at each failed gate and asserts the ceiling equals the card that never knew
+about any of this.
+
+## Zero is an answer and blank is not
+
+Free combined shipping is the commonest live-selling arrangement there is. So a typed `0` means "the
+extras ride free" and an empty box means "nobody said" — the same distinction the buyer's-premium box
+already draws. The read carries `AdditionalStated` as a flag rather than testing the rate for zero,
+`wnNumber` sends `null` for an empty box and `0` for a typed one, and the browser check confirms both
+land on the wire as written. The old *"No shipping cost entered"* warning now fires on the **verdict**
+rather than on `ShippingCost <= 0`, so a lot that genuinely ships free is not accused of having no
+freight entered.
+
+## Two shows are two boxes
+
+`LiveBuySheet.ShippingOnShow` matches on `LiveShipShare.NormalizeShow`, which forgives exactly the
+things a seller varies — case, spaces, a leading `@`, and the show's own address instead of its handle
+(so `whatnot.com/live/abc-123` and `abc-123` are one show, which is what lets the browser fill the box
+in from the address it is already reading from). It does not stem, split or fuzzy-match: two shows
+sharing a word must never share a box, because the cost of a wrong match here is a ceiling that is too
+high on somebody else's freight. An unnamed show matches nothing, **including rows that are themselves
+unnamed**.
+
+The show box is deliberately **not** remembered between sessions, unlike the two rates. It is the one
+field on that row that is only true for tonight.
+
+## A listed row is still in the box
+
+The one deliberate difference from `UnitsWonOf`. That count excludes listed rows, because listing
+moves stock onto the Deal Pipeline where counting it again would report a stack of four as eight.
+Freight is the opposite: drafting a listing changes nothing whatsoever about the parcel the seller is
+waiting on, and dropping the row would put the next ceiling back on full freight for no reason
+anybody could see. A test wins a lot, lists it, and asserts the stock count fell to 0 while the box
+still holds 1.
+
+## The night's spend became true
+
+`WonLot.ShippingCost` records the **marginal** freight, because the row is the card's own figures. So
+`BuySheet.Spent` — the number the seller checks against their bank statement — stopped double-counting
+shipping across a night. Six lots that really cost $17 to ship were being reported as $72 of freight.
+A test wins two lots from one show and asserts the sheet's whole freight bill is $13, not $24.
+
+## Nothing here touches what the thing is worth
+
+Freight is a fact about a parcel. A test prices the same lot with and without an open box and asserts
+the resale price, the median, the middle-half spread, the sell-through, the comp count and the
+days-to-sell are **identical** — and that the ceiling and the break-even each moved by exactly the
+$11 that came off the freight, with the profit at the ceiling unchanged. The money moved out of the
+shipping and into the bid; none of it was invented. A second test asserts `LiveShipShare.cs` contains
+no `MaxBid`, no `BreakEven`, no `ResalePrice` and no `Median` — and no `DateTime`, no `await` and no
+`HttpClient`, because it also costs no lookup and no clock and has to run inside a re-price.
+
+## The spoken line
+
+Two states, fifth, beside the two cuts — because like them it is a fact about what the ceiling just
+heard already accounts for. *"Ships with the other 3 lots you've won here for $1."* and its opposite,
+*"You've won 3 lots here already and this is still charged full shipping."* Silent on the three
+ordinary states, which is nearly every card: "this one pays full shipping" is what every card has
+always meant. One dollar figure at most, rounded up, and free is said as **free** rather than as "$0",
+which reads as nothing at all when spoken.
+
+## A saving is not a warning
+
+`combined` raises nothing on the card's warning list. Good news read under time pressure belongs on
+the strip; the warning list stays for what could cost money — which here is the two states that could:
+nothing entered, and a second full charge for a box already on its way.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+The freight never reaches the query: a test asserts `LiveSearchQuery` mentions neither `LiveShipShare`
+nor `ShowName`.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveShipShare.cs` | New — the five states, the three gates, the show key and every sentence on the strip |
+| `ING eBay AutoLister/Models/LiveShipModels.cs` | New — `LiveShipTonight`, `LiveShipRead`, `LiveShipVerdicts` |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | `ShippingOnShow` — tonight's box by show, listed rows included; `RowFrom` records `ShowName` |
+| `ING eBay AutoLister/Models/LiveBuyModels.cs` | `WonLot.ShowName`; `LiveWinRequest.ShowName` + `AdditionalItemShipping`, both carried by `AsBid` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidRequest.ShowName` + `AdditionalItemShipping`; `LiveBidCard.Ship` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | `ship` parameter, the one substitution that makes every dollar below it marginal, and the warning it hands on |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhatItShipsFor` — two states, fifth |
+| `ING eBay AutoLister/Program.cs` | The box read on all three card builds, and the freight in both log lines |
+| `ING eBay AutoLister/wwwroot/index.html` | `wn-show`, `wn-ship-add` (paired with `wn-ship` so they never wrap apart); `app.js?v=134`, `style.css?v=117` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, both fields on all four requests, `wnShow()`, the rate remembered and the show not, and the box filled from a read show |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-ship-*` — the five edges, the three box cells, the field pair; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveShipShareTests.cs` | New — 28 tests on the states, the gates, the show key and everything it refuses to claim |
+| `ING eBay AutoLister.Tests/WhatsNotShipAssetTests.cs` | New — 22 tests holding the seven links together |
+| `ING eBay AutoLister.Tests/LiveBuySheetTests.cs` | 7 new tests on the box, including the listed-row difference and the night's real freight |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 8 new tests on what a real card does with an open box, including that no resale figure moves |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | 7 new tests on the two states the clause speaks in and the three it does not |
+| `ING eBay AutoLister.Tests/WhatsNotStockAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotConditionAssetTests.cs` | Re-pinned asset versions and the strip order |
+| `whatsnot_ship_full.png`, `whatsnot_ship_combined.png`, `whatsnot_ship_unstated.png`, `whatsnot_ship_narrow.png` | The three states, and the combined one at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,356 passed**, 0 failed, 0 skipped (75 new; the previous commit was 4,281) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` and `/rebid` mocked in the shape the C# returns) | **34 checks, all passed.** On an ordinary card: both new boxes on screen, `Each extra` empty rather than 0, an empty box sent as `null` and a typed 0 sent as `0`, and the strip drawn as the **fifth child of the card**, between the pile and the ladder, reading `Full shipping — $12` with no box cells and no tag. Typing the show and `1` re-priced off held comps with **no eBay read** and produced a green-edged strip reading `Ships with your other 3 lots — $1, not $12`, a `+$11.00 TO BID` tag, `IngMining` beside it, three cells reading `BOX SO FAR $14.00 / THIS LOT ADDS $1.00 / BOX WITH IT $15.00` with the middle one highlighted, and *"Ships with the other 3 lots you've won here for $1."* in the spoken line. Clearing the rate gave an amber strip reading `Charged the full $12 again`, a `$36.00` box so far, and the *"one box per show"* sentence on the card's warning list. A typed `0` gave `Ships free with your other lot` and **no** "no shipping cost entered" warning. At 560px `.wn-ship` overflowed by **0px**, the box cells stayed inside the strip by **0px**, the headline took the line back from the label, and the two rates stayed on one line — at 560px and at 1400px. 0 JS errors beyond Whatnot's own X-Frame-Options refusal, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every state, every rate and every box is exercised
+  against sheets built in tests and a mocked endpoint. The action log now prints the verdict, what
+  the lot was charged, what it would have been charged and what that was worth in bid, on every fresh
+  price — which is where the first real *"the app said no to a $9 lot because it charged $12 shipping
+  on a box that was already going out"* will show up.
+- **Both rates are the seller's word, and nothing checks them.** Whatnot states shipping per show and
+  this app never reads it; a seller who types last show's rates gets last show's ceilings. The strip
+  states both figures back on every card, which is the only defence a screen can offer against a
+  number nobody measured.
+- **The box is tonight's sheet, and the sheet is cleared by hand.** A seller who never clears it will
+  have last week's lots from the same host still counting as an open box — and unlike the stock
+  count, there is no "it was listed" signal to age them out, because a listed lot really is still in
+  the parcel. What ages a box out is the seller pressing **Clear**.
+- **A show that combines across a *seller's* shows is not modelled.** Some hosts run two shows a
+  night and post one box for both; this treats each show address as its own box. The seller can force
+  the right answer by typing the same handle into the Show box on both, which is exactly why the box
+  takes free text rather than only the URL.
+- **The first lot of a show is still the expensive one, and that is real rather than a limitation.**
+  What the card cannot do is tell a seller to *start* with the lot they want most, so that the full
+  first-item rate lands on the best margin rather than on the first thing that came up. That advice
+  needs the show's whole lot list priced against a box that does not exist yet, and it does not
+  exist in this app.
+- **It raises ceilings, which is a new kind of risk for this screen.** Every previous read could only
+  cost the seller a lot they should have bought on. This one can cost them money on a lot they
+  should not have — if the show does not actually combine, or combines at a rate they mistyped. The
+  three gates and the "fails closed to full freight" property are the whole answer to that, and they
+  are asserted rather than promised.

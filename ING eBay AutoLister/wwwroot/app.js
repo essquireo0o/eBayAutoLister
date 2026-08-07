@@ -9964,12 +9964,20 @@
     if (saved.fee != null) setVal('wn-fee', saved.fee);
     if (saved.target != null) setVal('wn-target', saved.target);
     if (saved.inc != null) setVal('wn-inc', saved.inc);
+    // The extra-item rate holds for a whole show and is the one box a seller will not
+    // think to fill in twice. Deliberately restored even when it is "0" — free combined
+    // shipping is a real answer and an empty box is a different one.
+    if (saved.shipAdd != null) setVal('wn-ship-add', saved.shipAdd);
+    // The show itself is NOT remembered. It is the one field on this row that is only
+    // true for tonight, and a handle carried in from last week would quietly combine
+    // this lot's shipping with somebody else's box.
   }
 
   function wnSaveSettings() {
     try {
       localStorage.setItem(WN_SETTINGS_KEY, JSON.stringify({
         ship: $('wn-ship')?.value ?? '',
+        shipAdd: $('wn-ship-add')?.value ?? '',
         fee: $('wn-fee')?.value ?? '',
         target: $('wn-target')?.value ?? '',
         // Remembered like the other three, because a show's increments hold for the whole
@@ -9983,6 +9991,14 @@
   // Empty means "not stated", which is a different answer from zero and has to reach the
   // server as null: the card warns about an unstated buyer premium and cannot warn about
   // one the browser quietly turned into 0.
+  // Which show is on. Sent on every card so the server can ask tonight's buy sheet whether
+  // a box is already coming from this seller — lots from the SAME show ride in one parcel,
+  // and that is what makes the fourth win of a night cost the extra-item rate rather than
+  // full freight. Empty is a real answer and combines nothing.
+  function wnShow() {
+    return ($('wn-show')?.value ?? '').trim();
+  }
+
   function wnNumber(id) {
     const raw = ($(id)?.value ?? '').trim();
     if (!raw) return null;
@@ -10138,6 +10154,8 @@
         title: wnTokenItem,
         currentBid: wnNumber('wn-bid'),
         shippingCost: wnNumber('wn-ship'),
+        additionalItemShipping: wnNumber('wn-ship-add'),
+        showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
@@ -10312,6 +10330,13 @@
     }
 
     wnSaveShowUrl(url);
+
+    // Which show this is, filled in from the address that was just read successfully.
+    // Only ever into an EMPTY box: the seller's own wording outranks a slug off a URL,
+    // and quietly rewriting this one mid-show would silently re-point every ceiling's
+    // shipping at a different box. The server matches an address and a handle to the
+    // same show anyway (LiveShipShare.NormalizeShow), so the raw URL is a fine answer.
+    if (!wnShow() && read.url) setVal('wn-show', read.url);
 
     // Whatnot's own id where there is one, the title where there isn't. This is only
     // ever used to tell "the show moved on" apart from "the same lot, read again".
@@ -10553,6 +10578,8 @@
         title: item,
         currentBid: wnNumber('wn-bid'),
         shippingCost: wnNumber('wn-ship'),
+        additionalItemShipping: wnNumber('wn-ship-add'),
+        showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
         bidIncrement: wnNumber('wn-inc'),
@@ -10865,6 +10892,44 @@
         ${st.note ? `<p class="wn-stock-note">${esc(st.note)}</p>` : ''}
       </div>` : '';
 
+    // ── What this one costs to get delivered ───────────────────────────────────
+    // A live seller posts ONE box per show, not one per lot: a first-item rate, plus
+    // a much smaller rate for each extra thing in it. Every ceiling this app has ever
+    // produced charged the full first-item rate to every lot of the night, which
+    // overstates what winning the fourth one costs — by the whole difference, on the
+    // cheap lots where that is most of the margin.
+    //
+    // This is the only strip on the card that can raise a ceiling, so it says out
+    // loud which of the two rates it charged and what tonight's box now stands at.
+    // Every word and every dollar is the server's (Services/LiveShipShare.cs); the
+    // browser adds nothing up and never decides that two shows are one show.
+    const sh = c.ship || {};
+    const shipStrip = sh.headline ? `
+      <div class="wn-ship wn-ship-${esc(sh.verdict || 'none')}">
+        <div class="wn-ship-line">
+          <span class="wn-ship-label">Shipping</span>
+          <strong class="wn-ship-headline">${esc(sh.headline)}</strong>
+          ${sh.saved > 0 ? `<span class="wn-ship-tag">+${moneyExact(sh.saved)} to bid</span>` : ''}
+          ${sh.showName ? `<span class="wn-ship-src">${esc(sh.showName)}</span>` : ''}
+        </div>
+        ${sh.lotsWonFromShow > 0 ? `
+          <div class="wn-ship-box">
+            <span class="wn-ship-cell" title="What tonight's lots from this show have been charged for shipping so far">
+              <span class="wn-ship-cell-name">Box so far</span>
+              <span class="wn-ship-cell-fig">${moneyExact(sh.shippingSoFar)}</span>
+            </span>
+            <span class="wn-ship-cell wn-ship-cell-this" title="What winning the lot on screen adds to that box — the figure the ceiling above was costed at">
+              <span class="wn-ship-cell-name">This lot adds</span>
+              <span class="wn-ship-cell-fig">${moneyExact(sh.marginal)}</span>
+            </span>
+            <span class="wn-ship-cell" title="What the whole shipment costs if you win this one">
+              <span class="wn-ship-cell-name">Box with it</span>
+              <span class="wn-ship-cell-fig">${moneyExact(sh.shippingWithThisLot)}</span>
+            </span>
+          </div>` : ''}
+        ${sh.note ? `<p class="wn-ship-note">${esc(sh.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The press, not the price ───────────────────────────────────────────────
     // Every figure below compares the bid ON SCREEN against the ceiling, which
     // answers whether the last bid was all right. Nobody buys at that price: pressing
@@ -10993,6 +11058,7 @@
       ${condStrip}
       ${unitsStrip}
       ${stockStrip}
+      ${shipStrip}
       ${ladder}
       ${meter}
       ${wnOwnBlock(c.ownHistory)}
@@ -11240,6 +11306,8 @@
         title: wnTokenItem,
         winningBid: bid,
         shippingCost: wnNumber('wn-ship'),
+        additionalItemShipping: wnNumber('wn-ship-add'),
+        showName: wnShow(),
         buyerFeePercent: wnNumber('wn-fee'),
         targetRoiPercent: wnNumber('wn-target'),
         // A lot of three won at one hammer price is three units of stock. The row is costed
@@ -11405,6 +11473,13 @@
           // something before the auctioneer has said anything.
           currentBid: row.lot.openingBid ?? null,
           shippingCost: wnNumber('wn-ship'),
+          // The show and its extra-item rate ARE sent, unlike the condition and the
+          // quantity below. Those describe one item somebody is looking at; these
+          // describe the box every lot on this list arrives in, which is the same box
+          // for all of them — and a list priced at full freight would rank the cheap
+          // lots of a show the seller is already buying from below what they are worth.
+          additionalItemShipping: wnNumber('wn-ship-add'),
+          showName: wnShow(),
           buyerFeePercent: wnNumber('wn-fee'),
           targetRoiPercent: wnNumber('wn-target'),
           // Sent for the same reason the other three are: a lot opened from this list
@@ -11674,9 +11749,10 @@
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when
     // the held comps have been let go.
-    ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
-      $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
-    });
+    ['wn-item', 'wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-target']
+      .forEach(id => {
+        $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
+      });
 
     // The seven boxes that change the answer but not the comps. Typing in any of them
     // re-answers off the held sold history — no eBay, no spinner, no round trip past
@@ -11694,7 +11770,12 @@
     // worth having: it never changes what eBay was asked, only which of the comps
     // already in hand the ceiling stands on. A round trip to eBay for it would be a
     // round trip to fetch rows this machine is already holding.
-    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+    //
+    // The show and its extra-item rate are the eighth and ninth, and they are the only
+    // two that can move the ceiling UP. A seller three lots into a show types one rate
+    // and watches every ceiling for the rest of the night rise by what the box is
+    // already paying for — off the same held comps, with no eBay in it.
+    ['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-target'].forEach(id => {
       $(id)?.addEventListener('input', wnScheduleRebid);
     });
     // A select fires change, not input, on every browser worth supporting.

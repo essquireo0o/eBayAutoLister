@@ -3052,8 +3052,14 @@ app.MapPost("/api/whatsnot/bid", async (
     // already in memory. See LiveBuySheet.UnitsWonOf for why listed rows are left out of it.
     var tonight = sheet.UnitsWonOf(title);
 
+    // And whether a box is already coming from this show. Same reasoning and the same list: a live
+    // seller posts one parcel per show, so what winning THIS lot adds to the shipping bill is the
+    // extra-item rate once anything else from the same show is on the sheet — and that changes the
+    // moment the seller presses Won it, which is why it is counted here rather than held.
+    var freight = sheet.ShippingOnShow(req.ShowName);
+
     var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own,
-        search: terms, tonight: tonight);
+        search: terms, tonight: tonight, ship: freight);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
@@ -3084,6 +3090,12 @@ app.MapPost("/api/whatsnot/bid", async (
         $"stock {card.Stock.Verdict} — would hold {card.Stock.UnitsAfter} " +
         $"({card.Stock.UnitsHeld} shelf, {card.Stock.WonTonight} won tonight, {card.Stock.LotUnits} this lot)" +
         $"{(card.Stock.MonthsToClear is { } m ? $", {m:0.#} months to clear" : "")}; " +
+        // What the lot was charged to get delivered, and what it would have been charged before this
+        // read existed. The first real "the app said no to a $9 lot because it charged $12 shipping
+        // on a box that was already going out" shows up here, in the seller's own log.
+        $"freight {card.Ship.Verdict} — charged {card.Ship.Marginal:C} of {card.Ship.FirstItemShipping:C}" +
+        $"{(card.Ship.ShowNamed ? $" on \"{card.Ship.ShowName}\" ({card.Ship.LotsWonFromShow} lot(s) tonight)" : "")}" +
+        $"{(card.Ship.Applied ? $", {card.Ship.Saved:C} more to bid" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);
@@ -3140,7 +3152,7 @@ app.MapPost("/api/whatsnot/rebid", (
     // can change without touching the bid box: winning the previous lot of the same product and
     // pressing Won it. Held comps, fresh count — no eBay read either way.
     var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search,
-        sheet.UnitsWonOf(quote.Item));
+        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName));
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3199,14 +3211,18 @@ app.MapPost("/api/whatsnot/won", (
     }
 
     // The same card the seller was looking at, at the price it hammered at — including the stock
-    // read, counted BEFORE this win goes on the sheet, which is what the card on screen said.
+    // read and the freight read, both counted BEFORE this win goes on the sheet, which is what the
+    // card on screen said. The freight one matters most here: this row's shipping is what the lot
+    // actually adds to the box, so the night's spend stays the figure the bank statement will agree
+    // with rather than the first-item rate charged once per lot.
     var card = advisor.Build(
         quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own, quote.Search,
-        sheet.UnitsWonOf(quote.Item));
+        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName));
     var result = sheet.Record(card);
 
     log.Add("Research", "Live lot won",
-        $"\"{quote.Item}\" at {card.CurrentBid:C} ({card.LandedCostNow:C} all in); " +
+        $"\"{quote.Item}\" at {card.CurrentBid:C} ({card.LandedCostNow:C} all in, " +
+        $"{card.Ship.Marginal:C} freight — {card.Ship.Verdict}); " +
         $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")}; " +
         $"ceiling was {card.MaxBid:C}{(card.CurrentBid > card.MaxBid && card.MaxBid > 0m ? " — OVER" : "")}; " +
         $"sheet now {result.LotCount} lot(s), {result.Spent:C} spent");

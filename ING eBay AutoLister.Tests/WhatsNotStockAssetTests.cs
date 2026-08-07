@@ -143,7 +143,9 @@ public class WhatsNotStockAssetTests
     {
         var template = Js.Replace("\r\n", "\n");
         Assert.Contains("${unitsStrip}\n      ${stockStrip}", template, StringComparison.Ordinal);
-        Assert.Contains("${stockStrip}\n      ${ladder}", template, StringComparison.Ordinal);
+        // The freight strip was added between the pile and the ladder — the last thing said about
+        // what winning costs, immediately before the numbers it costed. See WhatsNotShipAssetTests.
+        Assert.Contains("${stockStrip}\n      ${shipStrip}\n      ${ladder}", template, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -292,8 +294,8 @@ public class WhatsNotStockAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=133", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=116", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=134", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=117", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

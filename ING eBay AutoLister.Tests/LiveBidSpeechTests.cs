@@ -521,6 +521,97 @@ public class LiveBidSpeechTests
         Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
     }
 
+    // ── What it ships for ─────────────────────────────────────────────────────
+    //
+    // A live seller posts one box per show. The clause speaks in the two states where the freight is
+    // not what the seller typed: the lot riding in a box already going out — the only good news in
+    // this whole line — and its opposite, repeated wins with no extra-item rate entered.
+
+    private static LiveShipRead Box(
+        string verdict, decimal marginal = 1m, decimal first = 12m, int lots = 3) => new()
+    {
+        Verdict = verdict,
+        Marginal = marginal,
+        FirstItemShipping = first,
+        LotsWonFromShow = lots,
+        ShowName = "ingmining",
+        Headline = "headline",
+        Readable = true,
+    };
+
+    /// <summary>The good state, and the cost in it rounds UP like every other cost in this line.</summary>
+    [Fact]
+    public void A_lot_riding_in_an_open_box_is_spoken_before_the_bidding()
+    {
+        var card = Card();
+        card.Ship = Box(LiveShipVerdicts.Combined, marginal: 1.5m);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.Contains("Ships with the other 3 lots you've won here for $2.", said, StringComparison.Ordinal);
+        Assert.True(
+            said.IndexOf("Ships with", StringComparison.Ordinal) < said.IndexOf("At $", StringComparison.Ordinal),
+            "the freight is a fact about the ceiling just heard, so it comes before where the bidding is");
+    }
+
+    /// <summary>Free combined shipping is said as free rather than as "$0", which reads as nothing
+    /// at all when it is spoken.</summary>
+    [Fact]
+    public void Free_combined_shipping_is_spoken_as_free()
+    {
+        var card = Card();
+        card.Ship = Box(LiveShipVerdicts.Combined, marginal: 0m, lots: 1);
+
+        Assert.Contains("Ships free with the other lot you've won here.",
+            LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>The opposite state, and it states no figure: nothing has been measured, and the fix
+    /// is a box on the screen.</summary>
+    [Fact]
+    public void Repeated_wins_with_no_extra_rate_are_spoken_without_a_figure()
+    {
+        var card = Card();
+        card.Ship = Box(LiveShipVerdicts.Unstated, marginal: 12m);
+
+        var said = LiveBidSpeech.Say(card);
+        var clause = said[said.IndexOf("You've won", StringComparison.Ordinal)..];
+
+        Assert.StartsWith("You've won 3 lots here already and this is still charged full shipping.",
+            clause, StringComparison.Ordinal);
+        Assert.DoesNotContain("$", clause[..clause.IndexOf('.')], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Silent on the three ordinary states, which is nearly every card. "This one pays full
+    /// shipping" is what every card has always meant, and a clause on every lot in exchange for that
+    /// would cost the line the one thing it is for.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveShipVerdicts.None)]
+    [InlineData(LiveShipVerdicts.Alone)]
+    [InlineData(LiveShipVerdicts.First)]
+    public void The_ordinary_freight_states_say_nothing(string verdict)
+    {
+        var card = Card();
+        card.Ship = Box(verdict, marginal: 12m);
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.DoesNotContain("Ships ", said, StringComparison.Ordinal);
+        Assert.DoesNotContain("You've won", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card built by something that never set the block at all still speaks.</summary>
+    [Fact]
+    public void A_card_with_no_freight_block_still_produces_a_line()
+    {
+        var card = Card();
+        card.Ship = null!;
+
+        Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_line_never_runs_on_or_ends_in_a_hanging_space()
     {

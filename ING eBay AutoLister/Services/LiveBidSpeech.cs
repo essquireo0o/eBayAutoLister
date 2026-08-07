@@ -51,9 +51,53 @@ public static class LiveBidSpeech
                 YourOwnRecord(card), HowManyYoudHave(card));
 
         return Join(Headline(card), HowMany(card), WhichWayItsGoing(card), WhatKindOfOne(card),
-            WhereTheBiddingIs(card), HowManyPressesLeft(card), WhatItResellsFor(card),
-            YourOwnRecord(card), HowManyYoudHave(card));
+            WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
+            WhatItResellsFor(card), YourOwnRecord(card), HowManyYoudHave(card));
     }
+
+    /// <summary>
+    /// What this one costs to get delivered, said fifth — after the two cuts and before the bidding,
+    /// because like them it is a fact about what the ceiling the seller has just heard already
+    /// accounts for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two states, and they are the two where the freight is not what the seller typed. The first is
+    /// the good one, and it is the only good news in this whole line: this lot rides in a box that is
+    /// already going out, so the ceiling is higher than the one they heard on the first lot of the
+    /// night. A seller who does not know that will bid it like the first one.
+    /// </para>
+    /// <para>
+    /// The second is its opposite — repeated wins from one show with no extra-item rate entered, so
+    /// the ceiling is knowingly charging full freight for a box already on its way. That one states
+    /// no figure at all: nothing has been measured, and the fix is a box on the screen.
+    /// </para>
+    /// <para>
+    /// Silent on every card charged the ordinary way, which is nearly all of them, and silent on the
+    /// first lot of a show — "this one pays full shipping" is what every card has always meant. One
+    /// dollar figure at most: a second number in a spoken line is a second number to mishear.
+    /// </para>
+    /// </remarks>
+    private static string WhatItShipsFor(LiveBidCard card)
+    {
+        if (card.Ship is not { } ship) return "";
+
+        return ship.Verdict switch
+        {
+            LiveShipVerdicts.Combined when ship.Marginal <= 0m =>
+                $"Ships free with {Lots(ship.LotsWonFromShow)} you've won here.",
+            // Rounded UP, like every other cost in this line.
+            LiveShipVerdicts.Combined =>
+                $"Ships with {Lots(ship.LotsWonFromShow)} you've won here for " +
+                $"{Math.Ceiling(ship.Marginal).ToString("C0")}.",
+            LiveShipVerdicts.Unstated =>
+                $"You've won {(ship.LotsWonFromShow == 1 ? "1 lot" : $"{ship.LotsWonFromShow} lots")} here " +
+                "already and this is still charged full shipping.",
+            _ => "",
+        };
+    }
+
+    private static string Lots(int count) => count == 1 ? "the other lot" : $"the other {count} lots";
 
     /// <summary>
     /// How many of these winning it would make, said last — after everything the market and the

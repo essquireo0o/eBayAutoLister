@@ -122,7 +122,9 @@ public class WhatsNotNextBidAssetTests
     {
         var lots = Advisor.IndexOf("warnings.AddRange(LotWarnings(card));", StringComparison.Ordinal);
         var press = Advisor.IndexOf("card.NextBid is { Warning.Length: > 0 } press", StringComparison.Ordinal);
-        var shipping = Advisor.IndexOf("if (card.ShippingCost <= 0m)", StringComparison.Ordinal);
+        // The shipping warning is now LiveShipShare's own sentence, so the strip and the warning
+        // list cannot describe the same freight differently. Its place in the order is unchanged.
+        var shipping = Advisor.IndexOf("card.Ship is { Warning.Length: > 0 } freight", StringComparison.Ordinal);
 
         Assert.True(lots > 0 && press > lots, "the press warning has to come after the lot warnings");
         Assert.True(shipping > press, "the press warning has to come before the ones about the money");
@@ -160,8 +162,11 @@ public class WhatsNotNextBidAssetTests
         Assert.Contains("id=\"wn-inc\"", Html, StringComparison.Ordinal);
         Assert.Equal(3, Occurrences(Js, "bidIncrement: wnNumber('wn-inc')"));
 
-        // Instant, off the held comps, like the other five boxes that change no comps.
-        Assert.Contains("['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {",
+        // Instant, off the held comps, like the other boxes that change no comps — now including
+        // the show and its extra-item rate, which are the only two that can move a ceiling UP.
+        Assert.Contains(
+            "['wn-bid', 'wn-inc', 'wn-qty', 'wn-ship', 'wn-ship-add', 'wn-show', 'wn-fee', 'wn-target']"
+            + ".forEach(id => {",
             Js, StringComparison.Ordinal);
         // And remembered between lots, like the shipping, the fee and the target.
         Assert.Contains("inc: $('wn-inc')?.value ?? ''", Js, StringComparison.Ordinal);
@@ -262,8 +267,8 @@ public class WhatsNotNextBidAssetTests
         foreach (var verdict in new[] { "press", "last", "stop", "over" })
             Assert.Contains($".wn-next-{verdict}", Css, StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=116", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=133", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=117", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=134", Html, StringComparison.Ordinal);
     }
 
     /// <summary>

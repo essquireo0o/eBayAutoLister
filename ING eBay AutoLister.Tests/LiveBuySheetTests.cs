@@ -566,13 +566,160 @@ public class LiveBuySheetTests
         Assert.Equal(3, LiveBuySheet.RowFrom(card, Now).Units);
     }
 
+    // ── What the night's box has already cost ─────────────────────────────────
+    //
+    // A live seller posts ONE parcel per show, not one per lot. So what winning the lot on screen
+    // really adds to the shipping bill depends on whether a box is already coming from this seller
+    // — and that is a question only this sheet can answer.
+
+    /// <summary>Lots from the named show, and what they were charged. The two figures the freight
+    /// read is built from.</summary>
+    [Fact]
+    public void Shipping_on_a_show_counts_that_shows_lots_and_adds_up_their_freight()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf(Product, show: "ingmining", shipping: 12m), Now);
+        sheet.Record(CardOf("Goldshell Mini Doge II", show: "ingmining", shipping: 1m, extra: 1m), Now);
+
+        var box = sheet.ShippingOnShow("ingmining");
+
+        Assert.Equal(2, box.Lots);
+        Assert.Equal(13m, box.ShippingCharged);
+    }
+
+    /// <summary>
+    /// Two shows are two boxes. Tonight's sheet holds lots from whoever the seller watched, and a
+    /// box carried across two of them would raise a ceiling on freight somebody else is paying.
+    /// </summary>
+    [Fact]
+    public void One_shows_box_never_counts_another_shows_lots()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf(Product, show: "ingmining", shipping: 12m), Now);
+        sheet.Record(CardOf("Goldshell Mini Doge II", show: "cardvault", shipping: 6m), Now);
+
+        Assert.Equal(1, sheet.ShippingOnShow("ingmining").Lots);
+        Assert.Equal(12m, sheet.ShippingOnShow("ingmining").ShippingCharged);
+        Assert.Equal(6m, sheet.ShippingOnShow("cardvault").ShippingCharged);
+        Assert.Equal(LiveShipTonight.Nothing, sheet.ShippingOnShow("someone else"));
+    }
+
+    /// <summary>The show's address and the host's handle are one show, so a box filled in from the
+    /// browser's URL and one typed by hand are the same box.</summary>
+    [Fact]
+    public void A_shows_address_matches_the_same_show_typed_by_hand()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        sheet.Record(CardOf(Product, show: "https://www.whatnot.com/live/abc-123", shipping: 12m), Now);
+
+        Assert.Equal(1, sheet.ShippingOnShow("abc-123").Lots);
+        Assert.Equal(1, sheet.ShippingOnShow("ABC-123").Lots);
+    }
+
+    /// <summary>
+    /// The deliberate difference from <see cref="LiveBuySheet.UnitsWonOf"/>: a listed row is still
+    /// in the box. Drafting a listing moves stock onto the Deal Pipeline, where counting it twice
+    /// would be an error — but it changes nothing whatsoever about the parcel the seller is waiting
+    /// on, and dropping it here would put the next ceiling back on full freight for no visible
+    /// reason.
+    /// </summary>
+    [Fact]
+    public void A_listed_row_is_still_in_the_box()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        var first = sheet.Record(CardOf(Product, show: "ingmining", shipping: 12m), Now);
+        sheet.MarkListed(first.Lots[0].Id, "draft.json", Product, 200m, "SKU-1", dealId: 7, Now);
+
+        Assert.Equal(0, sheet.UnitsWonOf(Product).Units);        // counted on the pipeline instead
+        Assert.Equal(1, sheet.ShippingOnShow("ingmining").Lots); // still arriving in the same parcel
+    }
+
+    /// <summary>An unnamed show matches nothing, including the rows that are themselves unnamed.
+    /// "I didn't say" is not a show two lots can share.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_unnamed_show_has_no_box(string? show)
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+        sheet.Record(CardOf(Product, show: "", shipping: 12m), Now);
+
+        Assert.Equal(LiveShipTonight.Nothing, sheet.ShippingOnShow(show));
+    }
+
+    /// <summary>
+    /// The row records the MARGINAL freight, which is what makes the night's spend the figure the
+    /// bank statement will agree with. Six lots charged the full first-item rate would report a $17
+    /// shipping bill as $72.
+    /// </summary>
+    [Fact]
+    public void A_row_records_what_the_lot_actually_added_to_the_box()
+    {
+        using var temp = new TempSheet();
+        var sheet = new LiveBuySheet(temp.Path);
+
+        var first = sheet.Record(CardOf(Product, show: "ingmining", shipping: 12m, extra: 1m), Now);
+        Assert.Equal(12m, first.Lots[0].ShippingCost);
+
+        var card = CardOf("Goldshell Mini Doge II", show: "ingmining", shipping: 12m, extra: 1m,
+                          box: sheet.ShippingOnShow("ingmining"));
+        var both = sheet.Record(card, Now);
+
+        Assert.Equal(1m, both.Lots.Single(l => l.Item == "Goldshell Mini Doge II").ShippingCost);
+        Assert.Equal(13m, both.Lots.Sum(l => l.ShippingCost));
+        // And the night's spend follows it: charging both lots the first-item rate would report a
+        // $13 shipping bill as $24.
+        Assert.Equal(13m, both.Spent - both.Lots.Sum(l => l.WinningBid + l.BuyerFee));
+    }
+
+    /// <summary>The show goes on the row, in the seller's own wording, because the NEXT lot asks
+    /// this sheet whether that box exists.</summary>
+    [Fact]
+    public void A_row_records_which_show_it_came_off()
+    {
+        var card = CardOf(Product, show: "  @IngMining  ", shipping: 12m);
+
+        Assert.Equal("IngMining", LiveBuySheet.RowFrom(card, Now).ShowName);
+    }
+
+    /// <summary>A row written before the sheet knew about shows carries no show, so it can only be
+    /// answered with full freight — which is what every card was charged before it existed.</summary>
+    [Fact]
+    public void A_row_from_an_older_sheet_belongs_to_no_box()
+    {
+        using var temp = new TempSheet();
+        File.WriteAllText(temp.Path, """
+            [{"id":"a1","item":"Bitmain Antminer S19j Pro 104TH","wonAtUtc":"2026-08-06T20:00:00Z",
+              "winningBid":100,"shippingCost":12,"landedCost":112,"priced":true,"resalePrice":300,"call":"bid"}]
+            """);
+
+        Assert.Equal(LiveShipTonight.Nothing, new LiveBuySheet(temp.Path).ShippingOnShow("ingmining"));
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private static LiveBidCard CardOf(string title, int units = 1)
+    private static LiveBidCard CardOf(
+        string title, int units = 1, string show = "", decimal? shipping = null, decimal? extra = null,
+        LiveShipTonight box = default)
     {
         var card = Advisor.Build(
-            title, Analysis(), new LiveBidRequest { Title = title, CurrentBid = 100m, Quantity = units },
-            Fees, nowUtc: Now);
+            title, Analysis(),
+            new LiveBidRequest
+            {
+                Title = title, CurrentBid = 100m, Quantity = units,
+                ShowName = show, ShippingCost = shipping, AdditionalItemShipping = extra,
+            },
+            Fees, nowUtc: Now, ship: box);
         Assert.Equal(units, card.Units.Count);
         return card;
     }

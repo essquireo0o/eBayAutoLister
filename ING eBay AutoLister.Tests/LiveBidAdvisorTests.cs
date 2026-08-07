@@ -1571,4 +1571,165 @@ public class LiveBidAdvisorTests
         Assert.Equal(without.Say, with.Say);
         Assert.Equal(without.Warnings.Count, with.Warnings.Count);
     }
+
+    // ── What the lot really costs to get delivered ────────────────────────────
+    //
+    // A live seller posts ONE box per show, not one per lot. Every ceiling this app produced before
+    // LiveShipShare existed charged the full first-item rate to every lot of the night, which
+    // overstates what the fourth win costs — on exactly the cheap lots where that is most of the
+    // margin. It is the only read on this card that can raise a ceiling, so what is pinned here is
+    // mostly the three gates it fails closed on.
+
+    /// <summary>A card that says nothing about a show is charged exactly what it always was.</summary>
+    [Fact]
+    public void A_card_with_no_show_named_is_charged_full_freight()
+    {
+        var card = Card(Analysis(), bid: 40m, shipping: 12m);
+
+        Assert.Equal(LiveShipVerdicts.Alone, card.Ship.Verdict);
+        Assert.Equal(12m, card.Ship.FirstItemShipping);
+        Assert.Equal(12m, card.ShippingCost);
+        Assert.False(card.Ship.Applied);
+    }
+
+    /// <summary>
+    /// The one state that moves money, and the direction it moves in: the lot rides in a box that is
+    /// already going out, so the ceiling really is higher than the first lot of the show got.
+    /// </summary>
+    [Fact]
+    public void A_lot_riding_in_an_open_box_is_costed_at_the_extra_item_rate()
+    {
+        var first = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees, nowUtc: Now);
+        var second = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees, nowUtc: Now,
+            ship: new LiveShipTonight(2, 13m));
+
+        Assert.Equal(LiveShipVerdicts.First, first.Ship.Verdict);
+        Assert.Equal(12m, first.ShippingCost);
+
+        Assert.Equal(LiveShipVerdicts.Combined, second.Ship.Verdict);
+        Assert.Equal(1m, second.ShippingCost);
+        Assert.Equal(11m, second.Ship.Saved);
+
+        // Eleven dollars less to get it delivered is eleven more dollars of bid, and the profit at
+        // the ceiling is unchanged — the money moved from the freight into the bid, not out of thin
+        // air. Both are the ceiling's own arithmetic, not this read's.
+        Assert.Equal(11m, second.MaxBid - first.MaxBid);
+        Assert.Equal(11m, second.BreakEvenBid - first.BreakEvenBid);
+        Assert.Equal(first.ProfitAtMaxBid, second.ProfitAtMaxBid);
+        // And the landed cost at the bid on screen falls by exactly the freight that came off it.
+        Assert.Equal(11m, first.LandedCostNow - second.LandedCostNow);
+    }
+
+    /// <summary>
+    /// A show that combines does not change what the item is WORTH. The resale side, the spread, the
+    /// sell-through and the comps are records of sales that really happened, and freight is a fact
+    /// about a parcel.
+    /// </summary>
+    [Fact]
+    public void Combining_the_freight_moves_no_resale_figure()
+    {
+        var full = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees, nowUtc: Now);
+        var combined = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees, nowUtc: Now,
+            ship: new LiveShipTonight(1, 12m));
+
+        Assert.Equal(full.ResalePrice, combined.ResalePrice);
+        Assert.Equal(full.MedianPrice, combined.MedianPrice);
+        Assert.Equal(full.PriceLow, combined.PriceLow);
+        Assert.Equal(full.PriceHigh, combined.PriceHigh);
+        Assert.Equal(full.SellThroughRate, combined.SellThroughRate);
+        Assert.Equal(full.CompCount, combined.CompCount);
+        Assert.Equal(full.DaysToSell, combined.DaysToSell);
+    }
+
+    /// <summary>
+    /// Repeated wins from one show with no extra-item rate. Nothing is assumed on the seller's
+    /// behalf — the ceiling stays exactly where it was and the warning says what would move it.
+    /// </summary>
+    [Fact]
+    public void Repeated_wins_with_no_extra_rate_warn_rather_than_guess()
+    {
+        var plain = Card(Analysis(), bid: 40m, shipping: 12m);
+        var repeated = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: null), Fees, nowUtc: Now,
+            ship: new LiveShipTonight(3, 36m));
+
+        Assert.Equal(LiveShipVerdicts.Unstated, repeated.Ship.Verdict);
+        Assert.Equal(plain.MaxBid, repeated.MaxBid);
+        Assert.Contains(repeated.Warnings, w => w.Contains("one box per show", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A saving is good news, and good news does not belong in a warning list read under time
+    /// pressure. The strip carries it; the warnings stay for what could cost money.
+    /// </summary>
+    [Fact]
+    public void A_combined_lot_raises_no_warning()
+    {
+        var card = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees, nowUtc: Now,
+            ship: new LiveShipTonight(2, 13m));
+
+        Assert.True(card.Ship.Applied);
+        Assert.Empty(card.Ship.Warning);
+        Assert.DoesNotContain(card.Warnings, w => w.Contains("shipping", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Free combined shipping is a real arrangement and a typed zero has to reach the ceiling as
+    /// one — without the old "no shipping cost entered" warning firing on a lot whose freight is
+    /// genuinely nothing.
+    /// </summary>
+    [Fact]
+    public void A_lot_that_ships_free_in_the_box_is_not_mistaken_for_one_with_no_shipping_entered()
+    {
+        var card = Advisor.Build(
+            Product, Analysis(), Freight(bid: 40m, shipping: 9m, extra: 0m), Fees, nowUtc: Now,
+            ship: new LiveShipTonight(1, 9m));
+
+        Assert.Equal(0m, card.ShippingCost);
+        Assert.Equal(LiveShipVerdicts.Combined, card.Ship.Verdict);
+        Assert.DoesNotContain(card.Warnings, w => w.Contains("No shipping cost entered", StringComparison.Ordinal));
+    }
+
+    /// <summary>A card nothing could price still says what the freight is doing — it is a fact about
+    /// a parcel, not about a comp.</summary>
+    [Fact]
+    public void An_unpriceable_card_still_reads_the_freight()
+    {
+        var card = Advisor.Build(
+            Product, Analysis(expected: null), Freight(bid: 40m, shipping: 12m, extra: 1m), Fees,
+            nowUtc: Now, ship: new LiveShipTonight(2, 13m));
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(LiveShipVerdicts.Combined, card.Ship.Verdict);
+        Assert.Equal(1m, card.ShippingCost);
+    }
+
+    /// <summary>A card built without a sheet is priced identically — additive, like every WhatsNot
+    /// read before it.</summary>
+    [Fact]
+    public void A_card_built_without_a_box_is_priced_identically()
+    {
+        var without = Card(Analysis(), bid: 40m, shipping: 12m);
+        var with = Advisor.Build(
+            Product, Analysis(), Ask(bid: 40m, shipping: 12m), Fees, nowUtc: Now,
+            ship: LiveShipTonight.Nothing);
+
+        Assert.Equal(without.MaxBid, with.MaxBid);
+        Assert.Equal(without.ShippingCost, with.ShippingCost);
+        Assert.Equal(without.Say, with.Say);
+        Assert.Equal(without.Warnings.Count, with.Warnings.Count);
+    }
+
+    private static LiveBidRequest Freight(decimal? bid, decimal? shipping, decimal? extra,
+                                          string show = "ingmining") =>
+        new()
+        {
+            Title = Product, CurrentBid = bid, ShippingCost = shipping,
+            AdditionalItemShipping = extra, ShowName = show,
+        };
 }

@@ -140,6 +140,50 @@ public sealed class LiveBuySheet
             : new LiveStockTonight(matched.Sum(l => Math.Max(1, l.Units)), matched.Count);
     }
 
+    /// <summary>
+    /// What tonight's sheet has already committed to one show's box — the count the live card asks
+    /// for before it decides what the lot on screen really costs to get delivered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A live seller posts <b>one box per show</b>, at the end, and charges a first-item rate plus a
+    /// smaller rate for each extra thing in it. So the marginal cost of the fourth win of a night is
+    /// not the figure in the Shipping box, and every ceiling this app has ever produced for a fourth
+    /// win has been costed as though that lot were being posted on its own.
+    /// </para>
+    /// <para>
+    /// <b>Listed rows are counted here, and are deliberately not counted by
+    /// <see cref="UnitsWonOf"/>.</b> The two questions are different. That one asks how much stock
+    /// the seller is holding, and a listed lot has moved onto the Deal Pipeline where it would be
+    /// counted twice. This one asks whether a box is already coming from this seller — and drafting
+    /// a listing changes nothing whatsoever about the box.
+    /// </para>
+    /// <para>
+    /// An unnamed show matches nothing, including rows that are themselves unnamed. Tonight's sheet
+    /// can hold lots from three different sellers, and a saving carried across two of them would be a
+    /// ceiling raised on evidence that does not exist. Matched by
+    /// <see cref="LiveShipShare.NormalizeShow"/>, under the same lock as everything else here — no
+    /// file I/O in the common case, which is what lets it sit inside a re-price.
+    /// </para>
+    /// </remarks>
+    public LiveShipTonight ShippingOnShow(string? show)
+    {
+        var key = LiveShipShare.NormalizeShow(show);
+        if (key.Length == 0) return LiveShipTonight.Nothing;
+
+        List<WonLot> matched;
+        lock (_gate)
+        {
+            matched = Load()
+                .Where(l => string.Equals(LiveShipShare.NormalizeShow(l.ShowName), key, StringComparison.Ordinal))
+                .ToList();
+        }
+
+        return matched.Count == 0
+            ? LiveShipTonight.Nothing
+            : new LiveShipTonight(matched.Count, Math.Round(matched.Sum(l => Math.Max(0m, l.ShippingCost)), 2));
+    }
+
     /// <summary>One row, by its own id. Null when it is not on the sheet — cleared, trimmed, or a
     /// stale id from a screen that has been open since the last show.</summary>
     public WonLot? Find(string? id)
@@ -228,6 +272,11 @@ public sealed class LiveBuySheet
             Item = card.Item,
             CategoryLabel = card.CategoryLabel,
             WonAtUtc = nowUtc,
+            // Which box this one is in. Written down because the NEXT lot from the same show asks
+            // this sheet whether a shipment is already coming, and a row with no show on it can only
+            // be answered with full freight. The card's own wording, so the row and the strip that
+            // decided its shipping name the same show.
+            ShowName = card.Ship?.ShowName ?? "",
             // One hammer price, N objects to sell. Written down because the next card that prices
             // this same product asks the sheet how many of it are already in a box tonight, and a
             // lot of three recorded as one would answer that with a third of the truth.

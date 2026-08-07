@@ -24,7 +24,32 @@ public sealed class LiveBidRequest
 
     /// <summary>What it costs to get it delivered to you. Part of what winning costs, so it comes
     /// out of the bid rather than out of the profit afterwards.</summary>
+    /// <remarks>
+    /// This is the FIRST-item rate: what the show charges to post one win. What each additional win
+    /// costs in the same box is <see cref="AdditionalItemShipping"/>, and which of the two this lot
+    /// is actually charged is <see cref="Services.LiveShipShare"/>'s answer.
+    /// </remarks>
     public decimal? ShippingCost { get; set; }
+
+    /// <summary>
+    /// What this show charges for each additional lot in the same box. Null is "nobody said" and
+    /// leaves the ceiling on full freight; <b>zero is a real answer</b> — free combined shipping is
+    /// the commonest live-selling arrangement there is.
+    /// </summary>
+    /// <remarks>
+    /// A live seller posts one box per show, not one per lot, so charging every lot of the night the
+    /// full first-item rate overstates what winning the fourth one costs — by the whole difference,
+    /// on the lots where it matters most. See <see cref="Services.LiveShipShare"/> for the three
+    /// facts that have to be true before the two rates are allowed to differ.
+    /// </remarks>
+    public decimal? AdditionalItemShipping { get; set; }
+
+    /// <summary>
+    /// Which show this is — the host's handle, or the show's own address pasted from the panel.
+    /// Empty means the seller has not said, and nothing is ever combined across an unnamed show:
+    /// tonight's buy sheet could be holding lots from three different sellers.
+    /// </summary>
+    public string? ShowName { get; set; }
 
     /// <summary>The live platform's buyer premium, as a percentage of the winning bid. Whatnot's is
     /// currently 8% + shipping; it is a field rather than a constant because it varies by platform
@@ -182,9 +207,24 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveStockRead Stock { get; set; } = new();
 
+    /// <summary>
+    /// What winning this lot really adds to the shipping bill, as opposed to what one lot from this
+    /// show costs. Never null — a block that only appears once a saving was found is a block whose
+    /// silence means both "you are paying full freight" and "nothing looked". It is the only read on
+    /// this card that can RAISE the ceiling, and <see cref="Services.LiveShipShare"/> gates it on
+    /// three facts the seller can see.
+    /// </summary>
+    public LiveShipRead Ship { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }
+
+    /// <summary>
+    /// What this lot was charged to get delivered — the MARGINAL cost, so on a lot riding along in a
+    /// box that is already going out it is the show's extra-item rate rather than its first-item
+    /// rate. What was typed in the Shipping box is <see cref="LiveShipRead.FirstItemShipping"/>.
+    /// </summary>
     public decimal ShippingCost { get; set; }
     public decimal BuyerFeePercent { get; set; }
     /// <summary>The premium on the CURRENT bid, in cash. Zero when no premium was stated.</summary>
