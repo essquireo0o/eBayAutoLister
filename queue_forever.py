@@ -31,22 +31,25 @@ VISION: optimize for (1) "how does Nick make money?" grow the seller's profit/sa
 # in app.js, styles in style.css): an embedded-browser panel with an address bar + iframe + "Open in
 # browser" fallback pointed at a live-selling feed (Whatnot etc.).
 WN = ("WHATSNOT FEATURE (the 'WhatsNot' tab: nav data-page=\"whatsnot\", section #whatsnot-section, "
- "showWhatsNotSection/bindWhatsNot in app.js, .wn-* styles in style.css). END GOAL: analyze the items on "
- "a live-selling feed on screen and give their cost/resale value from REAL-TIME live eBay sold prices "
- "(answer within seconds), so a seller watching a live auction knows instantly what each item is worth. "
- "HARD CONSTRAINT: do NOT stop, disable, or remove the sold-comps system anywhere in the app - it stays "
- "fully working; WhatsNot is additive. Known wall: an <iframe> can't read a cross-origin feed (Whatnot "
- "sends X-Frame-Options/CSP), so make honest incremental progress toward the goal (e.g. paste-in item "
- "title/URL -> instant live eBay cost; a manual 'price what I'm watching' box; groundwork for real feed "
- "capture) rather than faking a live read. One cohesive, tested, working increment per task. ")
+ "showWhatsNotSection/bindWhatsNot in app.js, .wn-* styles in style.css). VISION: real-time LIVE-AUCTION "
+ "ARBITRAGE. While an item is on screen in a live-selling feed (Whatnot), BEFORE and DURING the bid, show "
+ "the seller as many decision statistics as possible so they know whether to bid: recent SOLD comps on "
+ "eBay (start with eBay; other markets later), the SELL-THROUGH RATE, price low/median/high spread, sell "
+ "velocity/how fast it moves, and a suggested MAX BID for a target margin (current bid vs eBay resale = the "
+ "arbitrage). This is the Opportunity Finder treatment applied live - REUSE Opportunity Finder / the app's "
+ "existing eBay market + sell-through services, don't reinvent them. Answer within seconds. HARD "
+ "CONSTRAINTS: (1) do NOT stop, disable, or remove sold-comps anywhere - it stays fully working, WhatsNot "
+ "is additive; (2) an <iframe> can't read a cross-origin feed (Whatnot sends X-Frame-Options/CSP), so make "
+ "honest incremental progress (type/paste the item on screen -> instant arbitrage card; groundwork for real "
+ "feed capture) rather than faking a live read. One cohesive, tested, working increment per task. ")
 
 POOL = [
- (WN + "Improve the WhatsNot embedded-browser panel itself: navigation (back/forward/reload), remembering the last feed URL, clearer handling when a site refuses to embed, and general reliability/UX.", "wn-embed"),
- (WN + "Add a 'price what I'm watching' input to the WhatsNot panel: seller pastes/says an item (title, or an eBay/Whatnot URL) and gets its live eBay cost/resale estimate within seconds, shown beside the feed. Reuse the app's existing live eBay pricing services; do NOT touch sold comps.", "wn-price"),
- (WN + "Build the live eBay real-time cost lookup path WhatsNot needs: given an item title/identity, return a fast (seconds) resale estimate from live eBay data, with a confidence note. Add tests. Additive to, not a replacement for, sold comps.", "wn-live-cost"),
- (WN + "Show the cost/profit result as a clear overlay/side panel on the WhatsNot screen: item, live eBay estimate, confidence, and a quick 'source it / list it' next step. Premium UX.", "wn-overlay"),
- (WN + "Lay groundwork for reading items off the live feed (the hard part): research/implement the most feasible honest path (WebView2 host hook, screen-region capture + OCR/vision, or any Whatnot data the app can legitimately access), gated behind the existing panel. Small, tested step.", "wn-capture"),
- (WN + "Polish, harden, and test the WhatsNot flow end to end: accessibility, keyboard, responsive, error states, and unit tests for any new WhatsNot services. No logic breakage elsewhere.", "wn-polish"),
+ (WN + "Build the core 'arbitrage card' for WhatsNot: seller enters the item currently on screen (title, or eBay/Whatnot URL) and instantly sees recent eBay SOLD comps, sell-through rate, low/median/high, velocity, and a BID/PASS read with a suggested max bid for a target margin. Reuse Opportunity Finder + existing eBay market services. Shown beside the feed, answer in seconds.", "wn-arbitrage-card"),
+ (WN + "Wire the WhatsNot arbitrage card to the app's real eBay sold-comps + sell-through data path so its numbers are real and fast; add a confidence/freshness note. Additive to sold comps, never replacing it. Add tests.", "wn-live-data"),
+ (WN + "Improve the WhatsNot embedded-browser panel: navigation (back/forward/reload), remember the last feed URL, clearer handling when a site refuses to embed, general reliability/UX.", "wn-embed"),
+ (WN + "Sharpen the arbitrage read for LIVE BIDDING: show suggested max bid for chosen margin, break-even price, and a clear go/no-go as the current bid climbs; make it glanceable in the seconds a live auction gives you.", "wn-bid-signal"),
+ (WN + "Lay groundwork for reading the item off the live picture automatically (the hard part): research/implement the most feasible honest path (WebView2 host hook, screen-region capture + OCR/vision, or any Whatnot data the app can legitimately access), gated behind the existing panel. Small, tested step.", "wn-capture"),
+ (WN + "Polish, harden, and test the WhatsNot arbitrage flow end to end: accessibility, keyboard, responsive, error/empty states, and unit tests for any new WhatsNot services. No logic breakage elsewhere.", "wn-polish"),
  ("Add or improve a high-value seller feature not yet present; document the money impact in WORK_COMPLETED.md.", "auto-feature"),
  ("Polish and harden the local-arbitrage (Craigslist/Facebook) experience: reliability, clearer per-source status, better profit ranking.", "auto-arbitrage"),
  ("Improve the listing workflow (item -> live listing): fewer clicks, smarter defaults, better autofill.", "auto-workflow"),
