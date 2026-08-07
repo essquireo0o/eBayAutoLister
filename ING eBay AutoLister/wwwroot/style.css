@@ -16222,3 +16222,228 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border: 0;
   display: block;
 }
+
+/* ── WhatsNot: the live-auction arbitrage card ─────────────────────────────────
+   Read at a glance, during a live sale, by somebody who has seconds. So: one
+   badge, one ladder of five numbers, five stat tiles, and the caveats under
+   them rather than folded into a score. The frame keeps its space below — the
+   card sits above it because the decision is the point and the stream is the
+   context, not the other way round. */
+.wn-ask {
+  margin-bottom: 12px;
+}
+.wn-ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.wn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 108px;
+}
+.wn-field-wide {
+  flex: 1 1 260px;
+  width: auto;
+  min-width: 200px;
+}
+.wn-field > span {
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-field > input {
+  width: 100%;
+  min-width: 0;
+}
+.wn-price-btn {
+  white-space: nowrap;
+}
+.wn-ask-hint {
+  margin: 6px 0 0;
+}
+
+.wn-card {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.wn-empty {
+  margin: 0;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-empty-bad {
+  color: var(--danger, #e0796a);
+}
+
+/* The badge carries the answer, so it carries the colour. Four states, and the
+   two that are not "go" have to look different from each other: thin evidence is
+   not the same warning as "the bidding has passed your ceiling". */
+.wn-call {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.wn-call-badge {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  padding: 8px 14px;
+  border-radius: 10px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.wn-call-bid .wn-call-badge {
+  background: rgba(90, 200, 130, .14);
+  border-color: rgba(90, 200, 130, .45);
+  color: var(--success, #5ac882);
+}
+.wn-call-risky .wn-call-badge {
+  background: rgba(224, 169, 74, .14);
+  border-color: rgba(224, 169, 74, .45);
+  color: var(--warn, #e0a94a);
+}
+.wn-call-stop .wn-call-badge,
+.wn-call-no_data .wn-call-badge {
+  background: rgba(224, 121, 106, .12);
+  border-color: rgba(224, 121, 106, .4);
+  color: var(--danger, #e0796a);
+}
+.wn-call-body {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.wn-call-item {
+  font-weight: 600;
+}
+.wn-call-reason {
+  margin: 2px 0 0;
+  color: var(--text-dim, #8b93a7);
+}
+
+.wn-ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.wn-rung {
+  flex: 1 1 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+}
+.wn-rung > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-rung > strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.wn-rung-stop > strong {
+  color: var(--success, #5ac882);
+}
+.wn-neg {
+  color: var(--danger, #e0796a);
+}
+
+.wn-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.wn-stat {
+  flex: 1 1 130px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel, rgba(255, 255, 255, .03));
+}
+.wn-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wn-stat-note {
+  font-size: 11px;
+  color: var(--text-dim, #8b93a7);
+}
+
+.wn-evidence,
+.wn-fresh,
+.wn-ceiling-note,
+.wn-foot {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-evidence-confident {
+  color: var(--success, #5ac882);
+}
+.wn-evidence-low {
+  color: var(--warn, #e0a94a);
+}
+.wn-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--warn, #e0a94a);
+}
+.wn-warnings > li {
+  margin-bottom: 3px;
+}
+
+.wn-comps {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.wn-comps > summary {
+  cursor: pointer;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-comps-table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+}
+.wn-comps-table td {
+  padding: 3px 6px;
+  border-top: 1px solid var(--border, #2a2f3a);
+  vertical-align: top;
+}
+.wn-comp-title {
+  word-break: break-word;
+}
+.wn-comp-price,
+.wn-comp-age {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .wn-field {
+    width: calc(50% - 4px);
+  }
+  .wn-price-btn {
+    width: 100%;
+  }
+}

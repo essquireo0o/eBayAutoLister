@@ -1,0 +1,389 @@
+using ING_eBay_AutoLister.Models;
+
+namespace ING_eBay_AutoLister.Services;
+
+/// <summary>
+/// The WhatsNot tab's arbitrage card: an item is on screen in a live-selling feed, the bidding is
+/// running, and this turns real eBay sold history into the one number that decides it — the highest
+/// bid worth making — plus the statistics that say whether to believe it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Nothing here prices anything. The resale side arrives already computed by
+/// <c>AnalyzeProductAsync</c> — the same eBay sold comps + sell-through pipeline the Opportunity
+/// Finder, Local Deals, Roll the Dice and the auction sniper all run — and the money is
+/// <see cref="JackpotHunter.BreakEvenBuyPrice"/> and
+/// <see cref="AuctionSniperAnalyzer.MaxBidDetail"/>, unchanged. A live card that disagreed with the
+/// sniper about the same item at the same price would mean the app has two opinions and the bidder
+/// has none.
+/// </para>
+/// <para>
+/// What is genuinely different from every other screen is the shape of the price. It is a
+/// <b>bid</b>: it moves while the card is on screen, a buyer's premium sits on top of it, and
+/// shipping is part of what winning costs rather than something taken out of the profit afterwards.
+/// So the output is a ceiling and a headroom, not a verdict on a number somebody has agreed to.
+/// </para>
+/// <para>
+/// Pure except <see cref="Build"/>, which delegates every dollar to the shared
+/// <see cref="ProfitCalculator"/>.
+/// </para>
+/// </remarks>
+public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hunter)
+{
+    /// <summary>The return the ceiling defaults to — the app's own "worth doing" bar, not a
+    /// friendlier one for the feature with a countdown on it.</summary>
+    public const decimal DefaultTargetRoiPercent = LocalArbitrageAnalyzer.SolidRoiPercent;
+
+    /// <summary>Targets above this are refused. Not a judgement on ambition: a 4,000% target makes
+    /// the ceiling a rounding error and the card stops saying anything.</summary>
+    public const decimal MaxTargetRoiPercent = 500m;
+
+    /// <summary>A buyer's premium beyond this is a typo — 8% is typical, 40% is not a marketplace.
+    /// Clamped rather than rejected so a stray keystroke costs a wrong number, not the answer.</summary>
+    public const decimal MaxBuyerFeePercent = 40m;
+
+    /// <summary>Below this many sold comps the ceiling is arithmetic, not evidence. The same bar the
+    /// auction sniper refuses to bid under.</summary>
+    public const int MinCompsToBid = AuctionSniperAnalyzer.MinCompsToBid;
+
+    /// <summary>A sold comp older than this stops being evidence about today's market. It is not a
+    /// hard cut — the comps still price the item — but the card says so out loud.</summary>
+    public const int StaleCompDays = 120;
+
+    public static decimal SanitizeTargetRoi(decimal? raw) =>
+        raw is not decimal value || value <= 0m ? DefaultTargetRoiPercent : Math.Min(value, MaxTargetRoiPercent);
+
+    public static decimal SanitizeBuyerFee(decimal? raw) =>
+        raw is not decimal value || value <= 0m ? 0m : Math.Min(value, MaxBuyerFeePercent);
+
+    /// <summary>What winning at this bid actually costs: the bid, the platform's cut of it, and
+    /// getting it delivered.</summary>
+    public static decimal LandedCost(decimal bid, decimal buyerFeePercent, decimal shipping) =>
+        Math.Round(bid * (1m + Math.Max(0m, buyerFeePercent) / 100m) + Math.Max(0m, shipping), 2);
+
+    /// <summary>The highest bid that breaks even, with the premium and the shipping already taken
+    /// out of it — so it is a number to bid to, not a budget to spend.</summary>
+    public static decimal BreakEvenBid(decimal breakEvenAllIn, decimal buyerFeePercent, decimal shipping)
+    {
+        if (breakEvenAllIn <= 0m) return 0m;
+        var bid = (breakEvenAllIn - Math.Max(0m, shipping)) / (1m + Math.Max(0m, buyerFeePercent) / 100m);
+        // Truncated like the ceiling above it, and for the same reason: a walk-away line rounded up
+        // is a walk-away line that quietly permits the bid it exists to refuse.
+        return bid <= 0m ? 0m : Math.Floor(bid * 100m) / 100m;
+    }
+
+    /// <summary>One item on a live feed, costed and called.</summary>
+    /// <param name="analysis">
+    /// The market analysis for this title, or null when nothing priced it. Never recomputed here —
+    /// this is a translation of figures the pipeline has already produced.
+    /// </param>
+    public LiveBidCard Build(
+        string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
+        ResaleCategory? category = null, DateTime? nowUtc = null)
+    {
+        var now = nowUtc ?? DateTime.UtcNow;
+        var resale = analysis is null ? null : ResalePricing.From(analysis, item);
+        var shipping = Math.Max(0m, request.ShippingCost ?? 0m);
+        var feePercent = SanitizeBuyerFee(request.BuyerFeePercent);
+        var target = SanitizeTargetRoi(request.TargetRoiPercent);
+        var bid = Math.Max(0m, request.CurrentBid ?? 0m);
+
+        var card = new LiveBidCard
+        {
+            Item = item,
+            PricedAs = resale?.LookupTitle ?? "",
+            CategoryLabel = category?.Label ?? "",
+            CurrentBid = bid,
+            BidWasKnown = bid > 0m,
+            ShippingCost = shipping,
+            BuyerFeePercent = feePercent,
+            BuyerFee = Math.Round(bid * feePercent / 100m, 2),
+            LandedCostNow = LandedCost(bid, feePercent, shipping),
+            TargetRoiPercent = target,
+            SoldSearchUrl = ResaleValuationLinks.SoldSearchUrl(
+                category ?? ResaleCategoryCatalog.Resolve(request.CategoryId),
+                resale?.LookupTitle is { Length: > 0 } priced ? priced : item),
+        };
+
+        if (analysis is not null) ApplyMarket(card, analysis, now);
+
+        // Nothing priced it. The card says which of the two reasons applies rather than showing a
+        // dash — "no sold history matched this title" and "the comps are for something else" send
+        // the bidder in completely different directions, and both are actionable in seconds.
+        if (resale is null || !resale.HasPrice)
+        {
+            card.Call = LiveBidCalls.NoData;
+            card.CallLabel = "CAN'T PRICE IT";
+            // The evidence note is the better sentence whenever there IS evidence to describe —
+            // "no comp carries this model number" is a different problem, with a different next
+            // move, from "nothing matched at all". Its own wording is about an ask rather than a
+            // bid, so the nothing-matched case gets a bid-shaped sentence of its own.
+            card.Reason = card.EvidenceTier == LocalArbitrageAnalyzer.EvidenceNone
+                ? "No eBay sold history matched this item, so there is no resale price to bid against."
+                : card.EvidenceNote;
+            return card;
+        }
+
+        card.ResalePrice = resale.ExpectedSale ?? resale.Median;
+        card.MedianPrice = resale.Median;
+        card.QuickSalePrice = resale.QuickSale;
+
+        // The money. Every figure below is one subtraction away from this: net profit falls exactly
+        // one dollar for every dollar of landed cost, which is what makes the ceiling arithmetic
+        // rather than a rule of thumb.
+        var breakEvenAllIn = hunter.BreakEvenBuyPrice(resale, fees);
+        var (maxBid, boundBy) = AuctionSniperAnalyzer.MaxBidDetail(breakEvenAllIn, shipping, target, feePercent);
+
+        card.BreakEvenBid = BreakEvenBid(breakEvenAllIn, feePercent, shipping);
+        card.MaxBid = maxBid;
+        card.CeilingBoundBy = boundBy;
+        card.CeilingNote = boundBy == AuctionSniperAnalyzer.CeilingByCash
+            ? $"Ceiling set by the {LocalArbitrageAnalyzer.SolidProfit:C0} cash floor — a percentage has no size, " +
+              "and finding it, listing it and packing it costs the same hour whatever it cost to buy."
+            : $"Ceiling set by your {target:0.#}% target return.";
+        card.Headroom = Math.Round(maxBid - bid, 2);
+        card.ProfitAtMaxBid = Math.Round(Math.Max(0m, breakEvenAllIn - LandedCost(maxBid, feePercent, shipping)), 2);
+
+        if (card.BidWasKnown)
+        {
+            var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
+            var profit = profitCalc.Calculate(
+                supplierUnitCost: card.LandedCostNow, quantity: 1, expectedSalePrice: expected,
+                quickSalePrice: resale.QuickSale ?? expected,
+                buyerPaidShipping: resale.AvgCompShipping, fees: fees,
+                actualShippingCostOverride: resale.AvgCompShipping > 0 ? resale.AvgCompShipping : null);
+
+            card.ProfitNow = profit.NetProfitPerUnit;
+            card.RoiNow = profit.RoiPercent;
+            card.MarginNow = profit.MarginPercent;
+            card.EstimatedFees = profit.MarketplaceFeeTotal;
+            card.EstimatedShipCost = profit.FulfilmentCostTotal;
+        }
+
+        ApplySpeed(card, resale);
+
+        var (call, label, reason) = Judge(card);
+        card.Call = call;
+        card.CallLabel = label;
+        card.Reason = reason;
+        card.Warnings.AddRange(Warnings(card, resale));
+
+        return card;
+    }
+
+    // The resale statistics, straight off the analysis. Deliberately a copy and not a second
+    // calculation: the spread, the sell-through and the confidence on this card are the same
+    // figures the Opportunity Finder shows for the same title, or they are worth nothing.
+    private static void ApplyMarket(LiveBidCard card, MarketAnalysisResult analysis, DateTime now)
+    {
+        var estimate = analysis.PriceEstimate;
+        card.PriceLow = estimate.Percentile25;
+        card.PriceHigh = estimate.Percentile75;
+        card.PriceFloor = estimate.MinimumRealisticPrice;
+        card.PriceCeiling = estimate.MaximumRealisticPrice;
+
+        var sellThrough = analysis.SellThrough;
+        card.SellThroughRate = sellThrough.SellThroughRate;
+        card.SellThroughLabel = sellThrough.Interpretation;
+        card.SellThroughScore = sellThrough.SellThroughScore;
+        card.SellThroughUnbounded = sellThrough.RateIsUnbounded;
+        card.ActiveCompCount = sellThrough.ActiveComparableCount;
+        card.EstimatedMonthlySales = sellThrough.EstimatedMonthlySales;
+        card.LiquidityLevel = sellThrough.LiquidityLevel;
+
+        card.CompCount = analysis.Sources.PricedOnCompCount > 0
+            ? analysis.Sources.PricedOnCompCount + analysis.Sources.TerapeakComparableCount
+            : analysis.Sources.LocalComparableCount + analysis.Sources.TerapeakComparableCount;
+        card.ConfidenceScore = analysis.Confidence.Score;
+        card.ConfidenceLevel = analysis.Confidence.Level;
+        card.IdentityVerified = analysis.Sources.IdentityVerified;
+
+        var (tier, note) = LocalArbitrageAnalyzer.GradeEvidence(
+            analysis.Sources.PricedOnCompCount > 0
+                ? analysis.Sources.PricedOnCompCount
+                : analysis.Sources.LocalComparableCount,
+            analysis.Sources.TerapeakComparableCount, analysis.Sources.IdentityVerified,
+            analysis.Confidence.Score);
+        card.EvidenceTier = tier;
+        card.EvidenceNote = note;
+
+        card.OldestCompUtc = estimate.LocalOldestSoldAtUtc;
+        card.NewestCompUtc = estimate.LocalNewestSoldAtUtc;
+        card.NewestCompAgeDays = AgeDays(estimate.LocalNewestSoldAtUtc, now);
+        card.FreshnessNote = Freshness(card.NewestCompAgeDays, estimate.LocalOldestSoldAtUtc, now, card.CompCount);
+
+        card.Comps = analysis.TopSoldComparables.Select(c => new LiveBidComp
+        {
+            Title = c.Title,
+            SoldPrice = c.SoldPrice,
+            Shipping = c.Shipping,
+            TotalPrice = c.TotalPrice > 0 ? c.TotalPrice : Math.Round(c.SoldPrice + c.Shipping, 2),
+            Condition = c.Condition ?? "",
+            SoldDate = c.SoldDate,
+            AgeDays = AgeDays(c.SoldDate, now),
+            Url = c.ItemUrl ?? "",
+        }).ToList();
+    }
+
+    private static void ApplySpeed(LiveBidCard card, ResalePricing resale)
+    {
+        // Costed at the ceiling rather than at the bid on screen. The bid moves and the ceiling
+        // doesn't, so "how long is the money tied up" answered against the current bid would change
+        // every time somebody else raises — which is not what changed.
+        var estimate = DaysToCashEstimator.Estimate(
+            resale.EstimatedDaysToSell, resale.EstimatedMonthlySales,
+            card.ProfitAtMaxBid,
+            card.MaxBid > 0m && card.ProfitAtMaxBid > 0m
+                ? Math.Round(card.ProfitAtMaxBid / LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost) * 100m, 1)
+                : card.RoiNow);
+
+        card.DaysToSell = estimate.DaysToSell;
+        card.DaysToCash = estimate.DaysToCash;
+        card.SpeedLabel = estimate.SpeedLabel;
+    }
+
+    /// <summary>
+    /// The call, ordered so the reasons a ceiling cannot be trusted are reached before the ceiling
+    /// itself: nothing worth bidding at any price, then the bidding having passed it, then thin
+    /// evidence, and only then the number.
+    /// </summary>
+    public static (string Call, string Label, string Reason) Judge(LiveBidCard card)
+    {
+        if (card.BreakEvenBid <= 0m || card.MaxBid <= 0m)
+        {
+            return (LiveBidCalls.Stop, "DON'T BID", card.BreakEvenBid <= 0m
+                ? "Fees and shipping eat the whole resale price — no bid makes this work."
+                : $"It breaks even at {card.BreakEvenBid:C}, but nothing under that clears " +
+                  $"{LocalArbitrageAnalyzer.SolidProfit:C0} — not worth the listing and the packing.");
+        }
+
+        if (card.BidWasKnown && card.CurrentBid > card.MaxBid)
+        {
+            return (LiveBidCalls.Stop, "STOP",
+                card.CurrentBid > card.BreakEvenBid
+                    ? $"The bidding is past {card.BreakEvenBid:C}, where this stops making money at all. Let it go."
+                    : $"Past your {card.MaxBid:C} ceiling — there's still {Math.Max(0m, card.BreakEvenBid - card.CurrentBid):C} " +
+                      "before it loses money, but not enough left to be worth the work.");
+        }
+
+        var ceiling = $"Bid up to {card.MaxBid:C}" +
+                      (card.BuyerFeePercent > 0m || card.ShippingCost > 0m
+                          ? $" ({LandedCost(card.MaxBid, card.BuyerFeePercent, card.ShippingCost):C} landed)"
+                          : "");
+
+        if (card.CompCount < MinCompsToBid || card.EvidenceTier != LocalArbitrageAnalyzer.EvidenceConfident)
+        {
+            return (LiveBidCalls.Risky, $"RISKY — UP TO {Badge(card.MaxBid)}",
+                $"{ceiling} for {card.ProfitAtMaxBid:C} — but {Lowercase(card.EvidenceNote)}");
+        }
+
+        var headroom = card.BidWasKnown
+            ? $" That's {card.Headroom:C} of room from the {card.CurrentBid:C} on screen."
+            : "";
+
+        return (LiveBidCalls.Bid, $"BID UP TO {Badge(card.MaxBid)}",
+            $"{ceiling} and you clear {card.ProfitAtMaxBid:C} after eBay's cut and shipping it on." + headroom);
+    }
+
+    /// <summary>
+    /// The ceiling as whole dollars for the badge — rounded DOWN, never to nearest.
+    /// </summary>
+    /// <remarks>
+    /// The badge is the only part of this card a bidder reads at a glance, and <c>C0</c> on $67.68
+    /// prints "$68" — a badge instructing a bid 32 cents above the ceiling the rest of the card
+    /// spent its arithmetic protecting. The exact figure is a line below, in the reason and in the
+    /// ladder; the glance version is allowed to understate and never to overstate.
+    /// </remarks>
+    public static string Badge(decimal maxBid) => Math.Floor(maxBid).ToString("C0");
+
+    /// <summary>
+    /// What the ceiling cannot say. Facts from the evidence, stated plainly — none of them folded
+    /// into a score, because a score hides exactly the thing the bidder has seconds to check.
+    /// </summary>
+    public static List<string> Warnings(LiveBidCard card, ResalePricing resale)
+    {
+        var warnings = new List<string>();
+
+        if (card.Call == LiveBidCalls.NoData) return warnings;
+
+        if (card.ShippingCost <= 0m)
+        {
+            warnings.Add("No shipping cost entered. Live sellers charge it on top of the bid — if it turns " +
+                         "out to be $12, take $12 off the ceiling.");
+        }
+
+        if (card.BuyerFeePercent <= 0m)
+        {
+            warnings.Add("No buyer's premium entered. Most live-selling platforms add one to the winning " +
+                         "bid, and it comes straight off this margin.");
+        }
+
+        if (card.NewestCompAgeDays is int age && age > StaleCompDays)
+        {
+            warnings.Add($"The most recent matching sale is {age} days old — this is a price from " +
+                         "then, not a price from now.");
+        }
+
+        if (card.SellThroughUnbounded)
+        {
+            warnings.Add("These sell, but nothing comparable is listed on eBay right now, so there is no " +
+                         "sell-through rate to check the demand against.");
+        }
+        else if (card.SellThroughRate is decimal rate && rate < 15m)
+        {
+            warnings.Add($"Sell-through is {rate:0.#}% — for every one that sells there are several sitting " +
+                         "unsold. Expect to wait, or to cut the price.");
+        }
+
+        // A middle half this wide is not a price, it is a range the item lands somewhere in
+        // depending on condition, completeness and what the photos hid.
+        if (card.PriceLow is > 0m and decimal low && card.PriceHigh is decimal high && high >= low * 2m)
+        {
+            warnings.Add($"Sold prices are scattered — the middle half runs {low:C} to {high:C}. Condition " +
+                         "decides which end you get, and you are looking at it through a camera.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(resale.DisagreementMessage))
+            warnings.Add(resale.DisagreementMessage!);
+
+        return warnings;
+    }
+
+    /// <summary>
+    /// How old the evidence is, as a sentence. Said on every card, including the good ones: a
+    /// bidder who is only told about age when it is bad has no way to know the silence means fresh.
+    /// </summary>
+    public static string Freshness(int? newestAgeDays, DateTime? oldest, DateTime now, int compCount)
+    {
+        if (compCount <= 0) return "";
+
+        if (newestAgeDays is not int age)
+        {
+            return "None of the matching sales carried a date, so how current this price is cannot be checked.";
+        }
+
+        var recency = age switch
+        {
+            <= 0 => "The most recent matching sale was today",
+            1 => "The most recent matching sale was yesterday",
+            < 60 => $"The most recent matching sale was {age} days ago",
+            < 365 => $"The most recent matching sale was {age / 30} month{(age / 30 == 1 ? "" : "s")} ago",
+            _ => "The most recent matching sale was over a year ago",
+        };
+
+        var span = AgeDays(oldest, now) is int oldestAge && oldestAge > age
+            ? $", and these {compCount} sale{(compCount == 1 ? "" : "s")} span {oldestAge - age} days"
+            : "";
+
+        return $"{recency}{span}. Sold comps, not live asking prices.";
+    }
+
+    private static int? AgeDays(DateTime? at, DateTime now) =>
+        at is DateTime value ? (int)Math.Max(0, Math.Floor((now - value).TotalDays)) : null;
+
+    // The evidence note is a sentence of its own; spliced onto the end of another one it has to
+    // stop starting with a capital. Only the first letter — "eBay" and model numbers inside it
+    // keep their case.
+    private static string Lowercase(string sentence) =>
+        sentence.Length == 0 ? sentence : char.ToLowerInvariant(sentence[0]) + sentence[1..];
+}

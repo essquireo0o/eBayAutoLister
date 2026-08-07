@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=98" />
+  <link rel="stylesheet" href="style.css?v=99" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2705,6 +2705,46 @@
         </div>
 
         <div class="opportunity-overlay-body">
+          <!-- ── The arbitrage card ────────────────────────────────────────────────────────
+               The item on screen, typed or pasted, against real eBay sold comps: the ceiling to
+               bid to, the spread it resells into, whether it moves, and how old the evidence is.
+               Typed rather than read off the feed because an <iframe> cannot read a cross-origin
+               page — see the note above the frame. Shipping, the buyer's premium and the target
+               return are remembered between items, because during a live sale there is time to
+               type the name and nothing else. -->
+          <div class="wn-ask">
+            <div class="wn-ask-row">
+              <label class="wn-field wn-field-wide">
+                <span>What's on screen</span>
+                <input id="wn-item" type="text" spellcheck="false" autocomplete="off"
+                       placeholder="Brand + model, e.g. Bitmain Antminer S19j Pro 104TH" />
+              </label>
+              <label class="wn-field">
+                <span>Bid now</span>
+                <input id="wn-bid" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+              </label>
+              <label class="wn-field">
+                <span>Shipping</span>
+                <input id="wn-ship" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+              </label>
+              <label class="wn-field" title="The live platform's buyer premium, charged on top of the winning bid">
+                <span>Buyer fee %</span>
+                <input id="wn-fee" type="number" min="0" step="0.5" inputmode="decimal" placeholder="8" />
+              </label>
+              <label class="wn-field" title="The return you want on the money. Blank uses the app's own 30% bar.">
+                <span>Target %</span>
+                <input id="wn-target" type="number" min="0" step="5" inputmode="decimal" placeholder="30" />
+              </label>
+              <button id="wn-price" class="btn btn-primary wn-price-btn" type="button">⚡ Price it</button>
+            </div>
+            <p class="opp-hint wn-ask-hint">
+              Priced against the same eBay sold comps and sell-through the Opportunity Finder uses —
+              no live eBay call, so it answers in about a second. Enter re-prices as the bidding moves.
+            </p>
+          </div>
+
+          <div id="wn-card" class="wn-card hidden" aria-live="polite"></div>
+
           <div class="wn-bar">
             <input id="wn-url" type="text" class="wn-url" spellcheck="false"
                    value="https://www.whatnot.com/live" placeholder="https://www.whatnot.com/live" />
@@ -2713,8 +2753,8 @@
           <p class="opp-hint wn-hint">
             Loads a live-selling feed inside the app. <strong>Heads up:</strong> many sites (Whatnot
             included) block being embedded — if the frame stays blank, that's the site refusing, and
-            <strong>Open in browser</strong> is the way in. Reading the items on the feed and pricing
-            them against live eBay costs is the next build on top of this.
+            <strong>Open in browser</strong> is the way in. The app cannot read what is inside the
+            frame either (a browser refuses cross-origin), so the item is typed into the box above.
           </p>
           <div class="wn-frame-wrap">
             <iframe id="wn-frame" class="wn-frame" src="about:blank"
@@ -5702,6 +5742,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=115"></script>
+  <script src="app.js?v=116"></script>
 </body>
 </html>

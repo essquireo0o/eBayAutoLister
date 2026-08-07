@@ -9286,3 +9286,154 @@ covered by the service tests underneath them.
   figure on every screen.
 - **The endpoints have no tests of their own.** The optimizer, the catalogue and the settings store
   are covered; the three routes that assemble them are thin, but nothing pins their JSON shape.
+
+---
+
+# The WhatsNot card: what to bid, while the item is still on screen
+
+## The question this answers
+
+A live-selling feed puts an item in front of the seller for forty seconds and takes bids the whole
+time. Every sourcing screen in this app answers "what should I go and buy" at a desk, and Snap &
+Source answers "should I buy THIS" about a thing already in the hand at a price somebody has named.
+Neither one fits a live auction, where the price is a **moving object** and the only useful output
+is a number to stop at, arrived at before the hammer.
+
+So: type what is on screen, and get the ceiling — the most that can be bid and still make money
+reselling it on eBay — with the sold history behind it, all of it in about a second.
+
+## The arithmetic, and why none of it is new
+
+The resale side is `AnalyzeProductAsync`, untouched: the same hosted eBay sold-comps + sell-through
+pipeline the Opportunity Finder, Local Deals, Roll the Dice and the auction sniper already run. The
+money is `JackpotHunter.BreakEvenBuyPrice` and the auction sniper's own ceiling. A live card that
+disagreed with the snipe board about the same item at the same price would mean the app has two
+opinions and the bidder has none — `LiveBidAdvisorTests` prices one item both ways and asserts the
+two ceilings are the same number.
+
+What is genuinely different is the **shape of the price**, and it is three differences, all money:
+
+| | eBay auction | Live feed |
+|---|---|---|
+| The price | a bid, moving | a bid, moving |
+| On top of it | nothing — eBay charges the buyer no premium | a buyer's premium, a % of the winning bid |
+| Shipping | stated on the listing | charged after the sale, often not stated at all |
+
+The premium is the one that needed new arithmetic. Everything upstream produces a ceiling on the
+**all-in cost**; shipping is spent whatever the bid is, so it comes off the top, but the premium is
+a multiple of the bid, so it has to be **divided back out**:
+
+```
+maxBid = (min(breakEven / (1 + target), breakEven − $100) − shipping) / (1 + premium)
+```
+
+Applied in the other order the ceiling is wrong by the premium *on the shipping*. Small, and exactly
+the kind of small that eats a margin quietly. `AuctionSniperAnalyzer.MaxBidFor` grew two defaulted
+parameters rather than being copied — there is still one max-bid function in this app, and the eBay
+sniper's two-argument calls are unchanged.
+
+Both bars still apply, and the card says which one bound. On a $200 item 30% is nowhere near $100,
+so the cash floor stops you; on a $2,000 item the return does. That is the seller's next move —
+raising the target moves one ceiling and cannot move the other.
+
+## What is on the card besides the ceiling
+
+Five numbers that make it arbitrage rather than a price lookup — where the bidding is, where to
+stop, where it stops making money at all, what is left between them, and what it resells for — and
+then the four things that decide whether the ceiling above them is worth acting on:
+
+- **The spread**, as the middle half of the sold prices. "It sells for $200" is a claim; "$170–$240"
+  is what the sales actually did, and a middle half that runs $80–$400 gets a warning, because
+  condition decides which end you get and you are looking at it through somebody else's camera.
+- **Sell-through**, straight off `SellThroughCalculator`. A rate with no active listings under it
+  renders as a dash, never as 100% — that denominator has been a trap before.
+- **Velocity** — days to sell, and how many move a month. Costed at the ceiling rather than at the
+  bid on screen, because the bid changes every few seconds and how long the money is tied up does
+  not.
+- **The evidence**, graded by `LocalArbitrageAnalyzer.GradeEvidence` — the same grading every other
+  board in the app dims its percentages on. Thin evidence lowers the call to RISKY and never removes
+  the number: somebody with seconds is better served by the ceiling plus the reason to distrust it
+  than by a refusal.
+
+## Freshness, said on every card
+
+A price is a claim about now, assembled out of sales that happened in the past. So the card states
+how far in the past on **every** card, including the good ones — "the most recent matching sale was
+9 days ago, and these 8 sales span 51 days. Sold comps, not live asking prices." A bidder who only
+hears about age when it is bad has no way to read the silence. Past 120 days it also becomes a
+warning; undated comps say they are undated rather than being treated as new.
+
+## Two things the card will not do
+
+- **It will not round in the bidder's favour.** The ceiling truncates to the cent, the break-even
+  bid truncates to the cent, and the badge — the one part read at a glance — floors to whole
+  dollars. `C0` on $67.68 prints "$68", which is a badge instructing a bid 32 cents past the number
+  the rest of the card spent its arithmetic protecting.
+- **It will not pretend to read the feed.** An `<iframe>` cannot read a cross-origin page and
+  Whatnot refuses framing outright, so the item is typed. The screen says so in its own text, and an
+  asset test holds it there: a panel that implied the numbers were read off the stream would be the
+  most expensive lie this app could tell, because the seller would think they were about the item on
+  screen rather than about what they typed.
+
+## Sold comps
+
+Untouched, and pinned. The endpoint resolves the same `IMarketplaceRepository` every other board
+does, reads through it, and writes nothing; a test asserts the endpoint body contains no repository
+mutation and no second price calculation of its own, and that `/api/snap` and the Opportunity
+Finder are both still registered.
+
+## The bug this turned up
+
+`whatsnot-section` was in the router's page table but missing from `OVERLAY_SECTIONS`, so opening
+any other screen left the WhatsNot panel — iframe and all — sitting on top of it.
+`WorkspaceTabsAssetTests` had been red at `HEAD` since the tab was added. One entry in the array;
+verified in a real browser that another tab now covers it.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | New — the request, the card, one comp, the four calls |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | New — the landed cost, the break-even bid, the call, the warnings, the freshness sentence |
+| `ING eBay AutoLister/Services/AuctionSniperAnalyzer.cs` | `MaxBidDetail` — one ceiling function, now with an optional target return and buyer premium, and which bar bound |
+| `ING eBay AutoLister/Program.cs` | `LiveBidAdvisor` registered; `POST /api/whatsnot/bid` |
+| `ING eBay AutoLister/wwwroot/index.html` | The ask row and the card above the frame; `app.js?v=116`, `style.css?v=99` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnPriceItem` / `wnRenderCard`, remembered settings, Enter-to-reprice, and `whatsnot-section` added to `OVERLAY_SECTIONS` |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-*` — the ask row, the badge's four states, the ladder, the stat tiles, the comps table, the 860px stack |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | New — 32 tests |
+| `ING eBay AutoLister.Tests/WhatsNotArbitrageAssetTests.cs` | New — 11 tests |
+| `whatsnot_arbitrage_card.png` | The card at a $40 bid on a $200 item |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,208 passed**, 0 failed, 0 skipped (43 new; HEAD was 3,165 green + 2 red) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `/api/whatsnot/bid` mocked) | badge, five-rung ladder, five stat tiles, evidence, freshness, warnings, comps and the sold-search link all render; another tab now covers the panel — **no page errors** |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoint mocked in the shape the C# returns. That exercises every line of
+the render path; what it cannot exercise is the endpoint itself, which is thin and covered by the
+service tests underneath it.
+
+## Known limits
+
+- **The item is typed, not read.** This is the honest half of the feature and the half that is not
+  finished. Real feed capture needs something that is not an iframe — a browser extension, or the
+  headless-browser path `/api/analyze-url` already uses — and neither is a change that fits beside
+  this one.
+- **The premium and the shipping are typed too.** They are remembered between items, so it is one
+  entry per stream rather than per item, but nothing verifies them against the platform. Leave
+  either blank and the card warns instead of assuming zero.
+- **No category valuation gate.** Like the auction sniper it sits beside, this goes to
+  `JackpotHunter.BreakEvenBuyPrice` directly rather than through `ResaleValuationRegistry`, so the
+  refusals that stop a truck being priced off tow hitches do not apply here. Live feeds sell
+  parcels, so the exposure is small — but it is real, and it is the difference between this card and
+  a Local Deals row.
+- **One item at a time.** A live sale runs a queue; the card has no memory of the last five items
+  and no way to pre-price what is coming up.
+- **The endpoint has no test of its own.** The advisor, the ceiling and the sanitizers are covered;
+  the route that assembles them is thin, and its shape is pinned only by an asset test reading
+  `Program.cs`.

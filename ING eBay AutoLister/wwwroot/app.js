@@ -1565,7 +1565,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -9618,6 +9618,162 @@
     closeWorkspacePage('whatsnot');
   }
 
+  // ── WhatsNot: the live-auction arbitrage card ────────────────────────────────
+  // While an item is on screen and the bidding is running, this asks /api/whatsnot/bid
+  // for the ceiling and the eBay statistics behind it. The numbers are the app's own
+  // sold-comps + sell-through path (the same one the Opportunity Finder runs) — nothing
+  // here computes money, it only lays it out.
+  //
+  // The three settings that don't change between items — shipping, the platform's buyer
+  // premium and the target return — are remembered, because during a live sale there is
+  // time to type the item's name and nothing else.
+  const WN_SETTINGS_KEY = 'whatsnotBidSettings';
+
+  function wnLoadSettings() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(WN_SETTINGS_KEY) || '{}') || {}; }
+    catch { saved = {}; }
+    if (saved.ship != null) setVal('wn-ship', saved.ship);
+    if (saved.fee != null) setVal('wn-fee', saved.fee);
+    if (saved.target != null) setVal('wn-target', saved.target);
+  }
+
+  function wnSaveSettings() {
+    try {
+      localStorage.setItem(WN_SETTINGS_KEY, JSON.stringify({
+        ship: $('wn-ship')?.value ?? '',
+        fee: $('wn-fee')?.value ?? '',
+        target: $('wn-target')?.value ?? '',
+      }));
+    } catch { /* private mode — the fields still work, they just don't persist */ }
+  }
+
+  // Empty means "not stated", which is a different answer from zero and has to reach the
+  // server as null: the card warns about an unstated buyer premium and cannot warn about
+  // one the browser quietly turned into 0.
+  function wnNumber(id) {
+    const raw = ($(id)?.value ?? '').trim();
+    if (!raw) return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  async function wnPriceItem() {
+    const item = ($('wn-item')?.value || '').trim();
+    const card = $('wn-card');
+    if (!card) return;
+
+    if (!item) {
+      card.classList.remove('hidden');
+      card.innerHTML = '<p class="wn-empty">Type what\'s on screen — the brand and model are what the sold search runs on.</p>';
+      $('wn-item')?.focus();
+      return;
+    }
+
+    wnSaveSettings();
+    const btn = $('wn-price');
+    if (btn) { btn.disabled = true; btn.textContent = 'Pricing…'; }
+    card.classList.remove('hidden');
+    card.innerHTML = `<p class="wn-empty">Checking eBay sold comps for <strong>${esc(item)}</strong>…</p>`;
+
+    try {
+      const { res, body } = await safePost('/api/whatsnot/bid', {
+        title: item,
+        currentBid: wnNumber('wn-bid'),
+        shippingCost: wnNumber('wn-ship'),
+        buyerFeePercent: wnNumber('wn-fee'),
+        targetRoiPercent: wnNumber('wn-target'),
+      });
+      if (!res.ok) {
+        card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(body.message || body.error || 'That didn\'t price.')}</p>`;
+        return;
+      }
+      wnRenderCard(body);
+    } catch (err) {
+      card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(errorText(err, 'That didn\'t price.'))}</p>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Price it'; }
+    }
+  }
+
+  function wnStat(label, value, note) {
+    return `<div class="wn-stat"><div class="wn-stat-label">${esc(label)}</div>` +
+           `<div class="wn-stat-value">${esc(value)}</div>` +
+           `<div class="wn-stat-note">${esc(note || '')}</div></div>`;
+  }
+
+  function wnRenderCard(c) {
+    const card = $('wn-card');
+    if (!card) return;
+
+    const priced = c.call !== 'no_data';
+    const spread = (c.priceLow > 0 && c.priceHigh > 0)
+      ? `${money(c.priceLow)} – ${money(c.priceHigh)}`
+      : '—';
+
+    // The rate has no denominator when nothing comparable is listed. A dash is the honest
+    // rendering; a 100% off zero active listings is how thin data wears a green badge.
+    const sellThrough = c.sellThroughUnbounded ? '—'
+      : (c.sellThroughRate == null ? '—' : `${c.sellThroughRate.toFixed(1)}%`);
+    const velocity = c.daysToSell ? `${c.daysToSell} days` : '—';
+    const velocityNote = c.estimatedMonthlySales > 0
+      ? `about ${c.estimatedMonthlySales.toFixed(1)} sell a month`
+      : (c.speedLabel || 'no dated sold history');
+
+    const money2 = v => (v == null ? '—' : moneyExact(v));
+
+    const ladder = priced ? `
+      <div class="wn-ladder">
+        <div class="wn-rung"><span>Bid now</span><strong>${c.bidWasKnown ? money2(c.currentBid) : 'not started'}</strong></div>
+        <div class="wn-rung wn-rung-stop"><span>Stop at</span><strong>${money2(c.maxBid)}</strong></div>
+        <div class="wn-rung"><span>Break-even</span><strong>${money2(c.breakEvenBid)}</strong></div>
+        <div class="wn-rung"><span>Room left</span><strong class="${c.headroom < 0 ? 'wn-neg' : ''}">${money2(c.headroom)}</strong></div>
+        <div class="wn-rung"><span>Resells for</span><strong>${money2(c.resalePrice)}</strong></div>
+      </div>` : '';
+
+    const warnings = (c.warnings || []).length
+      ? `<ul class="wn-warnings">${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
+      : '';
+
+    const comps = (c.comps || []).length ? `
+      <details class="wn-comps">
+        <summary>The ${c.comps.length} sold comps behind this</summary>
+        <table class="wn-comps-table"><tbody>
+          ${c.comps.map(x => `<tr>
+            <td class="wn-comp-title">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>` : esc(x.title)}</td>
+            <td class="wn-comp-price">${moneyExact(x.totalPrice)}</td>
+            <td class="wn-comp-age">${x.ageDays == null ? 'undated' : (x.ageDays === 0 ? 'today' : `${x.ageDays}d ago`)}</td>
+          </tr>`).join('')}
+        </tbody></table>
+      </details>` : '';
+
+    card.innerHTML = `
+      <div class="wn-call wn-call-${esc(c.call)}">
+        <div class="wn-call-badge">${esc(c.callLabel)}</div>
+        <div class="wn-call-body">
+          <div class="wn-call-item">${esc(c.item)}${c.categoryLabel ? ` · ${esc(c.categoryLabel)}` : ''}</div>
+          <p class="wn-call-reason">${esc(c.reason)}</p>
+        </div>
+      </div>
+      ${ladder}
+      <div class="wn-stats">
+        ${wnStat('eBay resale', money2(c.resalePrice), c.medianPrice ? `median ${money(c.medianPrice)}` : '')}
+        ${wnStat('Middle half of sales', spread, 'where these actually land')}
+        ${wnStat('Sell-through', sellThrough, c.sellThroughLabel || '')}
+        ${wnStat('Sells in', velocity, velocityNote)}
+        ${wnStat('Evidence', `${c.compCount} comp${c.compCount === 1 ? '' : 's'}`, `confidence ${c.confidenceScore} · ${c.confidenceLevel || '—'}`)}
+      </div>
+      <p class="wn-evidence wn-evidence-${esc(c.evidenceTier)}">${esc(c.evidenceNote)}</p>
+      ${c.freshnessNote ? `<p class="wn-fresh">${esc(c.freshnessNote)}</p>` : ''}
+      ${warnings}
+      ${comps}
+      ${priced && c.ceilingNote ? `<p class="wn-ceiling-note">${esc(c.ceilingNote)}</p>` : ''}
+      <p class="wn-foot">
+        ${c.soldSearchUrl ? `<a href="${esc(c.soldSearchUrl)}" target="_blank" rel="noopener noreferrer">See the sold listings on eBay ↗</a> · ` : ''}
+        answered in ${Math.max(1, Math.round(c.elapsedMs || 0))} ms
+      </p>`;
+  }
+
   function bindWhatsNot() {
     on('wn-home', 'click', goHome);
     on('wn-close', 'click', closeWhatsNotSection);
@@ -9628,6 +9784,14 @@
     });
     const box = $('wn-url');
     if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter') wnLoad(); });
+
+    on('wn-price', 'click', wnPriceItem);
+    // The bid moves while the card is on screen, so Enter from any of the boxes re-prices
+    // rather than only the item name — the common move is "it's at $40 now", Enter.
+    ['wn-item', 'wn-bid', 'wn-ship', 'wn-fee', 'wn-target'].forEach(id => {
+      $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') wnPriceItem(); });
+    });
+    wnLoadSettings();
   }
 
   function bindShipping() {

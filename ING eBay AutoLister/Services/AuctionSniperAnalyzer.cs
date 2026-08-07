@@ -54,6 +54,10 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
     public const string VerdictEnded = "ended";
     public const string VerdictNoData = "no_data";
 
+    /// <summary>Which of the two bars set a ceiling — the return on the money, or the cash.</summary>
+    public const string CeilingByRoi = "roi";
+    public const string CeilingByCash = "cash";
+
     /// <summary>
     /// The most to bid, given the highest all-in cost that breaks even. Strictest of "clears
     /// <see cref="LocalArbitrageAnalyzer.SolidProfit"/> in cash" and "returns
@@ -65,14 +69,42 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
     /// Truncated to the cent rather than rounded. A ceiling rounded up is a ceiling that quietly
     /// gives away the last cent of the margin it exists to protect.
     /// </remarks>
-    public static decimal MaxBidFor(decimal breakEvenAllIn, decimal shippingCost)
-    {
-        if (breakEvenAllIn <= 0) return 0m;
+    public static decimal MaxBidFor(
+        decimal breakEvenAllIn, decimal shippingCost,
+        decimal? targetRoiPercent = null, decimal buyerFeePercent = 0m) =>
+        MaxBidDetail(breakEvenAllIn, shippingCost, targetRoiPercent, buyerFeePercent).MaxBid;
 
-        var byRoi = breakEvenAllIn / (1m + LocalArbitrageAnalyzer.SolidRoiPercent / 100m);
+    /// <summary>
+    /// The same ceiling, plus which bar produced it — one implementation, both answers, because two
+    /// callers deriving "was it the cash or the percentage that stopped me?" from the same two
+    /// expressions is how they end up disagreeing.
+    /// </summary>
+    /// <param name="targetRoiPercent">
+    /// The return the bidder wants on the money. Null is the app's own
+    /// <see cref="LocalArbitrageAnalyzer.SolidRoiPercent"/> bar, which is what every eBay auction
+    /// row uses. The cash bar applies whatever the target is: a percentage has no size, and 300% of
+    /// four dollars still doesn't pay for finding, listing and packing it.
+    /// </param>
+    /// <param name="buyerFeePercent">
+    /// A buyer's premium charged on top of the winning bid, as a percentage of it. Zero on eBay,
+    /// which charges the buyer nothing; live-selling platforms charge it, and it has to be divided
+    /// back out of the ceiling or the quoted bid costs more than the arithmetic behind it allowed.
+    /// </param>
+    public static (decimal MaxBid, string BoundBy) MaxBidDetail(
+        decimal breakEvenAllIn, decimal shippingCost,
+        decimal? targetRoiPercent = null, decimal buyerFeePercent = 0m)
+    {
+        if (breakEvenAllIn <= 0) return (0m, "");
+
+        var target = Math.Max(0m, targetRoiPercent ?? LocalArbitrageAnalyzer.SolidRoiPercent);
+        var byRoi = breakEvenAllIn / (1m + target / 100m);
         var byProfit = breakEvenAllIn - LocalArbitrageAnalyzer.SolidProfit;
-        var worthIt = Math.Min(byRoi, byProfit) - shippingCost;
-        return worthIt <= 0 ? 0m : Math.Floor(worthIt * 100m) / 100m;
+        var boundBy = byRoi <= byProfit ? CeilingByRoi : CeilingByCash;
+
+        // Everything above is a ceiling on the ALL-IN cost. Shipping is spent whatever the bid is,
+        // so it comes off the top; the premium is a multiple of the bid, so it divides out.
+        var worthIt = (Math.Min(byRoi, byProfit) - shippingCost) / (1m + Math.Max(0m, buyerFeePercent) / 100m);
+        return worthIt <= 0 ? (0m, boundBy) : (Math.Floor(worthIt * 100m) / 100m, boundBy);
     }
 
     /// <summary>Minutes until the close. Null when there is no end date to count to.</summary>

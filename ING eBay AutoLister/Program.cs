@@ -448,6 +448,13 @@ builder.Services.AddSingleton<DealPipelineCalculator>();
 // Craigslist. The sweep itself is orchestrated in ScanSnipesAsync below.
 builder.Services.AddSingleton<AuctionSniperAnalyzer>();
 
+// ── WhatsNot: the same arbitrage, live ────────────────────────────────────────
+// The auction sniper's arithmetic pointed at a live-selling feed, where the price is a bid that
+// moves while you watch it and a buyer's premium sits on top. Shares the sniper's own ceiling
+// (AuctionSniperAnalyzer.MaxBidDetail) and JackpotHunter's break-even, so a card and a snipe row
+// for the same item at the same price cannot disagree.
+builder.Services.AddSingleton<LiveBidAdvisor>();
+
 // ── Deal Radar: the board that reads itself ───────────────────────────────────
 // Every sourcing screen above is a button. This is the same local-arbitrage scan, saved with a
 // profit bar on it and run on a human cadence, so the $400 miner three miles away doesn't need
@@ -2865,6 +2872,82 @@ app.MapPost("/api/snap", async (
         $"{result.Call} — {result.CallLabel}; {sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(result);
+});
+
+// ── WhatsNot: live-auction arbitrage ──────────────────────────────────────────────────────────
+// An item is on screen in a live-selling feed and the bidding is running. This answers the only
+// question there is time for: what is the most I can bid on this and still make money reselling it
+// on eBay — and how much of that answer should I believe?
+//
+// The resale side is AnalyzeProductAsync, unchanged: the same hosted eBay sold-comps + sell-through
+// pipeline the Opportunity Finder and Local Deals run. Sold comps are read here, never touched —
+// this endpoint is purely additive to that path.
+//
+// Terapeak is never scraped. A real scrape is a browser page load against a logged-in session, and
+// a live auction is over in under a minute; the hosted comps database answers in milliseconds,
+// which is the whole reason this screen can exist.
+app.MapPost("/api/whatsnot/bid", async (
+    LiveBidRequest req, LiveBidAdvisor advisor, FeeProfile feeProfile,
+    ProductNormalizer normalizer, IMarketplaceRepository marketplace, ComparableMatcher matcher,
+    MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
+    OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var title = (req.Title ?? "").Trim();
+
+    if (title.Length == 0)
+    {
+        return BadInputJson("Nothing to price",
+            "No item name arrived with the request.",
+            "Type or paste what's on screen — the brand and model are what the sold search runs on.");
+    }
+
+    // What KIND of thing this is, decided by the same classification the local scan runs — so a
+    // vehicle on a live feed is refused by the same rule that refuses one on the board rather than
+    // priced off floor mats. The bid is carried on the listing only so the classifier sees the same
+    // shape of row every other screen hands it.
+    var listing = new LocalSupplyListing
+    {
+        Source = "whatsnot", SourceLabel = "Live feed", ItemId = "whatsnot",
+        Title = title, Price = req.CurrentBid ?? 0m,
+    };
+    var category = ResaleCategoryCatalog.Classify(
+        listing, req.CategoryId is { Length: > 0 } ? ResaleCategoryCatalog.Resolve(req.CategoryId) : null);
+
+    MarketAnalysisResult analysis;
+    try
+    {
+        analysis = await AnalyzeProductAsync(
+            // No supplier cost. The profit on a live auction is measured against the LANDED cost —
+            // bid plus the platform's premium plus shipping — which only LiveBidAdvisor knows how to
+            // assemble. Handing the bare bid in here would produce a second, lower-cost profit
+            // figure on the same object, and one of the two would end up on screen.
+            title, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: false,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+        log.Add("Warning", "Live bid pricing failed", $"\"{title}\": {failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+
+    var card = advisor.Build(title, analysis, req, feeProfile, category);
+    card.ElapsedMs = sw.ElapsedMilliseconds;
+
+    log.Add("Research", "Live bid ceiling",
+        $"\"{title}\"; bid {(card.BidWasKnown ? $"{card.CurrentBid:C}" : "not started")}; " +
+        $"resale {(card.ResalePrice is { } r ? $"{r:C}" : "none")} on {card.CompCount} comp(s); " +
+        $"max bid {card.MaxBid:C} ({card.Call}); {sw.ElapsedMilliseconds}ms");
+
+    return Results.Ok(card);
 });
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the
