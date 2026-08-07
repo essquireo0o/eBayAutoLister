@@ -293,6 +293,16 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveGateRead Gate { get; set; } = new();
 
+    /// <summary>
+    /// What lots on THIS show have actually been hammering for, against what this app said to stop
+    /// at. Never null — a block that only appeared once a room had been measured would be a block
+    /// whose silence means both "this room is fine" and "no hammer price has ever been written
+    /// down". Every other read on this card is about the ITEM; this is the only one about the
+    /// ROOM, and it is the only thing on the screen that can say a correct ceiling is unbuyable.
+    /// It moves no price and no call. See <see cref="Services.LiveRoom"/>.
+    /// </summary>
+    public LiveRoomRead Room { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }

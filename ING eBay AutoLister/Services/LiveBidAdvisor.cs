@@ -129,11 +129,20 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// sheet. It can lower the ceiling, and it is the only thing here that lowers one for a reason
     /// that is not about the item at all; see <see cref="LiveBudget"/>.
     /// </param>
+    /// <param name="room">
+    /// Every lot on THIS show whose hammer price is known — the ones that got away
+    /// (<see cref="LiveRoomBook.PassesOnShow"/>) and the ones that were won
+    /// (<see cref="LiveBuySheet.WinsOnShow"/>), pooled by <see cref="LiveRoom.Tonight"/>. Default is
+    /// nothing, so a card built without a room book carries an unread block and is otherwise
+    /// figure-for-figure the card that was built before this existed. It moves nothing here: whether
+    /// the room outbids a ceiling is not a claim about what the object fetches. See
+    /// <see cref="LiveRoom"/>.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
         ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
         LiveSearchTerms? search = null, LiveStockTonight tonight = default, LiveShipTonight ship = default,
-        LiveBudgetTonight cash = default)
+        LiveBudgetTonight cash = default, LiveRoomTonight room = default)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var terms = search ?? LiveSearchQuery.Build(item);
@@ -270,6 +279,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // ceiling of zero, so it reports the money and changes nothing — but a seller who has
             // spent tonight's budget should not have to price an unpriceable lot to find that out.
             card.Budget = LiveBudget.Read(request.NightBudget, cash, 0m, feePercent, shipping, taxPercent);
+            // And what the room has been paying, which on this path is the one thing on the card
+            // that is still measurable. Nothing priced the lot, so there is no ceiling for an
+            // expected hammer to be a share of — but "the last six lots here went over the app's
+            // ceilings" is true whatever this particular lot is, and a seller who cannot price the
+            // thing on screen is exactly the seller who should know what room they are standing in.
+            card.Room = LiveRoom.Read(freight.ShowName, room, marketCeiling: 0m);
+            if (card.Room.Warning.Length > 0) card.Warnings.Add(card.Room.Warning);
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid, card.Gate.Stops);
             card.Say = LiveBidSpeech.Say(card);
             return card;
@@ -456,6 +472,23 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         units.MonthsToClear = months;
         units.DaysToSellAll = daysAll;
         units.AbsorptionNote = absorption;
+
+        // ── And whether this room will let anybody buy at that ceiling ─────────────────────────
+        // Everything above this line answers "what is the thing on screen worth". Not one figure on
+        // it has ever asked whether the lot can be BOUGHT at the answer — which, at a live auction,
+        // is a separate fact with a separate owner: the other people watching the same stream.
+        //
+        // It is measured off the hammer prices of the lots this seller priced on this show and did
+        // not win, pooled with the ones they did. Read against the MARKET's ceiling rather than the
+        // one the budget may have cut, because the recorded ceilings are market ceilings too — a
+        // budget-capped figure measured against them would report a thin wallet as a hot room.
+        //
+        // It moves nothing. A room that outbids a correct ceiling does not make the object worth
+        // less, and shading the price for it would be the app disguising a fact about people as a
+        // fact about an item. See LiveRoom.
+        card.Room = LiveRoom.Read(
+            freight.ShowName, room,
+            card.Budget is { MarketCeiling: > 0m } market ? market.MarketCeiling : card.MaxBid);
 
         var (call, label, reason) = Judge(card);
         card.Call = call;
@@ -884,6 +917,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // what winning costs. LiveOdds owns the sentence, so the strip and the warning list cannot
         // describe the same count differently.
         if (card.Odds is { Warning.Length: > 0 } odds) warnings.Add(odds.Warning);
+
+        // And then the one line here that is not about the item at all. Every warning above says
+        // something might be wrong with the price; this one says the price is right and the room
+        // will not sell it to you at that price. Said in exactly one state — lots on this show have
+        // been hammering above the ceilings this app gives — because the other three are either good
+        // news or the ordinary shape of an auction. LiveRoom owns the sentence, so the strip and the
+        // warning list cannot describe the same room two ways.
+        if (card.Room is { Warning.Length: > 0 } roomRead) warnings.Add(roomRead.Warning);
 
         // A middle half this wide is not a price, it is a range the item lands somewhere in
         // depending on condition, completeness and what the photos hid.

@@ -30,9 +30,9 @@ public class WhatsNotStockAssetTests
     // ── The count reaches the card ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// All three endpoints that build a card ask the sheet. A fresh price, a re-price and a recorded
-    /// win are the same card by design; one of them counting a different pile would put two answers
-    /// about one night's stock on one screen.
+    /// All four endpoints that build a card ask the sheet. A fresh price, a re-price, a recorded win
+    /// and a recorded hammer price are the same card by design; one of them counting a different pile
+    /// would put two answers about one night's stock on one screen.
     /// </summary>
     [Fact]
     public void Every_endpoint_that_builds_a_card_counts_tonights_lots()
@@ -40,9 +40,9 @@ public class WhatsNotStockAssetTests
         Assert.Contains("var tonight = sheet.UnitsWonOf(title);", Program, StringComparison.Ordinal);
         Assert.Contains("tonight: tonight", Program, StringComparison.Ordinal);
 
-        // The re-price and the win both count off the item the comps were held for, never off a
-        // title typed since — the same guard the token itself enforces.
-        Assert.Equal(2, CountOf(Program, "sheet.UnitsWonOf(quote.Item)"));
+        // The re-price, the win and the recorded hammer price all count off the item the comps were
+        // held for, never off a title typed since — the same guard the token itself enforces.
+        Assert.Equal(3, CountOf(Program, "sheet.UnitsWonOf(quote.Item)"));
     }
 
     /// <summary>
@@ -298,8 +298,8 @@ public class WhatsNotStockAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=140", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=123", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=141", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=124", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

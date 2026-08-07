@@ -216,7 +216,7 @@ public class WhatsNotSteadyAssetTests
     }
 
     /// <summary>
-    /// Both animated widths on this screen animate because a number moved, which during a live sale
+    /// Every animated width on this screen animates because a number moved, which during a live sale
     /// is a bar sliding every few seconds in the corner of the eye of somebody who asked the system
     /// not to do that.
     /// </summary>
@@ -226,11 +226,12 @@ public class WhatsNotSteadyAssetTests
         var reduced = MediaBlock("@media (prefers-reduced-motion: reduce) {", ".wn-odds-bar-covered");
 
         Assert.Contains(".wn-budget-bar-spent", reduced, StringComparison.Ordinal);
+        Assert.Contains(".wn-room-bar-fill", reduced, StringComparison.Ordinal);
         Assert.Contains("transition: none;", reduced, StringComparison.Ordinal);
 
         // And they are still animated for everybody else — a reduced-motion rule that matched an
         // animation nobody had would be a rule about nothing.
-        Assert.Equal(2, Count(Css, "transition: width .18s ease-out;"));
+        Assert.Equal(3, Count(Css, "transition: width .18s ease-out;"));
     }
 
     // ── Nothing else moved ────────────────────────────────────────────────────
@@ -275,8 +276,8 @@ public class WhatsNotSteadyAssetTests
     [Fact]
     public void The_changed_assets_are_versioned()
     {
-        Assert.Contains("app.js?v=140", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=123", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=141", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=124", Html, StringComparison.Ordinal);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

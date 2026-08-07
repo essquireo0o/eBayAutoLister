@@ -9909,6 +9909,10 @@
     // sheet outlives the session — a restart mid-show must come back to the money, not to a
     // blank panel that reads as a night nobody has bought anything on.
     wnLoadSheet();
+    // And what the room has been paying, for the same reason and off the same kind of file.
+    // A book that came back empty after a restart would report every show as never measured
+    // — which is the one state the strip on the card treats as "press the button".
+    wnLoadRoomBook();
     // Load the feed on first open; a frame already showing a live stream is left alone on
     // return so tabbing away and back doesn't tear down what the seller is watching.
     const frame = $('wn-frame');
@@ -11290,6 +11294,26 @@
         ${od.note ? `<p class="wn-odds-note">${esc(od.note)}</p>` : ''}
       </div>` : '';
 
+    // ── And whether this room will sell it to you at that price ────────────────
+    // Every strip above this one is about the ITEM. This is the only one on the
+    // card about the ROOM, and it answers the question none of the others can: a
+    // ceiling is what the lot is worth, and whether it can be bought at that
+    // ceiling depends on the other people watching the same stream.
+    //
+    // It is measured off the hammer prices of lots the seller priced here and did
+    // not win — 🔨 Went for, one press — pooled with the ones they did win, because
+    // a rate built only from the losses would measure the top tail of its own
+    // distribution and call every room hot.
+    //
+    // Directly under the odds because they are the two "will this actually work"
+    // reads and they fail in opposite directions: the odds say the item may not
+    // fetch what the middle says, and this says the item may never be bought at all.
+    //
+    // Every word, every dollar and the rate itself are the server's
+    // (Services/LiveRoom.cs). The browser measures no room and projects no price.
+    const rm = c.room || {};
+    const roomStrip = wnRoomStrip(rm);
+
     // ── The hammer ─────────────────────────────────────────────────────────────
     // Only while the comps are held, because that is what the server records a win
     // against: a win with no sold history behind it would be a real spend sitting
@@ -11299,6 +11323,12 @@
     // to write down. Past the ceiling it says so — a lot can be won above it, and
     // the sheet's whole discipline half depends on that being recorded rather than
     // refused.
+    //
+    // Beside it, the outcome that happens six times as often and that this screen threw
+    // away until now: it went to somebody else. Same press, same held comps, same bid
+    // box — what changes is which book the row lands in. The hammer prices of the lots
+    // that got away are the only measurement of the room there is, and the button has to
+    // be as cheap as the one next to it or nobody records one mid-show.
     const overCeiling = c.bidWasKnown && c.maxBid > 0 && c.currentBid > c.maxBid;
     const won = c.token ? `
       <div class="wn-won">
@@ -11306,6 +11336,11 @@
                 class="btn wn-won-btn${overCeiling ? ' wn-won-btn-over' : ''}"
                 title="Record this lot as won at the bid above — it goes on tonight's buy sheet">
           🔨 Won it${c.bidWasKnown ? ` at ${moneyExact(c.currentBid)}` : ''}
+        </button>
+        <button type="button" data-passed="1" data-keep="passed"
+                class="btn btn-ghost wn-passed-btn"
+                title="It went to somebody else at the bid above — records what this room actually paid">
+          🔨 Went for${c.bidWasKnown ? ` ${moneyExact(c.currentBid)}` : ''}
         </button>
         <span class="wn-won-note">${overCeiling
           ? `That's ${moneyExact(c.currentBid - c.maxBid)} over your ceiling — it will be recorded as such.`
@@ -11364,6 +11399,7 @@
       ${ladder}
       ${meter}
       ${oddsStrip}
+      ${roomStrip}
       ${wnOwnBlock(c.ownHistory)}
       ${won}
       <div class="wn-stats">
@@ -11518,6 +11554,235 @@
     rows.querySelectorAll('[data-open-draft]').forEach(el => {
       el.addEventListener('click', () => wnOpenDraft(el.dataset.openDraft));
     });
+  }
+
+  // ── WhatsNot: the room ───────────────────────────────────────────────────────
+  // The buy sheet above is the four lots a night that were won. This is the twenty-six
+  // that were watched and lost — the only direct measurement of the room there is.
+  //
+  // Nothing here decides anything. The verdict, the rate, the expected landing price and
+  // every sentence are the server's (Services/LiveRoom.cs); this paints them, and the one
+  // number it computes is a bar width.
+
+  /// The strip on the card. Wrapped in a slot with a stable id so that recording a hammer
+  /// price can replace it in place — the seller has just watched a lot go and the answer
+  /// has to move without a re-price, which would cost an eBay read they did not ask for.
+  function wnRoomStrip(rm) {
+    const r = rm || {};
+    if (!r.headline) return '<div id="wn-room-slot"></div>';
+
+    // Capped at the ceiling line. Past 100% the bar is full and the colour is what says
+    // the room went over it — a bar drawn to 140% would need a scale nobody can read at
+    // a glance, on the one strip whose whole job is to be read at a glance.
+    const fill = Math.max(0, Math.min(100, r.clearingPercent || 0));
+
+    const box = r.expectedHammer > 0 ? `
+        <div class="wn-room-box">
+          <span class="wn-room-cell wn-room-cell-this" title="Where this lot is likely to land: this room's own clearing rate applied to the ceiling above. An estimate off recorded hammer prices — it is not a price, and nothing on this card bids to it">
+            <span class="wn-room-cell-name">Lands around</span>
+            <span class="wn-room-cell-fig">${moneyExact(r.expectedHammer)}</span>
+          </span>
+          <span class="wn-room-cell" title="What the comps say to stop at — the market's ceiling, before your budget">
+            <span class="wn-room-cell-name">Your ceiling</span>
+            <span class="wn-room-cell-fig">${moneyExact(r.ceiling)}</span>
+          </span>
+          <span class="wn-room-cell" title="What this room has been leaving between the hammer and your ceiling, on a lot this size">
+            <span class="wn-room-cell-name">${r.roomOverExpected >= 0 ? 'Daylight' : 'Short by'}</span>
+            <span class="wn-room-cell-fig${r.roomOverExpected < 0 ? ' wn-neg' : ''}">${moneyExact(Math.abs(r.roomOverExpected))}</span>
+          </span>
+        </div>` : '';
+
+    return `<div id="wn-room-slot">
+      <div class="wn-room wn-room-${esc(r.verdict || 'unread')}">
+        <div class="wn-room-line">
+          <span class="wn-room-label">Room</span>
+          <strong class="wn-room-headline">${esc(r.headline)}</strong>
+          ${r.readable ? `<span class="wn-room-tag">${r.clearingPercent}% of ceiling</span>` : ''}
+          ${r.watched > 0
+            ? `<span class="wn-room-src">${r.watched} watched${r.won > 0 ? ` · ${r.won} won` : ''}</span>` : ''}
+        </div>
+        ${r.readable ? `
+          <div class="wn-room-bar" role="img"
+               aria-label="${esc(`This room clears at ${r.clearingPercent}% of the ceiling`)}">
+            <div class="wn-room-bar-fill" style="width:${fill}%"></div>
+            <div class="wn-room-bar-edge"></div>
+          </div>` : ''}
+        ${box}
+        ${r.note ? `<p class="wn-room-note">${esc(r.note)}</p>` : ''}
+      </div>
+    </div>`;
+  }
+
+  /// Pressing Went for sends the token and the hammer price to /api/whatsnot/passed,
+  /// which re-asks the SAME card at that price against the comps already held and writes
+  /// the row. So the ceiling recorded beside the hammer price is the ceiling that was on
+  /// screen, and it costs no eBay read.
+  async function wnRecordPass() {
+    if (!wnToken) {
+      wnSayLine('Those comps have been let go — press Price it to read eBay again, then record what it went for.');
+      return;
+    }
+
+    const bid = wnNumber('wn-bid');
+    if (!bid || bid <= 0) {
+      wnSayLine('What did it go for? Put the hammer price in the bid box, then press Went for.');
+      $('wn-bid')?.focus();
+      return;
+    }
+
+    // Said here rather than after a round trip, because the answer is the same and the
+    // fix is one box away. A room is one host's audience and nothing is ever pooled
+    // across shows.
+    if (!wnShow()) {
+      wnSayLine('Which show was that? Put the show or the host in the Show box — a room is one host’s audience, and nothing is combined across shows.');
+      $('wn-show')?.focus();
+      return;
+    }
+
+    const btn = $('wn-card')?.querySelector('[data-passed]');
+    const hadFocus = document.activeElement === btn;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+
+    try {
+      const { res, body } = await safePost('/api/whatsnot/passed', {
+        token: wnToken,
+        title: wnTokenItem,
+        hammerPrice: bid,
+        showName: wnShow(),
+        shippingCost: wnNumber('wn-ship'),
+        additionalItemShipping: wnNumber('wn-ship-add'),
+        buyerFeePercent: wnNumber('wn-fee'),
+        ...wnTaxFields(),
+        targetRoiPercent: wnNumber('wn-target'),
+        quantity: wnQty(),
+        condition: wnCondition(),
+      });
+
+      if (!res.ok) {
+        const headline = body.error || "That didn't record.";
+        const whatToDo = body.failure?.whatToDo || '';
+        wnSayLine(whatToDo ? `${headline} ${whatToDo}` : headline);
+        return;
+      }
+
+      // The strip is replaced in place rather than the card re-rendered: the seller is
+      // still looking at the same lot, and a redraw would throw away the tables they had
+      // open. The read handed back is the server's, computed against this card's own
+      // ceiling, so nothing here recomputes a rate.
+      const slot = $('wn-room-slot');
+      if (slot && body.room) slot.outerHTML = wnRoomStrip(body.room);
+      if (body.book) wnRenderRoomBook(body.book);
+      wnSayLine([body.say, body.room?.headline].filter(Boolean).join(' '));
+    } catch (err) {
+      wnSayLine(errorText(err, "That didn't record."));
+    } finally {
+      // Looked up again rather than remembered, for the same reason the win does it: a
+      // re-price landing while this was in flight replaced the button with a new node.
+      const live = $('wn-card')?.querySelector('[data-passed]');
+      if (live) {
+        live.disabled = false;
+        live.removeAttribute('aria-busy');
+        if (hadFocus) live.focus();
+      }
+    }
+  }
+
+  function wnRenderRoomBook(book) {
+    const head = $('wn-room-head');
+    const shows = $('wn-room-shows');
+    const rows = $('wn-room-rows');
+    if (!head || !shows || !rows) return;
+
+    const lots = book?.lots || [];
+    head.textContent = lots.length ? (book.say || '') : 'nothing watched yet';
+
+    if (!lots.length) {
+      shows.innerHTML = '';
+      rows.innerHTML = '<p class="wn-sheet-empty">Nothing recorded yet. When a lot goes to somebody ' +
+        'else, put what it went for in the bid box and press <strong>🔨 Went for</strong> — after ' +
+        'three the card says what this room clears at.</p>';
+      return;
+    }
+
+    // One line per room, and each line's sentence is the server's own — the same
+    // LiveRoom.Read the card's strip is painted from, so the panel and the strip cannot
+    // disagree about what a show clears at.
+    shows.innerHTML = (book.shows || []).map(s => `
+      <div class="wn-room-show wn-room-${esc(s.verdict || 'unread')}">
+        <span class="wn-room-show-name">${esc(s.showName)}</span>
+        <span class="wn-room-show-say">${esc(s.say)}</span>
+        <span class="wn-room-show-count">${s.watched} watched${s.overCeiling > 0 ? ` · ${s.overCeiling} over` : ''}</span>
+        <button type="button" class="wn-sheet-remove" data-forget-show="${esc(s.showName)}"
+                title="Forget this room — the other shows stay"
+                aria-label="Forget the recorded lots for ${esc(s.showName)}">✕</button>
+      </div>`).join('');
+
+    rows.innerHTML = `<ul class="wn-sheet-list">${lots.map(l => {
+      const when = l.seenAtUtc
+        ? new Date(l.seenAtUtc).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : '';
+      const sub = [
+        l.showName,
+        l.ceilingAtPass > 0 ? `ceiling was ${moneyExact(l.ceilingAtPass)}` : 'nothing priced it',
+        when,
+      ].filter(Boolean).join(' · ');
+      const over = l.ceilingAtPass > 0 && l.hammerPrice > l.ceilingAtPass;
+
+      return `<li class="wn-sheet-row${over ? ' wn-sheet-row-over' : ''}" aria-label="${esc(l.say || l.item)}">
+        <span class="wn-sheet-row-main">
+          <span class="wn-sheet-row-title">${esc(l.item)}</span>
+          <span class="wn-sheet-row-sub">${esc(sub)}</span>
+        </span>
+        <span class="wn-sheet-row-profit${over ? ' wn-neg' : ''}">${esc(moneyExact(l.hammerPrice))}</span>
+        <button type="button" class="wn-sheet-remove" data-unwatch="${esc(l.id)}"
+                title="Take this lot out of the room book"
+                aria-label="Remove ${esc(l.item)} from the room book">✕</button>
+      </li>`;
+    }).join('')}</ul>`;
+
+    rows.querySelectorAll('[data-unwatch]').forEach(el => {
+      el.addEventListener('click', () => wnRemoveWatched(el.dataset.unwatch));
+    });
+    shows.querySelectorAll('[data-forget-show]').forEach(el => {
+      el.addEventListener('click', () => wnClearRoom(el.dataset.forgetShow));
+    });
+  }
+
+  /// Read when the tab opens, for the same reason the buy sheet is: a show runs for hours
+  /// and an app restarted in the middle of one must not come back claiming it has never
+  /// seen this room.
+  async function wnLoadRoomBook() {
+    try {
+      const book = await fetch('/api/whatsnot/room').then(r => (r.ok ? r.json() : null));
+      if (book) wnRenderRoomBook(book);
+    } catch {
+      // Offline or mid-restart. The panel keeps whatever it last showed.
+    }
+  }
+
+  async function wnRemoveWatched(id) {
+    if (!id) return;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/room/remove', { id });
+      if (res.ok) {
+        wnRenderRoomBook(body);
+        $('wn-room-clear')?.focus();
+      }
+    } catch { /* the row is still on screen and still true */ }
+  }
+
+  /// Forgetting a room. Named, it clears one show and leaves the others standing — which
+  /// is nearly always what is meant, since the reason to clear is that one host changed
+  /// something. It asks first, in the room's own numbers.
+  async function wnClearRoom(show) {
+    const what = show
+      ? `Forget the recorded lots for ${show}?`
+      : `Clear the whole room book?\n\n${$('wn-room-head')?.textContent || ''}`;
+    if (!confirm(`${what}\n\nThis cannot be undone.`)) return;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/room/clear', { showName: show || '' });
+      if (res.ok) wnRenderRoomBook(body);
+    } catch { /* nothing was cleared, and the book on screen is still the truth */ }
   }
 
   // ── WhatsNot: the won lot becomes a listing ──────────────────────────────────
@@ -12048,6 +12313,7 @@
     // stops existing two seconds after it was bound.
     $('wn-card')?.addEventListener('click', e => {
       if (e.target.closest('[data-won]')) { wnRecordWin(); return; }
+      if (e.target.closest('[data-passed]')) { wnRecordPass(); return; }
 
       // Overruling the search, either way. Both directions re-read eBay, because the
       // question being asked of it is the thing that changed — a re-price off the
@@ -12059,6 +12325,7 @@
       }
     });
     on('wn-sheet-clear', 'click', wnClearSheet);
+    on('wn-room-clear', 'click', () => wnClearRoom(''));
 
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when

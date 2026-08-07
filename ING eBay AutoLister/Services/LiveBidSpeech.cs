@@ -62,8 +62,49 @@ public static class LiveBidSpeech
         return Join(Headline(card), HowMany(card), WhetherEbayTakesIt(card),
             WhoseCeilingThatIs(card), WhichWayItsGoing(card),
             WhatKindOfOne(card), WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
+            WhatThisRoomPays(card),
             WhatItResellsFor(card), HowOftenItPays(card), YourOwnRecord(card),
             HowManyYoudHave(card), WhatTheWaitCosts(card));
+    }
+
+    /// <summary>
+    /// What the other bidders have been paying, said immediately after where the bidding stands —
+    /// because it is the only clause in this line that is about them rather than about the item.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two states speak, and they are the two where the ceiling the listener just heard is not the
+    /// number that decides the lot. The first is the room that clears above it: the card is right,
+    /// the price is right, and the lot will be won by somebody else at more than it is worth. Nothing
+    /// else in this line can say that, and a seller who does not hear it sits through the next two
+    /// hours to find it out.
+    /// </para>
+    /// <para>
+    /// The second is its opposite and is the reason this is not a warning-only clause: a room that
+    /// has been clearing well under the ceilings is a room where bidding to the ceiling gives away
+    /// margin that was there for free. It states where the lot is likely to land, which is the one
+    /// figure on this card that is not derived from eBay at all.
+    /// </para>
+    /// <para>
+    /// Silent on a tight room, which is the ordinary shape of a live auction and would be a clause on
+    /// every lot; silent on a room with too few recorded lots to be a rate; and silent, obviously, on
+    /// a show nobody has written a hammer price down for, which is every show until the seller
+    /// presses the button once.
+    /// </para>
+    /// </remarks>
+    private static string WhatThisRoomPays(LiveBidCard card)
+    {
+        if (card.Room is not { Readable: true } room) return "";
+
+        if (room.Verdict == LiveRoomVerdicts.Hot)
+            return $"This room has been clearing at {room.ClearingPercent}% of your ceilings — above them.";
+
+        // Rounded UP, like every other cost in this line: a landing price spoken at a glance is
+        // allowed to overstate what the lot will take and never to understate it.
+        return room is { Verdict: LiveRoomVerdicts.Cheap, ExpectedHammer: > 0m }
+            ? $"This room clears at {room.ClearingPercent}% of your ceilings — expect it around " +
+              $"{Math.Ceiling(room.ExpectedHammer).ToString("C0")}."
+            : "";
     }
 
     /// <summary>

@@ -185,6 +185,47 @@ public sealed class LiveBuySheet
     }
 
     /// <summary>
+    /// Every lot won on one show, as an outcome the room read can count — what it hammered at
+    /// against what the app said to stop at.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The wins are half of what <see cref="LiveRoom"/> measures, and leaving them out would bias it
+    /// in exactly one direction: a seller wins the lots that go cheap, so a clearing rate built only
+    /// from the lots that got away is a rate computed off the top tail of its own distribution. It
+    /// would report every room as hotter than it is, on the one screen where "this room is too hot"
+    /// means "go and do something else with your evening".
+    /// </para>
+    /// <para>
+    /// <see cref="WonLot.CeilingAtWin"/> is already the market's ceiling and not the wallet's — the
+    /// win path deliberately does not carry the budget (see <see cref="Models.LiveWinRequest.AsBid"/>)
+    /// — so it is the same kind of number as <see cref="PassedLot.CeilingAtPass"/> and the two can be
+    /// pooled without a conversion.
+    /// </para>
+    /// <para>
+    /// Cut at <see cref="LiveRoom.EvidenceDays"/> and matched by
+    /// <see cref="LiveShipShare.NormalizeShow"/>, the same as the room book's own rows, so one
+    /// stream is one room however it was typed. Read under the same lock, off the cached list.
+    /// </para>
+    /// </remarks>
+    public List<LiveRoomLot> WinsOnShow(string? show, DateTime? nowUtc = null)
+    {
+        var key = LiveShipShare.NormalizeShow(show);
+        if (key.Length == 0) return [];
+
+        var cutoff = (nowUtc ?? DateTime.UtcNow).AddDays(-LiveRoom.EvidenceDays);
+
+        lock (_gate)
+        {
+            return Load()
+                .Where(l => string.Equals(LiveShipShare.NormalizeShow(l.ShowName), key, StringComparison.Ordinal))
+                .Where(l => l.WonAtUtc >= cutoff)
+                .Select(l => new LiveRoomLot(l.WinningBid, l.CeilingAtWin, Won: true))
+                .ToList();
+        }
+    }
+
+    /// <summary>
     /// What tonight has cost so far, all in — the one number the live card needs before it can say
     /// whether the seller can afford the lot on screen.
     /// </summary>

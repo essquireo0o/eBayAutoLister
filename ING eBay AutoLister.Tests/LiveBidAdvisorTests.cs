@@ -2706,4 +2706,141 @@ public class LiveBidAdvisorTests
         Assert.Equal(LiveBidCalls.Bid, card.Call);
         Assert.DoesNotContain("eBay won't", card.Say, StringComparison.Ordinal);
     }
+
+    // ── The room: the first read on this card about the other bidders ─────────
+
+    /// <summary>A card built with a room to read carries the rate, the projection and the split —
+    /// and every one of them is <see cref="LiveRoom"/>'s, on the card's own market ceiling.</summary>
+    [Fact]
+    public void The_room_is_read_against_the_cards_own_market_ceiling()
+    {
+        var card = InRoom(Analysis(), bid: 40m, room: Cleared(0.5m, 0.6m, 0.55m));
+
+        Assert.True(card.Room.Readable);
+        Assert.Equal(LiveRoomVerdicts.Cheap, card.Room.Verdict);
+        Assert.Equal(card.MaxBid, card.Room.Ceiling);
+        Assert.Equal(Math.Round(card.MaxBid * 0.55m, 2), card.Room.ExpectedHammer);
+    }
+
+    /// <summary>
+    /// The property that keeps every other read on this card honest: a hot room moves NOTHING. The
+    /// item is worth exactly what the comps say it is worth and is simply not purchasable at that
+    /// price, which is a different fact and gets a different sentence — not a quieter ceiling.
+    /// </summary>
+    [Fact]
+    public void A_hot_room_moves_not_one_figure_on_the_card()
+    {
+        var quiet = InRoom(Analysis(), bid: 40m, room: default);
+        var hot = InRoom(Analysis(), bid: 40m, room: Cleared(1.3m, 1.25m, 1.4m));
+
+        Assert.Equal(LiveRoomVerdicts.Hot, hot.Room.Verdict);
+
+        Assert.Equal(quiet.MaxBid, hot.MaxBid);
+        Assert.Equal(quiet.BreakEvenBid, hot.BreakEvenBid);
+        Assert.Equal(quiet.ResalePrice, hot.ResalePrice);
+        Assert.Equal(quiet.MedianPrice, hot.MedianPrice);
+        Assert.Equal(quiet.Headroom, hot.Headroom);
+        Assert.Equal(quiet.ProfitAtMaxBid, hot.ProfitAtMaxBid);
+        Assert.Equal(quiet.SellThroughRate, hot.SellThroughRate);
+        Assert.Equal(quiet.CompCount, hot.CompCount);
+        // And the call is the market's, unchanged. A room that outbids a good lot is not a bad lot.
+        Assert.Equal(quiet.Call, hot.Call);
+        Assert.Equal(quiet.CallLabel, hot.CallLabel);
+    }
+
+    /// <summary>The hot room is the one state that reaches the warning list, and it says the lot is
+    /// not the problem — read straight off <see cref="LiveRoom"/> so the strip and the list cannot
+    /// describe one room two ways.</summary>
+    [Fact]
+    public void Only_the_hot_room_interrupts_and_it_says_the_lot_is_fine()
+    {
+        var hot = InRoom(Analysis(), bid: 40m, room: Cleared(1.3m, 1.25m, 1.4m));
+        Assert.Contains(hot.Room.Warning, hot.Warnings);
+        Assert.Contains("Nothing is wrong with this lot", hot.Room.Warning, StringComparison.Ordinal);
+
+        var cheap = InRoom(Analysis(), bid: 40m, room: Cleared(0.5m, 0.6m, 0.55m));
+        Assert.Empty(cheap.Room.Warning);
+        Assert.DoesNotContain(cheap.Warnings, w => w.Contains("outbids it", StringComparison.Ordinal));
+    }
+
+    /// <summary>Two of the four states speak in the one line the screen reads out loud: the room
+    /// that outbids the ceiling, and the room that clears well under it. The tight room — the
+    /// ordinary shape of a live auction — says nothing at all.</summary>
+    [Fact]
+    public void The_spoken_line_names_the_hot_room_and_the_cheap_one_only()
+    {
+        Assert.Contains("clearing at 130% of your ceilings",
+            InRoom(Analysis(), bid: 40m, room: Cleared(1.3m, 1.25m, 1.4m)).Say, StringComparison.Ordinal);
+
+        Assert.Contains("expect it around",
+            InRoom(Analysis(), bid: 40m, room: Cleared(0.5m, 0.6m, 0.55m)).Say, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("clears at",
+            InRoom(Analysis(), bid: 40m, room: Cleared(0.95m, 0.97m, 0.93m)).Say, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card nothing could price still gets the room — "the last six lots here went over
+    /// the app's ceilings" is true whatever this lot is, and the seller who cannot price the thing
+    /// on screen is exactly the one who should know what room they are in.</summary>
+    [Fact]
+    public void An_unpriceable_lot_still_learns_what_room_it_is_in()
+    {
+        var card = InRoom(analysis: null, bid: 40m, room: Cleared(1.3m, 1.25m, 1.4m));
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(LiveRoomVerdicts.Hot, card.Room.Verdict);
+        Assert.Equal(0m, card.Room.Ceiling);
+        Assert.Equal(0m, card.Room.ExpectedHammer);
+        Assert.Contains(card.Room.Warning, card.Warnings);
+    }
+
+    /// <summary>And a card built with no room book at all is the card that existed before this read
+    /// did, carrying a block that says nothing was measured rather than one that is absent.</summary>
+    [Fact]
+    public void A_card_with_no_room_book_carries_an_unread_block_and_nothing_else()
+    {
+        var card = Card(Analysis(), bid: 40m);
+
+        Assert.Equal(LiveRoomVerdicts.Unread, card.Room.Verdict);
+        Assert.False(card.Room.Readable);
+        Assert.NotEmpty(card.Room.Headline);
+        Assert.Empty(card.Room.Warning);
+    }
+
+    /// <summary>The room is read against the MARKET's ceiling and not the wallet's. A seller with
+    /// $40 left is not in a hotter room than they were an hour ago.</summary>
+    [Fact]
+    public void A_thin_wallet_is_never_reported_as_a_hot_room()
+    {
+        var room = Cleared(0.5m, 0.6m, 0.55m);
+
+        var rich = Advisor.Build(
+            Product, Analysis(),
+            new LiveBidRequest { Title = Product, CurrentBid = 40m, ShowName = RoomShow },
+            Fees, nowUtc: Now, room: room);
+
+        var broke = Advisor.Build(
+            Product, Analysis(),
+            new LiveBidRequest { Title = Product, CurrentBid = 40m, ShowName = RoomShow, NightBudget = 500m },
+            Fees, nowUtc: Now, cash: new LiveBudgetTonight(4, 460m), room: room);
+
+        Assert.True(broke.Budget.Capped);
+        Assert.True(broke.MaxBid < rich.MaxBid);
+        Assert.Equal(rich.Room.Ceiling, broke.Room.Ceiling);
+        Assert.Equal(rich.Room.ExpectedHammer, broke.Room.ExpectedHammer);
+        Assert.Equal(rich.Room.Verdict, broke.Room.Verdict);
+    }
+
+    private const string RoomShow = "@bitminer_bill";
+
+    /// <summary>A room whose lots hammered at the given shares of the ceilings they were given.</summary>
+    private static LiveRoomTonight Cleared(params decimal[] shares) =>
+        new([.. shares.Select(s => new LiveRoomLot(100m * s, 100m, Won: false))]);
+
+    private static LiveBidCard InRoom(
+        MarketAnalysisResult? analysis, decimal? bid, LiveRoomTonight room) =>
+        Advisor.Build(
+            Product, analysis,
+            new LiveBidRequest { Title = Product, CurrentBid = bid, ShowName = RoomShow },
+            Fees, nowUtc: Now, room: room);
 }

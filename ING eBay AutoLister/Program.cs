@@ -487,6 +487,14 @@ builder.Services.AddSingleton<LotPhotoReader>();
 // and the record of $1,200 already spent is not something a seller can type back in.
 builder.Services.AddSingleton<LiveBuySheet>();
 
+// The lots that got away. The buy sheet records the four lots a seller won; this records the
+// twenty-six they watched somebody else win, and those are the only direct measurement of the ROOM
+// there is — whether a correct ceiling can actually be bid to is a fact about the other people
+// watching the same stream, and no quantity of eBay sold history will ever answer it. Persisted for
+// the same reason as the sheet: a host runs a show every week. See Services/LiveRoom.cs for what is
+// made of it, and for why nothing in it ever reaches the pricing pipeline.
+builder.Services.AddSingleton<LiveRoomBook>();
+
 // ── Deal Radar: the board that reads itself ───────────────────────────────────
 // Every sourcing screen above is a button. This is the same local-arbitrage scan, saved with a
 // profit bar on it and run on a human cadence, so the $400 miner three miles away doesn't need
@@ -2962,7 +2970,7 @@ app.MapPost("/api/whatsnot/bid", async (
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
     EarningsStore earnings, CostBasisStore costBasis, EarningsCalculator earningsCalc, DealStore deals,
-    LiveBuySheet sheet, CredentialsStore store, LicenseService license, ActionLog log,
+    LiveBuySheet sheet, LiveRoomBook roomBook, CredentialsStore store, LicenseService license, ActionLog log,
     CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
@@ -3064,8 +3072,14 @@ app.MapPost("/api/whatsnot/bid", async (
     // individually defensible calls in one hour against money that ran out on the fourth.
     var spent = sheet.Committed();
 
+    // And what this show's room has been paying. The lots that got away plus the lots that were won,
+    // pooled — leaving the wins out would measure the top tail of the seller's own distribution and
+    // report every room as hotter than it is. Two cached list reads, no network, so it costs the
+    // live path nothing measurable. See Services/LiveRoom.cs.
+    var theRoom = LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName), sheet.WinsOnShow(req.ShowName));
+
     var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own,
-        search: terms, tonight: tonight, ship: freight, cash: spent);
+        search: terms, tonight: tonight, ship: freight, cash: spent, room: theRoom);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
@@ -3165,7 +3179,7 @@ app.MapPost("/api/whatsnot/bid", async (
 // bigger win: the seller can move the target and watch the ceiling move with it, mid-lot.
 app.MapPost("/api/whatsnot/rebid", (
     LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, LiveBuySheet sheet,
-    FeeProfile feeProfile, CredentialsStore store, LicenseService license) =>
+    LiveRoomBook roomBook, FeeProfile feeProfile, CredentialsStore store, LicenseService license) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -3199,8 +3213,11 @@ app.MapPost("/api/whatsnot/rebid", (
     // pressing Won it. Held comps, fresh count — no eBay read either way.
     // The spend is re-counted here for the same reason the unit count is: the seller changes it
     // themselves, mid-lot, by pressing Won it on the one before. Held comps, fresh money.
+    // And the room, re-read for the same reason: the seller changes it themselves, mid-lot, by
+    // pressing Went for on the lot that just sold. Held comps, fresh room.
     var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search,
-        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName), sheet.Committed());
+        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName), sheet.Committed(),
+        LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName, now), sheet.WinsOnShow(req.ShowName, now)));
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3292,6 +3309,113 @@ app.MapGet("/api/whatsnot/sheet", (LiveBuySheet sheet, CredentialsStore store, L
 app.MapPost("/api/whatsnot/sheet/remove", (
     LiveSheetRowRequest req, LiveBuySheet sheet, CredentialsStore store, LicenseService license) =>
     TrialGuard(store, license) ?? Results.Ok(sheet.Remove(req.Id)));
+
+// ── WhatsNot: it went for $X ──────────────────────────────────────────────────────────────────
+// The other outcome, and the commoner one by six to one. A seller prices thirty lots in a show and
+// wins four; the buy sheet has always recorded those four and the app has thrown away the hammer
+// prices of the other twenty-six — which are the only direct measurement of the ROOM there is.
+//
+// Whether a ceiling can be bid to is not a fact about the item. It is a fact about the other people
+// watching the same stream, and no amount of eBay sold history will ever answer it. A show whose
+// lots clear at 60% of the app's ceilings is a show worth sitting through; one whose lots clear
+// above them is two hours of correct arithmetic and nothing bought, and until now this screen could
+// not tell the seller which one they were in.
+//
+// Like the win, this is NOT a new calculation: it is the same card, the same LiveBidAdvisor.Build,
+// the same held comps, asked again at the price it actually went for — so the ceiling written on
+// the row is the ceiling the seller was looking at. No eBay read, no clock beyond one timestamp.
+app.MapPost("/api/whatsnot/passed", (
+    LivePassRequest req, LiveBidAdvisor advisor, LiveBidBoard board, LiveBuySheet sheet,
+    LiveRoomBook roomBook, FeeProfile feeProfile, CredentialsStore store, LicenseService license,
+    ActionLog log) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var hammer = req.HammerPrice ?? 0m;
+    if (hammer <= 0m)
+    {
+        return BadInputJson("What did it go for?",
+            "A watched lot with no hammer price measures nothing — the whole read is that price " +
+            "against the ceiling this app gave.",
+            "Put what it sold for in the bid box and press Went for again.");
+    }
+
+    // The comps are required for the same reason a win needs them: the row's whole value is the
+    // ceiling beside the hammer price, and a ceiling recomputed later against different comps would
+    // not be the one the seller was shown.
+    var quote = board.Find(req.Token);
+    if (quote is null)
+    {
+        return BadInputJson("Those comps have been let go",
+            "The sold history behind this card is no longer held — a card is kept for " +
+            $"{LiveBidBoard.HoldFor.TotalMinutes:0} minutes, or until {LiveBidBoard.Capacity} newer ones replace it.",
+            "Press Price it to read eBay again, then record what it went for.");
+    }
+
+    // Same guard as the re-price and the win: a token records the lot it was issued for and no other.
+    var typedTitle = (req.Title ?? "").Trim();
+    if (typedTitle.Length > 0 && !string.Equals(typedTitle, quote.Item, StringComparison.OrdinalIgnoreCase))
+    {
+        return BadInputJson("That's a different item",
+            $"These comps were read for \"{quote.Item}\".",
+            "Press Price it to read eBay for what you've typed, then record what it went for.");
+    }
+
+    // A room is one host's audience. Without a name there is nothing to pool this with and nothing
+    // it could ever be read against, so it is refused rather than written into a bucket that can
+    // never be looked up.
+    if (LiveShipShare.NormalizeShow(req.ShowName).Length == 0)
+    {
+        return BadInputJson("Which show was that?",
+            "A room is one host's audience, and nothing is ever combined across shows — a clearing " +
+            "rate pooled from three different streams is a claim about a room that does not exist.",
+            "Put the show or the host's handle in the Show box, then press Went for.");
+    }
+
+    var now = DateTime.UtcNow;
+
+    // The same card the seller was looking at, at the price it went for. Tonight's budget is
+    // deliberately not carried — see LivePassRequest.AsBid: the ceiling on this row is what the room
+    // is measured against, and that has to stay the market's answer.
+    var passedCard = advisor.Build(
+        quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, now, quote.Own, quote.Search,
+        sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName));
+
+    var book = roomBook.Record(passedCard, now);
+
+    // And the room as it now stands, read against THIS lot's own ceiling — so the strip on the card
+    // updates to include the observation the seller has just made, without a re-price and without a
+    // second arithmetic in the browser.
+    var room = LiveRoom.Read(
+        req.ShowName,
+        LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName, now), sheet.WinsOnShow(req.ShowName, now)),
+        passedCard.Budget is { MarketCeiling: > 0m } m ? m.MarketCeiling : passedCard.MaxBid);
+
+    var justRecorded = book.Lots.Count > 0 ? book.Lots[0] : null;
+
+    log.Add("Research", "Live lot went to the room",
+        $"\"{quote.Item}\" hammered at {hammer:C} against a {passedCard.MaxBid:C} ceiling on " +
+        $"\"{req.ShowName}\"; room now {room.Watched} lot(s), {room.Rated} rated, " +
+        $"{room.ClearingPercent}% of ceiling — {room.Verdict}");
+
+    return Results.Ok(new { room, book, say = justRecorded?.Say ?? "" });
+});
+
+// The room book as it stands. Read when the tab opens, for the same reason the buy sheet is: a
+// restart mid-show must come back to what has already been watched.
+app.MapGet("/api/whatsnot/room", (LiveRoomBook roomBook, CredentialsStore store, LicenseService license) =>
+    TrialGuard(store, license) ?? Results.Ok(roomBook.Read()));
+
+// A mistyped hammer price, or a lot recorded twice. One row, by its own id.
+app.MapPost("/api/whatsnot/room/remove", (
+    LiveRoomRowRequest req, LiveRoomBook roomBook, CredentialsStore store, LicenseService license) =>
+    TrialGuard(store, license) ?? Results.Ok(roomBook.Remove(req.Id)));
+
+// Forgetting a room. Named, it clears one show and leaves the others standing — which is the case
+// that matters, since the reason to clear is nearly always that one host changed something.
+app.MapPost("/api/whatsnot/room/clear", (
+    LiveRoomRowRequest req, LiveRoomBook roomBook, CredentialsStore store, LicenseService license) =>
+    TrialGuard(store, license) ?? Results.Ok(roomBook.Clear(req.ShowName)));
 
 // ── WhatsNot: the won lot becomes a listing ───────────────────────────────────────────────────
 // The sheet says the night is worth $3,100. None of that arrives until the boxes are listed, and

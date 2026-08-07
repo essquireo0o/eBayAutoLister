@@ -66,15 +66,15 @@ public class WhatsNotShipAssetTests
     }
 
     /// <summary>
-    /// Every request the tab makes carries both. The fresh price, the re-price, the recorded win and
-    /// the lot list are the same question by design; one of them costing the freight differently
-    /// would put two answers about one box on one screen.
+    /// Every request the tab makes carries both. The fresh price, the re-price, the recorded win, the
+    /// recorded hammer price of a lot that got away and the lot list are the same question by design;
+    /// one of them costing the freight differently would put two answers about one box on one screen.
     /// </summary>
     [Fact]
     public void Every_request_the_tab_makes_carries_the_show_and_the_extra_rate()
     {
-        Assert.Equal(4, CountOf(Js, "additionalItemShipping: wnNumber('wn-ship-add')"));
-        Assert.Equal(4, CountOf(Js, "showName: wnShow()"));
+        Assert.Equal(5, CountOf(Js, "additionalItemShipping: wnNumber('wn-ship-add')"));
+        Assert.Equal(5, CountOf(Js, "showName: wnShow()"));
 
         // One reader for the box, so no caller can normalise it differently on the way out.
         Assert.Contains("function wnShow()", Js, StringComparison.Ordinal);
@@ -125,13 +125,13 @@ public class WhatsNotShipAssetTests
 
     // ── The endpoints ask which box is open ──────────────────────────────────────────────────
 
-    /// <summary>All three endpoints that build a card ask the sheet. A fresh price, a re-price and a
-    /// recorded win are the same card, and one of them costing a different freight would be two
-    /// answers about one parcel.</summary>
+    /// <summary>All four endpoints that build a card ask the sheet. A fresh price, a re-price, a
+    /// recorded win and a recorded hammer price are the same card, and one of them costing a
+    /// different freight would be two answers about one parcel.</summary>
     [Fact]
     public void Every_endpoint_that_builds_a_card_asks_which_box_is_open()
     {
-        Assert.Equal(3, CountOf(Program, "sheet.ShippingOnShow(req.ShowName)"));
+        Assert.Equal(4, CountOf(Program, "sheet.ShippingOnShow(req.ShowName)"));
         Assert.Contains("ship: freight", Program, StringComparison.Ordinal);
     }
 
@@ -352,8 +352,8 @@ public class WhatsNotShipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=140", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=123", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=141", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=124", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

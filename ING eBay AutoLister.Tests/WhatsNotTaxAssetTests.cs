@@ -56,7 +56,7 @@ public class WhatsNotTaxAssetTests
 
     /// <summary>
     /// Both reach every path a lot is costed on — the fresh price, the instant re-price, a recorded
-    /// win and the show's lot list. A win recorded without them would report a night as costing less
+    /// win, a recorded hammer price and the show's lot list. A win recorded without them would report a night as costing less
     /// than the seller's bank statement will.
     /// </summary>
     [Fact]
@@ -66,9 +66,9 @@ public class WhatsNotTaxAssetTests
             "salesTaxPercent: wnNumber('wn-tax'), taxExempt: $('wn-exempt')?.checked === true",
             Js, StringComparison.Ordinal);
 
-        // One helper, spread into all four payloads — a second assembly of the same two fields is
+        // One helper, spread into all five payloads — a second assembly of the same two fields is
         // how one of them ends up sending a rate the others do not.
-        Assert.Equal(4, Occurrences(Js, "...wnTaxFields(),"));
+        Assert.Equal(5, Occurrences(Js, "...wnTaxFields(),"));
     }
 
     /// <summary>
@@ -262,8 +262,8 @@ public class WhatsNotTaxAssetTests
         var none = Css[Css.IndexOf(".wn-tax-none {", StringComparison.Ordinal)..];
         Assert.Contains("var(--danger", none[..none.IndexOf('}')], StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=123", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=140", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=124", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=141", Html, StringComparison.Ordinal);
     }
 
     /// <summary>It folds on a narrow card, like every strip above it — this screen is used as a

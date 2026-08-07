@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=123" />
+  <link rel="stylesheet" href="style.css?v=124" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2993,6 +2993,38 @@
                 <strong>over the ceiling</strong> figure is the one worth reading tomorrow: it is
                 measured against the maximum this app gave you <em>before</em> the bidding, which is
                 the only moment that number is still honest. Clear it when the show ends.
+              </p>
+            </div>
+          </details>
+
+          <!-- ── The room ─────────────────────────────────────────────────────────────────
+               The buy sheet above records the four lots a night that were won. This records the
+               twenty-six that were watched and lost, and those are the only direct measurement
+               of the ROOM there is: whether a correct ceiling can actually be bid to is a fact
+               about the other people watching the same stream, and no quantity of eBay sold
+               history will ever answer it.
+               Nothing in here is a sold comp and nothing in here prices anything. A hammer price
+               at a live show is what one bidder paid one seller on one night; the only thing it
+               is ever compared against is this app's own ceiling for the same lot. -->
+          <details id="wn-room-book" class="wn-sheet wn-roombook">
+            <summary class="wn-sheet-summary">
+              🎪 The room — <span id="wn-room-head">nothing watched yet</span>
+            </summary>
+            <div class="wn-sheet-body">
+              <div id="wn-room-shows" class="wn-room-shows"></div>
+              <div id="wn-room-rows" class="wn-sheet-rows"></div>
+              <div class="wn-sheet-actions">
+                <button id="wn-room-clear" class="btn btn-ghost" type="button"
+                        title="Forget every room — the next lot watched starts a new book">Clear the room book</button>
+              </div>
+              <p class="opp-hint wn-sheet-hint">
+                When a lot goes to somebody else, put what it went for in the bid box and press
+                <strong>🔨 Went for</strong>. After three rated lots the card's <strong>Room</strong>
+                strip says what this show clears at as a share of the ceilings this app gave — and
+                where the lot on screen is likely to land. A room clearing well under your ceilings
+                is a room worth sitting through; a room clearing above them is two hours of correct
+                arithmetic and nothing bought. Lots won here are counted too, on equal terms: a rate
+                built only from the ones you lost would report every room as hotter than it is.
               </p>
             </div>
           </details>
@@ -6038,6 +6070,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=140"></script>
+  <script src="app.js?v=141"></script>
 </body>
 </html>

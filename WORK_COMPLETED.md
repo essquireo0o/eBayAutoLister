@@ -13543,3 +13543,197 @@ effectively zero.
   different system colours and a real high-contrast desktop has not looked at this screen.
 - **Nothing here has seen a real live show.** As with every WhatsNot session: the sequences are real
   sequences run against the real app, but no lot in them was ever on a block.
+
+---
+
+# The ceiling was right. The room paid $310 for it anyway (autonomous session, 2026-08-07)
+
+**Branch** `auto/queue-features-20260726` · the WhatsNot live-arbitrage card gains its first read
+about **the other bidders**.
+
+## The question this answers
+
+Nineteen sessions of this card have sharpened one number: the highest bid worth making. What these
+fetch lately, what they fetch in this condition, what they fetch when yours reaches the front of the
+queue, what the platform bills on top, whether eBay will take the listing at all, how much of the
+sold history would actually have covered the win.
+
+Every one of them assumed that a bid worth making is a bid that **can be made**.
+
+On a live show it frequently is not. The card says `BID UP TO $240`, the seller sits through four
+minutes of bidding, and the lot goes for $310 to somebody who is not doing arithmetic. Repeat that
+for two hours and the night's return on the seller's time is zero — with a screen full of perfectly
+correct ceilings to show for it. Nothing on this screen could say so, because whether a ceiling is
+reachable is not a fact about the object and no quantity of eBay sold history will ever contain it.
+
+The opposite failure is quieter and costs more. A room that has been clearing at **60%** of the
+app's ceilings is a room where the seller has been bidding to a number they never needed to reach —
+margin given away on every win, on evidence that was sitting in front of them all night.
+
+So, under the odds strip:
+
+> **ROOM** **This room clears at 57% of your ceilings** `57% OF CEILING`  4 watched · 1 won
+> `LANDS AROUND $76.59` · `YOUR CEILING $135.56` · `DAYLIGHT $58.97`
+> 4 lots watched here — 1 you won, 3 to the room. The middle one went for 57% of what the app said
+> to stop at. None of them hammered above it. On that record this one lands around $76.59, $58.97
+> under your $135.56 ceiling. There is daylight here — the ceiling above is what the lot is worth,
+> not what it takes to win it.
+
+## The evidence was being thrown away every night
+
+A seller prices thirty lots in a show and wins four. The buy sheet has recorded those four since the
+session that built it. The hammer prices of the **other twenty-six** — every one of them a lot this
+app priced, gave a ceiling for, and watched sell in front of the seller — have been discarded by
+every version of this screen.
+
+They are the only direct measurement of the room there is. So `🔨 Went for` sits beside `🔨 Won it`
+on the card: same bid box, same held comps, one press. `/api/whatsnot/passed` rebuilds the **same
+card** through the same `LiveBidAdvisor.Build` at the price it went for and writes the row, exactly
+as a win does — so the ceiling recorded beside the hammer price is the ceiling the seller was
+actually looking at, not one recomputed a week later against comps that have moved.
+
+## The lots that were won are counted too, and that is not a detail
+
+A seller wins the lots that go cheap. A clearing rate built only from the lots that got away is a
+rate computed off the **top tail of its own distribution**, and it would report every room as hotter
+than it is — on the one screen where "too hot" means "go and do something else with your evening".
+
+So `LiveBuySheet.WinsOnShow` hands the wins back on equal terms and `LiveRoom.Tonight` pools the two
+books. A test builds the same night twice: three losses at 110–130% of the ceiling reads `hot`; put
+the four cheap lots the seller actually won back in and the same night reads `cheap`. Only the label
+on the strip distinguishes them — *"4 you won, 3 to the room"*.
+
+## It measures, and it charges nothing
+
+No ceiling, no resale price, no median, no spread, no break-even, no sell-through and no call moves
+for anything found here. A test builds the identical card with and without a hot room and asserts
+**ten figures are identical**, including the badge and its label.
+
+That is not caution, it is the honest shape of the fact. A room that outbids a correct ceiling has
+not made the object worth less — the ceiling is exactly right and the lot is simply not purchasable
+at it, which is a different thing and is owed a different sentence rather than a quieter number. The
+same discipline `LiveStockDepth` and `LiveOdds` were built with, for the same reason: a haircut for
+something nobody measured in dollars is a haircut that makes the ceiling uncheckable against the
+comps printed under it.
+
+## Five states, and what each of them refuses
+
+| State | When | What it does |
+|---|---|---|
+| `cheap` | the middle lot cleared at **≤85%** of the ceiling | says where this one lands, and interrupts nothing |
+| `tight` | between there and **102%** | says so; the ordinary shape of a live auction, so no warning |
+| `hot` | the middle lot cleared **above** the ceiling | one warning, one clause spoken, no price moves |
+| `thin` | fewer than **3** rated lots | reports the count, refuses the rate, draws no bar |
+| `unread` | no show named, or nothing recorded | says which of the two, and what the button is for |
+
+The rate is a **median of the per-lot ratios**, never the ratio of two medians: one $1,800 lot among
+four $20 ones would otherwise decide a whole room off one bidder's evening. A test pins exactly that
+case — the room still reads 50%, and the lot that went over is still counted and still reported.
+
+Below three rated lots the **count is still shown** and the percentage is not. Two lots are an
+anecdote about two bidders and one of them moves the median forty points; *"both lots here went over
+your ceiling"* is a true sentence, and *"this room clears at 145%"* off two rows is not.
+
+## Nothing is ever pooled across shows
+
+A room is one host's audience. An unnamed show matches nothing at all — in both books — and
+`/api/whatsnot/passed` **refuses** a hammer price with no show on it rather than writing it into a
+bucket nothing can look up. A stream typed `@BitMiner_Bill` and `bitminer_bill` is one room, by
+`LiveShipShare.NormalizeShow` — the same rule the combined-shipping read already matches shows by, so
+a won lot and a watched lot from the same stream land together.
+
+And a hammer price stops describing tonight's room after **14 days**, off one constant both books
+read. A host draws a different crowd on a Saturday than on a Tuesday, and a rate built out of a month
+of history is a confident claim about a room that has turned over. Old rows stay on disk — nothing
+here deletes what the seller wrote down — and stop being counted.
+
+## The market's ceiling on both sides
+
+`PassedLot.CeilingAtPass` is the **market's** ceiling, never the wallet's: `LivePassRequest.AsBid`
+deliberately drops `NightBudget`, exactly as `LiveWinRequest.AsBid` does and for the same reason.
+A lot that hammered at twice the app's number on a night the seller's cash had run out says nothing
+whatever about the room. The read compares against the same kind of number — `Budget.MarketCeiling`,
+not `MaxBid` — and a test proves a seller with $40 left is not reported as standing in a hotter room
+than they were an hour ago.
+
+## What it refuses to claim
+
+**That a hammer price is worth anything.** It is what one bidder paid one seller in one room on one
+night, frequently with a countdown running and no comparison shopping. Nothing in either file
+mentions a comparable, an analysis or the pricing pipeline, and a test asserts it — an app that
+priced items off auctions it had watched would be quoting itself.
+
+**That the expected landing price is a price.** It is this room's own clearing rate applied to this
+card's ceiling. Nothing bids to it, no ceiling is built from it, and it is absent entirely on a card
+with no ceiling for it to be a share of.
+
+**That a hot room is a bad lot.** The badge stays `BID UP TO`, the strip gets the **warn** edge and
+never the danger one, and the warning's own last sentence is *"Nothing is wrong with this lot or its
+price; you are in a room that outbids it."* A seller who learns to read this as "bad item" walks past
+the next good one.
+
+**That three lots is a lot of evidence.** It is the bar below which the rate is withheld, not a bar
+above which it is trustworthy.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+It costs **no lookup and no clock**: two cached list reads, so a held-comps re-price re-answers it in
+the microseconds a climbing bid leaves — and recording a hammer price replaces the strip in place
+rather than re-rendering the card, so the seller keeps the tables they had open and pays for no eBay
+read they did not ask for.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveRoom.cs` | New — the pooling, the median-of-ratios rate, the five states and every sentence |
+| `ING eBay AutoLister/Services/LiveRoomBook.cs` | New — the store for lots that got away, the per-show lines, the 14-day cut |
+| `ING eBay AutoLister/Models/LiveRoomModels.cs` | New — `LivePassRequest`, `PassedLot`, `LiveRoomLot`, `LiveRoomTonight`, `LiveRoomRead`, `RoomBook`, `RoomShow`, `LiveRoomVerdicts` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.Room` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The `room` parameter, the read on both paths against the market ceiling, and the one warning |
+| `ING eBay AutoLister/Services/LiveBuySheet.cs` | `WinsOnShow` — the wins, as room outcomes |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhatThisRoomPays` — two states, said after where the bidding stands |
+| `ING eBay AutoLister/Program.cs` | `LiveRoomBook` registered; the room read on `/bid` and `/rebid`; `/api/whatsnot/passed`, `/room`, `/room/remove`, `/room/clear` |
+| `ING eBay AutoLister/wwwroot/index.html` | The room-book panel; `app.js?v=141`, `style.css?v=124` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnRoomStrip`, the `🔨 Went for` button, `wnRecordPass`, the panel and its removals |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-room-*` — four edges, the capped bar with the ceiling mark, the panel; folded at 620px; added to the reduced-motion and forced-colours blocks |
+| `ING eBay AutoLister.Tests/LiveRoomTests.cs` | New — 16 tests on the rate, the bars and what it refuses |
+| `ING eBay AutoLister.Tests/LiveRoomBookTests.cs` | New — 15 tests on the row, the rooms, the window and the wins |
+| `ING eBay AutoLister.Tests/WhatsNotRoomAssetTests.cs` | New — 21 tests holding the eight links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 7 new tests on what a real card does with it, including that a hot card is figure-for-figure the quiet one |
+| `WhatsNotShipAssetTests.cs`, `WhatsNotTaxAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotBudgetAssetTests.cs`, `WhatsNotSteadyAssetTests.cs` and five more | Re-pinned counts and asset versions — `/passed` is a fourth card-building endpoint and a third animated bar |
+| `whatsnot_room_cheap.png`, `whatsnot_room_hot.png`, `whatsnot_room_thin.png`, `whatsnot_room_book.png`, `whatsnot_room_narrow.png` | The room worth staying in, the room that outbids you, the room too thin to call, the book, and the strip at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,684 passed**, 0 failed, 0 skipped (59 new) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid`, `/rebid`, `/passed` and `/room` answered with JSON **serialised out of the real `LiveBidAdvisor` and `LiveRoomBook`** rather than hand-written, and every card reached by typing into the tab's own form and pressing Price it) | **37 checks, all passed.** On the cheap room: a success-edged strip reading `This room clears at 57% of your ceilings`, a `57% of ceiling` tag, `4 watched · 1 won`, a 57%-wide bar, three cells reading `LANDS AROUND $76.59` / `YOUR CEILING $135.56` / `DAYLIGHT $58.97`, the strip **directly after `.wn-odds` in the card's own child order**, nothing on the warning list, and a spoken line ending `— expect it around $77.` Pressing **🔨 Went for** moved the headline from 57% to 58% **without a re-price**, filled the panel with two rows whose accessible names are the server's own sentences, and marked the one that hammered above its ceiling. On the hot room: the warn edge, the warning on the list **exactly once** including "Nothing is wrong with this lot", a `SHORT BY $39.31` cell, a bar capped at 100%, and the badge still **BID UP TO $135**. On the thin room: **no tag, no bar**, the count still stated, and no double space in the note. On the unread card: the block still there, saying what the button is for. On the card nothing priced: the badge still `CAN'T PRICE IT`, the room still read, and **no cells** — nothing projected off a ceiling that does not exist. At 560px the strip overflowed the card by **0px** and its line overflowed the strip by **0px**. 0 JS errors (the cross-origin refusal from the live feed itself, which the tab's own embed check exists to report, is excluded). |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every rate is measured against hammer prices built in
+  tests and cards serialised out of the real advisor. No lot in any of it was ever on a block.
+- **It only knows what the seller writes down.** A room is measured out of presses, and a seller who
+  records the three lots they lost badly and none of the twenty that went cheap will be shown a hot
+  room that is not there. Nothing in the app can detect that — the strip names the count and the
+  split so the sample is at least visible, and one bad row can be taken out of the panel, but a
+  biased sample looks exactly like a real one.
+- **A show is one string.** Two hosts who both type "The Vault" are one room here, and a host who
+  renames their show starts a new one. `NormalizeShow` is a text rule, not an identity.
+- **Fourteen days is a stated assumption, not a measured half-life.** Nobody has measured how fast a
+  live show's audience turns over. It is a constant with its own name and a doc comment saying so.
+- **The rate compares against ceilings that themselves moved.** A lot priced last Tuesday was given a
+  ceiling off last Tuesday's comps, and the trend, condition and shelf-time cuts inside it were that
+  night's. Pooling those ratios assumes the app's own ceilings are a stable yardstick, which they are
+  only approximately.
+- **It says nothing about WHY a room is hot.** A show full of collectors bidding sentimentally, a
+  show with a shill in it and a show whose lots are genuinely underpriced by this app all produce the
+  same number. The read reports what was paid and refuses to explain it.

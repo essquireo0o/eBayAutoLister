@@ -18163,6 +18163,218 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── The room ─────────────────────────────────────────────────────────────────
+   Directly under the odds, because the two are the "will this actually work"
+   pair and they fail in opposite directions: the odds say the item may not fetch
+   what the middle says, and this says the item may never be bought at all.
+
+   It is the only strip on the card that is about the other bidders rather than
+   about the object, and the colour follows the money rather than the mood: a
+   room clearing under the ceilings is the good edge, a room clearing above them
+   is the warn edge — never the danger one, because nothing is wrong with the lot
+   or its price, and a seller who learns to read this as "bad item" has learned
+   the wrong thing. */
+.wn-room {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* Daylight between the hammer and the ceiling. The one state on this strip that
+   is a reason to stay in the show. */
+.wn-room-cheap {
+  border-left: 3px solid var(--success, #5ac882);
+}
+/* Clearing right at the ceiling — the ordinary shape of a live auction, and
+   deliberately not warned about. */
+.wn-room-tight {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+/* The room outbids the arithmetic. The warn edge and not the danger one: the
+   card is right, the price is right, and the thing being spent is the evening. */
+.wn-room-hot {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Some lots watched, too few to be a rate. The count is still true; what is
+   withheld is the claim, so the edge is the quiet one. */
+.wn-room-thin,
+.wn-room-unread {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-room-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-room-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-room-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-room-cheap .wn-room-headline {
+  color: var(--success, #5ac882);
+}
+.wn-room-hot .wn-room-headline {
+  color: var(--warn, #e0b44a);
+}
+/* The rate, as a number. Absent below three rated lots rather than computed off
+   two — the strip says the count there and refuses the share. */
+.wn-room-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel, rgba(255, 255, 255, .06));
+  color: var(--text-dim, #8b93a7);
+  font-variant-numeric: tabular-nums;
+}
+.wn-room-cheap .wn-room-tag {
+  background: rgba(90, 200, 130, .16);
+  color: var(--success, #5ac882);
+}
+.wn-room-hot .wn-room-tag {
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+.wn-room-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The rate as one width, with the ceiling marked at the far end. A fill that
+   reaches the edge is a room buying at everything the lot is worth; past that
+   the fill is capped, because a bar drawn to 140% needs a scale and this is the
+   part read in the half-second a climbing bid leaves. */
+.wn-room-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel, rgba(255, 255, 255, .06));
+}
+.wn-room-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #6ea8fe);
+  transition: width .18s ease-out;
+}
+.wn-room-cheap .wn-room-bar-fill {
+  background: var(--success, #5ac882);
+}
+.wn-room-hot .wn-room-bar-fill {
+  background: var(--warn, #e0b44a);
+}
+/* Where the ceiling is on that track. Always at the right-hand end, because the
+   bar is a share OF the ceiling — the mark is what makes a full bar mean
+   something rather than just look finished. */
+.wn-room-bar-edge {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  right: 0;
+  width: 2px;
+  background: var(--text-dim, #8b93a7);
+}
+.wn-room-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-room-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-room-cell-this {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(110, 168, 254, .1);
+}
+.wn-room-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-room-cell-this .wn-room-cell-name {
+  color: var(--accent, #6ea8fe);
+}
+.wn-room-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-room-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
+/* The second button under the card. Quieter than Won it on purpose — it records
+   an observation rather than a spend — but the same size, because a button that
+   is fiddly to hit mid-show is a button whose data never gets collected. */
+.wn-passed-btn {
+  font-size: 13px;
+}
+
+/* ── The room book ────────────────────────────────────────────────────────────
+   The panel under the buy sheet: one line per room, then every lot watched to
+   the hammer. It borrows the sheet's own layout wholesale, because it is the
+   same kind of object — a list of rows with a figure and a remove — and two
+   panels on one screen that look different for no reason cost a glance each. */
+.wn-room-shows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.wn-room-show {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 12.5px;
+}
+.wn-room-show-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wn-room-show-say {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-room-show-count {
+  font-size: 11.5px;
+  color: var(--text-dim, #8b93a7);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Whether eBay will take the listing at all ────────────────────────────────
    First on the card, directly under the badge, because every number below it is
    the price of an eBay listing and none of them is a price of anything if the
@@ -18951,6 +19163,14 @@ p.wn-units-refused {
     flex-direction: column;
     gap: 1px;
   }
+  /* And on the room strip, where "ROOM" and "This room clears at 62% of your
+     ceilings" want the same line and only one of them is the sentence. The bar
+     keeps its full width — it is the part read at a glance — and the three cells
+     below wrap on their own. */
+  .wn-room-line {
+    flex-direction: column;
+    gap: 1px;
+  }
   /* And on the eBay-policy strip, where "EBAY" and "eBay won't let you list this
      — replicas and counterfeits" want the same line and only one of them is the
      sentence. The tag and the matched words wrap under it on their own. */
@@ -19091,6 +19311,9 @@ p.wn-units-refused {
   .wn-meter-bid,
   .wn-budget-bar,
   .wn-budget-bar-spent,
+  .wn-room-bar,
+  .wn-room-bar-fill,
+  .wn-room-bar-edge,
   .wn-odds-bar,
   .wn-odds-bar-covered {
     forced-color-adjust: none;
@@ -19099,6 +19322,7 @@ p.wn-units-refused {
      overflow:hidden track would change the width, and the width is the number. */
   .wn-meter-track,
   .wn-budget-bar,
+  .wn-room-bar,
   .wn-odds-bar {
     border: 1px solid CanvasText;
   }
@@ -19130,13 +19354,15 @@ p.wn-units-refused {
   }
 }
 
-/* Two widths animate on this screen, and both of them animate BECAUSE the number
-   moved: how much of tonight's budget has gone, and how many past sales still
-   cover the bid. During a live sale that is a bar sliding every few seconds in the
-   corner of the eye of somebody who asked the system not to do that. */
+/* Three widths animate on this screen, and every one of them animates BECAUSE the
+   number moved: how much of tonight's budget has gone, how many past sales still
+   cover the bid, and what this room has been clearing at. During a live sale that
+   is a bar sliding every few seconds in the corner of the eye of somebody who
+   asked the system not to do that. */
 @media (prefers-reduced-motion: reduce) {
   .wn-budget-bar-spent,
-  .wn-odds-bar-covered {
+  .wn-odds-bar-covered,
+  .wn-room-bar-fill {
     transition: none;
   }
 }
