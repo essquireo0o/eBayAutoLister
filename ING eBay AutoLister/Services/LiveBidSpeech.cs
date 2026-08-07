@@ -46,14 +46,60 @@ public static class LiveBidSpeech
         // Nothing was priced. The line stops at that, because every other clause below would be a
         // number this card does not have — and a spoken "$0 of room" on an item with no sold history
         // is the one failure this screen exists to avoid.
-        if (card.Call == LiveBidCalls.NoData)
-            return Join(Headline(card), HowMany(card), "No eBay sold history to bid against.",
-                YourOwnRecord(card), HowManyYoudHave(card));
+        // eBay will not take the listing, so it stops at the refusal — for exactly the reason the
+        // no-data line below stops at "no sold history to bid against". Every clause after this one
+        // is about a ceiling, a room figure or a resale price, and on this lot all three are prices
+        // of the ALLOWED article. Spoken under a countdown, "$104 of room" is the last thing heard
+        // and it is permission-shaped. The card underneath still carries every one of those figures,
+        // where they can be read next to the sentence that says what they are.
+        if (card.Gate is { Stops: true })
+            return Join(Headline(card), HowMany(card), WhetherEbayTakesIt(card));
 
-        return Join(Headline(card), HowMany(card), WhoseCeilingThatIs(card), WhichWayItsGoing(card),
+        if (card.Call == LiveBidCalls.NoData)
+            return Join(Headline(card), HowMany(card), WhetherEbayTakesIt(card),
+                "No eBay sold history to bid against.", YourOwnRecord(card), HowManyYoudHave(card));
+
+        return Join(Headline(card), HowMany(card), WhetherEbayTakesIt(card),
+            WhoseCeilingThatIs(card), WhichWayItsGoing(card),
             WhatKindOfOne(card), WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
             WhatItResellsFor(card), HowOftenItPays(card), YourOwnRecord(card),
             HowManyYoudHave(card), WhatTheWaitCosts(card));
+    }
+
+    /// <summary>
+    /// Whether eBay will take the listing at all, said third — after the badge and the unit count
+    /// that badge is a price of, and before every other figure whose meaning depends on the answer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two states speak. The first is a refusal, and it is the only clause in this whole line that
+    /// is not about a price: the badge has just said <c>CAN'T LIST IT</c> and a listener who does not
+    /// hear why in the next breath will assume the app has misread the item — which, on a lot that
+    /// prices like a spectacular flip against genuine comps, is exactly the reasoning that ends in
+    /// the purchase. So it names the rule.
+    /// </para>
+    /// <para>
+    /// The second is the authentication leg, and it speaks only when the card's own resale price is
+    /// actually over eBay's bar. A seller hearing <c>BID UP TO $310</c> on a bag is hearing a true
+    /// ceiling for a sale that eBay will hold, inspect and can refund — and the days that adds are
+    /// nowhere else in this line. It states no dollar figure: the ceiling and the resale price are
+    /// already here, and a third number would be one the listener has to do arithmetic on.
+    /// </para>
+    /// <para>
+    /// Silent on the restricted state, which is a condition only the seller can check and is on the
+    /// card's warning list where a thing to go and check belongs. Silent on the same category priced
+    /// under its bar, and silent on every clear lot, which is nearly all of them.
+    /// </para>
+    /// </remarks>
+    private static string WhetherEbayTakesIt(LiveBidCard card)
+    {
+        if (card.Gate is not { } gate) return "";
+
+        if (gate.Stops) return $"{gate.RuleName} can't be listed on eBay.";
+
+        return gate is { Verdict: LiveGateVerdicts.Authenticated, OverThreshold: true }
+            ? $"It goes through eBay's authenticator first — about {gate.ExtraDaysToCash} more days to cash."
+            : "";
     }
 
     /// <summary>

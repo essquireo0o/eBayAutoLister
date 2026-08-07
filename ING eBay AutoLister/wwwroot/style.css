@@ -18163,6 +18163,113 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── Whether eBay will take the listing at all ────────────────────────────────
+   First on the card, directly under the badge, because every number below it is
+   the price of an eBay listing and none of them is a price of anything if the
+   listing is not allowed to exist.
+
+   Four edges for four answers, and only one of them is loud. The blocked one is
+   the single place on this whole screen that gets the danger colour on the strip
+   AND in the headline: it is not "this is a poor deal", it is "the thing you are
+   about to buy cannot be sold where every figure here was priced". */
+.wn-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* eBay refuses it. The only stop on this card that is not about a price. */
+.wn-gate-blocked {
+  border-left: 3px solid var(--danger, #b93a34);
+  background: var(--danger-soft, rgba(224, 121, 106, .1));
+}
+/* eBay allows it on a condition only the seller can check. */
+.wn-gate-restricted {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Allowed, and it goes to eBay's authenticator first — later money and a fake is
+   a refund. A real cost, and not a refusal, so it gets the neutral attention
+   colour rather than the warning one. */
+.wn-gate-authenticated {
+  border-left: 3px solid var(--accent, #6ea8fe);
+}
+/* Nothing matched. Present and quiet, because a block that only appeared when
+   something was wrong would be a block whose silence meant both "eBay is fine
+   with this" and "nothing ever looked". */
+.wn-gate-clear {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-gate-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-gate-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-gate-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wn-gate-blocked .wn-gate-headline {
+  color: var(--danger, #b93a34);
+}
+.wn-gate-restricted .wn-gate-headline {
+  color: var(--warn, #e0b44a);
+}
+.wn-gate-authenticated .wn-gate-headline {
+  color: var(--accent, #6ea8fe);
+}
+/* The state in two or three words, for the glance. Absent on a clear lot — there
+   is nothing to flag, and a badge reading "OK" on every ordinary card is how a
+   seller learns to stop reading this strip. */
+.wn-gate-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel, rgba(255, 255, 255, .06));
+  color: var(--text-dim, #8b93a7);
+  white-space: nowrap;
+}
+.wn-gate-blocked .wn-gate-tag {
+  background: var(--danger, #b93a34);
+  color: #fff;
+}
+.wn-gate-restricted .wn-gate-tag {
+  background: rgba(224, 180, 74, .16);
+  color: var(--warn, #e0b44a);
+}
+.wn-gate-authenticated .wn-gate-tag {
+  background: rgba(110, 168, 254, .16);
+  color: var(--accent, #6ea8fe);
+}
+/* The words in the lot's own name that fired the rule. The seller has to be able
+   to see WHY in a glance, because a wrong match is fixed by retyping the name —
+   which is the whole reason this is shown rather than just the verdict. */
+.wn-gate-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-gate-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+
 /* Where the answer came from. Quiet on a fresh card, and it has to stay quiet —
    it is a note about the evidence, not a warning about the number. */
 .wn-held {
@@ -18841,6 +18948,13 @@ p.wn-units-refused {
      its full width — it is the part read at a glance — and the three cells below
      wrap on their own. */
   .wn-odds-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* And on the eBay-policy strip, where "EBAY" and "eBay won't let you list this
+     — replicas and counterfeits" want the same line and only one of them is the
+     sentence. The tag and the matched words wrap under it on their own. */
+  .wn-gate-line {
     flex-direction: column;
     gap: 1px;
   }

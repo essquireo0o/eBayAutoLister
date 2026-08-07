@@ -267,8 +267,8 @@ public class WhatsNotNextBidAssetTests
         foreach (var verdict in new[] { "press", "last", "stop", "over" })
             Assert.Contains($".wn-next-{verdict}", Css, StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=122", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=139", Html, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -3134,6 +3134,14 @@ app.MapPost("/api/whatsnot/bid", async (
                                  $"at a {card.Odds.AtBid:C}{(card.Odds.AtCeiling ? " ceiling" : "")} win " +
                                  $"({card.Odds.LowSale:C}-{card.Odds.HighSale:C}" +
                                  $"{(card.Odds.Repriced ? $", cut {card.Odds.CutPercent}%" : "")})" : "")}; " +
+        // And whether eBay would take the listing all of the above is a price of. This is where the
+        // first real "the app said CAN'T LIST IT on a $400 bag because the word replica was in the
+        // name" shows up, in the seller's own log, with the rule and the matched words beside it —
+        // so a rule that has drifted out of date can be found and corrected rather than argued with.
+        $"gate {card.Gate.Verdict}" +
+        $"{(card.Gate.RuleName.Length > 0 ? $" — {card.Gate.RuleName} (\"{card.Gate.Matched}\")" : "")}" +
+        $"{(card.Gate.ThresholdPrice > 0m ? $", bar {card.Gate.ThresholdPrice:C0} vs {card.Gate.PricedAt:C}/unit" +
+                                            $"{(card.Gate.OverThreshold ? $", +{card.Gate.ExtraDaysToCash}d to cash" : "")}" : "")}; " +
         $"{sw.ElapsedMilliseconds}ms");
 
     return Results.Ok(card);

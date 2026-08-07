@@ -51,6 +51,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// hard cut — the comps still price the item — but the card says so out loud.</summary>
     public const int StaleCompDays = 120;
 
+    /// <summary>
+    /// The badge on a lot eBay will not let the seller list. Deliberately not "DON'T BID": that one
+    /// is a judgement about a price, and this is not — the lot may well be worth every cent the
+    /// ladder under it says, to somebody who can sell it somewhere this app does not price.
+    /// </summary>
+    public const string CantListLabel = "CAN'T LIST IT";
+
     public static decimal SanitizeTargetRoi(decimal? raw) =>
         raw is not decimal value || value <= 0m ? DefaultTargetRoiPercent : Math.Min(value, MaxTargetRoiPercent);
 
@@ -211,6 +218,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // the bidder in completely different directions, and both are actionable in seconds.
         if (resale is null || !resale.HasPrice)
         {
+            // Whether eBay would take the listing at all — the one question on this card that does
+            // not need a comp to answer, and the one it is most worth answering here. A replica bag
+            // that nothing priced is still a replica bag, and "no sold history matched" is exactly
+            // the sentence a seller reads as "the app has no opinion, use your own".
+            card.Gate = LiveResaleGate.Read(item, null);
+            if (card.Gate.Warning.Length > 0) card.Warnings.Add(card.Gate.Warning);
+
             card.Call = LiveBidCalls.NoData;
             card.CallLabel = "CAN'T PRICE IT";
             // The evidence note is the better sentence whenever there IS evidence to describe —
@@ -224,6 +238,18 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                 // press, and a seller told "no sold history" cannot do anything at all.
                 ? $"No eBay sold history matched “{terms.Query}”, so there is no resale price to bid against."
                 : card.EvidenceNote;
+
+            // Except when eBay would refuse the listing, which is a stronger and more useful answer
+            // than "nothing priced it". The seller is owed the reason they cannot sell it far more
+            // than they are owed the news that the comps came back empty — and on a lot nothing
+            // priced, an absent ceiling reads as a gap in the app rather than as a refusal.
+            if (card.Gate.Stops)
+            {
+                card.Call = LiveBidCalls.Stop;
+                card.CallLabel = CantListLabel;
+                card.Reason = card.Gate.Reason;
+            }
+
             // Attached even here — especially here. A card the market could not price is exactly
             // the card on which "you have sold four of these yourself" is the only evidence there
             // is, and the seller's own ceiling becomes the only one on screen.
@@ -244,7 +270,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // ceiling of zero, so it reports the money and changes nothing — but a seller who has
             // spent tonight's budget should not have to price an unpriceable lot to find that out.
             card.Budget = LiveBudget.Read(request.NightBudget, cash, 0m, feePercent, shipping, taxPercent);
-            card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
+            card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid, card.Gate.Stops);
             card.Say = LiveBidSpeech.Say(card);
             return card;
         }
@@ -293,6 +319,15 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.ResalePrice = perUnitResale is decimal each ? Math.Round(each * count, 2) : null;
         card.MedianPrice = bidAgainst.Median;
         card.QuickSalePrice = bidAgainst.QuickSale;
+
+        // And whether eBay will take the listing that price is a price OF. Read here, as soon as
+        // there is a per-unit resale figure for it to check the authentication thresholds against,
+        // and before the call — this is the only read on the card that can overrule the badge, and
+        // it does not do it by shading a number. Everything above stays exactly as it is: what the
+        // genuine, allowed article fetches is still true and is exactly what made the lot tempting.
+        // See LiveResaleGate for the catalogue, and for why a rule that fires wrongly is the cheap
+        // failure and a rule that stays quiet is the expensive one.
+        card.Gate = LiveResaleGate.Read(item, perUnitResale);
 
         // The money. Every figure below is one subtraction away from this: net profit falls exactly
         // one dollar for every dollar of landed cost, which is what makes the ceiling arithmetic
@@ -437,7 +472,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // fourth one still resells for what the comps say — it just sells in April. Both figures it
         // measures the pile against are the card's own, already computed above.
         ApplyStock(card, own, tonight, bidAgainst.EstimatedMonthlySales, card.DaysToSell, card.ActiveCompCount);
-        card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
+        card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid, card.Gate.Stops);
         // Last, because it restates what everything above decided. Both exits set it, so no card
         // this method returns can reach a screen without the line that screen reads out loud.
         card.Say = LiveBidSpeech.Say(card);
@@ -553,8 +588,20 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// a second opinion about money that nothing tests.
     /// </para>
     /// </remarks>
-    public static decimal RankLot(string? call, decimal profitAtMaxBid) =>
-        Tier(call) * LotRankTierStep + Math.Clamp(profitAtMaxBid, 0m, LotRankTierStep - 1m);
+    /// <param name="blocked">
+    /// True when eBay will not let the lot be listed at all. Ranked below even a lot nothing could
+    /// price, which is the one place it belongs: an unpriceable lot might be a bargain the comps
+    /// missed, and this one is certainly not worth being in the room for. It is the only input to
+    /// this ordering that is not the call, and it is here because a blocked lot's call is
+    /// <see cref="LiveBidCalls.Stop"/> — which would otherwise sort it above every unpriced lot in
+    /// the show, and by its own healthy profit figure at that.
+    /// </param>
+    public static decimal RankLot(string? call, decimal profitAtMaxBid, bool blocked = false) =>
+        (blocked ? BlockedTier : Tier(call)) * LotRankTierStep
+        + (blocked ? 0m : Math.Clamp(profitAtMaxBid, 0m, LotRankTierStep - 1m));
+
+    /// <summary>Below every call there is. See <see cref="RankLot"/>.</summary>
+    private const int BlockedTier = -1;
 
     private static int Tier(string? call) => call switch
     {
@@ -656,6 +703,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// </summary>
     public static (string Call, string Label, string Reason) Judge(LiveBidCard card)
     {
+        // Before every reason a ceiling cannot be trusted: whether there is anything for a ceiling
+        // to be a ceiling ON. Each figure this method weighs is the price of an eBay listing, and a
+        // lot eBay refuses to list has no such price at any bid — so this is the one thing on the
+        // card that is not a haircut on the ceiling but a correction of what the ceiling means.
+        // See LiveResaleGate.
+        if (card.Gate is { Stops: true } gate) return (LiveBidCalls.Stop, CantListLabel, gate.Reason);
+
         if (card.BreakEvenBid <= 0m || card.MaxBid <= 0m)
         {
             // Out of cash is said only about a lot the market itself was willing to price. If the
@@ -740,6 +794,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     public static List<string> Warnings(LiveBidCard card, ResalePricing resale)
     {
         var warnings = new List<string>();
+
+        // First of all, and before the NoData exit below, because it is the only line here that can
+        // be true of a card nothing priced: whether eBay will take the listing every figure under it
+        // is a price of. Three of the five states speak — refused outright, allowed on a condition
+        // only the seller can check, and routed through eBay's authenticator. LiveResaleGate owns
+        // every sentence, so the strip and the warning list cannot describe one policy two ways.
+        if (card.Gate is { Warning.Length: > 0 } gate) warnings.Add(gate.Warning);
 
         if (card.Call == LiveBidCalls.NoData) return warnings;
 

@@ -13186,3 +13186,206 @@ re-counts them in the milliseconds a climbing bid leaves.
 - **It is silent on the two states a seller might most want a number for.** A `thin` count states no
   rate and an `even` count states no warning, both on purpose — but a seller who wanted "60%" said
   out loud on a coin flip has to read the strip rather than hear it.
+
+---
+
+# Whether eBay will let you sell it at all, before the ceiling says bid (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Eighteen sessions of the live card have answered **what is the thing on screen worth**, and every
+one of them has answered it in the same unit: *the price of an eBay listing*. The resale figure is
+what one fetched on eBay. The sell-through is the share of eBay listings that sold. The break-even
+is after eBay's cut. The ceiling is the bid that keeps all of that clearing a target return, after
+the premium, the tax, the freight, the trend, the condition, the shelf time, the night's cash and
+the odds.
+
+Not one of them has asked whether that listing is **allowed to exist**.
+
+On a live-selling feed that is not a theoretical gap. Replica handbags, loose ammunition, swatched
+makeup, vape kits and sealed bottles of bourbon cross those screens nightly, and every one of them
+prices like a spectacular flip — because the comps behind them are sales of the genuine, allowed
+article. A `BID UP TO $194` on a bag whose listing eBay deletes is not a slightly wrong number. It
+is the whole card pointed at a total loss, on a purchase with no undo, and the loss only surfaces
+weeks later when the listing comes down.
+
+So, first on the card and above every number whose meaning depends on it:
+
+> **EBAY** **eBay won't let you list this — replicas and counterfeits** `CAN'T LIST`  matched “replica”
+> eBay bans replicas and counterfeits outright — the listing comes down and the account takes the
+> strike. There is no eBay resale price for one at any bid. Matched because “replica” is in this
+> lot's name.
+
+And the badge above it reads **CAN'T LIST IT**, where on the same comps it used to read
+`BID UP TO $194`.
+
+## It is the only read on this card allowed to overrule the call
+
+Everything else here that moves a number moves it because the object is worth less than the comps
+suggest — a slide, a worse condition, a long wait, a thin wallet. Those are haircuts, and haircuts
+are argued about in percent.
+
+This is not a haircut. A lot eBay refuses to list has **no eBay resale price**, so the ceiling above
+it is not too high — it is a price for a transaction that cannot happen. Correcting the call is the
+only honest thing to do with that, and the badge gets a word of its own: `CAN'T LIST IT`, not
+`DON'T BID`, because the second is a judgement about a price and this is not one. The lot may well
+be worth every cent the ladder says to somebody who can sell it somewhere this app does not price.
+
+## And it moves not one figure
+
+The rest of the card is deliberately left standing. A test builds the same lot with and without the
+banned word in its name and asserts **eight figures are identical** — the resale price, the ceiling,
+the break-even, the room, the profit, the median, the sell-through and the comp count. What the
+genuine article fetches is still true, is still shown, and is exactly the figure that explains why
+the lot was tempting in the first place. A card that blanked its own evidence would be a card the
+seller argues with, and the seller would win.
+
+The one place that is not true is the **spoken line**, which stops at the refusal. Every clause
+after it is a ceiling, a room figure or a resale price; heard under a countdown, "$104 of room" is
+the last thing in the sentence and it is permission-shaped. So:
+
+> *"CAN'T LIST IT. Replicas and counterfeits can't be listed on eBay."*
+
+and the ladder underneath still says `Resells for $340.00`, where it can be read beside the sentence
+that says what it is a price of.
+
+## The softer gate, which costs days rather than the purchase
+
+Over a threshold, sneakers, streetwear, graded cards, handbags, jewellery and watches do not go from
+the seller to the buyer at all. They go to an eBay authentication hub first. The money lands days
+later than the card's own days-to-cash says, and a fake is refunded in full — which, at a live sale
+judged through a camera, is the risk that matters.
+
+> **EBAY** **goes through eBay's authenticator — sneakers over $150** `+4 DAYS TO CASH`  matched “Air Jordan”
+
+That is **said and never charged**. The cost is days, and `LiveHoldCost` already prices the calendar
+off measured sell-through; folding a stated assumption into a measured figure would make the
+measurement part guess. The four days are a constant with its own name (`AuthenticationDays`) and a
+doc comment saying plainly that nobody has watched one go through.
+
+## Four states, and the threshold is checked against the card's own price
+
+| State | When | What it does |
+|---|---|---|
+| `blocked` | eBay refuses the listing | overrules the call, one warning, one clause spoken, ranks below every other lot |
+| `restricted` | eBay allows it on a condition only the seller can check | one warning, **no** call change, silent in the spoken line |
+| `authenticated` | an Authenticity Guarantee category **over its bar** | one warning, one clause spoken, no price moves |
+| `clear` | nothing matched, or the same category **under** its bar | says so, and interrupts nothing |
+
+The Authenticity Guarantee bars are on a **sale price**, so they are checked against the card's own
+per-unit resale figure — the same one every other block here is priced from, per unit because eBay
+authenticates one sale at a time. `Air Jordan 1 Chicago` at $420 a unit is over the bar; the same
+words at $60 are `clear`, and the strip still names the rule, because "sneakers go through the hub
+over $150 and these price at $60" is a useful thing to have read and a useless thing to be
+interrupted about.
+
+A card **nothing priced** reports the category and refuses to guess which side of the bar it is on.
+And it is still refused outright when eBay would refuse it: "no eBay sold history matched" is exactly
+the sentence a seller reads as *the app has no opinion, use your own*, and a replica nothing priced
+is still a replica.
+
+## The vocabulary is tuned to one asymmetry, and it is the card's own
+
+A rule that fires when it should not costs a lot somebody else wins — invisible, there is another in
+four minutes, and the strip names the matched words so the seller can retype the name and carry on.
+A rule that stays quiet when it should not costs the whole purchase.
+
+So where a word is ambiguous this errs toward saying something, and the places that would produce
+noise on ordinary lots are carved out **by hand** rather than by loosening the rule:
+
+- **"fake" and "dupe" are absent**, with the reason written beside them. Fake fur, fake plants and
+  fake eyelashes are ordinary eBay stock, and a rule that stopped a lot of artificial flowers is a
+  rule the seller learns to ignore — the one failure a stop-the-call read cannot survive.
+- **`ammo` excludes the can, box, crate and tin.** The empty container is a legitimate collectible
+  and a live-show staple; the rounds are not.
+- **`scotch` excludes tape**, and bare `cigar` is missing entirely — the box is the collectible.
+- **`rifle`, `handgun` and `receiver` are missing.** A rifle scope, a holster and a stereo receiver
+  are all ordinary eBay stock.
+- **`ivory` is qualified every time** (`real`, `genuine`, `carved`, `elephant`, `tusk`), because on
+  a live feed it is nearly always a colour.
+- **No bare `RC` for rookie card.** Remote-control everything is a live-show staple.
+
+The authenticated rules run **cheapest bar first**, so a Cartier bracelet is measured against
+jewellery's $500 rather than silently cleared at the watch bar of $2,000.
+
+## What it refuses to claim
+
+**That a lot is genuine.** It reads a NAME — whatever the auctioneer typed — and a replica
+advertised as real matches nothing here. The authenticated states say eBay's authenticator will be
+the one to decide, never that the object is authentic.
+
+**That the seller lacks a licence.** The restricted rules state eBay's condition and leave the
+answer to the person who knows it. A `STOP` on a sealed bottle would cost a good lot for a fact
+nobody looked up.
+
+**A probability that authentication fails.** Nobody measured one.
+
+**That the rulebook is current.** It is the app's reading of eBay's published policies as of August
+2026, in one table, and the strip prints the rule name and the matched words on every finding — so
+a rule that has drifted is a thing a seller can see is stale rather than a silent hard-coded number.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo`
+are all still registered and are asserted to be, and the live price still runs on
+`AnalyzeProductAsync`. It costs **no lookup and no clock**: it is a regex sweep of a string, so a
+held-comps re-price re-answers it in the microseconds a climbing bid leaves.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveResaleGate.cs` | New — the sixteen-rule catalogue, the threshold check, the four states and every sentence |
+| `ING eBay AutoLister/Models/LiveGateModels.cs` | New — `LiveGateRead`, `LiveGateVerdicts` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.Gate` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The read on both paths, the `CAN'T LIST IT` badge ahead of every price in `Judge`, the warning ahead of the no-data exit, and the blocked tier in `RankLot` |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhetherEbayTakesIt` — two states, said third, and the line that stops at a refusal |
+| `ING eBay AutoLister/Program.cs` | The verdict, the rule, the matched words and the bar in the log line |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=139`, `style.css?v=122` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, drawn first under the badge — headline, tag, matched words, note |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-gate-*` — the four edges, the three tag colours; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveResaleGateTests.cs` | New — 27 tests on the catalogue, the thresholds, the carve-outs and what it refuses |
+| `ING eBay AutoLister.Tests/WhatsNotGateAssetTests.cs` | New — 20 tests holding the seven links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 9 new tests on what a real card does with it, including that a refused card is figure-for-figure the allowed one |
+| `WhatsNotTaxAssetTests.cs`, `WhatsNotShipAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotHoldAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotConditionAssetTests.cs`, `WhatsNotBudgetAssetTests.cs`, `WhatsNotOddsAssetTests.cs` | Re-pinned asset versions |
+| `whatsnot_gate_blocked.png`, `whatsnot_gate_authenticated.png`, `whatsnot_gate_restricted.png`, `whatsnot_gate_clear.png`, `whatsnot_gate_narrow.png` | The refusal, the authenticator, the condition, the ordinary lot, and the refusal at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,610 passed**, 0 failed, 0 skipped (56 new; the previous commit was 4,554) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` answered with card JSON **serialised out of the real `LiveBidAdvisor`** rather than hand-written, and the card reached by typing into the tab's own form and pressing Price it) | **42 checks, all passed.** On the blocked card: a danger-edged strip reading `eBay won't let you list this — replicas and counterfeits`, a `CAN'T LIST` tag, `matched “replica”`, the strip **first in the card's own child order** immediately after `.wn-call`, a badge reading **CAN'T LIST IT**, the read's warning on the list **exactly once**, and a spoken line ending at `can't be listed on eBay.` with no room figure and no resale price in it — while the ladder underneath still read `Resells for $340.00`, which is the "the evidence stays on the card" property drawn rather than asserted. On the authenticated card: the accent edge, `+4 DAYS TO CASH`, and the badge still `BID UP TO $263`. On the restricted card: `CHECK FIRST`, the badge still `BID UP TO $600`, and **nothing** in the spoken line. On the clear card: **no tag at all** and no policy warning. On the unpriced replica: the badge was the refusal rather than `CAN'T PRICE IT`, and the warning was the only one on the card. At 560px the strip overflowed the card by **0px** and its line overflowed the strip by **0px**. 0 JS errors. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every rule is exercised against names built in tests
+  and cards serialised out of the real advisor. The action log now prints the verdict, the rule, the
+  matched words and the threshold on every fresh price, which is where the first real *"the app said
+  CAN'T LIST IT on a $400 bag because the word replica was in the name"* will show up — and where a
+  rule that has drifted out of date will be found.
+- **It reads a name, and a name is what the auctioneer typed.** A replica advertised as genuine
+  matches nothing here, which is the failure mode that costs the most and the one this cannot fix.
+  The photo check (`/api/whatsnot/photo`) is the only thing on this screen that looks at the object,
+  and it is not wired to this read.
+- **The rulebook is a snapshot with no expiry.** eBay moves the Authenticity Guarantee thresholds
+  and the category lists, and nothing in the app knows when the table was last true. What it does
+  instead is name the rule and the matched words on every finding, so a stale call is visible rather
+  than silent — but a threshold that moved from $150 to $200 will quietly over-warn until somebody
+  edits the table.
+- **The four authentication days are a stated assumption.** Nobody has watched an item go through
+  the hub. They are reported and deliberately kept out of the card's measured days-to-cash, so the
+  worst this can do is be wrong in a sentence rather than wrong in a number other things are built
+  on.
+- **A blocked lot still shows a full ceiling.** The ladder, the meter and the odds strip all price
+  the allowed article, on purpose — that figure is what explains why the lot was tempting. The badge
+  and the strip are the only things that say the price is unreachable, and a seller who reads the
+  ladder and stops reading has read a number for a sale that cannot happen.
+- **It only knows eBay.** A lot eBay refuses may be perfectly sellable on Whatnot itself, at a
+  flea market or on a marketplace this app does not price — and for those the card says nothing
+  useful at all. Every figure on this screen has always been an eBay figure; this is the first block
+  that makes the limits of that visible, and it makes them visible only in one direction.

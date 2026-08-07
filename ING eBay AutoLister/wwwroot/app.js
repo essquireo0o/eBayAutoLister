@@ -11107,6 +11107,34 @@
         ${bg.note ? `<p class="wn-budget-note">${esc(bg.note)}</p>` : ''}
       </div>` : '';
 
+    // ── Whether eBay will take the listing at all ──────────────────────────────
+    // Every figure on this card is the price of an eBay listing: what one fetched
+    // on eBay, the share of eBay listings that sold, the break-even after eBay's
+    // cut. None of it is a price of anything if the listing is not allowed to
+    // exist — and replicas, loose ammunition, swatched makeup and sealed bottles
+    // all cross live feeds nightly, every one of them pricing like a huge flip
+    // against genuine sold comps.
+    //
+    // So this sits FIRST, directly under the badge, above every number whose
+    // meaning depends on the answer. On a blocked lot the badge itself already
+    // reads CAN'T LIST IT — the server made that call, not this — and the strip is
+    // where the rule, the matched words and the policy are, because a seller who
+    // thinks the app has misread the item needs to be able to check in one glance.
+    //
+    // Every word is the server's (Services/LiveResaleGate.cs), including the tag.
+    // The browser decides nothing here and matches nothing itself.
+    const gt = c.gate || {};
+    const gateStrip = gt.headline ? `
+      <div class="wn-gate wn-gate-${esc(gt.verdict || 'clear')}">
+        <div class="wn-gate-line">
+          <span class="wn-gate-label">eBay</span>
+          <strong class="wn-gate-headline">${esc(gt.headline)}</strong>
+          ${gt.tag ? `<span class="wn-gate-tag">${esc(gt.tag)}</span>` : ''}
+          ${gt.matched ? `<span class="wn-gate-src">matched “${esc(gt.matched)}”</span>` : ''}
+        </div>
+        ${gt.note ? `<p class="wn-gate-note">${esc(gt.note)}</p>` : ''}
+      </div>` : '';
+
     // ── The press, not the price ───────────────────────────────────────────────
     // Every figure below compares the bid ON SCREEN against the ceiling, which
     // answers whether the last bid was all right. Nobody buys at that price: pressing
@@ -11276,6 +11304,7 @@
           <p class="wn-call-reason">${esc(c.reason)}</p>
         </div>
       </div>
+      ${gateStrip}
       ${nextStrip}
       ${searchStrip}
       ${trendStrip}

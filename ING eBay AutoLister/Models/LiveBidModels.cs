@@ -283,6 +283,16 @@ public sealed class LiveBidCard
     /// </summary>
     public LiveOddsRead Odds { get; set; } = new();
 
+    /// <summary>
+    /// Whether eBay will let this be listed at all, and on what terms. Never null — a block that
+    /// only appeared once a policy was tripped would be a block whose silence means both "eBay is
+    /// fine with this" and "nothing ever looked". Every other read on this card asks what the thing
+    /// is WORTH; this one asks whether the listing all those figures price is allowed to exist, and
+    /// it is the only read here permitted to overrule the call. See
+    /// <see cref="Services.LiveResaleGate"/> for why that is a correction rather than a haircut.
+    /// </summary>
+    public LiveGateRead Gate { get; set; } = new();
+
     // ── The bid ──────────────────────────────────────────────────────────────
     public decimal CurrentBid { get; set; }
     public bool BidWasKnown { get; set; }

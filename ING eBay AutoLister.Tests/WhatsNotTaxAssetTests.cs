@@ -262,8 +262,8 @@ public class WhatsNotTaxAssetTests
         var none = Css[Css.IndexOf(".wn-tax-none {", StringComparison.Ordinal)..];
         Assert.Contains("var(--danger", none[..none.IndexOf('}')], StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=121", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=138", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=122", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=139", Html, StringComparison.Ordinal);
     }
 
     /// <summary>It folds on a narrow card, like every strip above it — this screen is used as a

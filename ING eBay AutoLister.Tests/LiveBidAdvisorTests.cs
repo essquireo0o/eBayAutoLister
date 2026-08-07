@@ -2520,4 +2520,190 @@ public class LiveBidAdvisorTests
         // sold set — including every other one in this file.
         Assert.DoesNotContain("past sales", Card(Analysis(), bid: 60m).Say, StringComparison.Ordinal);
     }
+
+    // ── Whether eBay will take the listing at all ─────────────────────────────
+    //
+    // Every figure this class pins is the price of an eBay listing. These are about the case where
+    // there is no such listing to be the price of.
+
+    /// <summary>A card for a lot with any name, so the policy read has something to read.</summary>
+    private static LiveBidCard Named(
+        string item, MarketAnalysisResult? analysis, decimal? bid = null, int? quantity = null) =>
+        Advisor.Build(
+            item, analysis,
+            new LiveBidRequest { Title = item, CurrentBid = bid, Quantity = quantity },
+            Fees, nowUtc: Now);
+
+    /// <summary>
+    /// The one thing on this card allowed to overrule the badge, and it does not do it by shading a
+    /// number. A lot eBay refuses to list has no eBay resale price at any bid, so the ceiling above
+    /// it is not too high — it is a price for a transaction that cannot happen.
+    /// </summary>
+    [Fact]
+    public void A_lot_ebay_refuses_to_list_is_stopped_whatever_the_arbitrage_says()
+    {
+        var priced = Named("Louis Vuitton Neverfull", Analysis(), bid: 40m);
+        var replica = Named("Louis Vuitton Neverfull replica", Analysis(), bid: 40m);
+
+        // The genuine one is a good lot at this bid, and the app says so.
+        Assert.Equal(LiveBidCalls.Bid, priced.Call);
+
+        Assert.Equal(LiveBidCalls.Stop, replica.Call);
+        Assert.Equal(LiveBidAdvisor.CantListLabel, replica.CallLabel);
+        Assert.Equal(replica.Gate.Reason, replica.Reason);
+        Assert.Contains("replica", replica.Reason, StringComparison.OrdinalIgnoreCase);
+
+        // And the spoken line stops at the refusal. The genuine one's line ends in a room figure,
+        // and heard under a countdown a room figure is permission-shaped — the ceiling, the room
+        // and the resale price on this lot are all prices of the ALLOWED article, and the card
+        // underneath is where they can be read beside the sentence that says so.
+        Assert.Contains("of room", priced.Say, StringComparison.Ordinal);
+        Assert.DoesNotContain("of room", replica.Say, StringComparison.Ordinal);
+        Assert.DoesNotContain("Resells around", replica.Say, StringComparison.Ordinal);
+        Assert.EndsWith("can't be listed on eBay.", replica.Say, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the rest of the card is deliberately left standing. What the genuine, allowed article
+    /// fetches is still true, is still shown, and is exactly the figure that explains why the lot
+    /// was tempting — a card that blanked its own evidence would be a card the seller argues with.
+    /// </summary>
+    [Fact]
+    public void The_refusal_changes_the_call_and_not_one_price()
+    {
+        var priced = Named("Louis Vuitton Neverfull", Analysis(), bid: 40m);
+        var replica = Named("Louis Vuitton Neverfull replica", Analysis(), bid: 40m);
+
+        Assert.Equal(priced.ResalePrice, replica.ResalePrice);
+        Assert.Equal(priced.MaxBid, replica.MaxBid);
+        Assert.Equal(priced.BreakEvenBid, replica.BreakEvenBid);
+        Assert.Equal(priced.Headroom, replica.Headroom);
+        Assert.Equal(priced.ProfitAtMaxBid, replica.ProfitAtMaxBid);
+        Assert.Equal(priced.MedianPrice, replica.MedianPrice);
+        Assert.Equal(priced.SellThroughRate, replica.SellThroughRate);
+        Assert.Equal(priced.CompCount, replica.CompCount);
+    }
+
+    /// <summary>
+    /// It ranks below even a lot nothing could price. An unpriceable lot might be a bargain the
+    /// comps missed; this one is certainly not worth being in the room for.
+    /// </summary>
+    [Fact]
+    public void A_refused_lot_sinks_to_the_bottom_of_the_shows_list()
+    {
+        var replica = Named("Gucci Marmont knockoff", Analysis(), bid: 40m);
+        var unpriceable = Named("Something nothing has ever sold", null, bid: 40m);
+
+        Assert.True(replica.LotRank < unpriceable.LotRank,
+            $"a lot that cannot be listed ranked {replica.LotRank}, above an unpriceable one at {unpriceable.LotRank}");
+    }
+
+    /// <summary>
+    /// Especially on a card nothing priced. "No eBay sold history matched" is exactly the sentence a
+    /// seller reads as "the app has no opinion, use your own" — and a replica nothing priced is
+    /// still a replica.
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_lot_is_still_refused_when_ebay_would_refuse_it()
+    {
+        var card = Named("Hermes Birkin 1:1 rep", null, bid: 300m);
+
+        Assert.Equal(LiveBidCalls.Stop, card.Call);
+        Assert.Equal(LiveBidAdvisor.CantListLabel, card.CallLabel);
+        Assert.Contains(card.Gate.Warning, card.Warnings);
+        Assert.Contains("can't be listed on eBay", card.Say, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Over eBay's Authenticity Guarantee bar the lot is listable and the money lands later, so this
+    /// says so and prices nothing. The days are a fact about a calendar; a ceiling cut for them
+    /// would be charging a second time for the wait <see cref="LiveHoldCost"/> already prices.
+    /// </summary>
+    [Fact]
+    public void An_authenticated_lot_is_said_and_never_charged_for()
+    {
+        var plain = Named("Bitmain Antminer S19j Pro 104TH", Analysis(), bid: 40m);
+        var sneaker = Named("Air Jordan 1 Retro High Chicago", Analysis(), bid: 40m);
+
+        Assert.Equal(LiveGateVerdicts.Authenticated, sneaker.Gate.Verdict);
+        Assert.True(sneaker.Gate.OverThreshold);
+        Assert.Equal(LiveBidCalls.Bid, sneaker.Call);
+
+        // Not one figure moved for it.
+        Assert.Equal(plain.MaxBid, sneaker.MaxBid);
+        Assert.Equal(plain.ResalePrice, sneaker.ResalePrice);
+        Assert.Equal(plain.DaysToCash, sneaker.DaysToCash);
+
+        // It is said, once, on the warning list and in the line that gets read out.
+        Assert.Contains(sneaker.Gate.Warning, sneaker.Warnings);
+        Assert.Contains("authenticator", sneaker.Say, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The Authenticity Guarantee bar is on the SALE price, so it is checked against the card's own
+    /// per-unit resale figure. Under it, the same words are the ordinary lot they describe.
+    /// </summary>
+    [Fact]
+    public void The_authentication_bar_is_checked_against_the_cards_own_resale_price()
+    {
+        var dear = Named("Air Jordan 1 Retro High Chicago", Analysis(expected: 400m), bid: 40m);
+        var cheap = Named("Air Jordan 1 Retro High Chicago", Analysis(expected: 60m), bid: 10m);
+
+        Assert.True(dear.Gate.OverThreshold);
+        Assert.Equal(400m, dear.Gate.PricedAt);
+
+        Assert.Equal(LiveGateVerdicts.Clear, cheap.Gate.Verdict);
+        Assert.False(cheap.Gate.OverThreshold);
+        Assert.DoesNotContain(cheap.Warnings, w => w.Contains("authenticator", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("authenticator", cheap.Say, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// On a lot the bar is still checked per unit, because eBay authenticates one sale at a time.
+    /// A box of four $400 sneakers is four listings and each of them is over it.
+    /// </summary>
+    [Fact]
+    public void On_a_lot_the_bar_is_checked_per_unit()
+    {
+        var card = Named("Air Jordan 1 Retro High Chicago", Analysis(expected: 400m), bid: 100m, quantity: 4);
+
+        Assert.True(card.Units.IsLot);
+        Assert.Equal(400m, card.Gate.PricedAt);
+        Assert.True(card.Gate.OverThreshold);
+    }
+
+    /// <summary>
+    /// A condition only the seller can check is said and never acted on. The app has no idea whether
+    /// this seller is one of eBay's approved wine sellers, and a STOP on that guess would cost a
+    /// good lot for a fact nobody looked up.
+    /// </summary>
+    [Fact]
+    public void A_restricted_lot_is_warned_about_and_never_stopped()
+    {
+        var card = Named("Pappy Van Winkle 15 year bourbon sealed", Analysis(), bid: 40m);
+
+        Assert.Equal(LiveGateVerdicts.Restricted, card.Gate.Verdict);
+        Assert.Equal(LiveBidCalls.Bid, card.Call);
+        Assert.Contains(card.Gate.Warning, card.Warnings);
+
+        // And it stays off the spoken line: a thing to go and check belongs where checking happens.
+        Assert.DoesNotContain("restrict", card.Say, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The ordinary lot — nearly every card — is byte-for-byte the card it was before this read
+    /// existed, except that it now says out loud that it looked.
+    /// </summary>
+    [Fact]
+    public void An_ordinary_lot_is_unchanged_and_carries_a_read_that_says_so()
+    {
+        var card = Card(Analysis(), bid: 40m);
+
+        Assert.Equal(LiveGateVerdicts.Clear, card.Gate.Verdict);
+        Assert.True(card.Gate.Readable);
+        Assert.NotEmpty(card.Gate.Headline);
+        Assert.Empty(card.Gate.Warning);
+        Assert.Equal(LiveBidCalls.Bid, card.Call);
+        Assert.DoesNotContain("eBay won't", card.Say, StringComparison.Ordinal);
+    }
 }
