@@ -256,10 +256,11 @@ public class WhatsNotShipAssetTests
         Assert.Contains("esc(sh.headline)", Js, StringComparison.Ordinal);
         Assert.Contains("esc(sh.note)", Js, StringComparison.Ordinal);
 
-        // Between the stock strip and the ladder — the last thing said about what winning costs,
-        // immediately before the numbers it costed.
+        // Immediately before the ladder — the last thing said about what winning costs, and the
+        // last strip before the numbers it costed. The shelf-time strip sits above it, between the
+        // pile and this, because it prices the wait that pile causes.
         var template = Js.Replace("\r\n", "\n");
-        Assert.Contains("${stockStrip}\n      ${shipStrip}\n      ${ladder}", template, StringComparison.Ordinal);
+        Assert.Contains("${holdStrip}\n      ${shipStrip}\n      ${ladder}", template, StringComparison.Ordinal);
     }
 
     /// <summary>The three box figures are the server's too. A browser that added "so far" to "this
@@ -350,8 +351,8 @@ public class WhatsNotShipAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=134", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=117", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=135", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=118", Html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

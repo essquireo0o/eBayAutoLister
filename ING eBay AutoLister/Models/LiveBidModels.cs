@@ -208,6 +208,15 @@ public sealed class LiveBidCard
     public LiveStockRead Stock { get; set; } = new();
 
     /// <summary>
+    /// How long this lot's units wait behind the stock above before they sell, and what the measured
+    /// price slide takes off them across that wait. Never null. The third and last thing on this card
+    /// allowed to CUT the ceiling, and the only one that is about the calendar rather than the object
+    /// — it is what <see cref="Stock"/> deliberately refuses to price. See
+    /// <see cref="Services.LiveHoldCost"/> for the four gates it has to clear first.
+    /// </summary>
+    public LiveHoldRead Hold { get; set; } = new();
+
+    /// <summary>
     /// What winning this lot really adds to the shipping bill, as opposed to what one lot from this
     /// show costs. Never null — a block that only appears once a saving was found is a block whose
     /// silence means both "you are paying full freight" and "nothing looked". It is the only read on

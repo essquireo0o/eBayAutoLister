@@ -17357,6 +17357,144 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 
+/* ── What the queue in front of it costs ─────────────────────────────────────
+   The stock strip above counts the pile and deliberately prices nothing, because
+   "you already have three" is not a measured reason to pay less. This prices the
+   other half of that sentence — the fourth one sells in April, and the trend line
+   on this same card says in dollars a month what April costs.
+
+   So a deep pile of a FLAT product is drawn as an ordinary strip with no colour
+   and no cells: nothing was charged, and the seller has to be able to see that at
+   a glance. Only the state that actually moved money gets an edge. */
+.wn-hold {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, .03));
+  font-size: 13px;
+}
+/* A measured slide across a real wait, taken off the ceiling. The one state here
+   that is a cut, so the one state that is coloured like one. */
+.wn-hold-priced {
+  border-left: 3px solid var(--danger, #d46a6a);
+}
+/* A slide was seen and judged too thin to price. The ceiling is the full one, and
+   the amber says the seller is the one holding that risk. */
+.wn-hold-unsure {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* A real wait with no dated history to say what happens across it. */
+.wn-hold-blind {
+  border-left: 3px solid var(--warn, #e0b44a);
+}
+/* Nothing was charged: no queue, a short one, or a price that is not falling. */
+.wn-hold-solo,
+.wn-hold-quick,
+.wn-hold-steady,
+.wn-hold-none {
+  border-left: 3px solid var(--border, #2a2f3a);
+}
+.wn-hold-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.wn-hold-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-hold-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.wn-hold-priced .wn-hold-headline {
+  color: var(--danger, #d46a6a);
+}
+.wn-hold-unsure .wn-hold-headline,
+.wn-hold-blind .wn-hold-headline {
+  color: var(--warn, #e0b44a);
+}
+/* What the wait took off, as a percentage of the ceiling. Drawn as a cost, which
+   is the opposite of the shipping strip's badge and deliberately so — the two are
+   the only tags on this card that move money, in opposite directions. */
+.wn-hold-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(212, 106, 106, .16);
+  color: var(--danger, #d46a6a);
+}
+/* That the wait ran past what the slide's evidence can be projected across, so
+   the figure beside it is knowingly the gentle one. Provenance, never news. */
+.wn-hold-src {
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-dim, #8b93a7);
+}
+/* The whole argument in three figures: how long yours waits, how fast these are
+   falling, and what that is worth a unit. The last one is what came off the
+   ceiling, so it is the one drawn loud. */
+.wn-hold-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.wn-hold-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--panel, rgba(255, 255, 255, .02));
+  min-width: 0;
+}
+.wn-hold-cell-this {
+  border-color: var(--danger, #d46a6a);
+  background: rgba(212, 106, 106, .1);
+}
+.wn-hold-cell-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-hold-cell-this .wn-hold-cell-name {
+  color: var(--danger, #d46a6a);
+}
+.wn-hold-cell-fig {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wn-hold-note,
+.wn-hold-money {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim, #8b93a7);
+}
+/* What the ceiling below was priced at, and why. Said in every state, including
+   the ones that took nothing off — so it is set apart from the arithmetic above
+   it the same way the trend and condition strips set theirs apart. */
+.wn-hold-money {
+  padding-top: 4px;
+  border-top: 1px solid var(--border, #2a2f3a);
+}
+
 /* ── What this lot costs to get delivered ────────────────────────────────────
    A live seller posts one box per show, not one per lot. This is the only strip
    on the card that can raise a ceiling — everything else here either describes
@@ -18218,6 +18356,14 @@ p.wn-units-refused {
      three box figures below wrap on their own; side by side they are the whole
      comparison, and they are kept that way as long as they fit. */
   .wn-ship-line {
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* And on the shelf-time strip, where "SHELF TIME" and "Yours sells about 2
+     months out — about $18 a unit lower by then" want the same line and only one
+     of them is the sentence. The three cells below wrap on their own; side by
+     side they are the argument for the cut, and are kept so while they fit. */
+  .wn-hold-line {
     flex-direction: column;
     gap: 1px;
   }

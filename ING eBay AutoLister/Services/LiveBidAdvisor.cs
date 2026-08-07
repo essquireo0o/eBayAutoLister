@@ -200,6 +200,12 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             // the single most useful thing an unpriceable card can say, and it is exactly the card
             // on which a seller talks themselves into one more cheap one.
             ApplyStock(card, own, tonight, monthlySales: 0m, daysToSellOne: null, activeComps: card.ActiveCompCount);
+            // And how long the queue in front of it is, which on this path is always unanswerable —
+            // no clearance rate and no price to erode. Attached anyway so the strip renders the
+            // honest "nothing said how long the last one waits" rather than vanishing, which on the
+            // one card with no resale figure would read as "there is no queue".
+            card.Hold = LiveHoldCost.Read(
+                card.Units.Count, own, tonight, monthlySales: 0m, perUnitResale: null, trend: trend);
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
             card.Say = LiveBidSpeech.Say(card);
             return card;
@@ -217,7 +223,28 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         // the two facts together rather than one opinion overwriting another. When neither fired
         // this is the same OBJECT as `resale`, which is what makes "a card with nothing to report
         // is priced exactly as it was before either of these existed" a property of the code.
-        var bidAgainst = LiveCondition.Discount(LiveTrend.Discount(resale, trend), condition);
+        //
+        // Both of them answer "what does this object fetch", and the answer they give is TODAY's.
+        var priceToday = LiveCondition.Discount(LiveTrend.Discount(resale, trend), condition);
+
+        // And WHEN this one sells, which is the half of the question the two cuts above cannot see.
+        // Both of them price the object as it is sold today; a seller who already has seven of these
+        // is not selling today, they are selling in April, and the trend line already on this card
+        // says in dollars a month what April costs. So the third ratio is the measured slide across
+        // the measured wait — not a "you already have three" haircut, which is why a deep pile of a
+        // FLAT product is charged nothing at all here. See LiveHoldCost for the four gates and for
+        // why this is not double-counting the trend cut: that one re-bases the ninety-day median to
+        // today, this one carries today forward to the month yours reaches the front of the queue.
+        var hold = LiveHoldCost.Read(
+            count, own, tonight, priceToday.EstimatedMonthlySales,
+            priceToday.ExpectedSale ?? priceToday.Median, trend);
+        card.Hold = hold;
+
+        // Three ratios, stacked, in the order they were measured — what these fetch lately, what
+        // they fetch in this shape, and what they fetch when yours actually sells. All three only
+        // ever cut, so applying them in series is the three facts together rather than three
+        // opinions overwriting each other. When none fired this is the same OBJECT as `resale`.
+        var bidAgainst = LiveHoldCost.Discount(priceToday, hold);
 
         // The resale price is the LOT's, because the bid it is measured against is the lot's — one
         // hammer buys all of them. The spread, the median and the quick-sale figure stay per unit:
@@ -305,6 +332,10 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.CallLabel = label;
         card.Reason = reason;
         card.Warnings.AddRange(Warnings(card, bidAgainst));
+        // What the wait costs, said beside the pile that causes it. Two states speak: a cut taken,
+        // and a slide that was seen but was too thin to take one for. Every other state is silent,
+        // which is nearly every card — the first one of something is never queued behind anything.
+        if (hold.Warning.Length > 0) card.Warnings.Add(hold.Warning);
         AttachOwnRecord(card, own);
         // How many of these the seller would then own, against how many the market clears. Read
         // after the ceiling rather than into it: this changes no price on the card, because the
@@ -368,6 +399,13 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// <see cref="LiveCondition"/> cut prices because they are about what the object fetches, and
     /// this is about what a calendar does to money. A "you already have three" haircut would be a
     /// number nobody measured, taken off the one figure on the card that comes from real sales.
+    /// </para>
+    /// <para>
+    /// What DOES price the calendar is <see cref="LiveHoldCost"/>, and it is worth being clear that
+    /// it is not the haircut refused above. It never charges for the pile; it charges for the
+    /// measured slide across the wait the pile causes, so a stack of ten of something whose price is
+    /// flat costs nothing at all. This block still reports the pile in months, which is the right
+    /// unit for a fact about a calendar, and the count it reports is the same one that read uses.
     /// </para>
     /// <para>
     /// The one thing it is allowed to do is <b>say something</b>, and only when the pile crosses a

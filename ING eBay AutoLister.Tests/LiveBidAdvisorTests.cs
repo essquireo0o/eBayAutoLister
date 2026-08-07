@@ -1732,4 +1732,174 @@ public class LiveBidAdvisorTests
             Title = Product, CurrentBid = bid, ShippingCost = shipping,
             AdditionalItemShipping = extra, ShowName = show,
         };
+
+    // ── What the queue in front of the lot costs (LiveHoldCost) ───────────────
+
+    /// <summary>The same card, with N of the thing already on the shelf.</summary>
+    private static LiveBidCard Queued(MarketAnalysisResult? analysis, int held, decimal? bid = 40m) =>
+        Advisor.Build(
+            Product, analysis, Ask(bid: bid), Fees, nowUtc: Now,
+            own: new OwnSalesEvidence { UnitsHeld = held });
+
+    /// <summary>
+    /// A gentle slide, well under the bar the trend read needs before IT may cut. This is the case
+    /// the whole file exists for: nothing is wrong with today's price, and the eleventh one of these
+    /// is not selling today.
+    /// </summary>
+    [Fact]
+    public void A_slide_too_small_to_cut_today_still_costs_a_long_wait()
+    {
+        var analysis = WithTrend(recent: 190m, prior: 200m);
+
+        var first = Queued(analysis, held: 0);
+        var eleventh = Queued(analysis, held: 10);
+
+        // The trend read took nothing on EITHER card — this is not the trend cut in disguise.
+        Assert.False(first.Trend.Discounted);
+        Assert.False(eleventh.Trend.Discounted);
+
+        Assert.Equal(LiveHoldVerdicts.Solo, first.Hold.Verdict);
+        Assert.False(first.Hold.Discounted);
+
+        Assert.Equal(LiveHoldVerdicts.Priced, eleventh.Hold.Verdict);
+        Assert.True(eleventh.Hold.Discounted);
+
+        // The ceiling really moved, and it moved DOWN. This is the whole feature.
+        Assert.True(eleventh.MaxBid < first.MaxBid);
+        Assert.True(eleventh.ResalePrice < first.ResalePrice);
+        Assert.True(eleventh.BreakEvenBid < first.BreakEvenBid);
+    }
+
+    /// <summary>
+    /// <b>The property that makes this a wait charge and not a duplicate charge.</b> Twelve of
+    /// something whose price is flat is priced identically to the first one. If this ever fails, the
+    /// app has started charging sellers for owning stock, which is a number nobody measured.
+    /// </summary>
+    [Fact]
+    public void A_deep_shelf_of_a_flat_product_is_priced_exactly_as_the_first_one()
+    {
+        var analysis = WithTrend(recent: 200m, prior: 200m);
+
+        var first = Queued(analysis, held: 0);
+        var thirteenth = Queued(analysis, held: 12);
+
+        Assert.False(thirteenth.Hold.Discounted);
+        Assert.Equal(first.MaxBid, thirteenth.MaxBid);
+        Assert.Equal(first.ResalePrice, thirteenth.ResalePrice);
+        Assert.Equal(first.BreakEvenBid, thirteenth.BreakEvenBid);
+        Assert.Equal(first.ProfitAtMaxBid, thirteenth.ProfitAtMaxBid);
+
+        // And the pile is still counted and still reported — only the dollars stayed away.
+        Assert.Equal(13, thirteenth.Stock.UnitsAfter);
+        Assert.Equal(12, thirteenth.Hold.UnitsAhead);
+    }
+
+    /// <summary>
+    /// The cut moves the price the ceiling is built from and nothing the comps describe. Most of all
+    /// it never moves the clearance rate, which is the figure the wait itself was computed from.
+    /// </summary>
+    [Fact]
+    public void The_wait_moves_the_price_and_never_the_evidence()
+    {
+        var analysis = WithTrend(recent: 190m, prior: 200m);
+
+        var first = Queued(analysis, held: 0);
+        var eleventh = Queued(analysis, held: 10);
+
+        Assert.True(eleventh.Hold.Discounted);
+
+        Assert.Equal(first.PriceLow, eleventh.PriceLow);
+        Assert.Equal(first.PriceHigh, eleventh.PriceHigh);
+        Assert.Equal(first.CompCount, eleventh.CompCount);
+        Assert.Equal(first.ConfidenceScore, eleventh.ConfidenceScore);
+        Assert.Equal(first.SellThroughRate, eleventh.SellThroughRate);
+        Assert.Equal(first.DaysToSell, eleventh.DaysToSell);
+        Assert.Equal(first.Comps.Count, eleventh.Comps.Count);
+        Assert.Equal(first.EvidenceTier, eleventh.EvidenceTier);
+    }
+
+    /// <summary>
+    /// The two strips agree about one pile. The stock strip's count and the wait's queue come from
+    /// the same two numbers, so a card can never say "you'd have 11" beside a wait computed for 4.
+    /// </summary>
+    [Fact]
+    public void The_pile_and_the_queue_are_the_same_count()
+    {
+        var card = Advisor.Build(
+            Product, WithTrend(recent: 190m, prior: 200m), Ask(bid: 40m), Fees, nowUtc: Now,
+            own: new OwnSalesEvidence { UnitsHeld = 6 }, tonight: new LiveStockTonight(3, 2));
+
+        Assert.Equal(9, card.Hold.UnitsAhead);
+        Assert.Equal(10, card.Hold.UnitsAfter);
+        Assert.Equal(card.Stock.UnitsAfter, card.Hold.UnitsAfter);
+        Assert.Equal(card.Stock.UnitsHeld + card.Stock.WonTonight, card.Hold.UnitsAhead);
+    }
+
+    /// <summary>
+    /// A card with nothing on the shelf is priced exactly as it was before this read existed —
+    /// additive, like every WhatsNot read before it. The commonest card on the tab is untouched.
+    /// </summary>
+    [Fact]
+    public void A_card_with_nothing_on_the_shelf_is_priced_identically()
+    {
+        var analysis = WithTrend(recent: 190m, prior: 200m);
+
+        var bare = Card(analysis, bid: 40m);
+        var read = Queued(analysis, held: 0);
+
+        Assert.Equal(bare.MaxBid, read.MaxBid);
+        Assert.Equal(bare.ResalePrice, read.ResalePrice);
+        Assert.Equal(bare.Say, read.Say);
+    }
+
+    /// <summary>
+    /// The warning is on the list, so a seller who never looks at the strip still hears why the
+    /// ceiling is lower than it was on the first one of these.
+    /// </summary>
+    [Fact]
+    public void The_wait_is_warned_about_on_the_card()
+    {
+        var card = Queued(WithTrend(recent: 190m, prior: 200m), held: 10);
+
+        Assert.True(card.Hold.Discounted);
+        Assert.Contains(card.Warnings, w => w.Contains("by the time yours sells", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// It stacks with the trend cut rather than replacing it. A steep confirmed slide re-bases the
+    /// price to today; the wait then carries today forward to the month this one actually sells. Both
+    /// fire, and the ceiling is below either of them alone.
+    /// </summary>
+    [Fact]
+    public void The_two_cuts_stack_rather_than_compete()
+    {
+        var sliding = WithTrend(recent: 140m, prior: 200m);
+
+        var trendOnly = Queued(sliding, held: 0);
+        var both = Queued(sliding, held: 10);
+
+        Assert.True(trendOnly.Trend.Discounted);
+        Assert.True(both.Trend.Discounted);
+        Assert.Equal(trendOnly.Trend.CutPercent, both.Trend.CutPercent);
+
+        Assert.False(trendOnly.Hold.Discounted);
+        Assert.True(both.Hold.Discounted);
+
+        Assert.True(both.MaxBid < trendOnly.MaxBid);
+    }
+
+    /// <summary>
+    /// A card the market could not price still counts the queue and still says so — and takes
+    /// nothing off a ceiling that does not exist.
+    /// </summary>
+    [Fact]
+    public void An_unpriceable_card_still_reports_the_queue()
+    {
+        var card = Queued(analysis: null, held: 6);
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(6, card.Hold.UnitsAhead);
+        Assert.False(card.Hold.Discounted);
+        Assert.NotEmpty(card.Hold.Headline);
+    }
 }

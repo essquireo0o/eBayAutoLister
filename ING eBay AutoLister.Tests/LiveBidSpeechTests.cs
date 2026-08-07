@@ -612,6 +612,107 @@ public class LiveBidSpeechTests
         Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
     }
 
+    // ── What the wait costs ──────────────────────────────────────────────────
+
+    /// <summary>A card whose ceiling was cut for the wait its own shelf causes.</summary>
+    private static LiveHoldRead Cut(decimal waitMonths = 2.5m, decimal cutPercent = 9m) => new()
+    {
+        Readable = true,
+        Verdict = LiveHoldVerdicts.Priced,
+        Discounted = true,
+        WaitMonths = waitMonths,
+        CutPercent = cutPercent,
+        ResaleMultiplier = 0.91m,
+    };
+
+    /// <summary>
+    /// The one state that speaks. Without it the ceiling is simply lower than the last one for no
+    /// reason anybody listening can hear, which is worse than not cutting it at all.
+    /// </summary>
+    [Fact]
+    public void A_ceiling_cut_for_the_wait_says_so()
+    {
+        var card = Card();
+        card.Hold = Cut();
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.Contains("Yours sells about 2.5 months out, so the ceiling is cut 9% for the slide by then.",
+            said, StringComparison.Ordinal);
+    }
+
+    /// <summary>Said last, after the count that causes it — it is a consequence of the clause before
+    /// it rather than a fact of its own.</summary>
+    [Fact]
+    public void The_wait_is_said_after_the_pile_that_causes_it()
+    {
+        var card = Card();
+        card.Hold = Cut();
+        card.Stock = new LiveStockRead
+        {
+            Readable = true,
+            Verdict = LiveStockVerdicts.Deep,
+            LotUnits = 1,
+            UnitsHeld = 9,
+            UnitsAfter = 10,
+            MonthsToClear = 2.5m,
+        };
+
+        var said = LiveBidSpeech.Say(card);
+
+        Assert.True(
+            said.IndexOf("That makes 10 of these", StringComparison.Ordinal)
+                < said.IndexOf("Yours sells about 2.5 months out", StringComparison.Ordinal),
+            "the count comes before the cost of the wait it causes");
+    }
+
+    /// <summary>
+    /// Silent on every state that took nothing off — including the one where a slide was seen and
+    /// judged too thin to price. A caveat spoken under a countdown is heard as a cut, and that one
+    /// is already on the card's warning list where it belongs.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveHoldVerdicts.Solo)]
+    [InlineData(LiveHoldVerdicts.Quick)]
+    [InlineData(LiveHoldVerdicts.Steady)]
+    [InlineData(LiveHoldVerdicts.Blind)]
+    [InlineData(LiveHoldVerdicts.Unsure)]
+    [InlineData(LiveHoldVerdicts.None)]
+    public void Every_state_that_took_nothing_off_is_silent(string verdict)
+    {
+        var card = Card();
+        card.Hold = new LiveHoldRead { Verdict = verdict, Readable = true, WaitMonths = 3m };
+
+        Assert.DoesNotContain("Yours sells", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
+    /// <summary>No dollar figure. The ceiling and the resale price are already in this line and
+    /// already have the cut inside them; a third figure would be one the listener has to subtract
+    /// from one of the other two to make sense of.</summary>
+    [Fact]
+    public void The_clause_states_no_dollar_figure_of_its_own()
+    {
+        var card = Card();
+        card.Hold = Cut();
+        card.Hold.ErosionPerUnit = 34m;
+        card.Hold.DeclinePerMonth = 13.60m;
+
+        var clause = LiveBidSpeech.Say(card);
+        clause = clause[clause.IndexOf("Yours sells", StringComparison.Ordinal)..];
+
+        Assert.DoesNotContain("$", clause, StringComparison.Ordinal);
+    }
+
+    /// <summary>A card built by something that never set the block at all still speaks.</summary>
+    [Fact]
+    public void A_card_with_no_wait_block_still_produces_a_line()
+    {
+        var card = Card();
+        card.Hold = null!;
+
+        Assert.Contains("BID UP TO $240.", LiveBidSpeech.Say(card), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_line_never_runs_on_or_ends_in_a_hanging_space()
     {

@@ -52,7 +52,38 @@ public static class LiveBidSpeech
 
         return Join(Headline(card), HowMany(card), WhichWayItsGoing(card), WhatKindOfOne(card),
             WhatItShipsFor(card), WhereTheBiddingIs(card), HowManyPressesLeft(card),
-            WhatItResellsFor(card), YourOwnRecord(card), HowManyYoudHave(card));
+            WhatItResellsFor(card), YourOwnRecord(card), HowManyYoudHave(card), WhatTheWaitCosts(card));
+    }
+
+    /// <summary>
+    /// What the queue costs, said last of all — immediately after the count that causes it, because
+    /// it is the only clause that is a consequence of the one before it rather than a fact of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One state speaks. A cut was taken: this lot goes to the back of a queue long enough for a
+    /// measured slide to happen to it, and the ceiling the seller heard at the start of this line
+    /// already has that taken off. Without the clause the ceiling is simply lower than the last one
+    /// for no reason anybody listening can hear, which is worse than not cutting it.
+    /// </para>
+    /// <para>
+    /// Silent on every other state, including the one where a slide was seen and judged too thin to
+    /// price. That one is a caveat, and a caveat spoken under a countdown is heard as a cut — the
+    /// card's warning list is where it belongs and where it already is. Silent, obviously, on every
+    /// card with nothing queued behind it, which is nearly all of them.
+    /// </para>
+    /// <para>
+    /// No dollar figure. The two numbers that matter — the ceiling and the resale price — are
+    /// already in this line and already have the cut inside them; a third figure here would be one
+    /// the listener has to subtract from one of the other two to make sense of.
+    /// </para>
+    /// </remarks>
+    private static string WhatTheWaitCosts(LiveBidCard card)
+    {
+        if (card.Hold is not { Discounted: true } hold) return "";
+
+        return $"Yours sells {LiveLotSize.MonthsInWords(hold.WaitMonths ?? 0m)} out, so the ceiling is cut " +
+               $"{hold.CutPercent:0.#}% for the slide by then.";
     }
 
     /// <summary>

@@ -10892,6 +10892,47 @@
         ${st.note ? `<p class="wn-stock-note">${esc(st.note)}</p>` : ''}
       </div>` : '';
 
+    // ── What the queue in front of it costs ────────────────────────────────────
+    // The strip above counts the pile and stops there, on purpose: "you already have
+    // three" is not a measured reason to pay less, and the fourth one really does
+    // resell for what the comps say. What it resells for IN APRIL is the half nobody
+    // priced — and the trend line on this same card is a rate in dollars per month,
+    // which is the one kind of number that can be multiplied by a wait.
+    //
+    // So this is not a duplicate haircut. A pile of something whose price is flat is
+    // charged nothing here however deep it gets; what is charged is holding a SLIDING
+    // product long enough for the slide to happen to it. The three cells are the whole
+    // argument — how long yours waits, how fast these are falling, what that is worth —
+    // and every one of them is the server's (Services/LiveHoldCost.cs). Nothing here
+    // multiplies anything.
+    const hd = c.hold || {};
+    const holdStrip = hd.headline ? `
+      <div class="wn-hold wn-hold-${esc(hd.verdict || 'none')}">
+        <div class="wn-hold-line">
+          <span class="wn-hold-label">Shelf time</span>
+          <strong class="wn-hold-headline">${esc(hd.headline)}</strong>
+          ${hd.discounted ? `<span class="wn-hold-tag">−${hd.cutPercent}% to bid</span>` : ''}
+          ${hd.capped ? '<span class="wn-hold-src">projected as far as the evidence goes</span>' : ''}
+        </div>
+        ${hd.discounted ? `
+          <div class="wn-hold-box">
+            <span class="wn-hold-cell" title="How long this lot's average unit waits behind the stock you already have, before it is the one selling">
+              <span class="wn-hold-cell-name">Yours waits</span>
+              <span class="wn-hold-cell-fig">${hd.waitMonths} mo</span>
+            </span>
+            <span class="wn-hold-cell" title="The trend line across every dated sold comp, in dollars a month — measured, not assumed">
+              <span class="wn-hold-cell-name">Sliding</span>
+              <span class="wn-hold-cell-fig">${moneyExact(hd.declinePerMonth)}/mo</span>
+            </span>
+            <span class="wn-hold-cell wn-hold-cell-this" title="What the wait costs one unit — the slide times the months, and the figure the ceiling above was cut by">
+              <span class="wn-hold-cell-name">Gone by then</span>
+              <span class="wn-hold-cell-fig">−${moneyExact(hd.erosionPerUnit)}</span>
+            </span>
+          </div>` : ''}
+        ${hd.note ? `<p class="wn-hold-note">${esc(hd.note)}</p>` : ''}
+        ${hd.moneyNote ? `<p class="wn-hold-money">${esc(hd.moneyNote)}</p>` : ''}
+      </div>` : '';
+
     // ── What this one costs to get delivered ───────────────────────────────────
     // A live seller posts ONE box per show, not one per lot: a first-item rate, plus
     // a much smaller rate for each extra thing in it. Every ceiling this app has ever
@@ -11058,6 +11099,7 @@
       ${condStrip}
       ${unitsStrip}
       ${stockStrip}
+      ${holdStrip}
       ${shipStrip}
       ${ladder}
       ${meter}
@@ -11070,10 +11112,13 @@
           // Said on the tile as well as in the strip. This is the one figure on the card
           // the haircut actually moved, and a resale price quietly 22% lower than the comp
           // table under it is exactly the sort of thing a seller re-reads and distrusts.
-          // Both cuts get a clause, in the order they were applied, because a tile that
-          // named one of two haircuts would understate the gap it is there to explain.
+          // All three cuts get a clause, in the order they were applied, because a tile
+          // that named two of three haircuts would understate the gap it is there to
+          // explain. The third is the one most worth naming: a resale price cut for a
+          // wait is the only one on this card that is not about the object at all.
           (t.discounted ? ` · cut ${t.cutPercent}% for the slide` : '') +
-          (cond.discounted ? ` · cut ${cond.cutPercent}% for ${(cond.bandLabel || '').toLowerCase()}` : ''))}
+          (cond.discounted ? ` · cut ${cond.cutPercent}% for ${(cond.bandLabel || '').toLowerCase()}` : '') +
+          (hd.discounted ? ` · cut ${hd.cutPercent}% for the ${hd.waitMonths}-month wait` : ''))}
         ${wnStat('Middle half of sales', spread, u.isLot ? 'per unit — where one of these lands' : 'where these actually land')}
         ${wnStat('Sell-through', sellThrough, c.sellThroughLabel || '')}
         ${wnStat(u.isLot ? `Sells in · all ${u.count}` : 'Sells in',

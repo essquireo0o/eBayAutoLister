@@ -12524,3 +12524,189 @@ nor `ShowName`.
   should not have — if the show does not actually combine, or combines at a rate they mistyped. The
   three gates and the "fails closed to full freight" property are the whole answer to that, and they
   are asserted rather than promised.
+
+---
+
+# The fourth one sells in April, and nobody priced April (autonomous session, 2026-08-07)
+
+## The question this answers
+
+Thirteen sessions have sharpened what the live card knows about the thing on screen. One of them —
+the pile strip — counts how many of it the seller would then own and says how long that takes to
+clear, and it ends with a paragraph explaining, at length, why it takes **nothing** off any price:
+
+> Saturation is a claim about *time*, not about price: the fourth one still resells for exactly what
+> the comps say, it just sells in April.
+
+That was right, and it left half a sentence on the floor. "It resells for what the comps say" is
+only true **if the comps still say it in April** — and this card has been measuring whether they
+will since the trend read was built. `LiveTrendRead.SlopePerMonth` is a Theil–Sen line in **dollars
+per month** fitted across every dated sale. A rate is the one kind of number that can be multiplied
+by a number of months.
+
+So the haircut that block refused now exists, and it is **not the haircut it refused**. It never
+charges for the pile. It charges for the measured slide across the wait the pile causes — which
+means a stack of twelve of something whose price is flat is priced *identically to the first one*.
+There is a test that asserts exactly that, and it is the most important test in this session.
+
+There is now a strip on every card, directly under the pile:
+
+> **SHELF TIME** **Yours sells about 2.5 months out — about $25 a unit lower by then**
+> `−12.5% TO BID` projected as far as the evidence goes
+> `YOURS WAITS 2.5 mo`  `SLIDING $12.50/mo`  `GONE BY THEN −$25.00`
+> About 4 of these sell a month on eBay, so 11 of them puts this lot about 2.5 months back in the queue.
+> The ceiling below is priced 12.5% under what these fetch today, at what the trend line says they
+> fetch in about 2 months — which is when yours sells, not today.
+
+## What it does
+
+`Services/LiveHoldCost.cs` answers one question — *how long do THIS lot's units wait, and what does
+the measured slide take off them over that wait* — and hands one ratio to the ceiling.
+
+| State | When | What the ceiling is charged |
+|---|---|---|
+| `solo` | One of it, nothing of it ahead of it | nothing — nearly every card |
+| `quick` | A queue the market clears inside a month | nothing |
+| `blind` | A real wait, no dated history to read a trend from | nothing, said out loud |
+| `steady` | A real wait, and the price is flat **or rising** | nothing |
+| `unsure` | A real wait and a slide, on a reading too thin to price | nothing, and a warning |
+| `priced` | A real wait and a **confirmed** measured slide | the slide × the wait |
+| `none` | No clearance rate, or no resale price to erode | nothing |
+
+The wait is this **lot's** place in the queue, not the whole pile's clearing time: its units are the
+ones at the back. Unit *i* of the stack waits `(i-1)/rate` months longer than a unit with nothing in
+front of it — the same arithmetic `LiveLotSize.Absorption` already uses for the last unit's day
+count — so this lot's average is `(ahead + (lot-1)/2) / rate`.
+
+## It is not a duplicate haircut, which is the whole design
+
+The distinction is the difference between a number nobody measured and two numbers already on the
+screen. A pile is not evidence of anything about price. A pile **plus a measured slide** is, and the
+two have to be multiplied rather than one of them assumed.
+
+So `Discounted` is set on exactly one line of the file, behind the slide, and `ResaleMultiplier` is
+initialised to 1 on the model — asserted by a test that counts `read.ResaleMultiplier =` and finds
+one. `LiveStockDepth` still contains no `MaxBid`, no `Discounted` and no `ResaleMultiplier`, which
+is also asserted: two blocks charging for one shelf would be the worst outcome here.
+
+## It is not the trend cut in disguise either, which is why they stack
+
+`LiveTrend` looks **backwards**: it re-bases the price from a median across the whole sold history
+down to what these fetched in the last thirty days. That is a correction to *today's* price. This
+looks **forwards** from today across the months the seller's own unit spends on a shelf. One says
+"today is not what the ninety-day median claims"; the other says "and you are not selling today".
+Neither figure is inside the other.
+
+The clearest proof is the case where the trend read takes **nothing**. A 5% slide is under the bar
+`LiveTrend` needs before it may cut, so on a first purchase the ceiling is untouched — and on the
+eleventh one, with ten already on the shelf, the same comps cut it. A test builds both cards off one
+analysis, asserts `Trend.Discounted` is false on **both**, and asserts the ceiling moved anyway.
+
+## The two bars are the evidence's, not numbers of their own
+
+- **How far the line may be projected.** `MaxProjectedMonths` is `LiveTrend.WindowDays * 2 / 30` —
+  literally the span of sales the slope was fitted to. A fourteen-month queue is charged **two
+  months** of slide, and the strip says the real exposure is longer than the figure on it. Extending
+  a line to four times its own length would be inventing evidence, in the direction that refuses lots.
+- **How much it may ever take.** `MaxHaircutPercent` is 20%, deliberately below the trend read's 35%.
+  That one prices sales that actually happened; this one prices sales that have not. A projection
+  must never take more off a ceiling than a measurement. A test asserts the inequality rather than
+  the numbers.
+
+## A climb never raises it, and a thin slide never lowers it
+
+The same asymmetry the other two cuts are built around. Waiting is not a way of making money, so a
+rising price across a long hold is `steady` and takes nothing — refusing to bid up costs a lot
+somebody else wins, and there is another in four minutes. And the slide has to clear the same
+`confirmed` bar `LiveTrend` requires, with the window comparison not pointing the other way: two
+readings of the same comps that disagree produce a caveat on the warning list, not a haircut.
+
+## The seller has to be able to check the arithmetic
+
+The wait is rounded to one decimal **before** it is multiplied by anything, rather than kept exact
+and rounded for display. A cut worked out from 1.75 months while the screen says 1.8 is a cut the
+person being charged for it cannot reproduce. A test wins that case explicitly: seven on the shelf at
+four a month, $10 a month of slide, and the erosion is $18 — the 1.8 on screen — not $17.50.
+
+A slide under 1% of the price across the whole wait is not taken at all. Half a percent off a ceiling
+is a charge the seller cannot see the reason for, which spends the block's credibility for nothing.
+
+## The spoken line
+
+One clause, last of all, immediately after the count that causes it — *"Yours sells about 2.5 months
+out, so the ceiling is cut 12.5% for the slide by then."* It states **no dollar figure**: the ceiling
+and the resale price are already in the line and already have the cut inside them. Silent in all six
+other states, including `unsure` — a caveat spoken under a countdown is heard as a cut, and that one
+is on the warning list where it belongs.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all still registered and are asserted to be, and the live price still runs on `AnalyzeProductAsync`.
+The queue never reaches the query: a test asserts `LiveSearchQuery` mentions neither `LiveHoldCost`,
+`UnitsHeld` nor `WaitMonths` — what eBay is asked is what the thing is, and how many the seller has
+of it is no part of that.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/LiveHoldCost.cs` | New — the seven states, the four gates, the two evidence-bound bars and every sentence on the strip |
+| `ING eBay AutoLister/Models/LiveHoldModels.cs` | New — `LiveHoldRead`, `LiveHoldVerdicts` |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.Hold` |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | The third ratio in the stack, the warning it hands on, the block on the unpriceable path, and the `ApplyStock` remark pointing at what now prices the calendar |
+| `ING eBay AutoLister/Services/LiveStockDepth.cs` | The remark that refused this haircut now says which half of it exists and why it is a different claim |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | `WhatTheWaitCosts` — one state, last |
+| `ING eBay AutoLister/Program.cs` | The verdict, the wait, the slide and the cut in the fresh-price log line |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=135`, `style.css?v=118` |
+| `ING eBay AutoLister/wwwroot/app.js` | The strip, the three cells, and the third clause on the resale tile |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-hold-*` — the edges, the three cells, the tag; folded at 620px |
+| `ING eBay AutoLister.Tests/LiveHoldCostTests.cs` | New — 24 tests on the states, the gates, the arithmetic and everything it refuses to charge for |
+| `ING eBay AutoLister.Tests/WhatsNotHoldAssetTests.cs` | New — 22 tests holding the six links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 8 new tests on what a real card does with a shelf behind it, including that a flat product is free |
+| `ING eBay AutoLister.Tests/LiveBidSpeechTests.cs` | 10 new tests on the one state the clause speaks in and the six it does not |
+| `ING eBay AutoLister.Tests/WhatsNotStockAssetTests.cs`, `WhatsNotShipAssetTests.cs`, `WhatsNotConditionAssetTests.cs`, `WhatsNotNextBidAssetTests.cs` | Re-pinned asset versions and the strip order |
+| `whatsnot_hold_priced.png`, `whatsnot_hold_steady.png`, `whatsnot_hold_solo.png`, `whatsnot_hold_narrow.png` | The state that charges, the two that must look free, and the charging one at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,420 passed**, 0 failed, 0 skipped (64 new; the previous commit was 4,356) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/bid` mocked in the shape the C# returns) | **22 checks, all passed.** On the charging card: a red-edged strip reading `Yours sells about 2.5 months out — about $25 a unit lower by then`, a `−12.5% TO BID` tag, `projected as far as the evidence goes` beside it, three cells reading `YOURS WAITS 2.5 mo / SLIDING $12.50/mo / GONE BY THEN −$25.00` with the last one drawn loud, the strip **above the ladder** on the card, and `cut 12.5% for the 2.5-month wait` on the resale tile beside `median $182`. On `steady` and `solo`: **no cells, no tag, no colour** — the edge stayed the ordinary border — and the money note still said out loud on both, which is the "a deep pile of a flat product is visibly free" property drawn rather than asserted. At 560px `.wn-hold` overflowed by **0px**, the three cells stayed inside the strip by **0px**, and the headline took the line back from the label. 0 JS errors beyond Whatnot's own X-Frame-Options refusal, which is the constraint this feature is built around. |
+
+## Known limits
+
+- **Nothing here has seen a real live show.** Every state, every wait and every cut is exercised
+  against comps and shelves built in tests and a mocked endpoint. The action log now prints the
+  verdict, the wait, the units ahead, the slide, the cut and the months it was projected across on
+  every fresh price — which is where the first real *"the app cut 12% on the eighth one and it sold
+  at full price in six weeks"* will show up, with enough of the working printed to tell whether the
+  wait or the slope was the wrong half.
+- **The queue assumes the seller's units sell in the order they were bought, at the market's rate.**
+  Neither is true. A seller who relists the newest one first gets the wait applied to the wrong unit,
+  and a seller with better photos than the market clears faster than the rate this measures. The
+  figure is the average unit's wait under a uniform queue, which is the only shape the data supports.
+- **The clearance rate is the market's, not the seller's** — the same limit the pile strip carries,
+  and it now has money on it. "About 4 of these sell a month on eBay" is *everybody's* sales, and one
+  seller holding eleven does not get four a month. So the wait is the **optimistic** one, and it is
+  optimistic in the direction that argues for bidding, which is the wrong direction for a figure
+  whose job is to argue against it.
+- **The slope is per unit and the comps are a mixed pool.** The line is fitted across every dated
+  sale of whatever matched the title, so on a loosely matched product it is measuring the drift of a
+  cluster rather than of an item. The 20% floor and the two-month projection cap are what stand
+  between that and a badly wrong ceiling; the identity caveat is on the pile strip above, not here.
+- **A slide that has already finished is still projected forwards.** A product that fell to a new
+  floor last month and has held there reads as a falling line for as long as the old sales stay in
+  the window, and this will keep charging for a fall that is over. The two-month cap bounds the cost
+  of that; nothing detects it. Distinguishing "still falling" from "fell and stopped" needs more
+  dated sales than one lookup returns.
+- **It cuts, which means it can cost the seller a lot they should have won.** Every previous read on
+  this card had the same exposure and the same answer: the gates, the caps, and the property that a
+  card with nothing on the shelf is priced byte-for-byte as it was before the file existed. What is
+  new is that the reason for the cut is a *projection*, and a seller who disagrees with it has no way
+  to turn it off — the only lever is the shelf count itself, which is a fact rather than a setting.

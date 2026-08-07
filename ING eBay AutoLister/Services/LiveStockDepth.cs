@@ -33,6 +33,13 @@ namespace ING_eBay_AutoLister.Services;
 /// for a fact about a calendar.
 /// </para>
 /// <para>
+/// <b>The half of that sentence that CAN be priced is "it just sells in April".</b> It is priced by
+/// <see cref="LiveHoldCost"/>, and the distinction matters: that read still charges nothing for
+/// owning three of something, and everything for the measured slide across the months the third one
+/// waits. So a deep pile of a product whose price is flat costs nothing there either. This block
+/// keeps the count and the months; the dollars, when there are any, are that one's.
+/// </para>
+/// <para>
 /// <b>It costs no lookup and no clock.</b> The market's clearance rate and the days-to-sell are the
 /// card's own figures, already computed; the shelf count arrives with the seller's own record, which
 /// is read once and held between bids; tonight's count is one cached JSON read. So this re-answers

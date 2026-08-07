@@ -3090,6 +3090,15 @@ app.MapPost("/api/whatsnot/bid", async (
         $"stock {card.Stock.Verdict} — would hold {card.Stock.UnitsAfter} " +
         $"({card.Stock.UnitsHeld} shelf, {card.Stock.WonTonight} won tonight, {card.Stock.LotUnits} this lot)" +
         $"{(card.Stock.MonthsToClear is { } m ? $", {m:0.#} months to clear" : "")}; " +
+        // How long THIS lot waits behind that shelf, and what the measured slide takes off it over
+        // the wait. The first real "the app cut the ceiling 12% on the eighth one because they were
+        // sliding $9 a month" shows up here, in the seller's own log, with all three figures it was
+        // worked out from — the wait, the rate and the cut — so the number can be checked afterwards.
+        $"hold {card.Hold.Verdict}" +
+        $"{(card.Hold.WaitMonths is { } w ? $" — {w:0.#} months behind {card.Hold.UnitsAhead}" : "")}" +
+        $"{(card.Hold.DeclinePerMonth is { } d ? $", sliding {d:C}/mo" : "")}" +
+        $"{(card.Hold.Discounted ? $", cut {card.Hold.CutPercent:0.#}% ({card.Hold.ErosionPerUnit:C}/unit over " +
+                                   $"{card.Hold.ProjectedMonths:0.#} months{(card.Hold.Capped ? ", capped" : "")})" : "")}; " +
         // What the lot was charged to get delivered, and what it would have been charged before this
         // read existed. The first real "the app said no to a $9 lot because it charged $12 shipping
         // on a box that was already going out" shows up here, in the seller's own log.
