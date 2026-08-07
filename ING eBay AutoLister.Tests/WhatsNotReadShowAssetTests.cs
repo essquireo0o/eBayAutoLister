@@ -247,13 +247,28 @@ public class WhatsNotReadShowAssetTests
         Assert.Contains("if (seq !== wnReadSeq) return;", readShow, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A floor rather than an equality, for the reason two earlier sessions already applied to
+    /// theirs: this test exists to catch a stamp going BACKWARDS, and an equality fails on somebody
+    /// else's correct bump and then gets "fixed" by deleting the test — which is exactly how a
+    /// version pin stops protecting anything.
+    /// </summary>
     [Fact]
     public void The_stylesheet_and_the_script_were_both_re_stamped()
     {
         // wwwroot is embedded, and a cached app.js against a new server renders a row whose button
         // does nothing at all.
-        Assert.Contains("app.js?v=125", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=108", Html, StringComparison.Ordinal);
+        Assert.True(AssetVersion("app.js?v=") >= 125, "app.js changed, so its stamp must move");
+        Assert.True(AssetVersion("style.css?v=") >= 108, "style.css changed, so its stamp must move");
+    }
+
+    private static int AssetVersion(string prefix)
+    {
+        var at = Html.IndexOf(prefix, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"\"{prefix}\" is no longer in index.html");
+        var digits = new string(Html[(at + prefix.Length)..].TakeWhile(char.IsDigit).ToArray());
+        Assert.NotEqual("", digits);
+        return int.Parse(digits);
     }
 
     // ── Additive, as every WhatsNot session has been ─────────────────────────────────────────

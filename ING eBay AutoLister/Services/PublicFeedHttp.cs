@@ -108,6 +108,23 @@ public static class PublicFeedHttp
     public static async Task<string?> ReadBoundedAsync(
         HttpResponseMessage response, int maxBytes, CancellationToken ct)
     {
+        var bytes = await ReadBoundedBytesAsync(response, maxBytes, ct);
+        return bytes is null ? null : System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>
+    /// The same bounded read, before anything decides the bytes were text. Returns null past the
+    /// ceiling.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="LotPhotoReader"/> fetches a lot's photograph, which is emphatically not UTF-8, and
+    /// the one thing it must share with every other fetch in this app is the ceiling: the loop that
+    /// decides how much of somebody else's response this process will hold lives here and nowhere
+    /// else. <see cref="ReadBoundedAsync"/> is this, decoded.
+    /// </remarks>
+    public static async Task<byte[]?> ReadBoundedBytesAsync(
+        HttpResponseMessage response, int maxBytes, CancellationToken ct)
+    {
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var memory = new MemoryStream();
 
@@ -119,6 +136,6 @@ public static class PublicFeedHttp
             memory.Write(buffer, 0, read);
         }
 
-        return System.Text.Encoding.UTF8.GetString(memory.ToArray());
+        return memory.ToArray();
     }
 }

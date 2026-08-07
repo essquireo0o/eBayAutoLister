@@ -10870,3 +10870,185 @@ previous session applied to `WhatsNotLotListAssetTests`.
 - **The vision pass is groundwork, not wired.** Every read returns the lot's photo URL, which is what
   the existing product-photo pipeline would need to confirm identity and condition. Nothing calls it
   yet.
+
+---
+
+# The check on the name: what the lot's own photo says about it
+
+## The question this answers
+
+Five sessions have made everything *after* the name instant. The comps are held so a climbing bid
+costs no network. The bid steps with an arrow key. The ceiling, the break-even, the room and the
+seller's own record all re-answer in place. The last one removed the typing itself — the show's page
+is read and the lot names itself.
+
+All of it stands on one string. The ceiling, the spread, the sell-through, the days-to-cash, the
+warnings and the badge are every one of them derived from a single eBay sold search, and that search
+runs on a **name**. At a desk a wrong name costs a re-type. On a live show it costs a bid, because a
+ceiling built on the wrong name arrives looking exactly as confident as one built on the right
+one — same badge, same green, same "$33.19 of room".
+
+And live lots are named by somebody holding a camera while talking to a hundred people:
+
+> **MYSTERY MINER LOT** · **S19 read desc** · **Antminer!!!** · **BIG BOX 🔥🔥**
+
+A sold search on "MYSTERY MINER LOT" answers at random, and it answers *confidently*. The read
+brought back the one piece of evidence on this screen that can argue with the name — **the lot's own
+photograph** — and until now nothing looked at it.
+
+## What it does
+
+A fifth control in the read row, and a panel under the read's:
+
+> 🔍 **Check the photo**
+>
+> **The photo says Bitmain Antminer S19j Pro 104TH.**
+> Same product, and the photo carries a spec the box doesn't. That spec is often what separates two
+> very different sold prices.
+>
+> **⚡ Price it as Bitmain Antminer S19j Pro 104TH**
+>
+> 🎤 Ask the host while it's still on the block: power it on and show the hashrate
+> ⚠ A photo can name a product. It cannot tell you it powers on, that nothing is missing from the
+> box, or that the host's description is true.
+> ▸ What the photo actually said
+
+Press the offer and the name lands in the item box and goes through the same **⚡ Price it** a typed
+one does. The ceiling below re-answers against the thing that is actually on screen.
+
+## The five answers, and why there are five
+
+Not "matches / doesn't match". The interesting cases are all in the middle:
+
+| | What it means | What it offers |
+|---|---|---|
+| **Agrees** | The model in the box and the model in the picture are the same one | Nothing |
+| **Sharpens** | The photo carries a model number, a capacity or a generation the name doesn't | The fuller name |
+| **Differs** | Both names carry a model and none of them match | The photo's name, loudly |
+| **Unsure** | Named with low confidence, or no legible plate in the picture | Nothing |
+| **Only name** | Nothing was typed, so there is nothing to agree with | The photo's name |
+
+**Agrees is said out loud.** A check that only speaks up when it is unhappy is a check the seller
+learns to distrust, because silence and "not run" look identical.
+
+## The bar for crying wolf
+
+This is the whole design. A panel that is wrong about a disagreement costs the seller the lot **and**
+the panel — they let a good one go, and then they stop reading the thing that told them to.
+
+So `Differs` is claimed in exactly two situations: both names carry a model-shaped token and none of
+them match, or two specific names share not one significant word. Everything that only *looks* like
+disagreement is deliberately something quieter:
+
+- **"MYSTERY MINER LOT" vs "Bitmain Antminer L7 9050M"** → sharpens. A name that makes no claim
+  cannot be contradicted; everything the photo found is new information.
+- **"iPhone 12 Pro 128GB" vs "Apple iPhone"** → unsure. A picture with no legible plate cannot tell a
+  12 from a 13, and saying it did would be the panel arguing on every blurry photo.
+- **"Used Goldshell Mini Doge II free ship" vs "Goldshell Mini Doge II"** → agrees. Two titles must
+  not be held to disagree over packaging words.
+- **Anything at low confidence** → unsure, and it offers nothing at all. A guess is not evidence.
+
+## What it is not allowed to do
+
+| It refuses | Why |
+|---|---|
+| To price anything | Pinned by a test: no `AnalyzeProductAsync`, no `advisor.Build`, no `MaxBid` in the endpoint. `LotPhotoLook` carries **no decimal property at all**, and a reflection test says so |
+| To take money off the ceiling for what it sees | A ceiling is made of sales that happened; this is made of a compressed frame. Shading the stronger evidence with the weaker one is the wrong trade — the condition is **shown**, and the seller decides |
+| To write into the item box | The only path from a photo to that box is a press on the offer. What the seller typed outranks what a model saw |
+| To run by itself | The watch loop deliberately does not reach it — a loop buying a vision call every twenty seconds would spend the seller's money all night on lots they were not watching. A test pins that `wnReadShow` and `wnWatchTick` never call it |
+| A name it wouldn't search on | The same `LiveLotList.MinTitleLength` bar the pasted lot list holds a line to |
+| A photo over http, or one that isn't a picture | The bytes are fetched by this app and sent on. https only, and one of the four media types the vision call can be handed — an HTML sign-in wall served with a 200 is refused here rather than remotely |
+| Loopback and private-network addresses | The same `FrameEmbedPolicy.Validate` guard the embed check and the show read run |
+
+## The line that is a question
+
+At a yard sale the identify call's last field — *the one thing to check before paying* — means pick
+it up and try it. On a live show the seller cannot: somebody else is holding it, four hundred miles
+away. But **the chat is open**, and the host is standing there with it in their hands.
+
+So it is reframed, on the server, into the most actionable sentence on the panel:
+
+> 🎤 Ask the host while it's still on the block: power it on and show the hashrate
+
+## Reuse, not reinvention
+
+| Borrowed | From |
+|---|---|
+| Naming what is in a photograph | `ClaudeService.IdentifyItemAsync` — the same call `/api/snap` makes, unchanged. A second "what is this" prompt would be a second opinion about identity |
+| Title cleaning, and the bar for "searchable" | `LiveLotList.Clean` / `MinTitleLength` — a name off a photo and the same name typed by hand reach the comp lookup identically |
+| The address guard | `FrameEmbedPolicy.Normalize` + `Validate` |
+| Browser-shaped headers and the bounded body read | `PublicFeedHttp` |
+| Failure sentences | `FailureTranslator.Translate(ex, FailureDomain.Ai)` |
+| The ceiling, and everything else about money | `/api/whatsnot/bid`, untouched |
+
+`PublicFeedHttp.ReadBoundedBytesAsync` was added and `ReadBoundedAsync` became *that, decoded*, so
+the app still has exactly one loop deciding how much of somebody else's response it will hold in
+memory — a test counts it.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list`, `/api/whatsnot/embed-check` and `/api/whatsnot/read` are all still registered
+and are asserted to be, and the live price still runs on `AnalyzeProductAsync`. `/api/snap`'s own
+photo path is asserted to still be there. The typed box still works on its own, on any platform, and
+a test says so.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Models/LotPhotoModels.cs` | New — the request, the seven statuses, the five agreements, and the look (deliberately carrying no money of its own) |
+| `ING eBay AutoLister/Services/LotPhotoJudge.cs` | New — the comparison, the bar for crying wolf, the four reasons to offer nothing, and every sentence the panel says |
+| `ING eBay AutoLister/Services/LotPhotoReader.cs` | New — one GET, the address and media-type guards, and every failure turned into a sentence with a next move |
+| `ING eBay AutoLister/Services/PublicFeedHttp.cs` | `ReadBoundedBytesAsync`; the text read is now that, decoded, so there is still one byte loop |
+| `ING eBay AutoLister/Program.cs` | `LotPhotoReader` registered; `POST /api/whatsnot/photo` — a look, a log line, and provably no pricing |
+| `ING eBay AutoLister/wwwroot/index.html` | The check button in the read row, the look panel under the read's, `app.js?v=126`, `style.css?v=109` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnRenderPhoto`, `wnCheckPhoto`, `wnUsePhotoTitle`; the read keeps the photo's address and nothing more; the look is dropped when the show moves on and when the tab closes |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-photo-*` — four outcome edges plus a busy one, the offer, folded at 620px |
+| `ING eBay AutoLister.Tests/LotPhotoJudgeTests.cs` | New — 58 tests, most of them refusals |
+| `ING eBay AutoLister.Tests/WhatsNotPhotoCheckAssetTests.cs` | New — 30 tests holding the five links from service to screen together |
+| `WhatsNotReadShowAssetTests.cs` | The asset-version pin loosened from equality to a floor — same reasoning two earlier sessions applied to theirs |
+| `whatsnot_photo_check.png`, `whatsnot_photo_check_narrow.png` | The panel on a sharpened lot, and the same screen at 560px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,812 passed**, 0 failed, 0 skipped (88 new; the previous commit was 3,724) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `read` / `photo` / `bid` mocked in the shape the C# returns) | **33/34 checks.** Pressed before any read: the neutral empty state, **no request made**, the sentence about where photos come from, the announcement in `#wn-say`, and the cursor moved to the address box. After a read: one press → **exactly one `/api/whatsnot/photo` call and no eBay read**, `aria-busy` and a disabled button while in flight, the *busy* edge rather than a warning one, then the accent edge, the server's headline character-for-character, the question for the host, the warning, the folded evidence, a decorative thumbnail, a real `<button>` offer and no second live region. Pressing the offer filled the item box and re-priced through `/api/whatsnot/bid` **without a second look**. A `differs` answer wore the loud edge and said the card had not been changed. A show between lots dropped the look. Nothing overflowed at 560px. |
+
+The one failing check is `no page errors`, and it is the frame's own pre-existing `X-Frame-Options`
+refusal from Whatnot — the panel demonstrating the thing it was built to explain, exactly as the
+previous session recorded it. Nothing on the photo path logged anything.
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked — which exercises the whole render, offer, keyboard and
+narrow-layout path but not the arithmetic underneath it, which is what the 58 new judge tests are
+for.
+
+## Known limits
+
+- **It has never been run against a real Whatnot photo.** The reader is exercised against fixtures
+  and the screen against mocks; nothing here proves what Whatnot's CDN answers a server-side GET
+  with. If it refuses one, the look says so with a next move and the ceiling is unaffected — but the
+  first real press is still the first real evidence.
+- **It inherits the read's reach.** No read, no photo. A seller who typed the lot themselves cannot
+  check a picture, because the app has no address for one. A pasted image address would fix that and
+  is not here.
+- **One photo, and it is the one the host chose.** A lot with its serial plate in the third picture
+  is read off the first. Nothing walks a gallery.
+- **The comparison is tokens, not identity.** "S19j Pro 104TH" and "S19j Pro 100TH" both carry model
+  tokens and share one, so that reads as *sharpens* rather than *differs* — which is the safe way
+  round, and is still not the same as understanding the products.
+- **The condition it sees does nothing.** That is deliberate and it is also a gap: a lot the photo
+  calls a parts unit gets a warning and the same ceiling, and a seller in a hurry reads the badge and
+  not the paragraph.
+- **It costs a model call per press.** There is no cache, so checking the same lot twice pays twice.
+  At one press a lot that is the right trade; a seller who leans on it every few seconds is spending
+  more than they think, and nothing on the screen says so.
+- **`Differs` cannot say which one is right.** It says the two names disagree and offers both. On a
+  lot where the host photographed the wrong unit, the *title* is the true one — and this panel has no
+  way to know that.

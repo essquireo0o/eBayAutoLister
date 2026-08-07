@@ -474,6 +474,13 @@ builder.Services.AddSingleton<FrameEmbedPolicy>();
 // same /api/whatsnot/bid the typed box uses.
 builder.Services.AddSingleton<WhatnotShowReader>();
 
+// And the check on the name that read hands over. Every figure on the live card comes from one eBay
+// sold search, and that search runs on a name typed by somebody holding a camera — "MYSTERY MINER
+// LOT", "S19 read desc". The lot's own photograph is the only evidence on the screen that can
+// contradict the name, and the read already brings its address back. This fetches that picture; what
+// is made of it is LotPhotoJudge, which prices nothing and changes nothing without a press.
+builder.Services.AddSingleton<LotPhotoReader>();
+
 // What the show cost and what it is worth. The card stopped at the hammer; this is the other end of
 // the same decision — a won lot is the SAME card, built by the same advisor against the same held
 // comps, at the price it actually hammered at. Persisted, because a live sale outlasts a session
@@ -3338,6 +3345,65 @@ app.MapPost("/api/whatsnot/read", async (
             : $"{read.Status}: {read.Headline} ({read.ElapsedMs}ms)");
 
     return Results.Ok(read);
+});
+
+// ── Is that actually what it says it is? ──────────────────────────────────────────────────────
+// The read above fills the item box, and every number on the card below comes from a sold search on
+// whatever is in it. On a live show that name was typed in a hurry by somebody holding a camera. The
+// lot's photograph — which the read brings back with it — is the one piece of evidence on the screen
+// that can disagree with the name.
+//
+// This looks at it, and does nothing else. It prices nothing (a test pins that), it changes nothing:
+// a better name comes back as an offer with a button on it, and the seller presses it or doesn't.
+// Never automatic — the watch loop deliberately does not reach this, because a look at a picture
+// costs money and seconds and neither should be spent without a press.
+app.MapPost("/api/whatsnot/photo", async (
+    LotPhotoRequest req, LotPhotoReader reader, ClaudeService claude,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var url = FrameEmbedPolicy.Normalize(req.ImageUrl);
+
+    var (base64, mediaType, refusal) = await reader.FetchAsync(req.ImageUrl, ct);
+    if (refusal is not null)
+    {
+        refusal.ImageUrl = url;
+        refusal.TypedTitle = LiveLotList.Clean(req.Title ?? "").Title;
+        refusal.ElapsedMs = sw.ElapsedMilliseconds;
+        log.Add("Warning", "Checked the lot photo", $"{refusal.Status}: {refusal.Headline}");
+        return Results.Ok(refusal);
+    }
+
+    SnapIdentity identity;
+    try
+    {
+        // The same call the Snap & Source photo path makes, unchanged. A second prompt for "what is
+        // this" would be a second opinion about identity, and this screen has no time for two.
+        identity = await claude.IdentifyItemAsync(base64!, mediaType!, ct);
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
+        var failed = LotPhotoJudge.Failed(failure);
+        failed.ImageUrl = url;
+        failed.TypedTitle = LiveLotList.Clean(req.Title ?? "").Title;
+        failed.ElapsedMs = sw.ElapsedMilliseconds;
+        log.Add("Warning", "Lot photo check failed", $"{failure.Kind} — {failure.Technical}");
+        return Results.Ok(failed);
+    }
+
+    var look = LotPhotoJudge.Judge(req.Title, identity, url);
+    look.ElapsedMs = sw.ElapsedMilliseconds;
+
+    log.Add(look.Agreement == LotPhotoAgreement.Differs ? "Warning" : "Research", "Checked the lot photo",
+        look.Status == LotPhotoStatuses.Looked
+            ? $"\"{look.SeenTitle}\" ({look.Certainty}) vs \"{look.TypedTitle}\" — {look.Agreement}; {look.ElapsedMs}ms"
+            : $"{look.Status}: {look.Headline} ({look.ElapsedMs}ms)");
+
+    return Results.Ok(look);
 });
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the

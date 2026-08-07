@@ -9802,6 +9802,8 @@
     const watch = $('wn-watch');
     if (watch) watch.checked = false;
     wnReadSeq++;
+    // A look already in flight has nothing left to paint onto.
+    wnPhotoSeq++;
     closeWorkspacePage('whatsnot');
   }
 
@@ -10069,6 +10071,10 @@
     wnRenderRead(read);
 
     if (read.status !== 'read') {
+      // Whatever photo the last lot had, it is not this one's. A look left on screen
+      // beside a show that has moved on is a claim about something that has gone.
+      wnPhotoUrl = '';
+      wnRenderPhoto(null);
       // Between lots is the normal state of a live show, not a failure — the watch
       // keeps going through it. Anything else has stopped working, and a loop that
       // kept requesting through a refusal would be a loop hammering somebody's site.
@@ -10100,6 +10106,12 @@
       // bid on the page is a snapshot that would fight the seller's own stepping.
       if (!movedOn) return;
     }
+
+    // The lot's own picture, kept for 🔍 Check the photo. It is never looked at here:
+    // a look costs money and seconds, and a read that spent both without being asked
+    // would be the automatic loop quietly buying vision calls all night.
+    if (movedOn) wnRenderPhoto(null);
+    wnPhotoUrl = read.imageUrl || '';
 
     wnReadLotKey = lotKey;
     wnReadFilled = read.title;
@@ -10145,6 +10157,131 @@
       return;
     }
     wnReadShow({ auto: true });
+  }
+
+  // ── Is that actually what it says it is? ─────────────────────────────────────
+  // Everything above fills one box, and every number on the card below comes from a
+  // sold search on what is in it. On a live show that name was typed in a hurry by
+  // somebody holding a camera — "MYSTERY MINER LOT", "S19 read desc". The lot's own
+  // photograph is the only evidence on this screen that can disagree with the name,
+  // and the read brings its address back.
+  //
+  // Pressed, never automatic. A look at a picture costs money and a second or two,
+  // and the watch loop deliberately does not reach this. Nothing here changes the
+  // item box either: a better name arrives as a button the seller presses, because
+  // what they typed outranks what a model saw.
+  let wnPhotoUrl = '';    // the lot photo the last successful read brought back
+  let wnPhotoSeq = 0;
+
+  /// The look, laid out. Every sentence on it is the server's (Services/LotPhotoJudge.cs)
+  /// — a browser that wrote its own would be a second account of what a picture showed.
+  function wnRenderPhoto(look) {
+    const out = $('wn-photo-out');
+    if (!out) return;
+    if (!look) { out.classList.add('hidden'); out.innerHTML = ''; return; }
+
+    const kind = look.status === 'reading' ? 'busy'
+      : look.status !== 'looked' ? (look.status === 'no-photo' || look.status === 'unnamed' ? 'none' : 'bad')
+      : look.agreement === 'agrees' ? 'ok'
+      : look.agreement === 'sharpens' ? 'new'
+      : look.agreement === 'differs' ? 'bad'
+      : 'none';
+
+    const text = [`<div class="wn-photo-head">${esc(look.headline || '')}</div>`];
+    if (look.detail) text.push(`<p class="wn-photo-detail">${esc(look.detail)}</p>`);
+
+    // The action, above the caveats. The seller has seconds, and the one thing they
+    // might want to DO with this belongs where their eye already is.
+    if (look.suggestedTitle) {
+      text.push('<div class="wn-photo-use">' +
+        `<button type="button" class="btn btn-primary wn-photo-use-btn" data-use-photo="${esc(look.suggestedTitle)}">` +
+        `⚡ Price it as <strong>${esc(look.suggestedTitle)}</strong></button></div>`);
+    }
+
+    if (look.askTheHost) text.push(`<p class="wn-photo-ask">🎤 ${esc(look.askTheHost)}</p>`);
+    (look.warnings || []).forEach(w => text.push(`<p class="wn-photo-warn">⚠ ${esc(w)}</p>`));
+    if (look.hint) text.push(`<p class="wn-photo-do">${esc(look.hint)}</p>`);
+
+    const evidence = look.evidence || [];
+    if (evidence.length) {
+      text.push('<details class="wn-photo-ev"><summary>What the photo actually said</summary><ul>' +
+        evidence.map(e => `<li>${esc(e)}</li>`).join('') + '</ul></details>');
+    }
+
+    const shot = look.imageUrl
+      ? `<img class="wn-photo-shot" src="${esc(look.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      : '';
+
+    out.className = `wn-photo-out wn-photo-${kind}`;
+    out.innerHTML = `<div class="wn-photo-main">${shot}<div class="wn-photo-text">${text.join('')}</div></div>`;
+  }
+
+  /// Looks at the lot photo the last read brought back, against whatever is in the item box.
+  async function wnCheckPhoto() {
+    const btn = $('wn-photo-btn');
+    const seq = ++wnPhotoSeq;
+
+    // No read yet, so no photo yet. An empty state rather than a dead button: a control
+    // that does nothing when pressed teaches the seller it is broken.
+    if (!wnPhotoUrl) {
+      wnRenderPhoto({
+        status: 'no-photo',
+        headline: 'There\'s no lot photo to look at yet.',
+        detail: 'The photo comes back with 📡 Read the show — it is the lot\'s own picture off the ' +
+                'show\'s page, not a frame grabbed from the video.',
+        hint: 'Read the show first, or type the item in and press ⚡ Price it — that never needed a photo.',
+      });
+      wnSayLine('There is no lot photo to look at yet. Read the show first.');
+      $('wn-read-url')?.focus();
+      return;
+    }
+
+    wnRenderPhoto({ status: 'reading', headline: 'Looking at the lot photo…' });
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Looking…'; }
+
+    let look = null;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/photo', {
+        imageUrl: wnPhotoUrl,
+        title: ($('wn-item')?.value || '').trim(),
+      });
+      look = res.ok ? body : {
+        status: 'unreachable',
+        headline: body.error || 'That look didn\'t happen.',
+        hint: body.failure?.whatToDo || 'Type the item in and press ⚡ Price it.',
+      };
+    } catch (err) {
+      look = { status: 'unreachable', headline: errorText(err, 'That look didn\'t happen.'),
+               hint: 'Type the item in and press ⚡ Price it.' };
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        btn.textContent = '🔍 Check the photo';
+      }
+    }
+
+    // A newer look has already answered, or the tab was closed. An older answer painted
+    // over it would describe a photo of a lot that has already gone.
+    if (seq !== wnPhotoSeq) return;
+
+    wnRenderPhoto(look);
+    wnSayLine([look.headline, look.hint].filter(Boolean).join(' '));
+  }
+
+  /// The offer, taken. This is the only path by which a photo reaches the item box, and
+  /// it runs on a press — the same ⚡ Price it a typed name goes through, so a name off a
+  /// picture and the same name typed by hand get the same ceiling from the same function.
+  function wnUsePhotoTitle(title) {
+    const name = (title || '').trim();
+    if (!name) return;
+    setVal('wn-item', name);
+    // A different item is a different question; the comps in hand answer the old one.
+    wnDropToken();
+    // So the automatic reader treats this as the seller's own choice and stops fighting
+    // for the box — which is exactly what it is.
+    wnReadFilled = '';
+    wnPriceItem();
   }
 
   async function wnPriceItem() {
@@ -11021,6 +11158,16 @@
       $('wn-read-btn')?.focus();
     });
     $('wn-read-url')?.addEventListener('keydown', e => { if (e.key === 'Enter') wnReadShow(); });
+
+    // ── The check on the name everything is priced from ───────────────────────
+    // Bound to a press and to nothing else. The offer inside the panel is caught on
+    // the panel, because the panel is replaced whole every time it is redrawn.
+    on('wn-photo-btn', 'click', wnCheckPhoto);
+    $('wn-photo-out')?.addEventListener('click', e => {
+      const use = e.target.closest('[data-use-photo]');
+      if (use) wnUsePhotoTitle(use.getAttribute('data-use-photo'));
+    });
+
     $('wn-watch')?.addEventListener('change', e => {
       if (e.target.checked) wnStartWatch(); else wnStopWatch();
     });

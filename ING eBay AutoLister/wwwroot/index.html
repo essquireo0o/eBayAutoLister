@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=108" />
+  <link rel="stylesheet" href="style.css?v=109" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2735,6 +2735,14 @@
               <button id="wn-read-btn" class="btn btn-primary wn-read-btn" type="button">📡 Read the show</button>
               <button id="wn-read-here" class="btn btn-ghost" type="button"
                       title="Copy the address the panel at the bottom of this screen is on">↧ From the panel</button>
+              <!-- The check on everything above it. The card's ceiling, spread, sell-through and
+                   room all come from one eBay sold search, and that search runs on the NAME in the
+                   box below — typed on a live show by somebody holding a camera. The lot's own
+                   photograph (the read brings its address back) is the only evidence on this screen
+                   that can contradict that name. Pressed, never automatic: a look at a picture costs
+                   money and seconds, and the watch loop deliberately does not reach it. -->
+              <button id="wn-photo-btn" class="btn btn-ghost wn-photo-btn" type="button"
+                      title="Look at the lot's photo and check it against the name being priced">🔍 Check the photo</button>
               <!-- Off by default, and it is the only thing on this screen that reaches the
                    network on its own. It also stops itself the moment the seller edits the item
                    box: whatever they typed outranks whatever the page says. -->
@@ -2744,6 +2752,11 @@
               </label>
             </div>
             <div id="wn-read-out" class="wn-read-out hidden"></div>
+            <!-- What the photo says about the name. Not a live region — #wn-say is the only one on
+                 this screen, and two competing announcements during a live sale is a screen reader
+                 saying nothing usable. A better name arrives here as a button, never as a
+                 substitution: what the seller typed outranks what a model saw. -->
+            <div id="wn-photo-out" class="wn-photo-out hidden"></div>
             <p class="opp-hint wn-read-hint">
               Reads the show's own page — the same one your browser loads — and puts the lot's name
               in the box below, then prices it. It reads the <strong>public page, once per press</strong>,
@@ -5906,6 +5919,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=125"></script>
+  <script src="app.js?v=126"></script>
 </body>
 </html>
