@@ -16304,6 +16304,26 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--text-dim, #8b93a7);
   opacity: .8;
 }
+/* How old the verdict is. Quieter than the refusal itself — it qualifies the claim above
+   it, it is not a second claim. */
+.wn-blocked-note {
+  margin: 0;
+  max-width: 56ch;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-dim, #8b93a7);
+  opacity: .85;
+}
+/* Wraps rather than squeezing: the frame gets narrow on a laptop beside a live stream and
+   three buttons on one line would push the way in off the edge. */
+.wn-blocked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
 .wn-frame {
   width: 100%;
   height: 100%;

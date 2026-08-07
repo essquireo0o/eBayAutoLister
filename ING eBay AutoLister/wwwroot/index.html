@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=112" />
+  <link rel="stylesheet" href="style.css?v=113" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2932,7 +2932,11 @@
           <p class="opp-hint wn-hint">
             Loads a live-selling feed inside the app, and asks the site first whether it allows being
             embedded — the answer appears above the frame, because a refused embed renders as a blank
-            rectangle and tells the page nothing. <strong>Open in browser</strong> is the way into a
+            rectangle and tells the page nothing. A refusal is <strong>remembered</strong>, so the
+            next visit to that site explains itself instantly instead of loading a frame that was
+            never going to render; it is still re-asked in the background, and
+            <strong>Try it anyway</strong> overrules the memory.
+            <strong>Open in browser</strong> is the way into a
             site that refuses. The app cannot read what is inside the frame either (a browser refuses
             cross-origin) — which is what <strong>📡 Read the show</strong> at the top of this screen
             is for: it fetches the show's page through the app instead, where no such rule applies.
@@ -2940,11 +2944,23 @@
           <div class="wn-frame-wrap">
             <!-- Shown over the frame when the site's own headers say the embed was refused, so the
                  blank rectangle underneath stops reading as a broken app. -->
+            <!-- A refusal is a doorway, not a dead end: out to a real browser, or straight to
+                 📡 Read the show, which fetches the same page through the app and fills the box
+                 the ceiling is priced from. Try it anyway is offered only against a verdict that
+                 might be out of date — remembered from a previous night, or taken off the standing
+                 list — never against a header this app read one second ago. -->
             <div id="wn-blocked" class="wn-blocked hidden">
               <div class="wn-blocked-title" id="wn-blocked-title"></div>
               <p class="wn-blocked-detail" id="wn-blocked-detail"></p>
+              <p class="wn-blocked-note hidden" id="wn-blocked-note"></p>
               <p class="wn-blocked-header" id="wn-blocked-header"></p>
-              <button id="wn-blocked-open" class="btn btn-primary" type="button">Open in browser ↗</button>
+              <div class="wn-blocked-actions">
+                <button id="wn-blocked-open" class="btn btn-primary" type="button">Open in browser ↗</button>
+                <button id="wn-blocked-read" class="btn btn-ghost" type="button"
+                        title="Fetch this show's page through the app and read the lot off it">📡 Read this show instead</button>
+                <button id="wn-blocked-retry" class="btn btn-ghost hidden" type="button"
+                        title="Point the frame at it regardless — the remembered refusal may be out of date">Try it anyway</button>
+              </div>
             </div>
             <iframe id="wn-frame" class="wn-frame" src="about:blank"
                     referrerpolicy="no-referrer" title="Live feed"></iframe>
@@ -5931,6 +5947,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=129"></script>
+  <script src="app.js?v=130"></script>
 </body>
 </html>

@@ -9590,6 +9590,12 @@
   // document. Blank looks exactly like a slow feed, a signed-out feed, or a bug in
   // this app. So the app asks the site itself, server-side, and says which it is.
   //
+  // And it keeps the answer. A site that refused in its own headers will refuse again,
+  // so the second visit is not a doomed request and twelve seconds of black rectangle:
+  // the panel explains it straight away, with no network in it, and re-asks the site
+  // quietly in case it has changed its mind. Only a verdict the server marked worth
+  // remembering is kept — "couldn't reach it" is a fact about the request, not the site.
+  //
   // Back/Forward walk THIS panel's list of loaded addresses. They cannot be the
   // frame's own history: a page may not read, or move, where a cross-origin frame
   // has navigated. Claiming otherwise would be a button that silently does the
@@ -9601,6 +9607,15 @@
   // Long enough that a heavy live page isn't accused of being blocked; short enough
   // to still be useful while the item on screen is being bid on.
   const WN_SLOW_MS = 12000;
+  // What each site said last time. Whatnot refuses to be framed and will refuse again;
+  // pointing the frame at it anyway costs a doomed request and hands the seller the same
+  // blank rectangle this panel exists to explain. Kept per host, not per address.
+  const WN_VERDICT_KEY = 'whatsnotEmbedVerdicts';
+  const WN_VERDICT_MAX = 24;
+  // A verdict is a claim about somebody else's server, and servers change their minds. A
+  // week is long enough to spare the seller the same rectangle every night, short enough
+  // that a site which starts allowing embeds is picked up even if no re-check ever lands.
+  const WN_VERDICT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
   let wnHistory = [];
   let wnHistoryAt = -1;
@@ -9655,6 +9670,67 @@
     try { return localStorage.getItem(WN_URL_KEY) || ''; } catch { return ''; }
   }
 
+  // ── What each site said last time ────────────────────────────────────────────
+  // Only verdicts the server marked `remember` get in here: a refusal the site stated in
+  // its own headers, or one from the standing list. A timeout is a fact about this
+  // request, not about the site, and remembering one would turn a bad minute into a feed
+  // the panel quietly declines to load for a week.
+  function wnVerdicts() {
+    try {
+      const all = JSON.parse(localStorage.getItem(WN_VERDICT_KEY) || '{}');
+      return all && typeof all === 'object' && !Array.isArray(all) ? all : {};
+    } catch { return {}; }
+  }
+
+  function wnRememberVerdict(check) {
+    if (!check || !check.remember || !check.host) return;
+    try {
+      const all = wnVerdicts();
+      all[check.host] = {
+        status: check.status,
+        headline: check.headline || '',
+        detail: check.detail || '',
+        header: check.header || '',
+        source: check.source || '',
+        at: Date.now(),
+      };
+      // Oldest out first, so a seller who tours a dozen feeds doesn't grow this forever.
+      const hosts = Object.keys(all);
+      if (hosts.length > WN_VERDICT_MAX) {
+        hosts.sort((a, b) => (all[a].at || 0) - (all[b].at || 0))
+             .slice(0, hosts.length - WN_VERDICT_MAX)
+             .forEach(h => delete all[h]);
+      }
+      localStorage.setItem(WN_VERDICT_KEY, JSON.stringify(all));
+    } catch { /* private mode — the panel still checks, it just re-checks every time */ }
+  }
+
+  function wnRememberedVerdict(host) {
+    const saved = wnVerdicts()[host];
+    if (!saved || typeof saved !== 'object' || !saved.status) return null;
+    if (!(saved.at > 0) || (Date.now() - saved.at) > WN_VERDICT_TTL_MS) return null;
+    return saved;
+  }
+
+  function wnForgetVerdict(host) {
+    try {
+      const all = wnVerdicts();
+      if (!(host in all)) return;
+      delete all[host];
+      localStorage.setItem(WN_VERDICT_KEY, JSON.stringify(all));
+    } catch { /* as above */ }
+  }
+
+  // Said out loud next to a remembered refusal, because "it said no just now" and "it said
+  // no last Tuesday" are different claims and only one of them is worth overruling.
+  function wnRememberedWhen(at) {
+    const days = Math.floor((Date.now() - at) / 86400000);
+    if (!(at > 0)) return 'earlier';
+    if (days <= 0) return 'earlier today';
+    if (days === 1) return 'yesterday';
+    return `${days} days ago`;
+  }
+
   // ── The status strip ─────────────────────────────────────────────────────────
   function wnStatus(kind, text) {
     const el = $('wn-status');
@@ -9672,14 +9748,32 @@
     setText('wn-blocked-detail', check.detail || '');
     setText('wn-blocked-header', check.header || '');
     $('wn-blocked-header')?.classList.toggle('hidden', !check.header);
+
+    // Where the verdict came from. A refusal read off the site's headers a second ago is not
+    // the same claim as one remembered from last week or taken off a list, and the seller is
+    // only offered the override against the two that might be out of date.
+    const note = check.remembered
+      ? `${check.host || 'This site'} refused this ${wnRememberedWhen(check.at)}. Asking it again now.`
+      : (check.source === 'known'
+          ? "This check couldn't reach the site just now — the refusal is a standing one."
+          : '');
+    setText('wn-blocked-note', note);
+    $('wn-blocked-note')?.classList.toggle('hidden', !note);
+    const overridable = !!check.remembered || check.source === 'known';
+    $('wn-blocked-retry')?.classList.toggle('hidden', !overridable);
+
     panel.classList.remove('hidden');
   }
 
   // Asks the site — via the app, which is not a frame and so is not refused on those
   // grounds — whether a browser will let this embed happen at all.
-  async function wnCheckEmbed(url) {
+  async function wnCheckEmbed(url, options) {
+    const opts = options || {};
     const token = ++wnCheckToken;
-    wnStatus('checking', `Checking whether ${wnHost(url)} allows embedding…`);
+    // On a re-check the screen already carries the remembered refusal and its own note saying
+    // the site is being asked again. Replacing that with "Checking…" would throw away the
+    // explanation the seller is reading in order to say less.
+    if (!opts.recheck) wnStatus('checking', `Checking whether ${wnHost(url)} allows embedding…`);
     let check = null;
     try {
       const res = await fetch('/api/whatsnot/embed-check?url=' + encodeURIComponent(url));
@@ -9690,17 +9784,37 @@
     if (token !== wnCheckToken) return;
 
     // No answer, or one with no verdict in it. Either way the honest report is "couldn't tell" —
-    // silence here is the failure this whole check exists to remove.
+    // silence here is the failure this whole check exists to remove. Behind a remembered refusal
+    // there is nothing to correct: what is on screen is still the best evidence there is.
     if (!check || !check.status) {
+      if (opts.recheck) return;
       wnStatus('unknown', `Couldn't check whether ${wnHost(url)} allows embedding. The frame may still load.`);
       return;
     }
 
+    wnRememberVerdict(check);
+
     if (check.status === 'refused') {
+      // Stop the load that will never render. The browser blocked the frame before anything was
+      // painted; leaving it pointed at a live page keeps somebody's stream in flight for a
+      // rectangle nobody will ever see.
+      const frame = $('wn-frame');
+      if (frame && frame.src && frame.src !== 'about:blank') frame.src = 'about:blank';
       wnStatus('refused', check.headline + (check.header ? ` (${check.header})` : ''));
       wnShowBlocked(check);
       if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
       return;
+    }
+
+    // A re-check that came back better than the memory. Only a live "allowed" overturns a
+    // refusal on screen — "couldn't tell" is not permission, and acting on it would put back
+    // the blank rectangle with nothing to explain it.
+    if (opts.recheck) {
+      if (check.status !== 'allowed') return;
+      // Nothing is forgotten here: wnRememberVerdict has already replaced the refusal with this
+      // permission, and deleting it afterwards would throw away the very answer that overturned
+      // it — leaving the panel to re-discover the same thing on every single load.
+      wnPointFrame(url);
     }
 
     wnShowBlocked(null);
@@ -9709,26 +9823,11 @@
              said || `${wnHost(url)} didn't say whether it allows embedding.`);
   }
 
-  function wnLoad(url, options) {
+  // Points the frame and arms the "still nothing" warning. Shared, so the ordinary load and a
+  // site that turned out to allow embedding after all cannot drift apart.
+  function wnPointFrame(target) {
     const frame = $('wn-frame');
-    const target = wnNormalizeUrl(url || $('wn-url')?.value);
     if (!frame || !target) return;
-    const box = $('wn-url');
-    if (box) box.value = target;
-
-    // A fresh address truncates anything that was ahead of it, exactly like a browser.
-    if (!options || options.push !== false) {
-      if (wnHistory[wnHistoryAt] !== target) {
-        wnHistory = wnHistory.slice(0, wnHistoryAt + 1);
-        wnHistory.push(target);
-        wnHistoryAt = wnHistory.length - 1;
-      }
-      wnAddRecent(target);
-    }
-    wnSaveLastUrl(target);
-    wnUpdateNav();
-
-    wnShowBlocked(null);
     wnStatus('checking', `Loading ${wnHost(target)}…`);
     // Assigning the same src doesn't always reload, so the frame is blanked first —
     // which also stops the previous stream before the next one starts.
@@ -9744,7 +9843,46 @@
                             'usually a site that refuses to be embedded — try Open in browser.');
       }
     }, WN_SLOW_MS);
+  }
 
+  function wnLoad(url, options) {
+    const opts = options || {};
+    const frame = $('wn-frame');
+    const target = wnNormalizeUrl(url || $('wn-url')?.value);
+    if (!frame || !target) return;
+    const box = $('wn-url');
+    if (box) box.value = target;
+
+    // A fresh address truncates anything that was ahead of it, exactly like a browser.
+    if (opts.push !== false) {
+      if (wnHistory[wnHistoryAt] !== target) {
+        wnHistory = wnHistory.slice(0, wnHistoryAt + 1);
+        wnHistory.push(target);
+        wnHistoryAt = wnHistory.length - 1;
+      }
+      wnAddRecent(target);
+    }
+    wnSaveLastUrl(target);
+    wnUpdateNav();
+
+    wnShowBlocked(null);
+
+    // A site that refused in its own headers will refuse again, and the frame is where that
+    // costs something: a doomed cross-origin request, and the same blank rectangle every time
+    // the tab is opened. So the remembered refusal is answered first, with no network in it,
+    // and the site is asked again in the background in case it has changed its mind.
+    const remembered = opts.force ? null : wnRememberedVerdict(wnHost(target));
+    if (remembered && remembered.status === 'refused') {
+      frame.src = 'about:blank';
+      if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
+      wnStatus('refused', `${remembered.headline || `${wnHost(target)} refuses to be embedded.`} ` +
+                          `Remembered from ${wnRememberedWhen(remembered.at)} — asking again now.`);
+      wnShowBlocked({ ...remembered, host: wnHost(target), remembered: true });
+      wnCheckEmbed(target, { recheck: true });
+      return;
+    }
+
+    wnPointFrame(target);
     wnCheckEmbed(target);
   }
 
@@ -11285,6 +11423,28 @@
     };
     on('wn-open-browser', 'click', openInBrowser);
     on('wn-blocked-open', 'click', openInBrowser);
+
+    // Pressing this means "your memory is stale" — so the memory goes, and the frame is
+    // pointed at the site regardless of what it said last time.
+    on('wn-blocked-retry', 'click', () => {
+      const target = wnNormalizeUrl($('wn-url')?.value);
+      if (!target) return;
+      wnForgetVerdict(wnHost(target));
+      wnLoad(target, { push: false, force: true });
+    });
+
+    // The way out of a refused frame that still ends in a priced lot: the address the panel
+    // is on, handed to the reader at the top of the screen, which fetches the page through
+    // the app where no framing rule applies.
+    const readWhatsHere = () => {
+      const here = wnNormalizeUrl(wnHistory[wnHistoryAt] || $('wn-url')?.value);
+      if (here) setVal('wn-read-url', here);
+      const readBox = $('wn-read-url');
+      readBox?.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+      $('wn-read-btn')?.focus();
+    };
+    on('wn-blocked-read', 'click', readWhatsHere);
+
     const box = $('wn-url');
     if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter') wnLoad(); });
 
@@ -11305,12 +11465,9 @@
     // ── Reading the lot off the show ──────────────────────────────────────────
     on('wn-read-btn', 'click', () => wnReadShow());
     // The panel at the bottom is where the seller navigated to the show; retyping
-    // that address into a second box is the friction this button removes.
-    on('wn-read-here', 'click', () => {
-      const here = wnNormalizeUrl(wnHistory[wnHistoryAt] || $('wn-url')?.value);
-      if (here) setVal('wn-read-url', here);
-      $('wn-read-btn')?.focus();
-    });
+    // that address into a second box is the friction this button removes. Same handler
+    // as the one on the refusal overlay — two ways in, one behaviour.
+    on('wn-read-here', 'click', readWhatsHere);
     $('wn-read-url')?.addEventListener('keydown', e => { if (e.key === 'Enter') wnReadShow(); });
 
     // ── The check on the name everything is priced from ───────────────────────

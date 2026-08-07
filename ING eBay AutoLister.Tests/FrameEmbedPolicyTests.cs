@@ -402,6 +402,103 @@ public class FrameEmbedPolicyTests
         Assert.Contains("example.com", check.Headline, StringComparison.Ordinal);
     }
 
+    // ── What the panel is allowed to remember ─────────────────────────────────
+    // The panel keeps refusals and stops pointing the frame at a site that has already said no.
+    // That is a good trade for a verdict the site stated, and a bad one for a verdict this app
+    // failed to obtain: a remembered timeout would turn one bad minute into a feed the panel
+    // quietly declines to load for a week, with a confident explanation attached.
+
+    [Theory]
+    [InlineData(FrameEmbedStatuses.Refused, "headers", true)]
+    [InlineData(FrameEmbedStatuses.Refused, "known", true)]
+    [InlineData(FrameEmbedStatuses.Allowed, "headers", true)]
+    [InlineData(FrameEmbedStatuses.Unknown, "unreachable", false)]
+    [InlineData(FrameEmbedStatuses.Unknown, "headers", false)]
+    [InlineData(FrameEmbedStatuses.Invalid, "validation", false)]
+    [InlineData(FrameEmbedStatuses.Refused, "unreachable", false)]
+    [InlineData(FrameEmbedStatuses.Allowed, "known", false)]
+    public void Only_what_the_site_said_is_worth_remembering(string status, string source, bool expected) =>
+        Assert.Equal(expected, FrameEmbedPolicy.IsWorthRemembering(status, source));
+
+    [Fact]
+    public async Task A_refusal_read_off_the_headers_is_marked_worth_remembering()
+    {
+        var policy = new FrameEmbedPolicy(
+            StubHttpClientFactory.Serving(HttpStatusCode.OK, ("X-Frame-Options", "DENY")));
+
+        var check = await policy.CheckAsync("https://example.com/", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Refused, check.Status);
+        Assert.True(check.Remember);
+        // The host is the key the panel files it under, so it has to come back populated.
+        Assert.Equal("example.com", check.Host);
+    }
+
+    [Fact]
+    public async Task A_permission_read_off_the_headers_is_marked_worth_remembering()
+    {
+        var policy = new FrameEmbedPolicy(StubHttpClientFactory.Serving(HttpStatusCode.OK));
+
+        var check = await policy.CheckAsync("https://example.com/", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Allowed, check.Status);
+        Assert.True(check.Remember);
+    }
+
+    /// <summary>
+    /// The one that matters. A site the probe could not reach is a site nothing is known about,
+    /// and the panel must go on trying the frame rather than filing it away as refused.
+    /// </summary>
+    [Fact]
+    public async Task A_check_that_never_landed_is_never_remembered()
+    {
+        var policy = new FrameEmbedPolicy(new ThrowingHttpClientFactory());
+
+        var check = await policy.CheckAsync("https://not-a-known-refuser.example/", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Unknown, check.Status);
+        Assert.False(check.Remember);
+    }
+
+    /// <summary>A 403 from a CDN says nothing about framing either — the real headers were never seen.</summary>
+    [Fact]
+    public async Task An_unreadable_page_is_not_remembered_as_anything()
+    {
+        var policy = new FrameEmbedPolicy(StubHttpClientFactory.Serving(HttpStatusCode.Forbidden));
+
+        var check = await policy.CheckAsync("https://example.com/", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Unknown, check.Status);
+        Assert.False(check.Remember);
+    }
+
+    /// <summary>
+    /// Whatnot behind a 403 is the everyday case: the probe gets nothing, the standing list
+    /// answers, and that answer IS about the site — so it is kept.
+    /// </summary>
+    [Fact]
+    public async Task A_standing_refusal_is_remembered_even_though_the_probe_was_turned_away()
+    {
+        var policy = new FrameEmbedPolicy(StubHttpClientFactory.Serving(HttpStatusCode.Forbidden));
+
+        var check = await policy.CheckAsync("https://www.whatnot.com/live", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Refused, check.Status);
+        Assert.Equal("known", check.Source);
+        Assert.True(check.Remember);
+    }
+
+    [Fact]
+    public async Task An_address_this_panel_cannot_load_is_not_remembered()
+    {
+        var policy = new FrameEmbedPolicy(StubHttpClientFactory.Serving(HttpStatusCode.OK));
+
+        var check = await policy.CheckAsync("http://192.168.1.10/", CancellationToken.None);
+
+        Assert.Equal(FrameEmbedStatuses.Invalid, check.Status);
+        Assert.False(check.Remember);
+    }
+
     /// <summary>A factory whose client always fails — the "the probe didn't land" path.</summary>
     private sealed class ThrowingHttpClientFactory : IHttpClientFactory
     {

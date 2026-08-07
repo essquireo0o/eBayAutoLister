@@ -11632,3 +11632,127 @@ the quote would be a number the fresh card and the re-priced one could disagree 
   the resale price the ceiling was built on. The strip says so; nothing sorts or splits the table.
 - **Nothing reads the trend on the seller's OWN record.** `OwnTrackRecord` still reports what they
   got for one last time without asking whether that was before or after the market moved.
+
+---
+
+# WhatsNot browser panel: a site that already said no is not asked to say it again (autonomous session, 2026-08-07)
+
+## The question this answers
+
+The seller opens the WhatsNot tab. The panel points its `<iframe>` at Whatnot, Whatnot sends
+`X-Frame-Options: DENY`, the browser blocks the embed before a pixel is painted and tells the
+embedding page **nothing** — and the seller looks at a black rectangle until the header check comes
+back and explains it. That explanation was built in an earlier session and it works.
+
+What it did not do was **remember**. Every open, every reload, every Back and Forward, the panel
+went through the same ritual: fire a request at a live-streaming page that was never going to
+render, hold a black rectangle for as long as the check took, then say the thing it already knew
+last night. Whatnot is the site this screen exists for, and it is the one site guaranteed to refuse.
+
+So the panel now keeps what each site said, and acts on it.
+
+## What it does
+
+**First visit to a refusing site** — unchanged. The frame is pointed at it, the check comes back,
+and the overlay explains the refusal in the site's own name with the header as evidence. New: the
+frame is then **blanked**, because a page the browser has already blocked is somebody's live stream
+still in flight for a rectangle nobody will ever see. And the verdict is filed under the host.
+
+**Every visit after that** — the refusal is answered from memory, with **no network in it**. The
+frame is never pointed at the site, the overlay is up before the tab has finished opening, and the
+status strip says *"Whatnot refuses to be embedded. Remembered from 3 days ago — asking again now."*
+
+**And it is asked again.** A memory nothing can dislodge is a broken panel. Three things can
+overturn it: the background re-check that runs behind every remembered refusal, the seven-day
+expiry, and **Try it anyway**. A live `allowed` on the re-check drops the memory, clears the overlay
+and points the frame at the feed by itself. `unknown` does not — "couldn't tell" is not permission,
+and acting on it would put the black rectangle back with nothing to explain it.
+
+## The line between what a site said and what this app failed to find out
+
+This is the whole design, and getting it wrong is worse than not remembering at all: a remembered
+timeout turns one bad minute into a week of a feed the panel quietly declines to load, with a
+confident sentence attached. So the **server** decides what is worth keeping —
+`FrameEmbedPolicy.IsWorthRemembering`, set on every path out of the probe, surfaced as
+`FrameEmbedCheck.Remember`, and the browser stores nothing the server did not vouch for:
+
+| Verdict | Source | Kept? | Why |
+|---|---|---|---|
+| refused | headers | **yes** | the site stated it |
+| refused | known | **yes** | a standing fact about the site |
+| allowed | headers | **yes** | the site stated it |
+| unknown | unreachable | no | a fact about this request, not the site |
+| invalid | validation | no | not an address anything was asked about |
+
+## The overlay says how old its claim is
+
+"It refused just now" and "it refused last week" are different claims, and only one is worth
+overruling. So a remembered verdict carries an italic note naming the host and the age, and
+**Try it anyway** appears **only** against a verdict that might be stale — remembered, or taken off
+the standing list. Against a header this app read one second ago it is not offered, because
+pressing it would achieve nothing and the button would be a lie.
+
+The moment the re-check confirms the refusal, the note and the override disappear: the claim has
+stopped being a memory. That transition is verified in a real browser rather than assumed.
+
+## A refusal is a doorway, not a dead end
+
+The overlay had one way out — Open in browser. It now has two, and the second is the one that ends
+in money: **📡 Read this show instead** takes the address the panel is on, drops it into the reader
+at the top of the screen and scrolls it into view. The reader fetches the show's page *through the
+app*, where no framing rule applies, and fills the box the ceiling is priced from. A seller who
+cannot watch the feed inside the app can still price the lot inside the app.
+
+It is bound to the same handler as the existing **⇩ From the panel** button, so the two cannot drift.
+
+## The bug the browser found that the tests did not
+
+The background re-check, on a site that had started allowing embeds, called `wnRememberVerdict`
+(filing the new `allowed`) and then `wnForgetVerdict` — deleting the very answer that had just
+overturned the refusal. Nothing broke visibly: the feed loaded. But the memory came back empty, so
+the *next* load short-circuited on the stale refusal again and the site had to change its mind
+forever, once per load. Found by asserting on `localStorage` after the transition, not by reading
+the code. The forget is gone from that path; the asset test now pins its **absence** and says why.
+
+## Sold comps
+
+Untouched. Nothing in this session goes near `/api/sold-comps`, `/api/whatsnot/bid`, or the
+sell-through path the ceiling is built on. The panel is the container; the card is the feature.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Models/FrameEmbedModels.cs` | `FrameEmbedCheck.Remember` — is this verdict evidence, or is it this app shrugging |
+| `ING eBay AutoLister/Services/FrameEmbedPolicy.cs` | `IsWorthRemembering`, set once in the `finally` so a verdict added later cannot become rememberable by accident |
+| `ING eBay AutoLister/wwwroot/app.js` | The verdict store (`wnVerdicts`/`wnRememberVerdict`/`wnRememberedVerdict`/`wnForgetVerdict`/`wnRememberedWhen`), the short-circuit in `wnLoad`, `wnPointFrame` split out and shared, the re-check path in `wnCheckEmbed`, blanking a confirmed-refused frame, the two new overlay bindings |
+| `ING eBay AutoLister/wwwroot/index.html` | The note, the actions row, Read this show instead, Try it anyway; the hint rewritten; `app.js?v=130`, `style.css?v=113` |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-blocked-note`, `.wn-blocked-actions` (wraps — three buttons do not fit one line beside a live stream) |
+| `ING eBay AutoLister.Tests/FrameEmbedPolicyTests.cs` | 15 new tests on what may be remembered, including the 403-plus-standing-list case that IS kept and the timeout that is not |
+| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | 5 new tests holding the short-circuit, the three ways to overturn it, the freshness note, the stopped load and the doorway |
+| `whatsnot_refused_live.png`, `whatsnot_refused_remembered.png`, `whatsnot_refused_to_reader.png`, `whatsnot_refused_narrow.png` | The four states |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,042 passed**, 0 failed, 0 skipped (20 new; the previous commit was 4,022) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, `wwwroot` served statically, `/api/whatsnot/embed-check` mocked in the shape the C# returns, `whatnot.com` itself stubbed and counted) | **24 checks, all passed.** First visit: 1 request to the site, overlay up, frame blanked, no note, no override, verdict in `localStorage`. Second visit with the verdict aged three days: **0 requests to the site**, frame `about:blank`, note reading *"www.whatnot.com refused this 3 days ago. Asking it again now."*, override offered, re-check fired. When the held-open re-check landed and confirmed: note and override retired, overlay still up, still 0 requests. Site changed its mind: overlay gone, frame pointed at the feed, memory now `allowed`. A check that never landed: nothing stored, frame still tried. At 560px the three buttons wrapped with **0px** overflow. 0 console errors. |
+
+## Known limits
+
+- **The memory is per host, not per address.** A site that refuses one path and allows another is
+  remembered as refusing. No live-selling site works that way, and the override is one press.
+- **Seven days is a guess.** Long enough to be worth having, short enough to self-heal; nothing
+  measures whether it is right.
+- **A remembered refusal that is wrong costs a press.** If a site started allowing embeds and the
+  re-check cannot reach it, the panel keeps refusing to load it until Try it anyway or the expiry.
+  That is the deliberate direction of the error: silence that explains itself beats a black
+  rectangle that does not.
+- **`localStorage` is per browser profile.** The app's own window and a real browser pointed at the
+  same port keep separate memories. Harmless, and invisible.
+- **Nothing here makes a cross-origin frame readable.** It never will be. The feed inside the frame
+  is still a picture the app cannot see, which is what 📡 Read the show is for — now reachable in
+  one press from the refusal itself.

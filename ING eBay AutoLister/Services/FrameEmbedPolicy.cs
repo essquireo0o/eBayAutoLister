@@ -261,6 +261,26 @@ public sealed class FrameEmbedPolicy(IHttpClientFactory httpFactory)
         return false;
     }
 
+    // ── What is worth remembering ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether a verdict is evidence the panel may keep and act on the next time this host comes
+    /// up — meaning: skip pointing the frame at it and explain the refusal straight away.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is between what a site <i>said</i> and what this check <i>failed to find
+    /// out</i>. A refusal read off the site's own headers, and a refusal from the standing list, are
+    /// both statements about the site. "Couldn't reach it" and "that isn't an address" are
+    /// statements about this request, and a remembered timeout would turn one bad minute into a
+    /// site the panel quietly declines to load for a week.
+    /// </remarks>
+    public static bool IsWorthRemembering(string? status, string? source) => status switch
+    {
+        FrameEmbedStatuses.Refused => source is "headers" or "known",
+        FrameEmbedStatuses.Allowed => source is "headers",
+        _ => false,
+    };
+
     // ── The check ─────────────────────────────────────────────────────────────
 
     /// <summary>Asks the site itself, and turns the answer into something the panel can say out loud.</summary>
@@ -372,6 +392,10 @@ public sealed class FrameEmbedPolicy(IHttpClientFactory httpFactory)
         finally
         {
             result.ElapsedMs = sw.ElapsedMilliseconds;
+            // Set in one place, on every path out of the probe, so a new verdict added later cannot
+            // become rememberable by accident — the two early returns above are both "invalid",
+            // which this would answer false for anyway.
+            result.Remember = IsWorthRemembering(result.Status, result.Source);
         }
     }
 

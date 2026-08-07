@@ -47,6 +47,14 @@ public sealed class FrameEmbedCheck
     /// read off a live response outranks one remembered from a list, and the screen says which.</summary>
     public string Source { get; set; } = "";
 
+    /// <summary>
+    /// Whether this verdict is solid enough for the panel to keep and act on next time — see
+    /// <see cref="Services.FrameEmbedPolicy.IsWorthRemembering"/>. It is the difference between
+    /// "the site said no" and "the check didn't land": only the first is evidence, and only the
+    /// first may be allowed to harden into a rectangle the panel refuses to even try.
+    /// </summary>
+    public bool Remember { get; set; }
+
     /// <summary>HTTP status the probe got back, when it got one.</summary>
     public int? HttpStatus { get; set; }
 

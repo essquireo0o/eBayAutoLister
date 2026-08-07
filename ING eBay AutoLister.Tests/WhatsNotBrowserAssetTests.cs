@@ -186,6 +186,116 @@ public class WhatsNotBrowserAssetTests
         Assert.Contains("app.MapGet(\"/api/sold-comps\"", Program, StringComparison.Ordinal);
     }
 
+    // ── What the panel remembers about a refusal ──────────────────────────────
+
+    /// <summary>
+    /// The point of remembering: a site that refused in its own headers is never pointed at
+    /// again on the strength of hope. The frame is left blank, the explanation is instant, and
+    /// no request goes out to a page that was never going to render.
+    /// </summary>
+    [Fact]
+    public void A_site_that_already_refused_is_not_pointed_at_again()
+    {
+        Assert.Contains("const WN_VERDICT_KEY = 'whatsnotEmbedVerdicts';", Js, StringComparison.Ordinal);
+
+        var load = Section(Js, "function wnLoad(url, options) {", "function wnUpdateNav()");
+        Assert.Contains("wnRememberedVerdict(wnHost(target))", load, StringComparison.Ordinal);
+        Assert.Contains("remembered.status === 'refused'", load, StringComparison.Ordinal);
+        // The frame is blanked, NOT pointed at the target, on that path.
+        Assert.Contains("frame.src = 'about:blank';", load, StringComparison.Ordinal);
+        Assert.Contains("wnCheckEmbed(target, { recheck: true });", load, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A memory nothing can dislodge is a broken panel. The site is asked again every time the
+    /// remembered refusal is shown, the memory expires on its own, and Try it anyway overrules it.
+    /// </summary>
+    [Fact]
+    public void A_remembered_refusal_can_always_be_overturned()
+    {
+        Assert.Contains("const WN_VERDICT_TTL_MS", Js, StringComparison.Ordinal);
+        Assert.Contains("function wnForgetVerdict(host)", Js, StringComparison.Ordinal);
+
+        Assert.Contains("id=\"wn-blocked-retry\"", Html, StringComparison.Ordinal);
+        var retry = Section(Js, "on('wn-blocked-retry', 'click'", "const readWhatsHere");
+        Assert.Contains("wnForgetVerdict(wnHost(target));", retry, StringComparison.Ordinal);
+        Assert.Contains("force: true", retry, StringComparison.Ordinal);
+
+        // And a live "allowed" on the background re-check puts the feed back by itself, off the
+        // permission wnRememberVerdict has just filed over the refusal. Forgetting it here would
+        // delete the answer that overturned the refusal and re-run this on every load.
+        var check = Section(Js, "if (opts.recheck) {", "wnShowBlocked(null);");
+        Assert.Contains("wnPointFrame(url);", check, StringComparison.Ordinal);
+        Assert.DoesNotContain("wnForgetVerdict", check, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Only a verdict the server stands behind is kept. Remembering "couldn't reach it" would
+    /// turn one bad minute into a week of a feed the panel refuses to even try, and the seller
+    /// would have no way of knowing why.
+    /// </summary>
+    [Fact]
+    public void Only_a_verdict_the_server_vouches_for_is_kept()
+    {
+        Assert.Contains("public bool Remember { get; set; }", ReadSource(Path.Combine("Models", "FrameEmbedModels.cs")),
+                        StringComparison.Ordinal);
+        Assert.Contains("public static bool IsWorthRemembering",
+                        ReadSource(Path.Combine("Services", "FrameEmbedPolicy.cs")), StringComparison.Ordinal);
+
+        var remember = Section(Js, "function wnRememberVerdict(check) {", "function wnRememberedVerdict(host)");
+        Assert.Contains("if (!check || !check.remember || !check.host) return;", remember, StringComparison.Ordinal);
+        Assert.Contains("catch", remember, StringComparison.Ordinal);
+
+        var read = Section(Js, "function wnRememberedVerdict(host) {", "function wnForgetVerdict(host)");
+        Assert.Contains("WN_VERDICT_TTL_MS", read, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A refusal confirmed live stops the doomed load rather than leaving somebody's stream in
+    /// flight behind an overlay nobody can see through.
+    /// </summary>
+    [Fact]
+    public void A_confirmed_refusal_stops_the_load_that_will_never_render()
+    {
+        var refused = Section(Js, "if (check.status === 'refused') {", "wnStatus('refused'");
+        Assert.Contains("frame.src = 'about:blank'", refused, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A refused frame must not be a dead end. The overlay offers a real browser AND the reader,
+    /// which fetches the same page through the app and fills the box the ceiling is priced from —
+    /// so the seller who cannot watch the feed here can still price the lot here.
+    /// </summary>
+    [Fact]
+    public void A_refusal_still_ends_at_a_priced_lot()
+    {
+        Assert.Contains("id=\"wn-blocked-read\"", Html, StringComparison.Ordinal);
+        Assert.Contains("on('wn-blocked-read', 'click', readWhatsHere);", Js, StringComparison.Ordinal);
+        // The same handler as the button beside the reader, so the two cannot drift apart.
+        Assert.Contains("on('wn-read-here', 'click', readWhatsHere);", Js, StringComparison.Ordinal);
+        Assert.Contains("setVal('wn-read-url', here);", Js, StringComparison.Ordinal);
+        Assert.Contains(".wn-blocked-actions", Css, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The overlay says how old its verdict is. "It refused just now" and "it refused last week"
+    /// are different claims, and the override is only offered against the one that might be stale.
+    /// </summary>
+    [Fact]
+    public void The_overlay_says_whether_the_verdict_is_fresh_or_remembered()
+    {
+        Assert.Contains("id=\"wn-blocked-note\"", Html, StringComparison.Ordinal);
+        Assert.Contains(".wn-blocked-note", Css, StringComparison.Ordinal);
+
+        var blocked = Section(Js, "function wnShowBlocked(check) {", "async function wnCheckEmbed");
+        Assert.Contains("wnRememberedWhen(check.at)", blocked, StringComparison.Ordinal);
+        Assert.Contains("check.source === 'known'", blocked, StringComparison.Ordinal);
+        Assert.Contains("const overridable = !!check.remembered || check.source === 'known';",
+                        blocked, StringComparison.Ordinal);
+        Assert.Contains("$('wn-blocked-retry')?.classList.toggle('hidden', !overridable);",
+                        blocked, StringComparison.Ordinal);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string Section(string text, string from, string to)
