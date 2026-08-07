@@ -46,6 +46,15 @@ public sealed class LiveBidRequest
     public string? Token { get; set; }
 }
 
+/// <summary>The show's upcoming lots, pasted. See <see cref="Services.LiveLotList"/>.</summary>
+public sealed class LiveLotListRequest
+{
+    /// <summary>The lot list exactly as it was copied — lot numbers, asking prices and all. What
+    /// the app made of each line comes back in the plan, so the cleaning is visible rather than
+    /// something that happened to the seller's paste on the way past.</summary>
+    public string? Text { get; set; }
+}
+
 /// <summary>One sold comp, flattened for the card — the sale, what it went for, and when.</summary>
 public sealed class LiveBidComp
 {
@@ -191,6 +200,13 @@ public sealed class LiveBidCard
     /// the sold history is <see cref="CompsAgeSeconds"/> old, and the screen says so out loud.
     /// </summary>
     public bool RepricedFromHeldComps { get; set; }
+
+    /// <summary>
+    /// Where this lot belongs among the others on a show's list — higher is worth being there for.
+    /// See <see cref="Services.LiveBidAdvisor.RankLot"/> for what it is made of and why it is made
+    /// on this side. On a single typed card it is computed and ignored, which costs nothing.
+    /// </summary>
+    public decimal LotRank { get; set; }
 }
 
 /// <summary>The four answers. Spelled once so the badge, the tests and the CSS agree.</summary>

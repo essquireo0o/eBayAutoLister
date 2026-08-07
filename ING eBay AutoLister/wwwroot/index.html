@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=101" />
+  <link rel="stylesheet" href="style.css?v=102" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2759,6 +2759,38 @@
           </div>
 
           <div id="wn-card" class="wn-card hidden" aria-live="polite"></div>
+
+          <!-- ── The show's lot list ───────────────────────────────────────────────────────
+               The card above answers "should I bid on this". This answers the question before
+               it: which of the next dozen lots is worth being here for. Paste what the show
+               says is coming, one lot per line, and each one is priced through the SAME
+               /api/whatsnot/bid the typed item uses — so a lot on this list and the same item
+               typed by hand get the same ceiling from the same function.
+               Each priced lot holds its comps server-side, which is what makes clicking a row
+               instant when that lot reaches the block: no eBay read, the card is already in
+               hand. The list is capped at what the board can hold, and says so. -->
+          <details id="wn-queue" class="wn-queue">
+            <summary class="wn-queue-summary">📋 Up next — price the show's lot list before the hammer</summary>
+            <div class="wn-queue-body">
+              <label class="wn-lots-label" for="wn-lots">What's coming up — one lot per line</label>
+              <textarea id="wn-lots" class="wn-lots" rows="5" spellcheck="false"
+                        placeholder="1) Bitmain Antminer S19j Pro 104TH — starting at $250&#10;2) Goldshell Mini Doge II&#10;Lot 3: iPhone 12 Pro 128GB $180"></textarea>
+              <div class="wn-lots-actions">
+                <button id="wn-lots-price" class="btn btn-primary" type="button">⚡ Price the list</button>
+                <button id="wn-lots-clear" class="btn btn-ghost" type="button">Clear</button>
+                <span id="wn-lots-note" class="wn-lots-note"></span>
+              </div>
+              <p class="opp-hint wn-lots-hint">
+                Lot numbers and asking prices are stripped off the line — the price becomes where the
+                bidding starts, not what the lot is worth. Lots are priced one at a time so the first
+                answer arrives in about a second rather than the last one arriving in twelve, and the
+                list re-orders itself <strong>only once they are all in</strong>, by what each lot is
+                worth at its own ceiling. Click a row when it reaches the block and its card opens
+                instantly, off comps already in hand.
+              </p>
+              <div id="wn-lots-rows" class="wn-lot-rows"></div>
+            </div>
+          </details>
 
           <!-- ── The browser panel ─────────────────────────────────────────────────────────
                Back / Forward walk THIS panel's own list of loaded addresses. They are not the
@@ -5784,6 +5816,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=118"></script>
+  <script src="app.js?v=119"></script>
 </body>
 </html>

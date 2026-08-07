@@ -9734,3 +9734,163 @@ arithmetic underneath it, which is what the 30 new C# tests are for.
   about the ceiling in JavaScript.
 - **The endpoints still have no tests of their own.** The board, the advisor and the ceiling are
   covered; the two routes are pinned only by asset tests reading `Program.cs`.
+
+---
+
+# The show's lot list: deciding before the lot is on screen
+
+## The question this answers
+
+The card answers "should I bid on this". By the time it can, the thing is already on the block and
+the bidding has started. The question in front of that one — **which of the next dozen lots should I
+be here for at all** — had no screen, and the previous session's own write-up said so:
+
+> **Nothing pre-prices the next lot.** A live sale runs a queue and the board can hold a dozen of
+> them, but they only get there by being priced one at a time, by hand.
+
+A live show publishes what is coming. Paste it, and every lot is priced before the auctioneer gets
+to it — so when one reaches the block the answer is already in hand, and the seller knows which of
+the twelve was the one to stay for.
+
+## What it does
+
+`📋 Up next` on the WhatsNot screen, folded away under the card:
+
+- **The paste is read, not retyped.** A lot list is written for a human — `3) Bitmain Antminer S19j
+  Pro 104TH — starting at $250`. Handed to a sold search that returns nothing. `LiveLotList` takes
+  the lot number off, takes the asking price off, and **keeps the price where it is worth
+  something**: it becomes where the bidding starts, which is the one number the card needs and the
+  one the seller would otherwise type again.
+- **Priced one at a time, in the order they were listed**, through `/api/whatsnot/bid` — the same
+  endpoint the typed item uses. The first answer arrives in about a second rather than the last one
+  arriving in twelve, and rows fill in as they come.
+- **Each row is the card at a glance**: the call, the ceiling, the room left, what it resells for,
+  the sell-through and the comp count.
+- **When they are all in, the list re-orders itself** by what each lot is worth at its own ceiling.
+- **Clicking a row opens its card instantly** — no eBay read. That is the whole point of pricing
+  them early.
+
+## The property that makes it worth having
+
+Every lot on the list goes through **`/api/whatsnot/bid`**. There is no bulk endpoint and
+deliberately no second pricing path.
+
+A bulk endpoint would have been faster and would have meant the app holds two opinions about one
+item: the one on the row, and the one on the card that opens when you click it. `/api/whatsnot/lots`
+returns lines and never a ceiling — `The_lot_list_endpoint_prices_nothing` asserts the route contains
+no `AnalyzeProductAsync`, no `LiveBidAdvisor`, no `board.Hold`, no repository call.
+
+Which also means the list gets the held comps for free. Each lot's fresh price holds its own comps on
+the `LiveBidBoard`, so opening a row is `wnRenderCard` off the card already in hand plus one re-price
+against comps already read. **Measured in the browser: five lots priced, then a row clicked — the
+pricing endpoint was not called again.**
+
+## What it is ranked on, and what that refuses to do
+
+`LiveBidAdvisor.RankLot` — next to the ceiling it is made of, not in the browser.
+
+**On what the lot is worth, not on how much room is left.** Room shrinks every time somebody else
+bids and the lot's worth does not, so a list ordered by room would reshuffle itself while the seller
+was reading it, and would rank a lot nobody had bid on yet above a better one halfway through its
+bidding. `The_rank_does_not_move_as_the_bidding_climbs` builds the same analysis at $0 and at $60 and
+asserts the headroom fell and the rank did not.
+
+**The call decides first, and no amount of money crosses it.** The tier gap is wider than any profit
+the ranking will consider, so a STOP with $900,000 in it still sits below a BID with $1 in it —
+the list answers "be present for this", and being present for a lot you have been told to walk away
+from is worth nothing. `No_profit_can_climb_a_tier` pins that at the boundaries and past the clamp.
+
+A sort key computed in JavaScript would be a second opinion about money that nothing tests. An asset
+test asserts the browser compares `lotRank` and never recombines the parts of it.
+
+## What the parser refuses to take off
+
+The risk a parser like this carries is not failing to clean a line. It is cleaning the **wrong half**
+— and then the seller bids on a ceiling priced for a different thing.
+
+- **`1975 Topps complete set` keeps its year.** A lot marker is a number *followed by punctuation* or
+  introduced by a word, never any number at the start of a line. The same rule keeps the quantity on
+  `2 x Antminer S9` and the capacity on `104TH Antminer S19j Pro`.
+- **`$100 Amazon gift card` keeps its face value.** Only a *trailing* price comes off; a leading one
+  is what the thing is named after.
+- **`Xbox Series X Now` keeps its last word.** The lead-in words ("starting at", "now", "bid") are
+  only stripped when a price was actually found behind them.
+- **A price it cannot read stays on the line.** `Antminer S19j Pro $0` is left whole — deciding a run
+  of characters was "the price" without being able to say what it was is how a title loses a model
+  number.
+- **`AT&T iPhone 12` and `Cat 6 cable reel` survive**, because the lead-in words are words.
+
+## What the screen refuses to do
+
+- **It never re-prices the list.** Moving shipping, the fee or the target re-prices the *card*, off
+  held comps. Twelve fresh eBay reads on a keystroke is exactly the cost this screen exists to avoid.
+- **The rows never move while they are being read.** Sorted once, after the last answer — re-ordering
+  as replies arrive would move a row out from under the pointer of somebody clicking it, and the
+  order means nothing until every lot has a card anyway.
+- **A run can be stopped, and closing the screen stops it.** Measured: 12 lots queued, Stop pressed
+  after 4 had priced, **three seconds of idle and not one further eBay read**. The four already
+  priced stayed on screen.
+- **An answer from an abandoned run paints nothing.** The run number is checked after every await.
+- **The list stops at 12, and says why.** That is `LiveBidBoard.Capacity`, not a number of its own: a
+  thirteenth lot's comps would evict the first one's while the seller was still deciding about it,
+  and that row would stop opening for a reason nothing on screen could explain.
+- **It still doesn't read the feed.** Unchanged, and still the honest limit — but the paste is the
+  shape a real feed read would fill in, and everything downstream of it is now built.
+
+## Sold comps
+
+Untouched, and additive as before. `/api/snap`, `/api/whatsnot/bid`, `/api/whatsnot/rebid` and
+`/api/whatsnot/embed-check` are all still registered and are asserted to be; the typed card, the
+stepper and the re-price behave exactly as they did.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Services/LiveLotList.cs` | New — the parser, the cap, and what it refuses to strip |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | `RankLot` + `LotRankTierStep`; every card carries a rank |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LotRank` on the card; `LiveLotListRequest` |
+| `ING eBay AutoLister/Program.cs` | `POST /api/whatsnot/lots` — a parse, and provably nothing else |
+| `ING eBay AutoLister/wwwroot/index.html` | The `wn-queue` panel; `app.js?v=119`, `style.css?v=102` |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnPriceLotList` / `wnRenderLotRows` / `wnOpenLot`, the run guard, the one sort |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-queue`, `.wn-lots*`, `.wn-lot-*` — the card's own three call colours |
+| `ING eBay AutoLister.Tests/LiveLotListTests.cs` | New — 19 methods, 41 cases, led by what must not come off a line |
+| `ING eBay AutoLister.Tests/LiveLotRankTests.cs` | New — 9 methods, 15 cases |
+| `ING eBay AutoLister.Tests/WhatsNotLotListAssetTests.cs` | New — 15 tests holding the screen to what it refuses to do |
+| `whatsnot_lot_list.png` | Seven pasted lines → five lots, sorted, BID over RISKY over STOP |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,378 passed**, 0 failed, 0 skipped (71 new; the previous commit was 3,307) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the three endpoints mocked in the shape the C# returns) | 7 pasted lines → 5 lots (the repeat and the bare `$75` dropped). Rows filled in one at a time with the button reading **■ Stop**. Final order: BID $240 · BID $52 · RISKY · STOP · NO DATA. Clicking the top row: **the pricing endpoint was not called again** — one `/api/whatsnot/rebid`, the item and bid boxes filled, the full card on screen. Stop on a 12-lot list: 4 priced, then 3s idle and **no further reads**. No page errors. |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked. That exercises the whole render, ordering and wiring path
+— including that opening a row makes no pricing call — but not the arithmetic underneath it, which is
+what the 71 new C# tests are for.
+
+The first browser run found a real bug the tests could not: the panel was styled with solid dark
+hexes as CSS-variable fallbacks, and `--panel-2` is not defined in this build, so the whole list
+rendered dark-on-dark in the light theme and was unreadable. It now uses the translucent fallbacks
+and the three call colours the card's own badge uses.
+
+## Known limits
+
+- **The list is not remembered.** Restart the app mid-show and the paste is gone. Re-pasting is
+  cheap; re-pricing twelve lots is not.
+- **Nothing watches the show for what is coming.** The list is pasted, which is the same honest limit
+  the item box has. This is the screen that a real feed read would fill in, and it now exists.
+- **The rows keep the settings they were priced at.** Changing shipping or the target after a run
+  does not move the rows — only the card that opens from one. That is the right trade (twelve reads
+  per keystroke is the cost this screen exists to avoid) but the rows do not say which settings they
+  were priced under.
+- **A failed lot is not retried.** One bad read leaves a row saying so, and the way back is the whole
+  list again.
+- **The rank has no note.** It orders the list and cannot say, in one line, *why* this lot beat that
+  one — the numbers are on the row, but the comparison is left to the reader.
+- **`/api/whatsnot/lots` has no test of its own.** The parser under it is covered thoroughly; the
+  route is pinned only by an asset test reading `Program.cs`, like the other three.

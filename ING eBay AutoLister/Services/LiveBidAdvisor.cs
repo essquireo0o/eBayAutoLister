@@ -121,6 +121,7 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             card.Reason = card.EvidenceTier == LocalArbitrageAnalyzer.EvidenceNone
                 ? "No eBay sold history matched this item, so there is no resale price to bid against."
                 : card.EvidenceNote;
+            card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
             return card;
         }
 
@@ -167,9 +168,51 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.CallLabel = label;
         card.Reason = reason;
         card.Warnings.AddRange(Warnings(card, resale));
+        card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
 
         return card;
     }
+
+    /// <summary>
+    /// The gap between one <see cref="RankLot"/> tier and the next. Wider than the largest profit
+    /// the ranking will consider, which is what makes the ordering a decision about the CALL first
+    /// and the money only within it — no amount of profit lifts a lot the app said stop to above one
+    /// it said bid to.
+    /// </summary>
+    public const decimal LotRankTierStep = 1_000_000m;
+
+    /// <summary>
+    /// Where one lot belongs among the others on a show's list. Higher is worth being there for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ranked on <b>what the lot is worth</b> — the profit at its own ceiling — and not on how much
+    /// room is left above the current bid. Room shrinks every time somebody else bids and the lot's
+    /// worth does not, so a list ordered by room would reshuffle itself every few seconds while the
+    /// seller was reading it, and would rank a lot nobody has bid on yet above a better one that the
+    /// room happened to be lower on.
+    /// </para>
+    /// <para>
+    /// The call comes first regardless. A stop is a stop: the ordering says which lots to be present
+    /// for, and a lot the app has already said not to bid on does not belong above one it would.
+    /// A no-data lot sits below even a stop, because a stop at least had sold history behind it.
+    /// </para>
+    /// <para>
+    /// It lives here, next to the ceiling it is made of, rather than in the browser, so that the app
+    /// has one opinion about which lot is the one to wait for. A sort key computed in JavaScript is
+    /// a second opinion about money that nothing tests.
+    /// </para>
+    /// </remarks>
+    public static decimal RankLot(string? call, decimal profitAtMaxBid) =>
+        Tier(call) * LotRankTierStep + Math.Clamp(profitAtMaxBid, 0m, LotRankTierStep - 1m);
+
+    private static int Tier(string? call) => call switch
+    {
+        LiveBidCalls.Bid => 3,
+        LiveBidCalls.Risky => 2,
+        LiveBidCalls.Stop => 1,
+        _ => 0,
+    };
 
     // The resale statistics, straight off the analysis. Deliberately a copy and not a second
     // calculation: the spread, the sell-through and the confidence on this card are the same

@@ -16612,6 +16612,153 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── The show's lot list ───────────────────────────────────────────────────────
+   Rows are read at a glance while something else is on screen, so the call is a
+   fixed-width block on the left and the ceiling a fixed-width block on the right:
+   the eye lands in the same place on every row regardless of how long the title is. */
+.wn-queue {
+  margin: 10px 0 14px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  /* Translucent, like every other panel on this screen. A solid colour here reads as
+     the wrong theme's panel the moment the app is not in the one it was picked in. */
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.wn-queue-summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  list-style: none;
+}
+.wn-queue-summary::-webkit-details-marker { display: none; }
+.wn-queue-summary::before {
+  content: '▸ ';
+  opacity: 0.7;
+}
+.wn-queue[open] > .wn-queue-summary::before { content: '▾ '; }
+.wn-queue-body {
+  padding: 0 12px 12px;
+}
+.wn-lots-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+/* Border, background and colour come from the app's own textarea rule, so the box is
+   whatever a textarea is in whichever theme is on. Only the size is set here. */
+.wn-lots {
+  font-size: 13px;
+  min-height: 78px;
+}
+.wn-lots-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.wn-lots-note {
+  font-size: 12px;
+  opacity: 0.85;
+  flex: 1 1 260px;
+}
+.wn-lots-hint {
+  margin-top: 6px;
+}
+.wn-lot-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+.wn-lot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.wn-lot-row.wn-lot-priced {
+  cursor: pointer;
+}
+.wn-lot-row.wn-lot-priced:hover,
+.wn-lot-row.wn-lot-priced:focus-visible {
+  border-color: var(--accent, #d4a24a);
+  outline: none;
+}
+.wn-lot-pricing {
+  opacity: 0.75;
+}
+/* The same three colours the card's own badge uses, so a row and the card it opens
+   never disagree about what colour the answer is. */
+.wn-lot-call {
+  flex: 0 0 66px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 3px 0;
+  border-radius: 5px;
+  border: 1px solid transparent;
+}
+.wn-lot-call-bid > .wn-lot-call {
+  background: rgba(90, 200, 130, .14);
+  border-color: rgba(90, 200, 130, .45);
+  color: var(--success, #5ac882);
+}
+.wn-lot-call-risky > .wn-lot-call {
+  background: rgba(224, 169, 74, .14);
+  border-color: rgba(224, 169, 74, .45);
+  color: var(--warn, #e0a94a);
+}
+.wn-lot-call-stop > .wn-lot-call,
+.wn-lot-call-no_data > .wn-lot-call {
+  background: rgba(224, 121, 106, .12);
+  border-color: rgba(224, 121, 106, .4);
+  color: var(--danger, #e0796a);
+}
+.wn-lot-call-no_data > .wn-lot-call {
+  font-size: 9px;
+  opacity: 0.8;
+}
+.wn-lot-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wn-lot-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wn-lot-sub {
+  font-size: 11px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wn-lot-max {
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.wn-lot-max > span {
+  display: block;
+  font-size: 10px;
+  opacity: 0.6;
+}
+.wn-lot-max > strong {
+  font-size: 15px;
+}
+
 @media (max-width: 860px) {
   .wn-field {
     width: calc(50% - 4px);

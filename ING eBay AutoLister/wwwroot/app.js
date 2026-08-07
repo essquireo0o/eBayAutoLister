@@ -9784,6 +9784,9 @@
     if (frame) frame.src = 'about:blank';
     if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
     wnCheckToken++;
+    // A lot list still being priced is a dozen eBay reads for a screen nobody is on.
+    // The rows already priced survive the close; the ones behind them are dropped.
+    wnStopLotRun();
     closeWorkspacePage('whatsnot');
   }
 
@@ -10094,6 +10097,219 @@
       </p>`;
   }
 
+  // ── WhatsNot: the show's lot list ────────────────────────────────────────────
+  // The card answers "should I bid on this". This answers the question before it:
+  // which of the next dozen lots is worth being here for.
+  //
+  // Every lot is priced through the SAME /api/whatsnot/bid the typed item uses.
+  // There is no bulk endpoint and deliberately no second pricing path — a lot on
+  // this list and the same item typed by hand must be the same card, or the app
+  // holds two opinions about one item and the seller acts on whichever it saw.
+  //
+  // One at a time, in the order they were listed, because the first answer in one
+  // second is worth more during a live show than all twelve in twelve.
+  const WN_LOT_QUEUED = 'queued';
+  const WN_LOT_PRICING = 'pricing';
+  const WN_LOT_PRICED = 'priced';
+  const WN_LOT_FAILED = 'failed';
+
+  let wnLots = [];         // { lot, state, card, error }
+  let wnLotRun = 0;        // the run in flight; bumping it stops the previous one
+  let wnLotRunning = false;
+
+  /// Bumping the run number is how a run is stopped: the loop checks it after every
+  /// answer and walks away rather than painting a row from a list nobody is on.
+  function wnStopLotRun() {
+    wnLotRun++;
+    wnLotButton(false);
+  }
+
+  function wnLotButton(running) {
+    wnLotRunning = running;
+    const btn = $('wn-lots-price');
+    if (btn) btn.textContent = running ? '■ Stop' : '⚡ Price the list';
+  }
+
+  function wnLotsNote(text) {
+    const el = $('wn-lots-note');
+    if (el) el.textContent = text || '';
+  }
+
+  async function wnPriceLotList() {
+    // The button is the stop button while a run is in flight. A seller whose lot came
+    // up early should not have to wait out eleven more reads to get their hands back.
+    if (wnLotRunning) {
+      wnStopLotRun();
+      wnLotsNote('Stopped. The lots already priced are still here.');
+      return;
+    }
+
+    const text = ($('wn-lots')?.value || '').trim();
+    if (!text) {
+      wnLotsNote('Paste what the show says is coming — one lot per line.');
+      $('wn-lots')?.focus();
+      return;
+    }
+
+    wnSaveSettings();
+    const run = ++wnLotRun;
+    wnLotButton(true);
+    wnLotsNote('Reading the list…');
+
+    let plan;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/lots', { text });
+      if (run !== wnLotRun) return;
+      if (!res.ok) {
+        wnLotButton(false);
+        wnLotsNote(body.message || body.error || "That list didn't read.");
+        return;
+      }
+      plan = body;
+    } catch (err) {
+      if (run !== wnLotRun) return;
+      wnLotButton(false);
+      wnLotsNote(errorText(err, "That list didn't read."));
+      return;
+    }
+
+    wnLots = (plan.lots || []).map(lot => ({ lot, state: WN_LOT_QUEUED, card: null, error: '' }));
+    wnLotsNote(plan.note || '');
+    wnRenderLotRows();
+    if (!wnLots.length) { wnLotButton(false); return; }
+
+    for (let i = 0; i < wnLots.length; i++) {
+      if (run !== wnLotRun) return;
+      const row = wnLots[i];
+      row.state = WN_LOT_PRICING;
+      wnRenderLotRows();
+
+      try {
+        const { res, body } = await safePost('/api/whatsnot/bid', {
+          title: row.lot.title,
+          // The price off the line is where the bidding starts, not what the lot is
+          // worth. It goes in as the current bid so the row's room-left means
+          // something before the auctioneer has said anything.
+          currentBid: row.lot.openingBid ?? null,
+          shippingCost: wnNumber('wn-ship'),
+          buyerFeePercent: wnNumber('wn-fee'),
+          targetRoiPercent: wnNumber('wn-target'),
+        });
+        if (run !== wnLotRun) return;
+        if (res.ok) { row.state = WN_LOT_PRICED; row.card = body; }
+        else { row.state = WN_LOT_FAILED; row.error = body.message || body.error || "Didn't price."; }
+      } catch (err) {
+        if (run !== wnLotRun) return;
+        row.state = WN_LOT_FAILED;
+        row.error = errorText(err, "Didn't price.");
+      }
+      wnRenderLotRows();
+    }
+
+    if (run !== wnLotRun) return;
+
+    // Sorted once, at the end. Re-ordering as answers arrive would move rows out from
+    // under the pointer of somebody reading them, and the order is not meaningful
+    // until every lot has a card anyway.
+    //
+    // lotRank is computed on the server, next to the ceiling it is made of. Nothing
+    // here decides which lot is worth waiting for; this compares two numbers.
+    wnLots.sort((a, b) => (b.card?.lotRank ?? -1) - (a.card?.lotRank ?? -1));
+    wnLotButton(false);
+    wnRenderLotRows();
+
+    const best = wnLots.find(r => r.card && r.card.call === 'bid');
+    wnLotsNote(best
+      ? `Sorted by what each lot is worth at its own ceiling. Best of the list: ${best.card.item}.`
+      : 'Sorted by what each lot is worth at its own ceiling. Nothing on this list clears the bar.');
+  }
+
+  function wnLotStateLabel(row) {
+    if (row.state === WN_LOT_QUEUED) return 'waiting';
+    if (row.state === WN_LOT_PRICING) return 'checking eBay…';
+    if (row.state === WN_LOT_FAILED) return row.error;
+    return '';
+  }
+
+  function wnRenderLotRows() {
+    const host = $('wn-lots-rows');
+    if (!host) return;
+
+    if (!wnLots.length) { host.innerHTML = ''; return; }
+
+    host.innerHTML = wnLots.map((row, i) => {
+      const c = row.card;
+      if (!c) {
+        return `<div class="wn-lot-row wn-lot-${esc(row.state)}">
+          <div class="wn-lot-call">${row.state === WN_LOT_FAILED ? '—' : '…'}</div>
+          <div class="wn-lot-main">
+            <div class="wn-lot-title">${esc(row.lot.title)}</div>
+            <div class="wn-lot-sub">${esc(wnLotStateLabel(row))}</div>
+          </div>
+        </div>`;
+      }
+
+      // Every figure below is one the server put on the card. The row is the card at a
+      // glance, not a summary of it computed somewhere else.
+      const ceiling = c.call === 'no_data' ? '—' : moneyExact(c.maxBid);
+      const resale = c.resalePrice == null ? '—' : money(c.resalePrice);
+      const st = c.sellThroughUnbounded || c.sellThroughRate == null
+        ? '—' : `${c.sellThroughRate.toFixed(0)}%`;
+      const room = c.call === 'no_data' || !c.bidWasKnown ? '' :
+        `<span class="${c.headroom < 0 ? 'wn-neg' : ''}">${moneyExact(c.headroom)} room</span> · `;
+
+      return `<div class="wn-lot-row wn-lot-priced wn-lot-call-${esc(c.call)}" role="button" tabindex="0"
+                   data-lot="${i}" title="Open this lot's card — instantly, off comps already read">
+        <div class="wn-lot-call">${esc(c.call === 'no_data' ? 'NO DATA' : (c.call === 'bid' ? 'BID' : c.call.toUpperCase()))}</div>
+        <div class="wn-lot-main">
+          <div class="wn-lot-title">${esc(c.item)}</div>
+          <div class="wn-lot-sub">${room}resells ${esc(resale)} · ${esc(st)} sell-through ·
+            ${c.compCount} comp${c.compCount === 1 ? '' : 's'}</div>
+        </div>
+        <div class="wn-lot-max"><span>up to</span><strong>${esc(ceiling)}</strong></div>
+      </div>`;
+    }).join('');
+
+    host.querySelectorAll('[data-lot]').forEach(el => {
+      const open = () => wnOpenLot(parseInt(el.dataset.lot, 10));
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+    });
+  }
+
+  /// The lot reached the block. Its card is already in hand and its comps are still
+  /// held server-side, so this is the whole point of the list: no eBay read, no wait.
+  ///
+  /// The card is painted from what the list already has, and then a re-price is
+  /// scheduled — because shipping, the buyer's premium or the target may have moved
+  /// since the list was priced, and that runs off the held comps in milliseconds. If
+  /// the comps have been let go the re-price says so on the card, which is the same
+  /// sentence any other stale token gets.
+  function wnOpenLot(index) {
+    const row = wnLots[index];
+    if (!row || !row.card) return;
+
+    setVal('wn-item', row.card.item);
+    setVal('wn-bid', row.card.bidWasKnown ? row.card.currentBid : '');
+    wnToken = row.card.token || '';
+    wnTokenItem = row.card.item;
+    wnRebidSeq++;
+    $('wn-card')?.classList.remove('hidden');
+    wnRenderCard(row.card);
+    wnScheduleRebid();
+    $('wn-card')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function wnClearLotList() {
+    wnStopLotRun();
+    wnLots = [];
+    setVal('wn-lots', '');
+    wnLotsNote('');
+    wnRenderLotRows();
+  }
+
   function bindWhatsNot() {
     on('wn-home', 'click', goHome);
     on('wn-close', 'click', closeWhatsNotSection);
@@ -10126,6 +10342,13 @@
     on('wn-price', 'click', wnPriceItem);
     on('wn-bid-up', 'click', () => wnStepBid(1));
     on('wn-bid-down', 'click', () => wnStepBid(-1));
+
+    // The lot list. Note what is NOT here: nothing re-prices the list when shipping,
+    // the fee or the target change. Twelve fresh eBay reads on a keystroke is exactly
+    // the cost this whole screen exists to avoid — the rows keep the numbers they were
+    // priced at, and opening one re-prices that lot alone off its held comps.
+    on('wn-lots-price', 'click', wnPriceLotList);
+    on('wn-lots-clear', 'click', wnClearLotList);
 
     // Enter always reads eBay again. Everything cheap already happens as you type, so
     // the one keystroke left is the expensive one — and it is also the way back when

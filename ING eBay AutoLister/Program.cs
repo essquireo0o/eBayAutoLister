@@ -3028,6 +3028,25 @@ app.MapPost("/api/whatsnot/rebid", (
     return Results.Ok(card);
 });
 
+// ── WhatsNot: the show's lot list ─────────────────────────────────────────────────────────────
+// The card answers "should I bid on the thing on screen". This answers the question before it:
+// which of the next dozen lots should I be here for at all.
+//
+// A live show publishes what is coming, written for a human — "3) Bitmain Antminer S19j Pro 104TH —
+// starting at $250". Handed to a sold search that returns nothing, because the lot number and the
+// asking price are not part of what the thing is. So the paste is read into titles, and the price
+// on the line is kept as where the bidding starts rather than thrown away.
+//
+// Nothing is priced here. Every lot goes back through /api/whatsnot/bid one at a time, so a lot on
+// the list and the same item typed by hand get the same ceiling from the same function — and each
+// one holds its comps, which is what makes clicking a row instant when it reaches the block.
+app.MapPost("/api/whatsnot/lots", (
+    LiveLotListRequest req, CredentialsStore store, LicenseService license) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+    return Results.Ok(LiveLotList.Parse(req.Text));
+});
+
 // ── WhatsNot: the browser panel ───────────────────────────────────────────────────────────────
 // "Why is the frame blank?" — the one question the browser panel could never answer.
 //
