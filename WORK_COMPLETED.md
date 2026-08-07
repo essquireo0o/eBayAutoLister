@@ -9700,8 +9700,8 @@ exactly what it did before and now also holds its comps.
 | `ING eBay AutoLister/wwwroot/index.html` | The bid stepper, and an ask-row hint that promises exactly what happens; `app.js?v=118`, `style.css?v=101` |
 | `ING eBay AutoLister/wwwroot/app.js` | The token, the debounced re-price and its stale-answer guard, the step sizes, the meter, the held-comps line |
 | `ING eBay AutoLister/wwwroot/style.css` | `.wn-stepper`, `.wn-step`, `.wn-meter*`, `.wn-held*` |
-| `ING eBay AutoLister.Tests/LiveBidBoardTests.cs` | New — 13 tests, led by "a re-price is the same card" |
-| `ING eBay AutoLister.Tests/WhatsNotLiveBidAssetTests.cs` | New — 11 tests holding the screen to what it refuses to do |
+| `ING eBay AutoLister.Tests/LiveBidBoardTests.cs` | New — 14 methods, 17 cases, led by "a re-price is the same card" |
+| `ING eBay AutoLister.Tests/WhatsNotLiveBidAssetTests.cs` | New — 13 tests holding the screen to what it refuses to do |
 | `whatsnot_live_bid.png` | The card at $90 on a $67.68 ceiling: STOP, the meter, the held-comps line |
 
 ## Verification
