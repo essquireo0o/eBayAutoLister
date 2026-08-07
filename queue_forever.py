@@ -15,7 +15,7 @@ CQ   = [sys.executable, r"C:/Users/nsquires/source/repos/claude-queue/claude-que
 QF   = r"C:/Users/nsquires/.claude-queue/tasks.json"
 LOG  = r"C:/Users/nsquires/source/repos/claude-queue-worker.log"
 PROJ = r"C:/Users/nsquires/source/repos/ING eBay AutoLister"
-TARGET   = 12      # keep at least this many queued
+TARGET   = 30      # keep at least this many queued (deeper backlog so it never looks empty)
 INTERVAL = 150     # seconds between supervisor cycles
 
 GUARD = r"""GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
