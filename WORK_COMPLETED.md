@@ -10814,7 +10814,7 @@ platform, and a test says so.
 | `ING eBay AutoLister/Program.cs` | `WhatnotShowReader` registered; `POST /api/whatsnot/read` — a read, a log line, and provably no pricing |
 | `ING eBay AutoLister/wwwroot/app.js` | `wnReadShow`, `wnRenderRead`, the watch loop and its brakes; the reader stops when the tab closes |
 | `ING eBay AutoLister/wwwroot/index.html` | The read row above the ask, the read panel, `app.js?v=125`, `style.css?v=108` |
-| `ING eBay AutoLister/wwwroot/style.css` | `.wn-read*`, `.wn-watch` — three outcome edges, a thumbnail, folded at 620px |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-read*`, `.wn-watch` — three outcome edges plus `.wn-read-busy`, a thumbnail, folded at 620px |
 | `ING eBay AutoLister.Tests/WhatnotShowParserTests.cs` | New — the parser held to what it refuses to guess |
 | `ING eBay AutoLister.Tests/WhatsNotReadShowAssetTests.cs` | New — the five links from service to screen, held together |
 | `WhatsNotArbitrageAssetTests.cs` | The frame-hint pin follows the sentence the read gave a better second half to |
@@ -10827,6 +10827,13 @@ platform, and a test says so.
 | `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
 | `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,724 passed**, 0 failed, 0 skipped (70 new; the previous commit was 3,654) |
 | `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, `/api/whatsnot/read` and `/api/whatsnot/bid` mocked in the shape the C# returns) | One press → **exactly two calls**, `read` then `bid`. The item box filled with the cleaned title, the bid box with `245.5`, the strip green with the headline, the snapshot sentence, the "read as … from …" warning and **4 evidence lines** folded under it; the card below priced, badge **BID**, spoken line present. Then the same press against a between-lots answer: neutral edge, the what-to-do line present, **the boxes untouched and no `/api/whatsnot/bid` call made at all**. **No page errors** beyond the frame's own pre-existing `X-Frame-Options` refusal — which is the panel demonstrating the thing it was built to explain. |
+
+That browser pass found one thing and it is fixed here: the in-flight state — the second between
+pressing the button and the answer arriving — was painted with the **warning** edge, because the
+render mapped every status that was not `read` or `no-listing` onto the failure colour. Every read
+passes through that state, including all the ones that work, so a working feature was showing an
+amber strip on every press. `reading` now has its own neutral edge (`.wn-read-busy`).
 
 The parser is tested against realistic page payloads in both shapes a Next.js app serves — a
 `<script type="application/json">` payload and streamed `self.__next_f` flight chunks — including a

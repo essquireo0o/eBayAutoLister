@@ -14,7 +14,7 @@
          tell the seller an update exists. Without it the assembly reports 1.0.0, every release looks
          newer, and the banner cries wolf on a fresh install forever.
          BUMP THIS IN THE SAME COMMIT AS THE RELEASE TAG. -->
-    <Version>2.4.0</Version>
+    <Version>2.5.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
