@@ -9527,7 +9527,10 @@ Small, and the reason the screen gets opened twice:
 
 - **It remembers the address.** The last feed comes back on open, and the last eight are in a
   `datalist` on the address bar. Losing `localStorage` (private mode) is caught everywhere — the
-  panel forgets, it does not break.
+  panel forgets, it does not break. The two are saved separately and deliberately: the *current*
+  address is written on every load including Back and Forward, so reopening the tab restores the
+  feed that was on screen, while the *recent list* only takes addresses the seller chose, so
+  retracing steps with Back doesn't reorder it.
 - **Back, Forward, Reload and ⌂.** Reload re-runs the same address *including* the check — headers
   change, and a dropped stream is the commonest reason to press it — and does not grow the history.
   A fresh address truncates what was ahead of it, exactly like a browser.
@@ -9538,6 +9541,14 @@ The address bar makes this machine issue a GET at whatever is typed, so it is fe
 only, no loopback, no private or link-local IP, no single-label host name. **No response body is
 ever read or returned** — the probe stops at the headers, which is also why it is fast enough to sit
 beside a frame that is already loading. Six seconds, then it gives up and says so.
+
+## The bug the browser found
+
+Driving the panel in a real browser against a deliberately malformed check response, the status
+strip rendered **nothing at all**: the headline came back undefined, the assembled sentence was
+empty, and empty text hides the strip. Silence is the exact failure this feature exists to remove,
+and it had been rebuilt one level up. A response with no verdict in it now reports "couldn't tell"
+like any other unanswered check.
 
 ## Sold comps
 
@@ -9556,7 +9567,7 @@ the Opportunity Finder and `/api/whatsnot/bid` are all still registered.
 | `ING eBay AutoLister/wwwroot/app.js` | Panel history, remembered addresses, the check and its stale-answer guard, the slow-load timer |
 | `ING eBay AutoLister/wwwroot/style.css` | `.wn-nav*`, `.wn-status*` (three states), `.wn-blocked*` |
 | `ING eBay AutoLister.Tests/FrameEmbedPolicyTests.cs` | New — the header rules, the fence, the probe paths |
-| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | New — 12 tests holding the panel to what it refuses to claim |
+| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | New — 13 tests holding the panel to what it refuses to claim |
 | `whatsnot_browser_panel.png` | The panel on Whatnot: the status strip and the overlay, quoting Whatnot's real CSP |
 
 ## Verification
