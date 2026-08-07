@@ -180,6 +180,14 @@ public sealed class LiveBidCard
     public DateTime? OldestCompUtc { get; set; }
     public int? NewestCompAgeDays { get; set; }
 
+    /// <summary>
+    /// What THIS seller has done with this product before — their own completed sales of it and the
+    /// units of it they are already sitting on, priced at this auction's terms. Null when nothing
+    /// read their book; see <see cref="Services.OwnTrackRecord"/> for what it refuses to claim.
+    /// It never moves the badge: the call above is the market's, and this is the seller's.
+    /// </summary>
+    public LiveOwnHistory? OwnHistory { get; set; }
+
     /// <summary>eBay's own sold-and-completed search for this item. The bidder's own eyes are the
     /// last check, and on a thin card they are the only one worth having.</summary>
     public string SoldSearchUrl { get; set; } = "";

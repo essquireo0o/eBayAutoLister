@@ -47,9 +47,43 @@ public static class LiveBidSpeech
         // number this card does not have — and a spoken "$0 of room" on an item with no sold history
         // is the one failure this screen exists to avoid.
         if (card.Call == LiveBidCalls.NoData)
-            return Join(Headline(card), "No eBay sold history to bid against.");
+            return Join(Headline(card), "No eBay sold history to bid against.", YourOwnRecord(card));
 
-        return Join(Headline(card), WhereTheBiddingIs(card), WhatItResellsFor(card));
+        return Join(Headline(card), WhereTheBiddingIs(card), WhatItResellsFor(card), YourOwnRecord(card));
+    }
+
+    /// <summary>
+    /// What the seller themselves has done with this product, when they have done it more than once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Last, and short, and only on a proven record. It is the strongest evidence on the card — the
+    /// fee eBay actually charged this seller, on this product, in their own listings — so it earns a
+    /// place in the one line that gets read out; but a line that grew a clause for every seller who
+    /// once sold something similar would stop being glanceable, which is the only thing it is for.
+    /// </para>
+    /// <para>
+    /// It states the seller's own ceiling only when that ceiling is the one that matters: below the
+    /// badge, where the badge is the optimistic number, or the only one there is because the comps
+    /// priced nothing. Otherwise the badge already said it.
+    /// </para>
+    /// </remarks>
+    private static string YourOwnRecord(LiveBidCard card)
+    {
+        if (card.OwnHistory is not { } own) return "";
+        if (own.Verdict != OwnTrackVerdicts.Proven || own.UnitsSold <= 0) return "";
+
+        var line = $"You've sold {own.UnitsSold}";
+
+        if (own.AverageNetProfit is { } net && net > 0m)
+            line += $", {Math.Floor(net).ToString("C0")} net each";
+
+        // Rounded down, like every other figure in this line: a ceiling spoken at a glance is
+        // allowed to understate and never to overstate.
+        if (own.OwnMaxBid > 0m && (own.CeilingIsLower || own.OwnIsTheOnlyCeiling))
+            line += $" — on your own prices, stop at {Math.Floor(own.OwnMaxBid).ToString("C0")}";
+
+        return line + ".";
     }
 
     /// <summary>

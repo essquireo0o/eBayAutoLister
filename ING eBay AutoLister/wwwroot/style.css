@@ -16670,6 +16670,105 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Your own record with this thing ───────────────────────────────────────────
+   Deliberately set apart from the market statistics below it: a left border in the
+   app's gold, so the eye can tell in one glance whether it is reading what strangers
+   got for these or what THIS seller got. They are different claims and they are
+   allowed to disagree, which is most of the value. */
+.wn-own {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--accent-2, #d4a24a);
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.wn-own-proven {
+  border-left-color: var(--success, #5ac882);
+}
+.wn-own-holding {
+  border-left-color: var(--warn, #e0a94a);
+}
+.wn-own-head {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-own-headline {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--text, #e7ebf3);
+}
+.wn-own-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.wn-own-tiles > .wn-stat {
+  background: var(--panel, rgba(255, 255, 255, .03));
+}
+/* The second ceiling. Quiet when it agrees with the badge — a sentence styled as a
+   warning every time would train the seller to skip the times it is one. */
+.wn-own-ceiling {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-own-ceiling > strong {
+  font-variant-numeric: tabular-nums;
+}
+.wn-own-ceiling-low {
+  color: var(--warn, #e0a94a);
+}
+.wn-own-ceiling-only {
+  color: var(--accent-2, #d4a24a);
+}
+.wn-own-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-own-notes > li {
+  margin-bottom: 3px;
+}
+/* Never sold one, never bought one: one line, and it stays a line. */
+.wn-own-empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-own-sales {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.wn-own-sales > summary {
+  cursor: pointer;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-own-table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+}
+.wn-own-table td {
+  padding: 3px 6px;
+  border-top: 1px solid var(--border, #2a2f3a);
+  vertical-align: top;
+}
+.wn-own-cell-title {
+  word-break: break-word;
+}
+.wn-own-cell-price,
+.wn-own-cell-net,
+.wn-own-cell-age {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── The show's lot list ───────────────────────────────────────────────────────
    Rows are read at a glance while something else is on screen, so the call is a
    fixed-width block on the left and the ceiling a fixed-width block on the right:
@@ -17106,6 +17205,14 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   }
   .wn-meter-legend {
     font-size: 10px;
+  }
+  /* Four columns of the seller's own sales is one more than the comp table has, and
+     the last of them carries two facts. It wraps rather than pushing the title out. */
+  .wn-own-table {
+    font-size: 11px;
+  }
+  .wn-own-cell-age {
+    white-space: normal;
   }
   .wn-lot-row {
     flex-wrap: wrap;

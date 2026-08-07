@@ -51,7 +51,10 @@ public class WhatsNotBuySheetAssetTests
     {
         var won = WonEndpoint();
 
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category)",
+        // Pinned as a prefix: the property is that the win is priced by the advisor, from the held
+        // quote, at the price it hammered at. What the advisor is additionally handed to price it
+        // with grows between sessions.
+        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
             won, StringComparison.Ordinal);
         Assert.Contains("sheet.Record(card)", won, StringComparison.Ordinal);
     }

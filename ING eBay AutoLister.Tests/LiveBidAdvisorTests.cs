@@ -513,4 +513,121 @@ public class LiveBidAdvisorTests
         Assert.NotNull(card.ProfitNow);
         Assert.NotNull(card.RoiNow);
     }
+
+    // ── The seller's own record, on the card ──────────────────────────────────
+    // The card grew a second ceiling: what the seller's OWN completed sales of this product say the
+    // most to bid is. It is the strongest evidence on the screen and it is allowed to say so — and
+    // it is never allowed to move the badge, because two of the seller's own sales are two sales
+    // and the call above them is the market's answer.
+
+    private static readonly EarningsCalculator Earnings = new(new ProfitCalculator());
+
+    /// <summary>One of the seller's own sales of this product, priced as Money Made prices it.</summary>
+    private static RestockSale Sold(decimal price, int daysAgo, decimal fee = 40m, decimal shippingCost = 20m) =>
+        new()
+        {
+            Sale = Earnings.Compute(
+                new FlipRecord
+                {
+                    Source = "ebay", Title = Product, SoldUtc = Now.AddDays(-daysAgo), Quantity = 1,
+                    SalePrice = price, MarketplaceFee = fee, ShippingCost = shippingCost, UnitCost = 60m,
+                },
+                null, Fees),
+        };
+
+    private static OwnSalesEvidence OwnRecord(params RestockSale[] sales) =>
+        OwnTrackRecord.Match(Product, sales, [], new DateTimeOffset(Now, TimeSpan.Zero));
+
+    private static LiveBidCard CardWithRecord(
+        MarketAnalysisResult? analysis, OwnSalesEvidence own, decimal? bid = null, decimal? fee = null) =>
+        Advisor.Build(Product, analysis, Ask(bid, fee: fee), Fees, nowUtc: Now, own: own);
+
+    [Fact]
+    public void The_seller_s_own_sales_never_move_the_call_or_the_ceiling_on_the_badge()
+    {
+        // The whole safety property. The record can disagree with the comps by any margin in either
+        // direction and the badge stays the market's answer, because that is the one with sold
+        // history behind it.
+        var analysis = Analysis();
+        var plain = Card(analysis, bid: 40m);
+
+        var poor = CardWithRecord(analysis, OwnRecord(Sold(90m, 20), Sold(90m, 40)), bid: 40m);
+        var rich = CardWithRecord(analysis, OwnRecord(Sold(900m, 20), Sold(900m, 40)), bid: 40m);
+
+        foreach (var card in new[] { poor, rich })
+        {
+            Assert.Equal(plain.Call, card.Call);
+            Assert.Equal(plain.CallLabel, card.CallLabel);
+            Assert.Equal(plain.MaxBid, card.MaxBid);
+            Assert.Equal(plain.BreakEvenBid, card.BreakEvenBid);
+            Assert.Equal(plain.Headroom, card.Headroom);
+            Assert.Equal(plain.LotRank, card.LotRank);
+        }
+    }
+
+    [Fact]
+    public void A_record_that_prices_lower_than_the_comps_reaches_the_card_s_warnings()
+    {
+        // Not folded into a score and not netted off the ceiling: said, on the list the seller reads
+        // for everything else the number cannot account for.
+        var card = CardWithRecord(Analysis(), OwnRecord(Sold(210m, 20), Sold(210m, 40)), bid: 40m);
+
+        Assert.NotNull(card.OwnHistory);
+        Assert.True(card.OwnHistory!.CeilingIsLower);
+        Assert.True(card.OwnHistory.OwnMaxBid < card.MaxBid);
+        Assert.Contains(card.Warnings, w => w.Contains("what you actually got", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void The_record_is_priced_at_the_same_premium_and_target_as_the_badge_above_it()
+    {
+        // Two ceilings on one card computed at different terms would be unreadable: the seller would
+        // be comparing a number that includes the premium with one that doesn't.
+        var own = OwnRecord(Sold(300m, 20), Sold(300m, 40));
+        var card = CardWithRecord(Analysis(), own, bid: 40m, fee: 8m);
+
+        var expected = AuctionSniperAnalyzer.MaxBidDetail(
+            own.AverageNetProceeds!.Value, card.ShippingCost, card.TargetRoiPercent, card.BuyerFeePercent);
+
+        Assert.Equal(expected.MaxBid, card.OwnHistory!.OwnMaxBid);
+    }
+
+    [Fact]
+    public void A_card_the_market_could_not_price_still_carries_the_seller_s_own_ceiling()
+    {
+        // The most valuable case there is: eBay matched nothing, and the seller has sold four of
+        // them. The badge still says CAN'T PRICE IT — the market genuinely didn't — and the card
+        // now has a number on it anyway, labelled as the seller's own.
+        var card = CardWithRecord(analysis: null, OwnRecord(Sold(300m, 20), Sold(300m, 40)));
+
+        Assert.Equal(LiveBidCalls.NoData, card.Call);
+        Assert.Equal(0m, card.MaxBid);
+        Assert.NotNull(card.OwnHistory);
+        Assert.True(card.OwnHistory!.OwnIsTheOnlyCeiling);
+        Assert.True(card.OwnHistory.OwnMaxBid > 0m);
+        Assert.Contains(card.Warnings, w => w.Contains("Nothing on eBay priced this", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_card_built_without_the_seller_s_book_carries_no_record_at_all()
+    {
+        // Null, not an empty record that renders as "you have never sold one of these" on a screen
+        // that simply never read the seller's sales.
+        Assert.Null(Card(Analysis(), bid: 40m).OwnHistory);
+    }
+
+    [Fact]
+    public void The_spoken_line_gains_the_seller_s_own_record_and_only_when_it_is_proven()
+    {
+        var proven = CardWithRecord(Analysis(), OwnRecord(Sold(210m, 20), Sold(210m, 40)), bid: 40m);
+        var once = CardWithRecord(Analysis(), OwnRecord(Sold(210m, 20)), bid: 40m);
+
+        Assert.Contains("You've sold 2", proven.Say, StringComparison.Ordinal);
+        Assert.Contains("on your own prices, stop at", proven.Say, StringComparison.Ordinal);
+        Assert.DoesNotContain("You've sold", once.Say, StringComparison.Ordinal);
+
+        // And the line still leads with the call and the ceiling — the record is the last clause,
+        // never the first.
+        Assert.StartsWith(proven.CallLabel, proven.Say, StringComparison.Ordinal);
+    }
 }

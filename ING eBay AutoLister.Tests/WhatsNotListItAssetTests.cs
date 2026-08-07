@@ -289,7 +289,7 @@ public class WhatsNotListItAssetTests
         Assert.Contains("const WN_REBID_DEBOUNCE_MS = 90;", Js, StringComparison.Ordinal);
         Assert.Contains("function wnPriceLotList()", Js, StringComparison.Ordinal);
         Assert.Contains("safePost('/api/whatsnot/won'", Js, StringComparison.Ordinal);
-        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category)",
+        Assert.Contains("advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category",
             Program, StringComparison.Ordinal);
     }
 

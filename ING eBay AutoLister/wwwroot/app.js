@@ -10033,6 +10033,82 @@
            `<div class="wn-stat-note">${esc(note || '')}</div></div>`;
   }
 
+  // ── WhatsNot: your own record with this thing ────────────────────────────────
+  // Everything else on the card is the market's evidence. This is the seller's own:
+  // what THEY got for the last ones after the fee eBay actually charged them, how
+  // long it took, and how many of these they are already sitting on unsold.
+  //
+  // It renders what the server decided and computes nothing. The second ceiling, the
+  // comparison sentence and the headline are all written next to the arithmetic in
+  // Services/OwnTrackRecord.cs, because a "your ceiling is $48" assembled here out of
+  // an average would be a second opinion about money that nothing tests.
+  function wnOwnBlock(own) {
+    if (!own) return '';
+
+    const money2 = v => (v == null ? '—' : moneyExact(v));
+    const has = own.verdict === 'proven' || own.verdict === 'once';
+
+    // Nothing sold and nothing held: one quiet line. It still earns its place — "you
+    // have never sold one of these" is the difference between a repeat buy and a punt,
+    // and a blank space says neither.
+    if (!has && !own.unitsHeld) {
+      return `<p class="wn-own-empty">${esc(own.headline)}</p>`;
+    }
+
+    const tiles = has ? `
+      <div class="wn-own-tiles">
+        ${wnStat("You've sold", `${own.unitsSold}`, own.daysSinceLastSale == null ? ''
+          : (own.daysSinceLastSale === 0 ? 'last one today' : `last one ${own.daysSinceLastSale}d ago`))}
+        ${wnStat('You got', money2(own.averageSalePrice), 'each, before fees')}
+        ${wnStat('Your net each', money2(own.averageNetProfit),
+          own.averageUnitCost == null ? 'no cost recorded' : `on ${moneyExact(own.averageUnitCost)} of stock`)}
+        ${wnStat('Your sell time', own.medianDaysToSell == null ? '—' : `${own.medianDaysToSell} days`,
+          own.medianDaysToSell == null ? 'no purchase dates recorded' : 'bought to sold, median')}
+        ${own.unitsHeld ? wnStat('Still holding', `${own.unitsHeld}`,
+          own.oldestHeldDays == null ? 'bought, not sold' : `oldest ${own.oldestHeldDays}d ago`) : ''}
+      </div>` : (own.unitsHeld ? `
+      <div class="wn-own-tiles">
+        ${wnStat('Still holding', `${own.unitsHeld}`,
+          own.oldestHeldDays == null ? 'bought, not sold' : `oldest ${own.oldestHeldDays}d ago`)}
+        ${wnStat('Your money in it', money2(own.capitalHeld), 'before tonight')}
+      </div>` : '');
+
+    // The seller's own ceiling, beside the badge's. Only ever the server's sentence,
+    // and flagged when it is the LOWER of the two — that is the case that costs money,
+    // because the badge is then the optimistic number.
+    const ceiling = own.ceilingComparison
+      ? `<p class="wn-own-ceiling${own.ceilingIsLower ? ' wn-own-ceiling-low' : ''}${own.ownIsTheOnlyCeiling ? ' wn-own-ceiling-only' : ''}">
+           ${own.ownMaxBid > 0 ? `<strong>Your ceiling ${moneyExact(own.ownMaxBid)}</strong> — ` : ''}${esc(own.ceilingComparison)}
+         </p>`
+      : '';
+
+    const notes = (own.notes || []).length
+      ? `<ul class="wn-own-notes">${own.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
+      : '';
+
+    const sales = (own.sales || []).length ? `
+      <details class="wn-own-sales">
+        <summary>Your ${own.sales.length} most recent ${own.sales.length === 1 ? 'sale' : 'sales'} of this</summary>
+        <table class="wn-own-table"><tbody>
+          ${own.sales.map(s => `<tr>
+            <td class="wn-own-cell-title">${esc(s.title)}</td>
+            <td class="wn-own-cell-price">${moneyExact(s.salePrice)}</td>
+            <td class="wn-own-cell-net">${s.netProfit == null ? '—' : `${moneyExact(s.netProfit)} net`}</td>
+            <td class="wn-own-cell-age">${s.daysAgo === 0 ? 'today' : `${s.daysAgo}d ago`}${s.daysHeld == null ? '' : ` · held ${s.daysHeld}d`}</td>
+          </tr>`).join('')}
+        </tbody></table>
+      </details>` : '';
+
+    return `
+      <div class="wn-own wn-own-${esc(own.verdict)}">
+        <div class="wn-own-head">👤 Your own record — <span class="wn-own-headline">${esc(own.headline)}</span></div>
+        ${tiles}
+        ${ceiling}
+        ${notes}
+        ${sales}
+      </div>`;
+  }
+
   function wnRenderCard(c) {
     const card = $('wn-card');
     if (!card) return;
@@ -10153,6 +10229,7 @@
       </div>
       ${ladder}
       ${meter}
+      ${wnOwnBlock(c.ownHistory)}
       ${won}
       <div class="wn-stats">
         ${wnStat('eBay resale', money2(c.resalePrice), c.medianPrice ? `median ${money(c.medianPrice)}` : '')}

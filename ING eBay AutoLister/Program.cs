@@ -2892,6 +2892,44 @@ app.MapPost("/api/snap", async (
     return Results.Ok(result);
 });
 
+// ── WhatsNot: what this seller has done with this product before ──────────────────────────────
+// Two local reads and no network. The rows are assembled EXACTLY as /api/restock assembles them —
+// the same flips, the same cost table, the same EarningsCalculator — so "your sales of this" means
+// the same set of sales on the live card as it does on the Restock board, and neither screen can
+// quietly be reading a different book.
+//
+// It never fails a price. The whole point of this screen is an answer in the seconds before a
+// hammer falls; a locked database or a half-written cost table has to cost the seller the extra
+// panel, not the ceiling.
+static OwnSalesEvidence? ReadOwnTrackRecord(
+    string title, EarningsStore earnings, CostBasisStore costBasis, EarningsCalculator calculator,
+    DealStore deals, FeeProfile feeProfile, ActionLog log)
+{
+    try
+    {
+        var costs = costBasis.GetAll();
+        var sales = earnings.GetAll()
+            .Select(flip =>
+            {
+                var basis = CostBasisStore.Find(costs, flip.ListingId, flip.Sku);
+                return new RestockSale
+                {
+                    Sale = calculator.Compute(flip, basis, feeProfile),
+                    AcquiredUtc = basis?.AcquiredUtc,
+                };
+            })
+            .ToList();
+
+        // Local time, not UTC — "sold 3 days ago" has to mean days the seller has lived through.
+        return OwnTrackRecord.Match(title, sales, deals.GetAll(), DateTimeOffset.Now);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Your own sales history could not be read for this lot", ex.Message);
+        return null;
+    }
+}
+
 // ── WhatsNot: live-auction arbitrage ──────────────────────────────────────────────────────────
 // An item is on screen in a live-selling feed and the bidding is running. This answers the only
 // question there is time for: what is the most I can bid on this and still make money reselling it
@@ -2909,6 +2947,7 @@ app.MapPost("/api/whatsnot/bid", async (
     ProductNormalizer normalizer, IMarketplaceRepository marketplace, ComparableMatcher matcher,
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
+    EarningsStore earnings, CostBasisStore costBasis, EarningsCalculator earningsCalc, DealStore deals,
     CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
@@ -2957,11 +2996,17 @@ app.MapPost("/api/whatsnot/bid", async (
         return FailureJson(failure);
     }
 
-    var card = advisor.Build(title, analysis, req, feeProfile, category);
+    // What this seller has done with this product before. Two local SQLite reads and no network, so
+    // it costs the live path nothing measurable — and it is the only evidence on the card that
+    // carries the fee eBay actually charged THEM, on THIS product, in their own listings.
+    var own = ReadOwnTrackRecord(title, earnings, costBasis, earningsCalc, deals, feeProfile, log);
+
+    var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
-    // only thing handed out; the analysis itself never leaves the server.
-    var quote = board.Hold(title, analysis, category);
+    // only thing handed out; the analysis itself never leaves the server. The seller's own record
+    // rides along for the same reason: it cannot change while a lot is being sold.
+    var quote = board.Hold(title, analysis, category, nowUtc: null, own: own);
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.ElapsedMs = sw.ElapsedMilliseconds;
@@ -3021,7 +3066,7 @@ app.MapPost("/api/whatsnot/rebid", (
     }
 
     var now = DateTime.UtcNow;
-    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now);
+    var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own);
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);
@@ -3079,7 +3124,7 @@ app.MapPost("/api/whatsnot/won", (
             "Press Price it to read eBay for what you've typed, then record the win.");
     }
 
-    var card = advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category);
+    var card = advisor.Build(quote.Item, quote.Analysis, req.AsBid(), feeProfile, quote.Category, null, quote.Own);
     var result = sheet.Record(card);
 
     log.Add("Research", "Live lot won",

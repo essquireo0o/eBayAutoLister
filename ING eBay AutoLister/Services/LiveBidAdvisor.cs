@@ -77,9 +77,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// The market analysis for this title, or null when nothing priced it. Never recomputed here —
     /// this is a translation of figures the pipeline has already produced.
     /// </param>
+    /// <param name="own">
+    /// The seller's own history with this product, when their book was read. Priced at this
+    /// request's terms and attached to the card — never allowed to move the call, which stays the
+    /// market's answer. See <see cref="OwnTrackRecord"/>.
+    /// </param>
     public LiveBidCard Build(
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
-        ResaleCategory? category = null, DateTime? nowUtc = null)
+        ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var resale = analysis is null ? null : ResalePricing.From(analysis, item);
@@ -121,6 +126,10 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             card.Reason = card.EvidenceTier == LocalArbitrageAnalyzer.EvidenceNone
                 ? "No eBay sold history matched this item, so there is no resale price to bid against."
                 : card.EvidenceNote;
+            // Attached even here — especially here. A card the market could not price is exactly
+            // the card on which "you have sold four of these yourself" is the only evidence there
+            // is, and the seller's own ceiling becomes the only one on screen.
+            AttachOwnRecord(card, own);
             card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
             card.Say = LiveBidSpeech.Say(card);
             return card;
@@ -169,12 +178,37 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         card.CallLabel = label;
         card.Reason = reason;
         card.Warnings.AddRange(Warnings(card, resale));
+        AttachOwnRecord(card, own);
         card.LotRank = RankLot(card.Call, card.ProfitAtMaxBid);
         // Last, because it restates what everything above decided. Both exits set it, so no card
         // this method returns can reach a screen without the line that screen reads out loud.
         card.Say = LiveBidSpeech.Say(card);
 
         return card;
+    }
+
+    /// <summary>
+    /// The seller's own record with this product, priced at the same shipping, premium and target
+    /// the ceiling above it used — and never allowed to change the call.
+    /// </summary>
+    /// <remarks>
+    /// The badge is the market's answer and stays the market's answer. What the seller's own sales
+    /// are allowed to do is <b>say something</b>: a second ceiling clearly labelled as theirs, and
+    /// the two or three facts that belong on the card's warning list because they change the answer
+    /// to "should I bid on this" — most of all, that they already own two of these and neither has
+    /// sold. A screen that quietly re-rated the call on the strength of two of the seller's own
+    /// sales would be a screen that talks somebody out of a good lot because they once listed one
+    /// badly.
+    /// </remarks>
+    private static void AttachOwnRecord(LiveBidCard card, OwnSalesEvidence? own)
+    {
+        if (own is null) return;
+
+        card.OwnHistory = OwnTrackRecord.Price(
+            own, card.ShippingCost, card.BuyerFeePercent, card.TargetRoiPercent,
+            card.MaxBid, card.ResalePrice);
+
+        card.Warnings.AddRange(OwnTrackRecord.Warnings(card.OwnHistory));
     }
 
     /// <summary>

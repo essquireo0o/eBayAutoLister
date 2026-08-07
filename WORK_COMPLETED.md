@@ -10496,3 +10496,172 @@ when there is not.
 - **One cost basis per listing.** The freight is divided by the deal's quantity exactly as the
   pipeline already did, but a lot of six published as one listing of six is one row, and the seller
   cannot tell the app that two of the six were broken.
+
+---
+
+# The evidence that was already yours: your own record, on the live card
+
+## The question this answers
+
+Every number the WhatsNot card has ever shown is somebody else's. The resale price is estimated from
+strangers' sold listings, the eBay fee is estimated from a fee profile, the postage is estimated from
+a rate book. That is the right evidence for an item the seller has never handled — and it is the
+*weaker* evidence for one they have sold four times, because their own sales carry the fee eBay
+actually charged **them**, the label they actually paid for, the condition they actually list in and
+the price their own listings actually get.
+
+Two facts decide a live bid and neither of them was on the screen:
+
+- **What you got for the last one.** A comp median of $205 against the seller's own three sales at
+  $172 is not a rounding difference. It is a $33-a-unit ceiling error, repeated on every lot of that
+  product for as long as nobody says it out loud — and the badge is always the optimistic one.
+- **What you are already sitting on.** Buying a fourth while three are listed and unsold is not
+  arbitrage, it is moving cash onto a shelf. At 11pm with a stream running it is completely
+  invisible.
+
+Both were already in this app and neither had ever been read at bid time. Completed sales live in
+Money Made; capital in motion lives on the Deal Pipeline.
+
+## What it does
+
+The card grows a panel, above the market statistics rather than below them:
+
+> 👤 **YOUR OWN RECORD** — You have sold 3 of these at $210 each, $90 net, gone in about 12 days.
+>
+> | You've sold | You got | Your net each | Your sell time | Still holding |
+> |---|---|---|---|---|
+> | 3 | $210.00 | $90.00 | 12 days | 2 |
+>
+> **Your ceiling $50.00** — Your own 3 cleared $150.00 each, which puts your ceiling at $50.00 —
+> $23.10 under the $73.10 the comps allow. The badge is the market's number; this one is yours.
+
+Under it, what the numbers cannot say: the sale whose postage was never recorded and is therefore
+left out, the gap between the seller's own selling price and the comps, the units that came back.
+And two facts get promoted onto the card's own warning list, because they change the answer to
+*should I bid on this*:
+
+> You already have 2 of these bought and unsold — $310 of your money is in this product before
+> tonight, the oldest bought 96 days ago and still not sold. Another one competes with your own.
+>
+> On what you actually got for the last ones, the ceiling is $50.00 rather than the badge's.
+
+The one spoken line gains a last clause — *"You've sold 3, $90 net each — on your own prices, stop at
+$50."* — but only on a proven record, because the line is the only glanceable thing on the screen.
+
+## The property that makes it legitimate
+
+**It never moves the badge.** The call, the label, the ceiling, the break-even, the room and the lot
+rank are all identical with and without the seller's record, at any strength, in either direction —
+pinned by a test that builds the same card with a terrible record and a spectacular one. The badge is
+the market's answer, and two of the seller's own sales are two sales; a screen that quietly re-rated
+the call on them would occasionally talk somebody out of a good lot because they once listed one
+badly.
+
+**It is not a second opinion about money.** The seller's ceiling comes out of
+`AuctionSniperAnalyzer.MaxBidDetail` and its walk-away line out of `LiveBidAdvisor.BreakEvenBid` — the
+same two functions the badge above it uses, at the same shipping, the same premium and the same
+target. Only the evidence underneath differs, and the card says which is which. There is still
+exactly one function in this app that turns a break-even into a maximum bid.
+
+**The break-even is measured, not modelled.** `FlipProfit.NetProceeds` is money that arrived minus
+money that left, excluding the goods — eBay's real fee, the real label, the real refunds. Averaged
+per unit it *is* the highest price this seller could have paid for one and broken even. Nothing here
+predicts a fee.
+
+**It reads the same rows the Restock board ranks.** The same flips, the same cost table, the same
+`EarningsCalculator`, grouped by the same `JackpotHunter.ProductSignature`. Two screens claiming to
+show "your sales of this" out of two different assemblies of one table is two screens that will
+eventually disagree about the seller's own history.
+
+## The refusals
+
+A wrong ceiling here is worse than no ceiling, because every one of these mistakes makes the number
+**bigger** and somebody bids to it with a hammer coming down.
+
+| It will not price off | Why |
+|---|---|
+| A title with no model number | "silver plated flatware" keys on two ordinary words, and those words match a great deal that is not this item. Shown, and never priced off |
+| A single sale | One sale is not a pattern. The Restock board's own bar, shared as a constant so the two screens cannot drift |
+| Sales with no postage cost recorded | Proceeds with the label missing read higher than they were, and a flattered break-even is a raised ceiling. Left out, counted, and said |
+| Refunded or cancelled orders | Not sales. Counted on their own line and priced nowhere |
+| A record that never covered its own costs | No ceiling at all, and the panel says the seller loses money on this product |
+| Its own arithmetic | Two calls into the shared ceiling functions, and nothing beside them |
+
+And it will not *raise* anything. A seller who does better than the comps is told so and told the
+badge still has the sold history behind it.
+
+## Where it earns the most
+
+A card the market could not price. eBay matched nothing, the badge says **CAN'T PRICE IT** — honestly,
+because the market genuinely didn't — and if the seller has sold two of them, the card now carries a
+number anyway:
+
+> Nothing on eBay priced this, but you have sold 2 — on your own sales the most to bid is $50.00.
+
+## Speed
+
+Two local SQLite reads and no network, on the fresh price only. The record is then **held with the
+comps** on the same quote, so a climbing bid re-prices it without re-reading the seller's book — and
+a locked database costs the panel, never the ceiling: the read is wrapped, logged and returns null.
+
+## Sold comps
+
+Untouched and additive, as every WhatsNot session has been. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/lots`,
+`/api/whatsnot/list` and `/api/whatsnot/embed-check` are all still registered and are asserted to be,
+and the live price still runs on `AnalyzeProductAsync`. `/api/restock` still assembles and analyses
+its own rows, including the one eBay read the live card refuses to make.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Models/OwnTrackRecordModels.cs` | New — the evidence, the priced record, one sale row, the four verdicts |
+| `ING eBay AutoLister/Services/OwnTrackRecord.cs` | New — the match, the measured break-even, the second ceiling, the sentences and the refusals |
+| `ING eBay AutoLister/Services/LiveBidAdvisor.cs` | `Build` takes the record and attaches it **after** the call is decided |
+| `ING eBay AutoLister/Services/LiveBidBoard.cs` | The held quote keeps it, so a moving bid does not re-read the seller's book |
+| `ING eBay AutoLister/Services/LiveBidSpeech.cs` | One last clause, on a proven record only |
+| `ING eBay AutoLister/Models/LiveBidModels.cs` | `LiveBidCard.OwnHistory` |
+| `ING eBay AutoLister/Program.cs` | `ReadOwnTrackRecord`; the three whatsnot endpoints that price a card carry it |
+| `ING eBay AutoLister/wwwroot/app.js` | `wnOwnBlock`, rendered above the market statistics |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-own*`, a verdict colour each, folded at 620px |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=124`, `style.css?v=107` |
+| `ING eBay AutoLister.Tests/OwnTrackRecordTests.cs` | New — 30 tests, most of them refusals |
+| `ING eBay AutoLister.Tests/WhatsNotOwnRecordAssetTests.cs` | New — 19 tests holding the four links together |
+| `ING eBay AutoLister.Tests/LiveBidAdvisorTests.cs` | 6 new — chiefly that the record cannot move the badge |
+| `WhatsNotLiveBidAssetTests.cs`, `WhatsNotBuySheetAssetTests.cs`, `WhatsNotListItAssetTests.cs` | Three call-site pins loosened from whole-argument-list equality to a prefix — they exist to catch a call disappearing, and an equality fails on every addition and gets "fixed" by deletion |
+| `whatsnot_own_record.png` | The panel on a card whose seller does worse than the comps |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,654 passed**, 0 failed, 0 skipped (55 new; the previous commit was 3,599) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser (Playwright, wwwroot served statically, the endpoints mocked in the shape the C# returns) | **21/21 checks.** The panel renders with its verdict colour, the headline is the server's sentence character-for-character, five tiles carry the count, the price, the net, the speed and the stock, and the ceiling line leads with **Your ceiling $50.00** and is marked as the lower of the two. Both notes render; the three past sales open, and the one with no cost recorded shows a dash rather than a zero. The held stock and the lower ceiling both reach the card's warning list, the spoken line carries the record, the panel sits above the market statistics, and the badge still reads **BID UP TO $73**. Nothing in the card overflows at 560px. A seller with no record gets one line and no tiles. **No page errors.** |
+
+The installed app holds port 9332 and the app has no port override, so the screen was driven against
+a static server with the endpoints mocked — which exercises the whole render, ordering and
+warning-list path but not the arithmetic underneath it, which is what the 55 new C# tests are for.
+
+## Known limits
+
+- **It reads sales, not live listings.** "Still holding" counts Deal Pipeline cards at Bought or
+  Listed. A seller who lists straight to eBay without tracking a deal has stock the panel cannot see,
+  and the Restock board's one eBay read — which would see it — is exactly the call a live auction
+  cannot afford. The honest version is a cached listing snapshot, and it is not here.
+- **The match is a grouping key, not an identity.** `ProductSignature` collapses "S19j Pro 104TH" and
+  "S19j Pro 100TH" into one line, which is right for a restock list and arguable for a ceiling. A
+  loose identity is refused outright; a wrong *model* match is not detectable here.
+- **Two sales is a thin ceiling and is presented as a firm one.** The bar is the Restock board's, and
+  above it the panel states a dollar figure without a confidence beside it. The comp-side ceiling
+  dims itself on thin evidence; this one does not yet.
+- **Nothing tells the seller which of the two ceilings to use.** The card says both and says which is
+  which. That is deliberate — the app has one opinion, on the badge — but a seller who consistently
+  sells under the comps is being asked to remember that every lot, all night.
+- **The record is a snapshot at Price it.** A win recorded twenty minutes later re-prices against the
+  same held record, which is correct; a sale imported in between is not seen until the next fresh
+  price.
+- **It only ever looks at eBay money.** Sales imported from anywhere else are not in the book, so a
+  cross-listed seller's record here is their eBay half of it.

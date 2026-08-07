@@ -190,7 +190,11 @@ public class WhatsNotLiveBidAssetTests
     {
         var route = Between(Program, "app.MapPost(\"/api/whatsnot/bid\"", "});");
 
-        Assert.Contains("board.Hold(title, analysis, category)", route, StringComparison.Ordinal);
+        // The argument list is pinned as a prefix rather than whole: what this test exists to catch
+        // is the hold disappearing or being pointed at something other than the item just priced,
+        // and later sessions legitimately hand it more to keep (the seller's own record, most
+        // recently). An equality here fails on every addition and gets "fixed" by deletion.
+        Assert.Contains("board.Hold(title, analysis, category", route, StringComparison.Ordinal);
         Assert.Contains("card.Token = quote.Token;", route, StringComparison.Ordinal);
         Assert.Contains("builder.Services.AddSingleton<LiveBidBoard>();", Program, StringComparison.Ordinal);
     }

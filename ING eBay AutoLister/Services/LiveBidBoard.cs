@@ -58,7 +58,15 @@ public sealed class LiveBidBoard
     /// <summary>
     /// Keeps the comps behind one priced item and hands back the token that re-prices it.
     /// </summary>
-    public LiveBidQuote Hold(string item, MarketAnalysisResult analysis, ResaleCategory? category, DateTime? nowUtc = null)
+    /// <param name="own">
+    /// The seller's own history with this product, held for the same reason the comps are: it is
+    /// evidence about the seller rather than about the auction, so it cannot change while a lot is
+    /// on screen, and re-reading two SQLite tables for every keystroke of a climbing bid spends the
+    /// seconds this whole screen exists to save.
+    /// </param>
+    public LiveBidQuote Hold(
+        string item, MarketAnalysisResult analysis, ResaleCategory? category,
+        DateTime? nowUtc = null, OwnSalesEvidence? own = null)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var quote = new LiveBidQuote
@@ -67,6 +75,7 @@ public sealed class LiveBidBoard
             Item = item,
             Analysis = analysis,
             Category = category,
+            Own = own,
             PricedAtUtc = now,
         };
 
@@ -138,6 +147,13 @@ public sealed class LiveBidQuote
     /// <summary>The classification the fresh price ran under, kept so a re-price cannot land in a
     /// different category and quietly change what the item is.</summary>
     public ResaleCategory? Category { get; init; }
+
+    /// <summary>
+    /// The seller's own sales of this product, as they stood when the lot was priced. Held so a
+    /// re-price keeps saying what the seller's own record says, without re-reading their book on
+    /// every keystroke. Null when nothing read it.
+    /// </summary>
+    public OwnSalesEvidence? Own { get; init; }
 
     /// <summary>When the comps were read — the age printed on every re-priced card.</summary>
     public DateTime PricedAtUtc { get; init; }
