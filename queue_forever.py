@@ -26,7 +26,27 @@ VISION: optimize for (1) "how does Nick make money?" grow the seller's profit/sa
 - Fail -> revert (git checkout -- . ; git clean -fd) and STOP. Green -> git add -A && git commit; bump wwwroot/index.html ?v= if app.js changed; document in WORK_COMPLETED.md.
 - NEVER: git push, publish live eBay, read/print secrets, delete user data, change keys, rm -rf, git reset --hard, touch files outside the repo."""
 
+# WhatsNot vision, carried in every WhatsNot task because the worker is stateless per task.
+# The tab already exists (nav data-page="whatsnot", section id="whatsnot-section", showWhatsNotSection
+# in app.js, styles in style.css): an embedded-browser panel with an address bar + iframe + "Open in
+# browser" fallback pointed at a live-selling feed (Whatnot etc.).
+WN = ("WHATSNOT FEATURE (the 'WhatsNot' tab: nav data-page=\"whatsnot\", section #whatsnot-section, "
+ "showWhatsNotSection/bindWhatsNot in app.js, .wn-* styles in style.css). END GOAL: analyze the items on "
+ "a live-selling feed on screen and give their cost/resale value from REAL-TIME live eBay sold prices "
+ "(answer within seconds), so a seller watching a live auction knows instantly what each item is worth. "
+ "HARD CONSTRAINT: do NOT stop, disable, or remove the sold-comps system anywhere in the app - it stays "
+ "fully working; WhatsNot is additive. Known wall: an <iframe> can't read a cross-origin feed (Whatnot "
+ "sends X-Frame-Options/CSP), so make honest incremental progress toward the goal (e.g. paste-in item "
+ "title/URL -> instant live eBay cost; a manual 'price what I'm watching' box; groundwork for real feed "
+ "capture) rather than faking a live read. One cohesive, tested, working increment per task. ")
+
 POOL = [
+ (WN + "Improve the WhatsNot embedded-browser panel itself: navigation (back/forward/reload), remembering the last feed URL, clearer handling when a site refuses to embed, and general reliability/UX.", "wn-embed"),
+ (WN + "Add a 'price what I'm watching' input to the WhatsNot panel: seller pastes/says an item (title, or an eBay/Whatnot URL) and gets its live eBay cost/resale estimate within seconds, shown beside the feed. Reuse the app's existing live eBay pricing services; do NOT touch sold comps.", "wn-price"),
+ (WN + "Build the live eBay real-time cost lookup path WhatsNot needs: given an item title/identity, return a fast (seconds) resale estimate from live eBay data, with a confidence note. Add tests. Additive to, not a replacement for, sold comps.", "wn-live-cost"),
+ (WN + "Show the cost/profit result as a clear overlay/side panel on the WhatsNot screen: item, live eBay estimate, confidence, and a quick 'source it / list it' next step. Premium UX.", "wn-overlay"),
+ (WN + "Lay groundwork for reading items off the live feed (the hard part): research/implement the most feasible honest path (WebView2 host hook, screen-region capture + OCR/vision, or any Whatnot data the app can legitimately access), gated behind the existing panel. Small, tested step.", "wn-capture"),
+ (WN + "Polish, harden, and test the WhatsNot flow end to end: accessibility, keyboard, responsive, error states, and unit tests for any new WhatsNot services. No logic breakage elsewhere.", "wn-polish"),
  ("Add or improve a high-value seller feature not yet present; document the money impact in WORK_COMPLETED.md.", "auto-feature"),
  ("Polish and harden the local-arbitrage (Craigslist/Facebook) experience: reliability, clearer per-source status, better profit ranking.", "auto-arbitrage"),
  ("Improve the listing workflow (item -> live listing): fewer clicks, smarter defaults, better autofill.", "auto-workflow"),

@@ -923,6 +923,7 @@
     bindLotAnalyzer();
     bindPromoted();
     bindShipping();
+    bindWhatsNot();
     bindTrendRadar();
     bindDealRadar();
     bindSnapSource();
@@ -1213,6 +1214,7 @@
     promoted:    { section: 'promoted-section',      open: showPromotedSection },
     copilot:     { section: 'copilot-section',       open: showCopilotSection },
     shipping:    { section: 'shipping-section',      open: showShippingSection },
+    whatsnot:    { section: 'whatsnot-section',      open: showWhatsNotSection },
 
     // These five have no sidebar entry — they were removed from the nav — so they carry their own
     // title and icon. Everything else takes both off its nav button, which is why renaming a
@@ -9575,6 +9577,57 @@
 
   function closeShippingSection() {
     closeWorkspacePage('shipping');
+  }
+
+  // ── WhatsNot: embedded live-feed browser ─────────────────────────────────────
+  // An <iframe> pointed at a live-selling feed. Sites that send X-Frame-Options /
+  // CSP frame-ancestors will show blank — that's the site refusing, not a bug here,
+  // which is why "Open in browser" exists. Reading items off the feed and pricing
+  // them against live eBay costs is the larger build this panel is the seed of.
+  function wnNormalizeUrl(raw) {
+    let u = (raw || '').trim();
+    if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    return u;
+  }
+
+  function wnLoad(url) {
+    const frame = $('wn-frame');
+    const target = wnNormalizeUrl(url || $('wn-url')?.value);
+    if (!frame || !target) return;
+    const box = $('wn-url');
+    if (box) box.value = target;
+    frame.src = target;
+  }
+
+  async function showWhatsNotSection() {
+    hideOverlaySections();
+    $('whatsnot-section')?.classList.remove('hidden');
+    setActiveNavItem('whatsnot');
+    markWorkspaceTabOpen('whatsnot');
+    // Load the feed on first open; a frame already showing a live stream is left alone on
+    // return so tabbing away and back doesn't tear down what the seller is watching.
+    const frame = $('wn-frame');
+    if (frame && (!frame.src || frame.src === 'about:blank')) wnLoad();
+  }
+
+  function closeWhatsNotSection() {
+    // Blank the frame on close so a live stream stops spending bandwidth/CPU unseen.
+    const frame = $('wn-frame');
+    if (frame) frame.src = 'about:blank';
+    closeWorkspacePage('whatsnot');
+  }
+
+  function bindWhatsNot() {
+    on('wn-home', 'click', goHome);
+    on('wn-close', 'click', closeWhatsNotSection);
+    on('wn-go', 'click', () => wnLoad());
+    on('wn-open-browser', 'click', () => {
+      const target = wnNormalizeUrl($('wn-url')?.value);
+      if (target) window.open(target, '_blank', 'noopener,noreferrer');
+    });
+    const box = $('wn-url');
+    if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter') wnLoad(); });
   }
 
   function bindShipping() {

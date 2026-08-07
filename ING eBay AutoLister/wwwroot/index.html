@@ -117,6 +117,10 @@
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
 
         <p class="nav-group-label">Grow</p>
+        <!-- Live-feed sourcing: an embedded browser on a live-selling feed (Whatnot etc.), so the
+             seller can price what's on screen against real eBay costs without leaving the app. The
+             live analysis is built on top over time; this entry opens the embedded feed. -->
+        <button class="nav-item" type="button" data-page="whatsnot"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>WhatsNot</button>
         <!-- The only screen meant to be used away from the desk. Every board below it answers
              "what should I go and buy"; this one answers "should I buy THIS", about the thing
              already in the seller's hand. It sits first in Grow because it is the one that has to
@@ -2679,6 +2683,46 @@
            which of the four ways to charge for shipping leaves the most money after eBay's cut.
            The leak scan answers it across everything already live at once.
            Read-only throughout: no labels are bought, no listing is changed, nothing is sent. -->
+      <!-- ── WhatsNot: embedded live-feed browser ──────────────────────────────────────────
+           An <iframe> embed of a live-selling feed. Most live-commerce sites (Whatnot included)
+           send X-Frame-Options / CSP frame-ancestors that REFUSE embedding, so the frame can come
+           up blank — the fallback note + "Open in browser" covers that. The live item-analysis
+           (read what's on screen, price it against real eBay costs) is a separate, larger build
+           that an iframe cannot do cross-origin; this panel is the container it will grow from. -->
+      <section id="whatsnot-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="wn-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">WhatsNot</div>
+              <h2>📺 Live Feed — price what's on screen</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="wn-open-browser" class="btn btn-ghost" type="button" title="Open this feed in your real browser">Open in browser ↗</button>
+            <button id="wn-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <div class="wn-bar">
+            <input id="wn-url" type="text" class="wn-url" spellcheck="false"
+                   value="https://www.whatnot.com/live" placeholder="https://www.whatnot.com/live" />
+            <button id="wn-go" class="btn btn-primary" type="button">Load</button>
+          </div>
+          <p class="opp-hint wn-hint">
+            Loads a live-selling feed inside the app. <strong>Heads up:</strong> many sites (Whatnot
+            included) block being embedded — if the frame stays blank, that's the site refusing, and
+            <strong>Open in browser</strong> is the way in. Reading the items on the feed and pricing
+            them against live eBay costs is the next build on top of this.
+          </p>
+          <div class="wn-frame-wrap">
+            <iframe id="wn-frame" class="wn-frame" src="about:blank"
+                    referrerpolicy="no-referrer" title="Live feed"></iframe>
+          </div>
+        </div>
+      </section>
+
       <section id="shipping-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
@@ -5658,6 +5702,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=114"></script>
+  <script src="app.js?v=115"></script>
 </body>
 </html>
