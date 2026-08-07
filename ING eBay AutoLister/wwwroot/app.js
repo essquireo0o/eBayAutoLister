@@ -950,6 +950,10 @@
     addActivity('ING Listing Engine™ ready', 'Official product of ING Mining LLC — all systems operational.');
 
     await checkSetupOnLoad();
+    // Explicit, and deliberately not left to the call inside updateSetupChecklist: this is what
+    // opens the first-run screen, and it must still happen on the one path where reading the
+    // credential status failed — a brand-new install with nothing to read is precisely that case.
+    await loadOnboarding();
     // The checklist's extras row now carries live Connect buttons, so their state has to be known
     // on the dashboard and not only once Settings is opened. Not awaited: neither button's state
     // blocks anything else on the page, and a slow status check shouldn't hold up the listings.
@@ -1582,6 +1586,9 @@
     $('dashboard-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setActiveNavItem('dashboard');
     markWorkspaceTabOpen('dashboard');
+    // Coming back from the Opportunity Finder or a publish is exactly when a step has just been
+    // earned, and the dashboard is where the seller finds out. One local read, no network.
+    loadOnboarding();
   }
 
   // Settings has no `refresh` hook on purpose: every return to the tab would re-run
@@ -1723,9 +1730,12 @@
       FACEBOOK_BANNERS.forEach(([statusId, connectId, disconnectId]) =>
         paintFacebookBanner($(statusId), $(connectId), $(disconnectId), data));
       setConnectState('pg-facebook-state', data.connected, 'Connected', 'Not connected');
-      markSetupStep('step4', data.connected, 'Connected');
-      const row4 = $('step4-row');
-      if (row4) row4.dataset.known = '1';
+      // Step 6 since the checklist grew the three flip steps — it was step 4 while the path
+      // stopped at "connected". Same row, same wiring, later position: an optional extra belongs
+      // after the five things the seller is actually being walked through.
+      markSetupStep('step6', data.connected, 'Connected');
+      const row6 = $('step6-row');
+      if (row6) row6.dataset.known = '1';
       refreshChecklistVisibility();
       // A Facebook connect/disconnect changes what the source list says about itself.
       loadLocalSources();
@@ -17884,14 +17894,23 @@
   // the cursor in the key field, which is the whole difference between "here is a settings screen"
   // and "type your key here".
   function bindSetupChecklist() {
-    on('setup-checklist-dismiss', 'click', () => {
-      const checklist = $('setup-checklist');
-      if (!checklist) return;
-      // Recorded, not just hidden: the two optional status calls re-run the visibility check, and
-      // a dismissed panel that reappears a second later reads as a bug.
-      checklist.dataset.dismissed = '1';
-      checklist.classList.add('hidden');
+    // Recorded on the server, not just hidden: the two optional status calls re-run the visibility
+    // check, and a dismissed panel that reappears a second later — or on the next launch — reads
+    // as a bug. "Show the getting-started steps again" in Settings is the way back.
+    on('setup-checklist-dismiss', 'click', () => setOnboardingDismissed(true));
+    on('pg-show-onboarding', 'click', async () => {
+      await setOnboardingDismissed(false);
+      navigateTo('dashboard');
+      setTimeout(() => $('setup-checklist')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
     });
+    // The three flip steps. Delegated off the row's own token rather than one handler each, so the
+    // server can re-point a step at a different screen without a matching change here.
+    document.querySelectorAll('[data-onboard-action]').forEach(btn =>
+      btn.addEventListener('click', () => runOnboardAction(btn.dataset.onboardAction)));
+    // The first-run screen. "Set it up" goes where step 1 goes — a welcome that ends on the
+    // dashboard the seller was already looking at has told them nothing about where to start.
+    on('welcome-start', 'click', () => { closeWelcome(); openSetupAt('key'); });
+    on('welcome-later', 'click', closeWelcome);
     on('step1-btn', 'click', () => openSetupAt('key'));
     // Step 2 is the eBay login only now — it no longer routes to the policy picker, which lives in
     // Settings -> eBay Seller Policies and in the New Listing form.
@@ -19911,6 +19930,11 @@
     refreshChecklistVisibility();
 
     renderDashStatus();
+
+    // The two rows above are now painted; the three past them, the headline and the progress bar
+    // are the server's answer. Both callers of this function are moments the plan changes — a key
+    // saved, eBay connected — so this is where the rest of the panel catches up.
+    loadOnboarding();
   }
 
   /**
@@ -19964,6 +19988,130 @@
     chip.classList.toggle('is-off', !on);
     const text = chip.querySelector('.dash-chip-text');
     if (text) text.textContent = on ? onText : offText;
+  }
+
+  // ── The getting-started path ───────────────────────────────────────────────
+  //
+  // The checklist above paints the two setup rows the instant anything local changes, so a seller
+  // who pastes a key sees the tick without waiting for a round trip. This is the other half: the
+  // three steps past setup, which no amount of local state can answer. Whether the seller has ever
+  // priced something against sold comps, had the AI write a listing or published one is known only
+  // to the server, which watched it happen — see OnboardingProgress.
+  //
+  // Read-only, cheap and idempotent, so it is safe to call on every return to the dashboard.
+
+  async function loadOnboarding() {
+    if (!$('setup-checklist')) return null;
+    try {
+      const plan = await fetch('/api/onboarding').then(r => r.ok ? r.json() : null);
+      if (plan) renderOnboarding(plan);
+      return plan;
+    } catch {
+      // The static copy in index.html is the same wording as the server's, so a failed fetch
+      // leaves a correct — merely undated — checklist rather than an empty one.
+      return null;
+    }
+  }
+
+  function renderOnboarding(plan) {
+    const checklist = $('setup-checklist');
+    if (!checklist || !plan || !Array.isArray(plan.steps)) return;
+
+    setText('setup-title', plan.headline || '');
+    setText('setup-sub', plan.sub || '');
+
+    const done = plan.done || 0, total = plan.total || plan.steps.length;
+    setText('setup-progress-count', `${done} of ${total}`);
+    const fill = $('setup-progress-fill');
+    if (fill) fill.style.width = `${plan.percentComplete || 0}%`;
+    const bar = $('setup-progress-bar');
+    if (bar) {
+      bar.setAttribute('aria-valuenow', String(done));
+      bar.setAttribute('aria-valuemax', String(total));
+    }
+
+    plan.steps.forEach(step => {
+      const prefix = ONBOARD_ROWS[step.id];
+      const row = $(`${prefix}-row`);
+      if (!row) return;
+
+      // Steps 1 and 2 belong to updateSetupChecklist, which paints them the instant a key is saved
+      // or eBay answers — with the right button labels ("✓ Key saved", "✓ Connected"). Repainting
+      // them from here would replace those with a generic tick and, worse, do it a round trip late.
+      if (prefix !== 'step1' && prefix !== 'step2') {
+        // These rows have no `-btn`, so markSetupStep ticks the row and leaves the button alone —
+        // which is what keeps "Find Goldmines" clickable after the first time.
+        markSetupStep(prefix, step.done, 'Done');
+        const copy = $(`${prefix}-copy`);
+        if (copy) copy.textContent = step.done && step.note ? step.note : step.why;
+      }
+
+      // Exactly one row is the next thing to do, and it is the only one that looks urgent.
+      row.classList.toggle('is-next', step.state === 'next');
+    });
+
+    // Recorded on the server, so a dismissal made on Monday is still a dismissal on Tuesday.
+    if (plan.dismissed) checklist.dataset.dismissed = '1';
+    else delete checklist.dataset.dismissed;
+    checklist.classList.toggle('is-complete', !!plan.firstFlipComplete);
+    refreshChecklistVisibility();
+
+    if (plan.showWelcome) openWelcome();
+  }
+
+  // Server step id → the row prefix markSetupStep already understands.
+  const ONBOARD_ROWS = {
+    key: 'step1', ebay: 'step2', priced: 'step3', written: 'step4', published: 'step5',
+  };
+
+  // What a step's button does. Kept as tokens on the server rather than hard-coded page ids in the
+  // markup, so the path can be re-pointed at a different screen without touching index.html.
+  function runOnboardAction(action) {
+    if (!action) return;
+    if (action === 'key') { openSetupAt('key'); return; }
+    if (action === 'ebay') { if (!isConnected) $('btn-connect')?.click(); return; }
+    if (action.startsWith('page:')) navigateTo(action.slice(5));
+  }
+
+  async function setOnboardingDismissed(dismissed) {
+    const checklist = $('setup-checklist');
+    if (checklist) {
+      // Applied before the round trip: a panel that lingers for half a second after the X is
+      // pressed reads as a button that didn't work.
+      if (dismissed) { checklist.dataset.dismissed = '1'; checklist.classList.add('hidden'); }
+      else { delete checklist.dataset.dismissed; checklist.classList.remove('hidden'); }
+    }
+    try {
+      const plan = await fetch(`/api/onboarding/dismiss?dismissed=${dismissed ? 'true' : 'false'}`,
+        { method: 'POST' }).then(r => r.ok ? r.json() : null);
+      if (plan) renderOnboarding(plan);
+    } catch { /* the local hide already happened; it just won't survive a restart */ }
+  }
+
+  // ── The first run ─────────────────────────────────────────────────────────
+  // Opened only when the server says this install has never done anything (OnboardingProgress
+  // .ShowWelcome). Marked seen the moment it opens rather than when it closes, so a seller who
+  // closes the app mid-read is not shown it again on every launch.
+
+  // Once per page load, whatever later plans say. The server flips its own flag the moment this
+  // opens, but /api/onboarding is called again on every dashboard return and on every setup change
+  // — and a plan fetched before that POST landed still reads showWelcome. Without this latch,
+  // pressing "Set it up" reopened the welcome screen over the settings modal it had just opened,
+  // and stole the caret back out of the key field.
+  let welcomeShown = false;
+
+  function openWelcome() {
+    const overlay = $('welcome-overlay');
+    if (!overlay || welcomeShown || !overlay.classList.contains('hidden')) return;
+    welcomeShown = true;
+    overlay.classList.remove('hidden');
+    setTimeout(() => $('welcome-start')?.focus(), 120);
+    fetch('/api/onboarding/welcome-seen', { method: 'POST' }).catch(() => {});
+  }
+
+  function closeWelcome() {
+    welcomeShown = true;
+    $('welcome-overlay')?.classList.add('hidden');
   }
 
   function markSetupStep(prefix, done, doneLabel) {

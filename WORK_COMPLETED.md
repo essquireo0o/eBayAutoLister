@@ -13737,3 +13737,140 @@ read they did not ask for.
 - **It says nothing about WHY a room is hot.** A show full of collectors bidding sentimentally, a
   show with a shill in it and a show whose lots are genuinely underpriced by this app all produce the
   same number. The read reports what was paid and refuses to explain it.
+
+---
+
+# Say what the app is for, before the tester decides it isn't
+
+## The question this answers
+
+A new beta tester opens this app and sees a sidebar of thirty features, a hero, four stat tiles at
+zero, and a checklist with two steps on it. They finish the two steps. The checklist ticks itself
+green and reports — accurately, and uselessly — that setup is complete.
+
+At that point the app has taken a Claude key and an eBay login off them and shown them nothing. It
+has not priced anything, written anything or published anything. "Setup complete" was being reported
+as though it were the achievement, and the first five minutes are the whole of what a tester decides
+on.
+
+So the path now runs past setup and into the flip:
+
+| # | Step | What it says |
+|---|---|---|
+| 1 | Enter your Claude API key | the AI that reads the photo and writes the listing; about $5 covers hundreds |
+| 2 | Connect eBay | your own account — read what you have, publish what you make, import what it sold for |
+| 3 | Price one item against real sold comps | *"Guessing the price is where the money goes"* — what the same thing actually sold for, minus eBay's cut, the label and the box |
+| 4 | Let the AI write a listing | *"the hour per listing you stop spending"* |
+| 5 | Publish it to eBay | the whole loop; from here the app tracks cost, sale and take-home |
+| 6 | Connect Facebook Marketplace | optional, and now visibly after the five that aren't |
+
+Every step carries a sentence about money rather than a sentence about configuration. A tester who
+reads only those five lines has read what this product is.
+
+## The three new steps are earned, not claimed
+
+Nothing on rows 3-5 is ticked by opening a screen or by the seller saying so. Each is recorded by
+the server at the moment the thing actually happened, and nowhere else:
+
+| Step | Where it is recorded | What it refuses |
+|---|---|---|
+| `priced` | inside `/api/sold-comps`'s single `Answer(...)` — the one point all three comp sources return through — and only when `Count > 0` | the links-only fallback, which priced nothing |
+| `written` | `/api/analyze` when `Guarded` produced a 200, and both success exits of `/api/analyze-url` | a bad key, a dead page, a rate limit — all of which return 400 |
+| `published` | `/api/listing/publish` on eBay's own answer, and on the reconciled path where the listing went live but the response was lost | the duplicate guard's "already live" reply, which is a publish that did not happen |
+
+The first time wins: `Reach` is an `INSERT … ON CONFLICT DO NOTHING`, so "you priced your first item
+on Aug 3" stays true after the hundredth. It is also swallowed on failure — a locked database is not
+a reason to fail a publish that eBay accepted.
+
+## Why it is stored rather than counted
+
+`ActionLog` is the only other record that a comp lookup or a publish ever happened. It lives in
+memory, holds a hundred entries and dies with the process, so a seller who priced something on
+Monday would have been told on Tuesday to go and do it again. The milestones are one table in the
+app's own SQLite database, beside the fee profile and the cost basis, and migrated with them by
+`AppPaths`.
+
+## The first run, once
+
+`OnboardingProgress.ShowWelcome` is true only when nothing is configured, nothing has been earned,
+nothing has been dismissed and the screen has never been shown. An existing seller who updates the
+app trips at least one of those and is never greeted as a new install.
+
+The screen says three things and asks for nothing: what the app does, what it will need — *a Claude
+key, about $5 of credit, an eBay login, five minutes* — and that the beta is free. Naming the cost
+before asking for anything is the difference between a free beta and something that feels like a
+paywall waiting to happen. Its one button goes to the key field, not back to the dashboard.
+
+The seen-flag is the server's, not `localStorage`: clearing browser data should not make a seller of
+six weeks a new install again.
+
+**The browser check found a real bug here.** Pressing "Set it up" opened the settings modal and then
+the welcome screen reopened over it and took the caret back out of the key field: the plan fetched by
+the refresh that `openSetup` triggers was still carrying `showWelcome: true`, because the POST that
+clears it had not landed. `openWelcome` now latches once per page load regardless of what later plans
+say.
+
+## Dismissal is a preference, not a reset
+
+The X is recorded server-side, so a panel dismissed on Monday is still dismissed on Tuesday — and
+**Settings → Required setup → "Show the getting-started steps again"** brings it back to the same five
+rows in the same state. Without a way back, closing it on day one would have hidden the three steps
+that say what the app is for, permanently.
+
+## What the panel refuses to do
+
+- **It does not vanish when it is finished.** All five done turns the top rail green and changes the
+  headline to *"That's the whole loop — you've done it once."* It then waits to be closed. A panel
+  that disappears the moment the last step is ticked reads as a section the app lost.
+- **It does not tick a row because a later one happened.** A seller who published by hand from an
+  imported draft has genuinely published and still has no AI key; the milestones are evidence of
+  separate things, not a ladder.
+- **It does not let the optional row move the bar.** Progress is over the five required steps only —
+  a seller who will never connect Facebook must not be shown a path they cannot finish.
+- **A tick with no date is a claim.** Done rows read *"Priced against sold comps on Aug 3."*
+- **Rows 3-5 do not disable their own buttons.** `markSetupStep` greys a row's `-btn` once done,
+  which is right for a login you do once and wrong for a screen worth reopening — so those rows use
+  `-go` and stay clickable.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/OnboardingProgress.cs` | New — the five-step plan, pure. Facts in, plan out: headline, sub-line, per-step reason, action token, state, dated note, percent, `ShowWelcome` |
+| `ING eBay AutoLister/Services/OnboardingStore.cs` | New — the three earned milestones and the two one-time flags, in one SQLite table. First-time-wins, never throws, `Reset()` for a tester who wants the first five minutes back |
+| `ING eBay AutoLister/Program.cs` | `OnboardingStore` registered; `GET /api/onboarding`, `POST /api/onboarding/{welcome-seen,dismiss,reset}`; the three evidence hooks in `/api/sold-comps`, `/api/analyze`, `/api/analyze-url` and `/api/listing/publish` |
+| `ING eBay AutoLister/wwwroot/index.html` | Steps 3-5, the progress bar and count, the headline/sub ids, the first-run screen, "Show the getting-started steps again"; Facebook moved to row 6 and off the gold button; `app.js?v=142`, `style.css?v=125` |
+| `ING eBay AutoLister/wwwroot/app.js` | `loadOnboarding`, `renderOnboarding`, `runOnboardAction`, `setOnboardingDismissed`, `openWelcome`/`closeWelcome` and its once-per-load latch; refreshed on every dashboard return and on every setup change; `markSetupStep('step4')` → `'step6'` |
+| `ING eBay AutoLister/wwwroot/style.css` | `.setup-progress-*`, `.setup-step.is-next`, `.setup-step--flip`, `.setup-checklist.is-complete`, `.setup-eyebrow` + a re-set `.setup-title`, and the whole `.welcome-*` block |
+| `ING eBay AutoLister.Tests/OnboardingProgressTests.cs` | New — 24 tests on the path, the reasons, the one next step, the dates and every suppressor of the welcome screen |
+| `ING eBay AutoLister.Tests/OnboardingStoreTests.cs` | New — 11 tests on persistence, first-time-wins, unknown ids, dismissal and reset |
+| `ING eBay AutoLister.Tests/OnboardingAssetTests.cs` | New — 14 tests holding the server's plan and the markup together: every step has a row, in order; every action token is one the handler runs; the static copy *is* the server's copy |
+| Eleven `WhatsNot*AssetTests.cs` | Re-pinned asset versions |
+| `onboarding_welcome.png`, `onboarding_fresh.png`, `onboarding_complete.png`, `onboarding_panel.png` | The first run, day one, the finished loop, and the panel at 900px |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,733 passed**, 0 failed, 0 skipped (49 new) |
+| Real browser (Playwright, `wwwroot` served statically, every `/api/onboarding` answer **serialised out of the real `OnboardingProgress`** rather than hand-written) | **39 checks, all passed.** On a fresh install: the welcome screen opens, names `Anthropic`, `about $5 of credit covers hundreds of listings`, eBay, five minutes and "free", carries three bullets, and POSTs `welcome-seen` on open. The panel behind reads the server's own headline, `0 of 5`, a `0%` bar, **exactly one** row marked next and it is step 1, and rows 3-5 carrying the server's reasons character-for-character. Pressing **Set it up** closes the welcome, opens the settings modal and lands focus on `s-anthropic-key`. With both logins done: no welcome, `2 of 5`, a `40%` bar, steps 1 and 2 ticked with their own labels (`✓ Key saved`), step 3 marked next, and the headline no longer starting "Start here". With one milestone earned: step 3 ticked reading `Priced against sold comps on Aug 3.`, its button **still enabled**, step 4 next, `3 of 5`. With all five: `5 of 5`, **nothing** marked next, the panel green-railed and **still on screen** — and the X hides it *and* POSTs `dismissed=true`. At 900px the rows overflowed the panel by **0px**. 0 JS errors. |
+
+## Known limits
+
+- **Nothing verifies that the Claude key works.** Step 1 ticks on a key being *saved*. A typo'd or
+  out-of-credit key ticks green here and fails at the first analysis, where the failure translator
+  explains it. Testing the key would cost a real API call on every settings save.
+- **"Priced" is one comp lookup, not a decision.** A seller who searches once and closes the screen
+  has the row ticked. It measures that the feature answered, not that it was useful.
+- **The three milestones are per-install, not per-account.** They live in the app's own database, so
+  a seller who moves to a new PC starts the path over — the same trade-off as the cost basis and the
+  fee profile, which `AppPaths.Migrate` covers only between builds on one machine.
+- **`/api/quick-fill` does not tick step 4.** Only `/api/analyze` and `/api/analyze-url` do. A seller
+  whose first draft came from the quick-fill path alone will be shown step 4 as outstanding.
+- **The panel cannot tell a returning seller from a new one beyond these five facts.** An
+  experienced reseller who imports 200 listings on day one still gets a checklist that says "start
+  here", because publishing through *this app* is genuinely something they have not done yet.
+- **Nothing measures whether it worked.** There is no funnel, no telemetry and no way to know from
+  here how many testers reach step 5. The five steps are a hypothesis about what the first five
+  minutes should be, argued from what the app does, not from data about what testers do.

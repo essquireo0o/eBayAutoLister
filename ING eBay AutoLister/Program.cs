@@ -331,6 +331,11 @@ builder.Services.AddSingleton<ProfitCalculator>();
 // startup (see the FeeProfileStore.Apply call after the app is built). Every screen that costs an
 // item shares that one instance, so saving the Fees & Costs form re-prices the whole app at once.
 builder.Services.AddSingleton<FeeProfileStore>();
+// What the seller has actually got out of the app yet, as opposed to what they have configured.
+// A singleton because the three milestones it records are written from inside endpoints that have
+// already succeeded — a comp lookup, an analysis, a publish — and read by the dashboard panel that
+// tells a new tester what is left to try. See OnboardingProgress for why the path runs past setup.
+builder.Services.AddSingleton<OnboardingStore>();
 // All-in net proceeds, break-even and the minimum offer to accept — the one calculation behind
 // every price the app shows, on the sourcing screens and in the listing editor alike.
 builder.Services.AddSingleton<NetProceedsCalculator>();
@@ -805,6 +810,52 @@ app.MapPost("/api/setup/save", (CredentialsPatch body, CredentialsStore store) =
     return Results.Ok(store.GetStatus());
 });
 
+// ── Onboarding: the first five minutes ────────────────────────────
+//
+// The old dashboard checklist finished at "connected", which is not an achievement — it is a
+// configured app that has not yet shown the tester anything. This one runs past setup into the
+// flip itself, and the three steps past setup are ticked from evidence rather than from the
+// seller saying so. See OnboardingProgress.
+//
+// Read-only and cheap: two credential booleans and one small table. It is called on every return
+// to the dashboard, so it must never reach eBay, Anthropic or the network.
+static OnboardingProgress.Plan BuildOnboardingPlan(CredentialsStore store, OnboardingStore onboarding)
+{
+    var status = store.GetStatus();
+    // A user token alone is a two-hour session; either one means eBay has issued this install
+    // something. The checklist's job is "have you done the sign-in", not "is the token fresh" —
+    // the Connection Doctor owns that distinction and says so in far more detail.
+    return OnboardingProgress.Build(onboarding.Facts(
+        hasAiKey: status.HasAnthropicKey,
+        ebayConnected: status.HasEbayRefreshToken || status.HasEbayUserToken));
+}
+
+app.MapGet("/api/onboarding", (CredentialsStore store, OnboardingStore onboarding) =>
+    Results.Ok(BuildOnboardingPlan(store, onboarding)));
+
+// Recorded server-side rather than in localStorage: this is the flag that stops a first-run screen
+// reappearing, and a seller who clears their browser data should not be greeted as a new install.
+app.MapPost("/api/onboarding/welcome-seen", (CredentialsStore store, OnboardingStore onboarding) =>
+{
+    onboarding.MarkWelcomeSeen();
+    return Results.Ok(BuildOnboardingPlan(store, onboarding));
+});
+
+app.MapPost("/api/onboarding/dismiss", (bool? dismissed, CredentialsStore store, OnboardingStore onboarding) =>
+{
+    onboarding.SetDismissed(dismissed ?? true);
+    return Results.Ok(BuildOnboardingPlan(store, onboarding));
+});
+
+// For a beta tester who wants the first five minutes back. Clears the onboarding table and nothing
+// else — no listing, cost, sale or credential is touched, so this cannot lose anything.
+app.MapPost("/api/onboarding/reset", (CredentialsStore store, OnboardingStore onboarding, ActionLog log) =>
+{
+    onboarding.Reset();
+    log.Add("Info", "Getting-started panel reset", "The five-step path is back to its first-run state.");
+    return Results.Ok(BuildOnboardingPlan(store, onboarding));
+});
+
 // ── Trial guard ───────────────────────────────────────────────────
 static IResult? TrialGuard(CredentialsStore store, LicenseService license)
 {
@@ -874,7 +925,7 @@ static async Task<IResult> Guarded<T>(FailureDomain domain, string operation, Ac
 
 // ── AI analysis ───────────────────────────────────────────────────
 app.MapPost("/api/analyze", async (AnalyzeRequest req, ClaudeService claude, CredentialsStore store,
-    LicenseService license, ActionLog log, CancellationToken ct) =>
+    LicenseService license, ActionLog log, OnboardingStore onboarding, CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrEmpty(req.ImageBase64))
@@ -882,11 +933,18 @@ app.MapPost("/api/analyze", async (AnalyzeRequest req, ClaudeService claude, Cre
             "The image did not arrive with the request, so there was nothing to analyse.",
             "Drop the photo in again, or use Browse rather than paste.");
 
-    return await Guarded(FailureDomain.Ai, "AI listing from photo", log,
+    var answer = await Guarded(FailureDomain.Ai, "AI listing from photo", log,
         () => claude.AnalyzeImageAsync(req.ImageBase64, req.MimeType, ct));
+
+    // Step four of the getting-started path. Guarded turns a failure into a 400, so only an
+    // analysis that actually produced a draft ticks it — a bad key never looks like a success.
+    if (answer is IStatusCodeHttpResult { StatusCode: 200 })
+        onboarding.Reach(OnboardingProgress.Milestones.Written);
+
+    return answer;
 });
 
-app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService claude, EbayService ebay, IHttpClientFactory httpFactory, IWebHostEnvironment env, ActionLog log, CredentialsStore store, LicenseService license) =>
+app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService claude, EbayService ebay, IHttpClientFactory httpFactory, IWebHostEnvironment env, ActionLog log, CredentialsStore store, LicenseService license, OnboardingStore onboarding) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
     if (string.IsNullOrWhiteSpace(req.Url))
@@ -954,6 +1012,10 @@ app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService clau
                 log.Add("Warning", "eBay description SEO rewrite failed", ex.Message);
             }
 
+            // The dashboard's "New AI Listing" card lands here as often as it lands on a photo, so
+            // the getting-started path has to count it. Both exits of this endpoint, and only the
+            // exits — a rewrite that failed and fell through still produced a draft.
+            onboarding.Reach(OnboardingProgress.Milestones.Written);
             return Results.Ok(item);
         }
 
@@ -1008,6 +1070,7 @@ app.MapPost("/api/analyze-url", async (AnalyzeUrlRequest req, ClaudeService clau
             catch { }
         }
 
+        onboarding.Reach(OnboardingProgress.Milestones.Written);
         return Results.Ok(listing2);
 
     }
@@ -1607,7 +1670,7 @@ static SoldCompsResult? BuildHostedCompsResult(IReadOnlyList<MarketplaceComparab
 
 app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, decimal? buyerShipping,
     EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace,
-    NetProceedsCalculator net, FeeProfile fees, ActionLog log) =>
+    NetProceedsCalculator net, FeeProfile fees, ActionLog log, OnboardingStore onboarding) =>
 {
     if (string.IsNullOrWhiteSpace(q))
         return Results.BadRequest(new { error = "Query is required." });
@@ -1683,14 +1746,22 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
     // know about. Three sources answer this endpoint and they are not equally strong — a seller
     // deciding what to list at is entitled to know whether the median came from live Terapeak, from
     // the hosted sold-comps database, or from eBay's own Insights API.
-    IResult Answer(SoldCompsResult r, decimal average, string source) => Results.Ok(new
+    IResult Answer(SoldCompsResult r, decimal average, string source)
     {
-        r.Query, r.Items, r.Count, Average = average, r.Median, r.Min, r.Max,
-        terapeakUrl, fallbackUrl,
-        source, sourceLabel = SoldCompsSourceLabel(source),
-        dataNote, fixAction, needsReconnect,
-        pricing = PricingFor(r.Median, average),
-    });
+        // The getting-started panel's third step, ticked here and nowhere else: this is the single
+        // point every source with real comps comes back through, and comps are what makes it true.
+        // The links-only answer below is deliberately not this — it priced nothing.
+        if (r.Count > 0) onboarding.Reach(OnboardingProgress.Milestones.Priced);
+
+        return Results.Ok(new
+        {
+            r.Query, r.Items, r.Count, Average = average, r.Median, r.Min, r.Max,
+            terapeakUrl, fallbackUrl,
+            source, sourceLabel = SoldCompsSourceLabel(source),
+            dataNote, fixAction, needsReconnect,
+            pricing = PricingFor(r.Median, average),
+        });
+    }
 
     // 1) Real Terapeak data, if the seller has connected their session (Settings > Terapeak)
     if (terapeak.IsConnected)
@@ -9430,7 +9501,7 @@ app.MapPost("/api/listing/post", async (PostListingRequest req, EbayService ebay
 app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService ebay, ActionLog log,
     CredentialsStore store, LicenseService license, PublishGuard guard,
     CategoryMemoryStore categoryMemory, DealStore deals, CostBasisStore costBasis,
-    EarningsStore earnings) =>
+    EarningsStore earnings, OnboardingStore onboarding) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -9474,6 +9545,11 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
     {
         var result = await ebay.PublishListingAsync(req);
         guard.Succeeded(fingerprint, req.WorkKey, result.ListingId);
+        // The last step of the getting-started path, and the only one that ends in something a
+        // buyer can pay for. Reached from eBay's own answer, so it cannot be ticked by a publish
+        // that failed — and only from here, never from the duplicate-guard's "already live" reply,
+        // which is a publish that did not happen.
+        onboarding.Reach(OnboardingProgress.Milestones.Published);
         // A live listing is the seller's category decision, proven. Recorded here and nowhere else
         // on this path: a publish that failed teaches nothing, and a reconciled one below went out
         // under a category the app never saw confirmed.
@@ -9504,6 +9580,8 @@ app.MapPost("/api/listing/publish", async (PostListingRequest req, EbayService e
             if (found is not null)
             {
                 guard.Succeeded(fingerprint, req.WorkKey, found.ListingId);
+                // It is live. The error was in hearing the answer, not in the publish.
+                onboarding.Reach(OnboardingProgress.Milestones.Published);
                 log.Add("Info", "Publish reconciled after a failed response",
                     $"eBay had created listing {found.ListingId} despite the error — no duplicate was made.");
                 return Results.Ok(new

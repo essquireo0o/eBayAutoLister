@@ -7991,12 +7991,23 @@ td.skeleton-cell { padding: 0 !important; }
 }
 .setup-dismiss:hover { background: var(--soft-2); color: var(--ink); }
 
-.setup-title {
+/* The eyebrow carries the label the title used to. The title itself is now a sentence written by
+   the server — "Start here", then "Two logins, then the part that makes money", then "That's the
+   whole loop" — and a sentence set in 11px uppercase tracking reads as a legal notice. */
+.setup-eyebrow {
   color: var(--gold-ink);
   font-size: var(--fs-xs);
   font-weight: 750;
   text-transform: uppercase;
   letter-spacing: .13em;
+}
+
+.setup-title {
+  margin-top: var(--s1);
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -.01em;
 }
 
 .setup-sub {
@@ -8098,6 +8109,144 @@ td.skeleton-cell { padding: 0 !important; }
 }
 
 .setup-extras .btn { flex-shrink: 0; }
+
+/* ── Getting-started progress ─────────────────────────────────────────
+   Five steps, two of which are setup and three of which are the flip. The bar
+   exists because the panel got longer: six rows with no sense of how far
+   through them you are is a form, and the whole point of the three new rows is
+   that they are not a form. The count beside it is the honest version of the
+   same fact — a bar alone can be read as "nearly there" from any width. */
+.setup-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+}
+
+.setup-progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--soft-2);
+  overflow: hidden;
+}
+
+.setup-progress-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--teal-800), var(--gold));
+  transition: width var(--dur-3) var(--ease);
+}
+
+.setup-progress-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The one row to do now. Everything below the fold of a six-row panel looks
+   equally optional; without this, so does everything above it. */
+.setup-step.is-next {
+  border-color: var(--gold);
+  background: var(--card);
+  box-shadow: 0 0 0 3px rgba(199, 154, 54, .14);
+}
+.setup-step.is-next .setup-step-num { background: var(--gold); color: var(--teal-800); }
+
+/* The three steps past setup. Not a lighter weight than the two logins — they
+   are the ones that show what the app is for — but visibly a different kind of
+   thing: a login is a fact, these are an errand. */
+.setup-step--flip { background: transparent; }
+
+/* All five done. The panel has finished its job and says so once, in the gold
+   it opened in, and then waits to be closed rather than vanishing on its own. */
+.setup-checklist.is-complete { border-top-color: var(--success); }
+.setup-checklist.is-complete .setup-eyebrow { color: var(--success); }
+
+/* ── The first run ───────────────────────────────────────────────────
+   Wider than the settings modal and set in prose, because it is the one screen
+   in the app that is read rather than used. */
+.welcome-modal {
+  width: min(680px, 100%);
+  padding: var(--s7) var(--s7) var(--s6);
+  border-top: 3px solid var(--gold);
+}
+
+.welcome-modal h2 {
+  margin-top: var(--s2);
+  color: var(--ink);
+  font-size: var(--fs-3xl);
+  font-weight: 750;
+  letter-spacing: -.02em;
+}
+
+.welcome-promise {
+  margin-top: var(--s3);
+  color: var(--ink);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+
+.welcome-points {
+  display: grid;
+  gap: var(--s3);
+  margin: var(--s5) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welcome-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.welcome-points strong { color: var(--ink); font-weight: 650; }
+
+.welcome-point-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--r-md);
+  background: var(--teal-800);
+  color: var(--gold-note);
+}
+.welcome-point-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* What it will cost and how long, said before the seller is asked for anything.
+   Leaving this to be discovered on the settings screen is how a free beta ends
+   up feeling like a paywall. */
+.welcome-needs {
+  padding: var(--s4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+.welcome-needs strong { color: var(--ink); font-weight: 650; }
+
+.welcome-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s5);
+}
 
 /* ── Shared surface polish ────────────────────────────────────────── */
 .opp-supplier-panel {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=124" />
+  <link rel="stylesheet" href="style.css?v=125" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -266,16 +266,33 @@
              silence 2.4.0. -->
         <div id="update-banner" class="update-banner hidden" role="status" aria-live="polite"></div>
 
-        <!-- Setup checklist — hidden once both required steps complete.
-             Two required steps and nothing else: the optional extras are named
-             underneath as extras, so a brand-new seller can tell in one read what
-             they have to do from what they may do later. Buttons are wired in
-             app.js (bindSetupChecklist) rather than inline, so the key step can
-             open the modal *and* put the cursor in the key field. -->
+        <!-- The getting-started path. Five steps, and only the first two are setup.
+             It used to stop at "connected", which is not an achievement — it is a
+             configured app that has still shown the seller nothing. Steps 3-5 are
+             the flip itself (price it, let the AI write it, publish it), each one
+             ticked from evidence the server already has rather than from the seller
+             saying so, and each carrying a line about money rather than a line about
+             configuration. Headline, sub-line, progress and every step's copy are
+             written by renderOnboarding() from /api/onboarding — the text below is
+             the same wording, so a failed fetch still reads correctly.
+
+             Buttons are wired in app.js (bindSetupChecklist) rather than inline, so
+             the key step can open the modal *and* put the cursor in the key field. -->
         <div id="setup-checklist" class="setup-checklist hidden">
-          <button id="setup-checklist-dismiss" title="Dismiss" aria-label="Dismiss setup checklist" class="setup-dismiss" type="button">&times;</button>
-          <p class="setup-title">Get started</p>
-          <p class="setup-sub">Steps 1 and 2 are all you need to list. Steps 3 and 4 are optional — they add real sold-comp pricing and local sourcing.</p>
+          <button id="setup-checklist-dismiss" title="Dismiss" aria-label="Dismiss the getting-started steps" class="setup-dismiss" type="button">&times;</button>
+          <p class="setup-eyebrow">Getting started</p>
+          <p class="setup-title" id="setup-title">Start here — about five minutes to your first listing</p>
+          <p class="setup-sub" id="setup-sub">Find something worth buying, price it against what actually sold, let the AI write the listing, and publish it to eBay — with the profit after fees on screen before you commit.</p>
+          <!-- Progress over the five required steps only. The optional extras below
+               never move this bar: a seller who will never connect Facebook must not
+               be shown a path they can't finish. -->
+          <div class="setup-progress">
+            <div class="setup-progress-track" role="progressbar" id="setup-progress-bar"
+                 aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="Getting started progress">
+              <div id="setup-progress-fill" class="setup-progress-fill" style="width:0%"></div>
+            </div>
+            <span id="setup-progress-count" class="setup-progress-count">0 of 5</span>
+          </div>
           <div class="setup-steps">
 
             <!-- Step 1: the Claude key -->
@@ -302,13 +319,53 @@
             </div>
 
 
-            <div id="step4-row" class="setup-step setup-step--optional">
+            <!-- ── Steps 3-5: the flip ──────────────────────────────────────────
+                 The half the checklist never had. Their buttons are `-go` rather
+                 than `-btn` on purpose: markSetupStep() disables a step's `-btn`
+                 once it is done, which is right for a login you only do once and
+                 wrong for a screen the seller should keep opening. So these tick
+                 and stay clickable. Copy is replaced with the dated "you did this
+                 on Aug 3" line once the server has the evidence. -->
+
+            <div id="step3-row" class="setup-step setup-step--flip">
+              <div id="step3-icon" class="setup-step-num">3</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Price one item against real sold comps</div>
+                <div class="setup-step-copy" id="step3-copy">Guessing the price is where the money goes. Type anything you own or might buy and the app shows what the same thing has actually sold for — minus eBay's cut, the label and the box, so the number on screen is what you would keep.</div>
+              </div>
+              <button id="step3-go" class="btn btn-secondary" type="button" data-onboard-action="page:opportunity">Find Goldmines →</button>
+            </div>
+
+            <div id="step4-row" class="setup-step setup-step--flip">
               <div id="step4-icon" class="setup-step-num">4</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Let the AI write a listing</div>
+                <div class="setup-step-copy" id="step4-copy">A photo or a product name goes in and a finished listing comes out — title, item specifics, description, category and price. This is the hour per listing you stop spending.</div>
+              </div>
+              <button id="step4-go" class="btn btn-secondary" type="button" data-onboard-action="page:ai">Start a draft →</button>
+            </div>
+
+            <div id="step5-row" class="setup-step setup-step--flip">
+              <div id="step5-icon" class="setup-step-num">5</div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Publish it to eBay</div>
+                <div class="setup-step-copy" id="step5-copy">The whole loop, end to end. From the moment it is live the app tracks what it cost you, what it sells for and what you actually kept.</div>
+              </div>
+              <button id="step5-go" class="btn btn-secondary" type="button" data-onboard-action="page:ai">Open a draft →</button>
+            </div>
+
+            <!-- Facebook was step 4 while the checklist stopped at setup. It is the
+                 same row and the same wiring — only its number moved, to sit after
+                 the three flip steps where an optional extra belongs. -->
+            <div id="step6-row" class="setup-step setup-step--optional">
+              <div id="step6-icon" class="setup-step-num">6</div>
               <div class="setup-step-body">
                 <div class="setup-step-title">Connect Facebook Marketplace <span class="setup-tag">Optional</span></div>
                 <div class="setup-step-copy" id="setup-facebook-status">Checking Facebook connection…</div>
               </div>
-              <button id="setup-facebook-connect" class="btn btn-primary" type="button">Connect Facebook →</button>
+              <!-- Secondary, not primary. Gold on the one optional row made it the loudest thing
+                   on a panel whose whole job is to point at one required step at a time. -->
+              <button id="setup-facebook-connect" class="btn btn-secondary" type="button">Connect Facebook →</button>
               <button id="setup-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
             </div>
 
@@ -4999,6 +5056,11 @@
           </ol>
           <div class="settings-card-foot imggen-test-row">
             <button id="pg-open-required" class="btn btn-primary" type="button">Open required setup</button>
+            <!-- The way back. Dismissing the dashboard's getting-started panel is recorded on the
+                 server and final, which is right — but with no way to undo it, a seller who closed
+                 it on day one could never see the three steps past setup again, and those are the
+                 ones that say what the app is for. Clears nothing but the panel's own state. -->
+            <button id="pg-show-onboarding" class="btn btn-secondary" type="button">Show the getting-started steps again</button>
             <span id="pg-required-msg" class="sd-test-msg"></span>
           </div>
         </div>
@@ -5807,6 +5869,51 @@
     <div id="edit-drawer-body" class="edit-drawer-body"></div>
   </aside>
 
+  <!--
+    The first run, and only the first run. Everything else on the dashboard assumes a seller who
+    knows what the app is for; this is the thirty seconds before that is true. It opens once on a
+    genuinely untouched install — no key, no eBay, nothing earned, never shown — and the server
+    records that it has been (POST /api/onboarding/welcome-seen), so clearing browser data does not
+    greet a seller of six weeks as a new one. See OnboardingProgress.ShowWelcome.
+
+    It says three things and asks for nothing: what the app does, what it will need, and how long.
+    The one button goes straight to the key field, because "where do I start" is the question this
+    screen exists to close.
+  -->
+  <div id="welcome-overlay" class="modal-overlay hidden">
+    <div class="modal welcome-modal" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <p class="eyebrow">ING Mining LLC — free beta, every feature unlocked</p>
+      <h2 id="welcome-title">Welcome. Here's what this does.</h2>
+      <p class="welcome-promise" id="welcome-promise">Find something worth buying, price it against what actually sold, let the AI write the listing, and publish it to eBay — with the profit after fees on screen before you commit.</p>
+
+      <ul class="welcome-points">
+        <li>
+          <span class="welcome-point-icon" aria-hidden="true"><svg><use href="#i-opportunity"/></svg></span>
+          <span><strong>It prices against real sales, not asking prices.</strong> What the same item sold for, minus eBay's cut, the label and the box — the number you would actually keep.</span>
+        </li>
+        <li>
+          <span class="welcome-point-icon" aria-hidden="true"><svg><use href="#i-ai"/></svg></span>
+          <span><strong>It writes the listing for you.</strong> A photo or a product name in; title, item specifics, description, category and price out.</span>
+        </li>
+        <li>
+          <span class="welcome-point-icon" aria-hidden="true"><svg><use href="#i-money"/></svg></span>
+          <span><strong>It follows the money afterwards.</strong> What each item cost, what it sold for, what you kept, and what you owe on it.</span>
+        </li>
+      </ul>
+
+      <p class="welcome-needs">
+        <strong>What it needs from you:</strong> a Claude (Anthropic) API key — about $5 of credit covers hundreds
+        of listings — and a login to your own eBay account. About five minutes, and the app will walk you through
+        both. Nothing is charged by us: this beta is free and nothing is locked.
+      </p>
+
+      <div class="welcome-actions">
+        <button id="welcome-start" class="btn btn-primary" type="button">Set it up — about 5 minutes</button>
+        <button id="welcome-later" class="btn btn-ghost" type="button">Look around first</button>
+      </div>
+    </div>
+  </div>
+
   <div id="setup-overlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-header">
@@ -6070,6 +6177,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=141"></script>
+  <script src="app.js?v=142"></script>
 </body>
 </html>

@@ -242,8 +242,8 @@ public class WhatsNotConditionAssetTests
                  })
             Assert.Contains(rule, Css, StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=124", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=141", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=125", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=142", Html, StringComparison.Ordinal);
     }
 
     /// <summary>
