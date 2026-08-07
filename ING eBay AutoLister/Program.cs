@@ -455,6 +455,12 @@ builder.Services.AddSingleton<AuctionSniperAnalyzer>();
 // for the same item at the same price cannot disagree.
 builder.Services.AddSingleton<LiveBidAdvisor>();
 
+// The other half of that screen is a browser panel, and a browser panel has one failure the seller
+// cannot diagnose: a site that refuses to be framed produces a blank rectangle and no error at all.
+// This asks the site for its headers directly — the app is not a frame, so nothing stops it — and
+// turns X-Frame-Options / CSP frame-ancestors into a sentence.
+builder.Services.AddSingleton<FrameEmbedPolicy>();
+
 // ── Deal Radar: the board that reads itself ───────────────────────────────────
 // Every sourcing screen above is a button. This is the same local-arbitrage scan, saved with a
 // profit bar on it and run on a human cadence, so the $400 miner three miles away doesn't need
@@ -2949,6 +2955,19 @@ app.MapPost("/api/whatsnot/bid", async (
 
     return Results.Ok(card);
 });
+
+// ── WhatsNot: the browser panel ───────────────────────────────────────────────────────────────
+// "Why is the frame blank?" — the one question the browser panel could never answer.
+//
+// A site that sends X-Frame-Options or a CSP frame-ancestors directive is blocked by the browser
+// BEFORE anything renders, and the embedding page is told nothing: no error, no event, no readable
+// document. Blank looks identical to a slow feed, a signed-out feed, and a bug in this app. So the
+// app asks the site itself — a server-side GET is not a frame and nothing refuses it on those
+// grounds — and reports which of the three it is, in the site's own name.
+//
+// Headers only: FrameEmbedPolicy stops at the response headers and never reads or returns a body.
+app.MapGet("/api/whatsnot/embed-check", async (string? url, FrameEmbedPolicy policy, CancellationToken ct) =>
+    Results.Ok(await policy.CheckAsync(url, ct)));
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the
 // CDNs in front of these sites refuse a bare client first — the same headers every feed read in this

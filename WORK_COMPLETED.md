@@ -9437,3 +9437,148 @@ service tests underneath it.
 - **The endpoint has no test of its own.** The advisor, the ceiling and the sanitizers are covered;
   the route that assembles them is thin, and its shape is pinned only by an asset test reading
   `Program.cs`.
+
+---
+
+# The WhatsNot panel: ending the blank rectangle
+
+## The question this answers
+
+The panel next to the arbitrage card is an `<iframe>` pointed at a live-selling feed, and it had one
+failure mode the seller could not diagnose: **it comes up blank.**
+
+A site refuses framing with `X-Frame-Options` or a CSP `frame-ancestors` directive, and when it does
+the browser blocks the load **before anything renders** and tells the embedding page *nothing* — no
+error, no event, no readable document, no status code. What the seller sees is a grey rectangle, and
+that rectangle is indistinguishable from:
+
+- a live page that is still loading,
+- a feed that needs a sign-in the frame doesn't carry,
+- and this app being broken.
+
+The panel's answer up to now was a sentence in the hint text: *"if the frame stays blank, that's the
+site refusing."* That is a guess printed in advance, and it is wrong about the two cases that are not
+a refusal. A seller who reads it and concludes the app is broken stops using the screen — including
+the half of the screen that works, which is the card that prices what they are bidding on.
+
+The app is not a frame. Nothing stops it asking the site for those headers itself.
+
+## What it does
+
+`GET /api/whatsnot/embed-check?url=…` fetches the address server-side, stops at the response headers,
+and returns one of four verdicts in the site's own name:
+
+| Verdict | What the panel says |
+|---|---|
+| `refused` | "Whatnot refuses to be embedded." — plus the header that decided it, verbatim |
+| `allowed` | "example.com allows embedding." — its headers don't refuse framing |
+| `unknown` | The site turned the check away, or it timed out. **The frame may still load.** |
+| `invalid` | Not an address this panel can load at all |
+
+On a refusal a panel is drawn over the frame, so the blank rectangle underneath stops reading as a
+broken app, and the refusal sentence says both halves: *whose* decision it was, and what still works
+— **Open in browser**, and the card above, which prices the item regardless of what the frame did.
+
+## The browser rules, and getting them the right way round
+
+Every rule here is a rule a browser applies, and each one has a way to be wrong that produces a
+confident sentence about somebody else's server:
+
+- **CSP is read first and settles it.** Where a response carries `frame-ancestors`, browsers use it
+  and ignore `X-Frame-Options` entirely. Read the other way round, a site whose CSP had just granted
+  the frame gets reported as `DENY`. Whatnot's real response carries both, which is why this is
+  pinned against its actual headers rather than an invented pair.
+- **`SAMEORIGIN` is a refusal *here*.** It is permission for the site to frame itself, and this app
+  is a different origin from every site the panel can load. Reporting it as permission would be
+  reporting somebody else's permission as ours.
+- **`frame-ancestors 'self' https://*.whatnot.com` is a refusal here** for the same reason. Only a
+  wildcard or an explicit localhost source is permission for this app.
+- **`Content-Security-Policy-Report-Only` is not a refusal.** No browser enforces it — it is a site
+  measuring a policy it has not turned on. Reading it as a refusal would black out a panel for a
+  site that frames perfectly well.
+- **A refusing header on an error response is still a refusal.** Live pages answer a probe with 403
+  and 404 constantly and still carry their real framing headers. Checking the status first would
+  downgrade a certainty to "couldn't tell".
+- **`ALLOW-FROM` grants nothing** — obsolete and ignored by every current browser — but it is a clear
+  statement of intent, so it is reported as one rather than silently ignored.
+
+## What it refuses to claim
+
+- **It never says "allowed" off a page it wasn't allowed to read.** A 403 from a CDN with no framing
+  headers on it is `unknown`, not `allowed` — the real headers were never seen. Saying "allowed"
+  there is how the panel would promise a frame that then sits blank, which is the exact failure this
+  whole change exists to end.
+- **A remembered refusal never outranks a live answer.** The known-refuser list (Whatnot, eBay, Meta,
+  TikTok, the marketplaces) is a claim about the past and sites do change their headers, so it is
+  consulted **only** when the probe couldn't get an answer of its own — and the verdict says which of
+  the two it was, in a `source` field the panel shows.
+- **The frame's `load` event is never read as success.** A blocked embed fires `load` too. It only
+  retires the "still loading" timer; the verdict comes from the headers or from nowhere.
+- **Back / Forward are not the frame's history.** A page may not read, or move, where a cross-origin
+  frame has navigated on its own. These walk *this panel's* list of addresses it loaded, and the
+  tooltips say so — "the previous address this panel loaded". A button claiming to be a browser's
+  Back and silently doing something else is worse than not having the button.
+- **It still doesn't read the feed.** Unchanged and still the honest limit: the item is typed. This
+  change is about the frame's *status*, not its contents.
+
+## The other two things a framed panel was missing
+
+Small, and the reason the screen gets opened twice:
+
+- **It remembers the address.** The last feed comes back on open, and the last eight are in a
+  `datalist` on the address bar. Losing `localStorage` (private mode) is caught everywhere — the
+  panel forgets, it does not break.
+- **Back, Forward, Reload and ⌂.** Reload re-runs the same address *including* the check — headers
+  change, and a dropped stream is the commonest reason to press it — and does not grow the history.
+  A fresh address truncates what was ahead of it, exactly like a browser.
+
+## Not a fetch proxy
+
+The address bar makes this machine issue a GET at whatever is typed, so it is fenced: http/https
+only, no loopback, no private or link-local IP, no single-label host name. **No response body is
+ever read or returned** — the probe stops at the headers, which is also why it is fast enough to sit
+beside a frame that is already loading. Six seconds, then it gives up and says so.
+
+## Sold comps
+
+Untouched, and pinned again. `The_card_and_the_sold_comps_path_are_left_alone` asserts the new
+endpoint is header-only, that it neither prices anything nor writes anything, and that `/api/snap`,
+the Opportunity Finder and `/api/whatsnot/bid` are all still registered.
+
+## Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/Models/FrameEmbedModels.cs` | New — the four verdicts, and one address's answer |
+| `ING eBay AutoLister/Services/FrameEmbedPolicy.cs` | New — the address fence, the header rules, the probe |
+| `ING eBay AutoLister/Program.cs` | `FrameEmbedPolicy` registered; `GET /api/whatsnot/embed-check` |
+| `ING eBay AutoLister/wwwroot/index.html` | Nav row, status strip, blocked overlay, recent-address list; `app.js?v=117`, `style.css?v=100` |
+| `ING eBay AutoLister/wwwroot/app.js` | Panel history, remembered addresses, the check and its stale-answer guard, the slow-load timer |
+| `ING eBay AutoLister/wwwroot/style.css` | `.wn-nav*`, `.wn-status*` (three states), `.wn-blocked*` |
+| `ING eBay AutoLister.Tests/FrameEmbedPolicyTests.cs` | New — the header rules, the fence, the probe paths |
+| `ING eBay AutoLister.Tests/WhatsNotBrowserAssetTests.cs` | New — 12 tests holding the panel to what it refuses to claim |
+| `whatsnot_browser_panel.png` | The panel on Whatnot: the status strip and the overlay, quoting Whatnot's real CSP |
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **3,277 passed**, 0 failed, 0 skipped (69 new; HEAD was 3,208) |
+| `node --check wwwroot/app.js` | clean |
+| Real browser | `whatsnot_browser_panel.png` — pointed at `whatnot.com/live`, the strip reads "Whatnot refuses to be embedded. (Content-Security-Policy: frame-ancestors https://*.whatnot.com 'self')" and the overlay covers the blank frame with the header quoted and **Open in browser** under it. The card above is untouched and still on screen. |
+
+## Known limits
+
+- **The check is one GET, and a browser is not.** A site that varies its headers by cookie, by
+  `Sec-Fetch-Dest`, or by geography can answer this probe differently from how it answers the frame.
+  The verdict is evidence, not a guarantee — which is why `unknown` exists and why nothing here
+  blocks the frame from trying.
+- **Redirects are followed silently.** The verdict describes the page that finally answered, and the
+  panel doesn't say the address moved.
+- **The verdict isn't cached.** Every load re-probes. At one request per address that is cheap, but a
+  seller flicking between two feeds pays for it twice.
+- **The endpoint has no test of its own.** The policy underneath it is covered thoroughly; the route
+  is a one-liner whose shape is pinned only by an asset test reading `Program.cs`.
+- **`.wn-status-checking` has no colour of its own** — it renders with the base status style. The
+  three verdicts that persist all have one.

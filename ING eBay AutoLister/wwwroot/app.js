@@ -9580,10 +9580,33 @@
   }
 
   // ── WhatsNot: embedded live-feed browser ─────────────────────────────────────
-  // An <iframe> pointed at a live-selling feed. Sites that send X-Frame-Options /
-  // CSP frame-ancestors will show blank — that's the site refusing, not a bug here,
-  // which is why "Open in browser" exists. Reading items off the feed and pricing
-  // them against live eBay costs is the larger build this panel is the seed of.
+  // An <iframe> pointed at a live-selling feed, with the three things a frame in a
+  // panel is otherwise missing: somewhere to go back to, the address it was left on
+  // last time, and an answer when it comes up blank.
+  //
+  // That last one is the whole reason this is more than an <iframe>. A site that
+  // sends X-Frame-Options / CSP frame-ancestors is blocked BEFORE anything renders
+  // and the embedding page is told nothing — no error, no event, no readable
+  // document. Blank looks exactly like a slow feed, a signed-out feed, or a bug in
+  // this app. So the app asks the site itself, server-side, and says which it is.
+  //
+  // Back/Forward walk THIS panel's list of loaded addresses. They cannot be the
+  // frame's own history: a page may not read, or move, where a cross-origin frame
+  // has navigated. Claiming otherwise would be a button that silently does the
+  // wrong thing, which is worse than not having it.
+  const WN_HOME_URL = 'https://www.whatnot.com/live';
+  const WN_URL_KEY = 'whatsnotFeedUrl';
+  const WN_RECENT_KEY = 'whatsnotRecentUrls';
+  const WN_RECENT_MAX = 8;
+  // Long enough that a heavy live page isn't accused of being blocked; short enough
+  // to still be useful while the item on screen is being bid on.
+  const WN_SLOW_MS = 12000;
+
+  let wnHistory = [];
+  let wnHistoryAt = -1;
+  let wnSlowTimer = null;
+  let wnCheckToken = 0;
+
   function wnNormalizeUrl(raw) {
     let u = (raw || '').trim();
     if (!u) return '';
@@ -9591,13 +9614,151 @@
     return u;
   }
 
-  function wnLoad(url) {
+  function wnHost(url) {
+    try { return new URL(url).host; } catch { return url; }
+  }
+
+  // ── What the panel remembers ─────────────────────────────────────────────────
+  // The seller watches the same one or two feeds. Retyping the address every time
+  // the tab is opened is the kind of small friction that stops a screen being used.
+  // Where the panel is NOW, saved on every load including Back and Forward — reopening the tab
+  // should put back the feed that was on screen, not the last one that happened to be typed.
+  function wnSaveLastUrl(url) {
+    try { localStorage.setItem(WN_URL_KEY, url); }
+    catch { /* private mode — the panel still works, it just forgets */ }
+  }
+
+  // The recent list is addresses the seller CHOSE, so retracing steps with Back doesn't reorder it.
+  function wnAddRecent(url) {
+    try {
+      const recents = wnRecentUrls().filter(u => u !== url);
+      recents.unshift(url);
+      localStorage.setItem(WN_RECENT_KEY, JSON.stringify(recents.slice(0, WN_RECENT_MAX)));
+    } catch { /* as above */ }
+    wnRenderRecents();
+  }
+
+  function wnRecentUrls() {
+    try {
+      const list = JSON.parse(localStorage.getItem(WN_RECENT_KEY) || '[]');
+      return Array.isArray(list) ? list.filter(u => typeof u === 'string' && u) : [];
+    } catch { return []; }
+  }
+
+  function wnRenderRecents() {
+    const list = $('wn-recent');
+    if (!list) return;
+    list.innerHTML = wnRecentUrls().map(u => `<option value="${esc(u)}"></option>`).join('');
+  }
+
+  function wnLastUrl() {
+    try { return localStorage.getItem(WN_URL_KEY) || ''; } catch { return ''; }
+  }
+
+  // ── The status strip ─────────────────────────────────────────────────────────
+  function wnStatus(kind, text) {
+    const el = $('wn-status');
+    if (!el) return;
+    if (!text) { el.classList.add('hidden'); el.textContent = ''; return; }
+    el.className = `wn-status wn-status-${kind}`;
+    el.textContent = text;
+  }
+
+  function wnShowBlocked(check) {
+    const panel = $('wn-blocked');
+    if (!panel) return;
+    if (!check) { panel.classList.add('hidden'); return; }
+    setText('wn-blocked-title', check.headline || 'This site refuses to be embedded.');
+    setText('wn-blocked-detail', check.detail || '');
+    setText('wn-blocked-header', check.header || '');
+    $('wn-blocked-header')?.classList.toggle('hidden', !check.header);
+    panel.classList.remove('hidden');
+  }
+
+  // Asks the site — via the app, which is not a frame and so is not refused on those
+  // grounds — whether a browser will let this embed happen at all.
+  async function wnCheckEmbed(url) {
+    const token = ++wnCheckToken;
+    wnStatus('checking', `Checking whether ${wnHost(url)} allows embedding…`);
+    let check = null;
+    try {
+      const res = await fetch('/api/whatsnot/embed-check?url=' + encodeURIComponent(url));
+      if (res.ok) check = await res.json();
+    } catch { /* the frame is loading regardless; the check is advice, not a gate */ }
+
+    // A slower answer about a page the seller has already navigated away from is noise.
+    if (token !== wnCheckToken) return;
+
+    // No answer, or one with no verdict in it. Either way the honest report is "couldn't tell" —
+    // silence here is the failure this whole check exists to remove.
+    if (!check || !check.status) {
+      wnStatus('unknown', `Couldn't check whether ${wnHost(url)} allows embedding. The frame may still load.`);
+      return;
+    }
+
+    if (check.status === 'refused') {
+      wnStatus('refused', check.headline + (check.header ? ` (${check.header})` : ''));
+      wnShowBlocked(check);
+      if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
+      return;
+    }
+
+    wnShowBlocked(null);
+    const said = `${check.headline || ''} ${check.detail || ''}`.trim();
+    wnStatus(check.status === 'allowed' ? 'ok' : 'unknown',
+             said || `${wnHost(url)} didn't say whether it allows embedding.`);
+  }
+
+  function wnLoad(url, options) {
     const frame = $('wn-frame');
     const target = wnNormalizeUrl(url || $('wn-url')?.value);
     if (!frame || !target) return;
     const box = $('wn-url');
     if (box) box.value = target;
+
+    // A fresh address truncates anything that was ahead of it, exactly like a browser.
+    if (!options || options.push !== false) {
+      if (wnHistory[wnHistoryAt] !== target) {
+        wnHistory = wnHistory.slice(0, wnHistoryAt + 1);
+        wnHistory.push(target);
+        wnHistoryAt = wnHistory.length - 1;
+      }
+      wnAddRecent(target);
+    }
+    wnSaveLastUrl(target);
+    wnUpdateNav();
+
+    wnShowBlocked(null);
+    wnStatus('checking', `Loading ${wnHost(target)}…`);
+    // Assigning the same src doesn't always reload, so the frame is blanked first —
+    // which also stops the previous stream before the next one starts.
+    frame.src = 'about:blank';
     frame.src = target;
+
+    if (wnSlowTimer) clearTimeout(wnSlowTimer);
+    wnSlowTimer = setTimeout(() => {
+      const el = $('wn-status');
+      // Only if the check hasn't already said something more definite.
+      if (el && el.classList.contains('wn-status-checking')) {
+        wnStatus('unknown', `${wnHost(target)} hasn't finished loading. A feed that never renders is ` +
+                            'usually a site that refuses to be embedded — try Open in browser.');
+      }
+    }, WN_SLOW_MS);
+
+    wnCheckEmbed(target);
+  }
+
+  function wnUpdateNav() {
+    const back = $('wn-back'), forward = $('wn-forward');
+    if (back) back.disabled = wnHistoryAt <= 0;
+    if (forward) forward.disabled = wnHistoryAt < 0 || wnHistoryAt >= wnHistory.length - 1;
+  }
+
+  function wnGo(step) {
+    const next = wnHistoryAt + step;
+    if (next < 0 || next >= wnHistory.length) return;
+    wnHistoryAt = next;
+    wnLoad(wnHistory[next], { push: false });
   }
 
   async function showWhatsNotSection() {
@@ -9605,16 +9766,24 @@
     $('whatsnot-section')?.classList.remove('hidden');
     setActiveNavItem('whatsnot');
     markWorkspaceTabOpen('whatsnot');
+    wnRenderRecents();
     // Load the feed on first open; a frame already showing a live stream is left alone on
     // return so tabbing away and back doesn't tear down what the seller is watching.
     const frame = $('wn-frame');
-    if (frame && (!frame.src || frame.src === 'about:blank')) wnLoad();
+    if (frame && (!frame.src || frame.src === 'about:blank')) {
+      const box = $('wn-url');
+      const remembered = wnLastUrl();
+      if (remembered && box) box.value = remembered;
+      wnLoad();
+    }
   }
 
   function closeWhatsNotSection() {
     // Blank the frame on close so a live stream stops spending bandwidth/CPU unseen.
     const frame = $('wn-frame');
     if (frame) frame.src = 'about:blank';
+    if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
+    wnCheckToken++;
     closeWorkspacePage('whatsnot');
   }
 
@@ -9778,12 +9947,30 @@
     on('wn-home', 'click', goHome);
     on('wn-close', 'click', closeWhatsNotSection);
     on('wn-go', 'click', () => wnLoad());
-    on('wn-open-browser', 'click', () => {
+    on('wn-back', 'click', () => wnGo(-1));
+    on('wn-forward', 'click', () => wnGo(1));
+    // Reload re-runs the same address, including the embed check — a site's headers can
+    // change, and a stream that dropped is the commonest reason to press this at all.
+    on('wn-reload', 'click', () => wnLoad(wnHistory[wnHistoryAt] || $('wn-url')?.value, { push: false }));
+    on('wn-feed-home', 'click', () => wnLoad(WN_HOME_URL));
+    const openInBrowser = () => {
       const target = wnNormalizeUrl($('wn-url')?.value);
       if (target) window.open(target, '_blank', 'noopener,noreferrer');
-    });
+    };
+    on('wn-open-browser', 'click', openInBrowser);
+    on('wn-blocked-open', 'click', openInBrowser);
     const box = $('wn-url');
     if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter') wnLoad(); });
+
+    // A blocked embed fires load too, so this cannot be read as "it worked" — it only
+    // retires the "still loading" warning, which is now answered by the header check.
+    $('wn-frame')?.addEventListener('load', () => {
+      if (wnSlowTimer) { clearTimeout(wnSlowTimer); wnSlowTimer = null; }
+    });
+
+    const remembered = wnLastUrl();
+    if (remembered && box) box.value = remembered;
+    wnRenderRecents();
 
     on('wn-price', 'click', wnPriceItem);
     // The bid moves while the card is on screen, so Enter from any of the boxes re-prices

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=99" />
+  <link rel="stylesheet" href="style.css?v=100" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2686,7 +2686,9 @@
       <!-- ── WhatsNot: embedded live-feed browser ──────────────────────────────────────────
            An <iframe> embed of a live-selling feed. Most live-commerce sites (Whatnot included)
            send X-Frame-Options / CSP frame-ancestors that REFUSE embedding, so the frame can come
-           up blank — the fallback note + "Open in browser" covers that. The live item-analysis
+           up blank — and the browser tells the embedding page nothing about it. /api/whatsnot/embed-check
+           asks the site for those headers server-side and the panel says which of the three it is,
+           so "blank" is never left to mean "this app is broken". The live item-analysis
            (read what's on screen, price it against real eBay costs) is a separate, larger build
            that an iframe cannot do cross-origin; this panel is the container it will grow from. -->
       <section id="whatsnot-section" class="opportunity-overlay hidden">
@@ -2745,18 +2747,45 @@
 
           <div id="wn-card" class="wn-card hidden" aria-live="polite"></div>
 
+          <!-- ── The browser panel ─────────────────────────────────────────────────────────
+               Back / Forward walk THIS panel's own list of loaded addresses. They are not the
+               frame's history and cannot be: a browser will not let a page see, or move, where a
+               cross-origin frame has navigated on its own. The buttons say so in their tooltips
+               rather than pretending to be a browser's. -->
           <div class="wn-bar">
-            <input id="wn-url" type="text" class="wn-url" spellcheck="false"
+            <div class="wn-nav" role="group" aria-label="Feed navigation">
+              <button id="wn-back" class="btn btn-ghost wn-nav-btn" type="button" disabled
+                      title="Back — the previous address this panel loaded" aria-label="Back">←</button>
+              <button id="wn-forward" class="btn btn-ghost wn-nav-btn" type="button" disabled
+                      title="Forward — the next address this panel loaded" aria-label="Forward">→</button>
+              <button id="wn-reload" class="btn btn-ghost wn-nav-btn" type="button"
+                      title="Reload this address" aria-label="Reload">⟳</button>
+              <button id="wn-feed-home" class="btn btn-ghost wn-nav-btn" type="button"
+                      title="Whatnot's live page" aria-label="Whatnot live page">⌂</button>
+            </div>
+            <input id="wn-url" type="text" class="wn-url" spellcheck="false" list="wn-recent"
+                   autocomplete="off" aria-label="Feed address"
                    value="https://www.whatnot.com/live" placeholder="https://www.whatnot.com/live" />
+            <datalist id="wn-recent"></datalist>
             <button id="wn-go" class="btn btn-primary" type="button">Load</button>
           </div>
+          <p id="wn-status" class="wn-status hidden" role="status" aria-live="polite"></p>
           <p class="opp-hint wn-hint">
-            Loads a live-selling feed inside the app. <strong>Heads up:</strong> many sites (Whatnot
-            included) block being embedded — if the frame stays blank, that's the site refusing, and
-            <strong>Open in browser</strong> is the way in. The app cannot read what is inside the
-            frame either (a browser refuses cross-origin), so the item is typed into the box above.
+            Loads a live-selling feed inside the app, and asks the site first whether it allows being
+            embedded — the answer appears above the frame, because a refused embed renders as a blank
+            rectangle and tells the page nothing. <strong>Open in browser</strong> is the way into a
+            site that refuses. The app cannot read what is inside the frame either (a browser refuses
+            cross-origin), so the item is typed into the box above.
           </p>
           <div class="wn-frame-wrap">
+            <!-- Shown over the frame when the site's own headers say the embed was refused, so the
+                 blank rectangle underneath stops reading as a broken app. -->
+            <div id="wn-blocked" class="wn-blocked hidden">
+              <div class="wn-blocked-title" id="wn-blocked-title"></div>
+              <p class="wn-blocked-detail" id="wn-blocked-detail"></p>
+              <p class="wn-blocked-header" id="wn-blocked-header"></p>
+              <button id="wn-blocked-open" class="btn btn-primary" type="button">Open in browser ↗</button>
+            </div>
             <iframe id="wn-frame" class="wn-frame" src="about:blank"
                     referrerpolicy="no-referrer" title="Live feed"></iframe>
           </div>
@@ -5742,6 +5771,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=116"></script>
+  <script src="app.js?v=117"></script>
 </body>
 </html>
