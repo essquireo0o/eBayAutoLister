@@ -19058,3 +19058,85 @@ p.wn-units-refused {
     min-height: 50vh;
   }
 }
+
+/* ── The live screen with the colour taken away ────────────────────────────────
+   Windows High Contrast overrides every background and every border colour the
+   app chose. On most screens here that costs decoration. On this one it costs the
+   answer: the whole point of the card is that a bidding seller reads it in the two
+   seconds a lot gives them, and half of what they read at that speed is colour —
+   the fill along the meter, the length of the odds bar, which condition band is
+   the one this lot is in, which of tonight's counts is money already committed.
+   All of it flattens to one CanvasText outline on one Canvas fill.
+
+   Two rules, applied consistently:
+
+   1. Where the colour IS the datum — a fill whose LENGTH is the number — the
+      author's colours are kept (forced-color-adjust: none) and the track around
+      them is outlined so the extent is still visible against any background. Same
+      treatment the charts get; see .viz-* above.
+   2. Where the colour was only emphasis — "this is the band/cell/count that
+      matters" — the emphasis moves to a border WIDTH, which is the one thing
+      forced colours do not override.
+
+   The four calls need nothing: BID UP TO $90, DON'T BID, NO DATA and CAN'T LIST
+   IT are words, on the badge, in the one line above the card and on every lot row.
+   The colour was never carrying that on its own. */
+@media (forced-colors: active) {
+  /* The ceiling meter: green track up to the walk-away line, the line itself, and
+     the bid sitting somewhere along it. Three overlapping absolutely-positioned
+     fills with no text anywhere on them. */
+  .wn-meter-track,
+  .wn-meter-good,
+  .wn-meter-edge,
+  .wn-meter-bid,
+  .wn-budget-bar,
+  .wn-budget-bar-spent,
+  .wn-odds-bar,
+  .wn-odds-bar-covered {
+    forced-color-adjust: none;
+  }
+  /* The tracks get the outline, not the fills — a border on a fill inside an
+     overflow:hidden track would change the width, and the width is the number. */
+  .wn-meter-track,
+  .wn-budget-bar,
+  .wn-odds-bar {
+    border: 1px solid CanvasText;
+  }
+  /* The one this lot is in, the money already committed, the cell the ceiling was
+     cut by. Colour said which; a second pixel of border says it just as fast. */
+  .wn-cond-band-mine,
+  .wn-stock-bar-shelf,
+  .wn-stock-bar-tonight,
+  .wn-hold-cell-this,
+  .wn-ship-cell-this,
+  .wn-tax-cell-this,
+  .wn-budget-cell-this,
+  .wn-odds-cell-this {
+    border-width: 2px;
+  }
+  /* The badge and each lot row's call keep a visible edge of their own, so the
+     answer still reads as a separate object rather than as another line of text. */
+  .wn-call-badge,
+  .wn-lot-call,
+  .wn-status,
+  .wn-gate,
+  .wn-say {
+    border: 1px solid CanvasText;
+  }
+  /* The say line's stripe is a coloured left border, which is the one part of it
+     that does not survive. Widened so it is still a stripe. */
+  .wn-say {
+    border-left-width: 4px;
+  }
+}
+
+/* Two widths animate on this screen, and both of them animate BECAUSE the number
+   moved: how much of tonight's budget has gone, and how many past sales still
+   cover the bid. During a live sale that is a bar sliding every few seconds in the
+   corner of the eye of somebody who asked the system not to do that. */
+@media (prefers-reduced-motion: reduce) {
+  .wn-budget-bar-spent,
+  .wn-odds-bar-covered {
+    transition: none;
+  }
+}

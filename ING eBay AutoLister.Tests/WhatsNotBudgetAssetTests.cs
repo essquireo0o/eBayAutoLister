@@ -306,8 +306,8 @@ public class WhatsNotBudgetAssetTests
         var none = Css[Css.IndexOf(".wn-budget-none {", StringComparison.Ordinal)..];
         Assert.Contains("var(--border", none[..none.IndexOf('}')], StringComparison.Ordinal);
 
-        Assert.Contains("style.css?v=122", Html, StringComparison.Ordinal);
-        Assert.Contains("app.js?v=139", Html, StringComparison.Ordinal);
+        Assert.Contains("style.css?v=123", Html, StringComparison.Ordinal);
+        Assert.Contains("app.js?v=140", Html, StringComparison.Ordinal);
     }
 
     /// <summary>It folds on a narrow card, like every strip above it — this screen is used as a

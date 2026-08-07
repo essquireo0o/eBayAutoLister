@@ -10749,7 +10749,7 @@
       : '';
 
     const sales = (own.sales || []).length ? `
-      <details class="wn-own-sales">
+      <details class="wn-own-sales" data-keep="own-sales">
         <summary>Your ${own.sales.length} most recent ${own.sales.length === 1 ? 'sale' : 'sales'} of this</summary>
         <table class="wn-own-table"><tbody>
           ${own.sales.map(s => `<tr>
@@ -10769,6 +10769,47 @@
         ${notes}
         ${sales}
       </div>`;
+  }
+
+  /// ── The card has to hold still under the seller's hand ──────────────────────
+  /// It is replaced whole every time the bid moves, which during a live sale is
+  /// every two or three seconds, and two of the things it throws away on each
+  /// redraw were put there by the seller rather than by the server.
+  ///
+  /// Keyboard focus is the one that costs money. A seller who has tabbed to
+  /// 🔨 Won it and is waiting for the hammer loses it — silently, to <body> — the
+  /// moment a debounced re-price lands, and the Enter they press when the lot
+  /// sells goes nowhere at all. The lot list already puts focus back after its own
+  /// re-render for exactly this reason; the card never did.
+  ///
+  /// The open comp table is the other. Expanding "the 14 sold comps behind this"
+  /// is how a seller checks a ceiling they distrust, and one press of the up arrow
+  /// on the bid box snapped it shut under them.
+  ///
+  /// Both are keyed off `data-keep` and never off a position or an index. The
+  /// card's blocks come and go between redraws — a gate strip arrives, a units
+  /// strip stops applying — so anything counted would put the keyboard on a
+  /// different control at precisely the moment nobody is looking at it.
+  function wnCardKeepState(card) {
+    const open = [];
+    card.querySelectorAll('details[data-keep][open]').forEach(d => open.push(d.dataset.keep));
+    const active = document.activeElement;
+    // A comp link inside the open table resolves to the table, so focus lands back
+    // on its summary rather than at <body>. Guessing which of fourteen links was
+    // the one would be worse than landing beside them.
+    const held = active && card.contains(active) ? active.closest('[data-keep]') : null;
+    return { open, focus: held ? held.dataset.keep : '' };
+  }
+
+  function wnRestoreCardKeepState(card, was) {
+    was.open.forEach(key => {
+      const d = card.querySelector(`details[data-keep="${key}"]`);
+      if (d) d.open = true;
+    });
+    if (!was.focus) return;
+    const back = card.querySelector(`[data-keep="${was.focus}"]`);
+    if (!back) return;
+    (back.tagName === 'DETAILS' ? back.querySelector('summary') : back)?.focus();
   }
 
   function wnRenderCard(c) {
@@ -10816,7 +10857,8 @@
         ${s.widenedNote ? `<p class="wn-search-note">${esc(s.widenedNote)}</p>` : ''}
         ${s.refused ? `<p class="wn-search-note">${esc(s.refused)}</p>` : ''}
         ${s.changed || s.askedForExactly ? `
-          <button type="button" class="wn-search-undo" data-exact="${s.askedForExactly ? 'off' : 'on'}">
+          <button type="button" class="wn-search-undo" data-keep="exact"
+                  data-exact="${s.askedForExactly ? 'off' : 'on'}">
             ${s.askedForExactly ? 'Take the auction wording back out' : 'Search my exact words instead'}
           </button>` : ''}
       </div>` : '';
@@ -11260,7 +11302,7 @@
     const overCeiling = c.bidWasKnown && c.maxBid > 0 && c.currentBid > c.maxBid;
     const won = c.token ? `
       <div class="wn-won">
-        <button type="button" data-won="1"
+        <button type="button" data-won="1" data-keep="won"
                 class="btn wn-won-btn${overCeiling ? ' wn-won-btn-over' : ''}"
                 title="Record this lot as won at the bid above — it goes on tonight's buy sheet">
           🔨 Won it${c.bidWasKnown ? ` at ${moneyExact(c.currentBid)}` : ''}
@@ -11285,7 +11327,7 @@
       : '';
 
     const comps = (c.comps || []).length ? `
-      <details class="wn-comps">
+      <details class="wn-comps" data-keep="comps">
         <summary>The ${c.comps.length} sold comps behind this</summary>
         <table class="wn-comps-table"><tbody>
           ${c.comps.map(x => `<tr>
@@ -11295,6 +11337,10 @@
           </tr>`).join('')}
         </tbody></table>
       </details>` : '';
+
+    // Taken before the redraw destroys it, and put back after: what the keyboard was
+    // on, and which of the card's tables the seller had opened.
+    const keep = wnCardKeepState(card);
 
     card.innerHTML = `
       <div class="wn-call wn-call-${esc(c.call)}">
@@ -11348,9 +11394,11 @@
       ${comps}
       ${priced && c.ceilingNote ? `<p class="wn-ceiling-note">${esc(c.ceilingNote)}</p>` : ''}
       <p class="wn-foot">
-        ${c.soldSearchUrl ? `<a href="${esc(c.soldSearchUrl)}" target="_blank" rel="noopener noreferrer">See the sold listings on eBay ↗</a> · ` : ''}
+        ${c.soldSearchUrl ? `<a href="${esc(c.soldSearchUrl)}" data-keep="sold-link" target="_blank" rel="noopener noreferrer">See the sold listings on eBay ↗</a> · ` : ''}
         answered in ${Math.max(1, Math.round(c.elapsedMs || 0))} ms
       </p>`;
+
+    wnRestoreCardKeepState(card, keep);
   }
 
   // ── WhatsNot: the show's buy sheet ───────────────────────────────────────────
@@ -11595,13 +11643,16 @@
     } catch (err) {
       wnSayLine(errorText(err, "That didn't record."));
     } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.removeAttribute('aria-busy');
-        // The card is not re-rendered by a win, so this is the same button — but focus is
-        // handed back the same way Price it hands it back, because a disabled focused
-        // button drops the keyboard to <body> mid-show.
-        if (hadFocus) btn.focus();
+      // A win does not re-render the card — but a re-price landing while the win was in
+      // flight does, and then `btn` is a node that is no longer on the page: re-enabling
+      // it does nothing and focusing it drops the keyboard to <body>, which is the exact
+      // failure this block exists to prevent. So the button is looked up again rather
+      // than remembered, the same way Price it hands its own focus back.
+      const live = $('wn-card')?.querySelector('[data-won]');
+      if (live) {
+        live.disabled = false;
+        live.removeAttribute('aria-busy');
+        if (hadFocus) live.focus();
       }
     }
   }
@@ -12084,12 +12135,17 @@
     // into with a stream running: closing it blanks the frame and stops a lot run mid-list, and
     // that is too much for a stray key. So the first Escape leaves the field and the second
     // closes the tab — the same two-step a text field in any dialog gets.
+    //
+    // The condition dropdown counts as a field, and it is the one control on this row where
+    // Escape already has a job: it is how a dropdown is dismissed. Without SELECT here, a
+    // seller who opened Condition and changed their mind closed the whole tab with it —
+    // blanking the frame and stopping a lot run, on the key that meant "never mind".
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       const section = $('whatsnot-section');
       if (!section || section.classList.contains('hidden')) return;
       const active = document.activeElement;
-      if (active && section.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName)) {
+      if (active && section.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) {
         active.blur();
         return;
       }

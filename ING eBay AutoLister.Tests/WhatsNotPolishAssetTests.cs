@@ -247,7 +247,9 @@ public class WhatsNotPolishAssetTests
         var bind = Between(Js, "function bindWhatsNot()", "  function bindShipping()");
 
         Assert.Contains("if (e.key !== 'Escape') return;", bind, StringComparison.Ordinal);
-        Assert.Contains("/^(INPUT|TEXTAREA)$/.test(active.tagName)", bind, StringComparison.Ordinal);
+        // SELECT joined the two field tags later: Escape is how a dropdown is dismissed, and the
+        // condition control is one. See WhatsNotSteadyAssetTests.
+        Assert.Contains("/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)", bind, StringComparison.Ordinal);
         Assert.Contains("active.blur();", bind, StringComparison.Ordinal);
         Assert.Contains("closeWhatsNotSection();", bind, StringComparison.Ordinal);
         // Not while the screen is closed — every overlay's Escape handler is on the document.

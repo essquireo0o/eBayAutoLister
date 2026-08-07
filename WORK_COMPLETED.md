@@ -13389,3 +13389,157 @@ held-comps re-price re-answers it in the microseconds a climbing bid leaves.
   flea market or on a marketplace this app does not price — and for those the card says nothing
   useful at all. Every figure on this screen has always been an eBay figure; this is the first block
   that makes the limits of that visible, and it makes them visible only in one direction.
+
+---
+
+# The card holds still under the hand
+
+**Branch** `auto/queue-features-20260726` · a polish and hardening pass over the WhatsNot
+live-arbitrage flow. Nothing new is priced and no figure moved. What changed is what survives the two
+things this screen does constantly and no other screen does at all: **replace the whole answer every
+two or three seconds**, and **be read at a glance by somebody who is also watching a stream**.
+
+## The redraw was throwing away the seller's own work
+
+`wnRenderCard` rebuilds the card with one `innerHTML` assignment. That is the right shape — the card
+is the server's answer and the browser paints it — but an `innerHTML` assignment destroys every node
+under it, and two of those nodes were put there by the seller rather than by the server.
+
+**Keyboard focus.** A seller who has tabbed to 🔨 **Won it** and is waiting for the auctioneer loses
+it — silently, to `<body>` — the moment a debounced re-price lands. The Enter they press when the lot
+sells then goes nowhere, and the lot they actually bought is not on tonight's sheet. This is the most
+expensive keystroke on the screen and it was the least protected one: `Price it` already hands its
+focus back, `wnRecordWin` already hands its focus back, and the lot list already puts the keyboard
+back on the same *lot* after its own re-render. The card, which redraws far more often than any of
+them, did nothing.
+
+**The open comp table.** Expanding *"the 19 sold comps behind this"* is how a seller checks a ceiling
+they distrust. One press of ↑ on the bid box closed it under them.
+
+Both now survive, keyed off `data-keep`: the state is read **before** the redraw destroys it and put
+back **after** — either half on its own is nothing, and a test pins the order of the three lines.
+
+Keyed by **name and never by position**. The card's blocks come and go between redraws — a gate strip
+arrives, a units strip stops applying — so anything counted would put the keyboard on a *different*
+control at exactly the moment nobody is looking at it. That is the same reasoning the lot list uses
+when it restores by lot rather than by row, and it is now the same mechanism in both places.
+
+Five things carry a key: the hammer, the search override, the comp table, the seller's own sales
+table, and the sold-search link. A comp link inside the open table resolves to the table, so focus
+lands back on its summary — guessing which of nineteen links was the one would be worse than landing
+beside them.
+
+`wnRecordWin` was hardened with the same fact in mind: it held a *reference* to the hammer button
+across the request, and a re-price landing while the win was in flight leaves that reference pointing
+at a node no longer on the page. Re-enabling it does nothing; focusing it drops the keyboard to
+`<body>` — the exact failure the block exists to prevent. It looks the button up again instead.
+
+## Escape meant "never mind" and did "close the tab"
+
+The screen's Escape is a deliberate two-step: the first leaves the field, the second closes the tab,
+because closing blanks the frame and stops a lot run mid-list and that is too much for a stray key.
+The field test was `INPUT` or `TEXTAREA` — and **Condition is a `<select>`**. Escape is how a dropdown
+is dismissed. A seller who opened Condition and changed their mind closed the whole screen with the
+key that meant *never mind*. `SELECT` joined the test.
+
+## The screen with the colour taken away
+
+Windows High Contrast overrides every background and border colour the app chose. On most screens
+here that costs decoration. On this one it costs **the answer**: the fill along the ceiling meter, the
+length of the odds bar, which condition band this lot is in, which of tonight's counts is money
+already committed — all of it read at a glance, all of it carried by colour, and all of it flattening
+to one `CanvasText` outline on one `Canvas` fill. The WhatsNot block is the largest block of CSS in
+the app and it was the only large one with no `forced-colors` rules at all.
+
+Two rules, applied consistently:
+
+1. **Where the colour is the datum** — a fill whose *length* is the number — the author's colours are
+   kept (`forced-color-adjust: none`) and the **track** is outlined so the extent stays visible. The
+   outline goes on the track and never on the fill: a border on a fill inside an `overflow: hidden`
+   track changes its width, and the width is the number.
+2. **Where the colour was emphasis** — *this* is the band the lot is in, *this* is the money already
+   committed, *this* is the cell the ceiling was cut by — the emphasis moves to a border **width**,
+   which is the one thing the OS does not override.
+
+The four calls need no rescuing and deliberately get none: `BID UP TO $90`, `DON'T BID`, `NO DATA`
+and `CAN'T LIST IT` are **words**, on the badge, on every lot row and in the one line above the card.
+The colour was never carrying that on its own. What the badge gets is an edge, so it still reads as
+an object rather than as another line of text.
+
+And the two widths that animate on this screen — how much of tonight's budget has gone, how many past
+sales still cover the bid — animate *because a number moved*, which during a live sale is a bar
+sliding every few seconds in the corner of the eye of somebody who asked the system not to do that.
+They stop under `prefers-reduced-motion`.
+
+## Sold comps
+
+Untouched and fully working, as in every WhatsNot session. `/api/sold-comps`, `/api/whatsnot/bid`,
+`/api/whatsnot/rebid`, `/api/whatsnot/won`, `/api/whatsnot/sheet`, `/api/whatsnot/list`,
+`/api/whatsnot/lots`, `/api/whatsnot/embed-check`, `/api/whatsnot/read` and `/api/whatsnot/photo` are
+all asserted present by name — a polish pass is exactly the kind of change that quietly takes an
+endpoint off a screen. No C# service was added or altered; every change is in the two assets and in
+the tests that hold them.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/wwwroot/app.js` | `wnCardKeepState` / `wnRestoreCardKeepState`; the pair wrapped around the card's `innerHTML`; `data-keep` on the hammer, the search override, both tables and the sold link; `SELECT` in the Escape field test; `wnRecordWin` looks the hammer up again rather than remembering it |
+| `ING eBay AutoLister/wwwroot/style.css` | `@media (forced-colors: active)` for the live screen — the meter, budget and odds fills keep their colours and their tracks get an outline; eight emphasis selectors move to a 2px border; the badge, the lot-row call, the status, the gate and the one line keep an edge. `@media (prefers-reduced-motion: reduce)` for the two sliding widths |
+| `ING eBay AutoLister/wwwroot/index.html` | `app.js?v=140`, `style.css?v=123` |
+| `ING eBay AutoLister.Tests/WhatsNotSteadyAssetTests.cs` | New — 15 tests |
+| `ING eBay AutoLister.Tests/WhatsNotPolishAssetTests.cs` | The Escape assertion follows the widened field test |
+| `WhatsNotBudgetAssetTests.cs`, `WhatsNotConditionAssetTests.cs`, `WhatsNotGateAssetTests.cs`, `WhatsNotHoldAssetTests.cs`, `WhatsNotNextBidAssetTests.cs`, `WhatsNotOddsAssetTests.cs`, `WhatsNotShipAssetTests.cs`, `WhatsNotStockAssetTests.cs`, `WhatsNotTaxAssetTests.cs` | Re-pinned asset versions |
+| `whatsnot_high_contrast.png`, `whatsnot_holds_still.png` | The live card in forced colours; the card mid-flow |
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug` | **Succeeded** — 0 errors, 2 pre-existing NU1903 warnings |
+| `dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj"` | **4,625 passed**, 0 failed, 0 skipped (15 new) |
+| Real browser — **the real app**, `AutoListerB1.exe` on 9332, driven with Playwright, cards priced by typing into the tab's own form and pressing ⚡ Price it against live sold comps | see below |
+
+**The hammer, across a redraw.** The card was priced, then the exact sequence a seller runs: type the
+hammer price into the bid box, tab straight to 🔨 **Won it**. The re-price their typing started was
+still in flight when they got there. Focus at that moment: `won`. Three seconds later, after the
+answer had landed and replaced the card whole: still `won`, on a button now reading
+`🔨 Won it at $1,009.00`. **Enter recorded the win** — the sheet came back
+*"1 lot won, $1,009 spent… 1 won above the ceiling"*, which is also the app correctly calling a
+deliberately terrible bid terrible. The row was then removed through `/api/whatsnot/sheet/remove`;
+the sheet is back to 0 lots.
+
+**The comp table, across a redraw.** Opened, bid moved, still open.
+
+**Escape.** Focus on `#wn-cond`, Escape → the field is left (`document.activeElement` is no longer
+the select) and the tab is **still open**. Focus on `#wn-price`, Escape → the tab closes. Both halves
+of the two-step, in the real app.
+
+**Empty state.** ⚡ Price it with an empty box → the card says *"Type what's on screen — the brand and
+model are what the sold search runs on"* and the one live region says *"Nothing to price — type
+what's on screen."*, so a seller who pressed it from the keyboard and never looked away from the
+stream is told.
+
+**Forced colours** (`forcedColors: 'active'`, real card): the meter track carries `1px` of
+`CanvasText`; the green fill **kept its own colour** (`rgb(16, 113, 79)`) instead of flattening, at
+its measured width; `.wn-cond-band-mine` is `2px` against a plain band's `1px`, and
+`.wn-odds-cell-this` likewise. The screenshot reads: a boxed **STOP**, a bordered one-line answer, a
+2px-outlined `USED 3 · $200` band. **Reduced motion**: the odds fill's transition duration is
+effectively zero.
+
+0 JS errors and 0 page errors in every run.
+
+## Known limits
+
+- **The restore is scoped to the card.** The read panel, the photo panel and the buy sheet are also
+  replaced whole when they are redrawn, and they still drop focus — the buy sheet hands the keyboard
+  somewhere sensible by hand after a removal or a draft, which is not the same guarantee. Nothing on
+  those three is as expensive to lose as the hammer, which is why the card went first.
+- **A comp link is not restored to itself.** Focus inside the open comp table returns to the table's
+  summary, not to the nineteenth link. Restoring the exact link would mean keying every row, and a
+  key that changes when the comps change would put the keyboard on a different sale.
+- **Forced colours were verified in Chromium's emulation, not in Windows High Contrast.** The
+  emulation implements the same `forced-colors` cascade the OS drives, but the OS themes pick
+  different system colours and a real high-contrast desktop has not looked at this screen.
+- **Nothing here has seen a real live show.** As with every WhatsNot session: the sequences are real
+  sequences run against the real app, but no lot in them was ever on a block.
