@@ -298,9 +298,20 @@ builder.Services.AddSingleton<MarketplaceRepository>();
 // MarketCompsApiUrl is configured; otherwise the local Marketplace.db repository is used.
 builder.Services.AddSingleton<HostedMarketplaceClient>();
 builder.Services.AddSingleton<HostedMarketplaceRepository>();
+// Live sold-comps lookups, one model at a time, while the seller waits. The daily background
+// crawl this replaces was retired on 2026-08-07 — see OnDemandCompsScraper for why volume, not
+// throughput, was the binding constraint. Registered unconditionally: when the scraper isn't
+// installed on this machine it reports unavailable and every lookup serves stored comps.
+builder.Services.AddSingleton<OnDemandCompsScraper>();
+// Both databases, merged — NOT one or the other. The live scraper writes into the LOCAL
+// SoldListings table, so selecting the hosted repository alone (the shipped configuration) meant
+// every freshly scraped comp landed somewhere the pricing path never read: three minutes of
+// waiting that could not move the price. Hosted carries the breadth, local carries the recency,
+// and neither is a superset of the other. See UnionMarketplaceRepository.
+builder.Services.AddSingleton<UnionMarketplaceRepository>();
 builder.Services.AddSingleton<IMarketplaceRepository>(sp =>
     !string.IsNullOrWhiteSpace(sp.GetRequiredService<CredentialsStore>().Get().MarketCompsApiUrl)
-        ? sp.GetRequiredService<HostedMarketplaceRepository>()
+        ? sp.GetRequiredService<UnionMarketplaceRepository>()
         : sp.GetRequiredService<MarketplaceRepository>());
 // Answers "is each connection actually up, and if not why" with real probes — see
 // ConnectionDoctor. Served by /api/diagnostics/connections.
@@ -1668,6 +1679,10 @@ static string SoldCompsSourceLabel(string source) => source switch
 {
     "terapeak"              => "Terapeak (live eBay sold data)",
     "marketplace_insights"  => "eBay Marketplace Insights",
+    // Same rows, same table, but fetched from eBay seconds ago rather than whenever the model
+    // last happened to be collected. A seller deciding what to list at is entitled to the
+    // difference — "just fetched" and "on file" are not the same claim about a price.
+    "live_ebay"             => "Fetched from eBay just now",
     "hosted_comps"          => "Sold-comps database",
     _                       => "No sold-comp data — research links only",
 };
@@ -1710,12 +1725,19 @@ static SoldCompsResult? BuildHostedCompsResult(IReadOnlyList<MarketplaceComparab
     };
 }
 
+// fresh: a live scrape for this exact query just finished and wrote its rows to the comps
+// database, so the sources below it are skipped and the answer is read straight from what was
+// just collected. Only set when that scrape actually returned rows — a blocked one leaves this
+// false so Terapeak still gets its turn, because a block on one live source says nothing about
+// the other.
 app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, decimal? buyerShipping,
-    EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace,
+    bool? fresh, EbayService ebay, TerapeakService terapeak, IMarketplaceRepository marketplace,
     NetProceedsCalculator net, FeeProfile fees, ActionLog log, OnboardingStore onboarding) =>
 {
     if (string.IsNullOrWhiteSpace(q))
         return Results.BadRequest(new { error = "Query is required." });
+
+    var justScraped = fresh == true;
 
     // Always hand back links to eBay's own research tools as a fallback — Marketplace Insights
     // (the real sold-comps API) requires a special eBay approval most developer accounts don't
@@ -1754,21 +1776,50 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
         };
     }
 
-    // Blend the local Marketplace.db sold history into the reported average at 40% weight
-    // (Terapeak/Insights carries the other 60%). The local comps are NOT surfaced in the
-    // response — the bar's items/count/median/min/max stay exactly as the primary source
-    // returned them; only the Average value reflects the blend. If there is no local data,
-    // or no primary average, the average falls back to whichever single source has data.
-    async Task<decimal> BlendLocalAverageAsync(decimal primaryAverage)
+    // Blend the local sold history into the reported average. The local comps are NOT surfaced in
+    // the response — the bar's items/count/median/min/max stay exactly as the primary source
+    // returned them; only the Average value reflects the blend. If there is no local data, or no
+    // primary average, the average falls back to whichever single source has data.
+    //
+    // The weights are the SAME adaptive ones the Opportunity Finder and every board price on
+    // (MarketPriceEstimator.ResolveWeights): sample size x spread x age, rather than the flat
+    // 60/40 this used until 2026-08-11. That constant was wrong in both directions and silently —
+    // three live comps outvoted twenty stored ones, and a stored set that had not seen a sale in
+    // months still took 40% of the answer. Two different blends in one app is also how the price
+    // on the listing screen ends up disagreeing with the price on the board for the same item.
+    async Task<decimal> BlendLocalAverageAsync(decimal primaryAverage, int primaryCount)
     {
         try
         {
             var local  = await marketplace.SearchByKeywordAsync(q, limit: 24);
-            var prices = local.Where(c => c.SoldPrice > 0m).Select(c => c.SoldPrice).ToList();
+            var priced = local.Where(c => c.SoldPrice > 0m).ToList();
+            var prices = priced.Select(c => c.SoldPrice).OrderBy(p => p).ToList();
             if (prices.Count == 0) return primaryAverage;
             var localAverage = prices.Average();
             if (primaryAverage <= 0m) return Math.Round(localAverage, 2);
-            return Math.Round(primaryAverage * 0.6m + localAverage * 0.4m, 2);
+
+            // Age of the local set, off its newest dated sale — undated stays neutral.
+            var newest = priced.Where(c => c.SoldDate.HasValue).Select(c => c.SoldDate!.Value)
+                               .DefaultIfEmpty(default).Max();
+            var localFreshness = newest == default
+                ? 1.0
+                : MarketPriceEstimator.FreshnessWeight((DateTime.UtcNow - newest).TotalDays);
+
+            // Spread on the same footing as the estimator: local from its own quartiles, the
+            // primary left neutral because this path gets an average and a count, not a range.
+            var localSpread = MarketplacePricingCalculator.Percentile(prices, 0.75)
+                            - MarketplacePricingCalculator.Percentile(prices, 0.25);
+
+            var (localWeight, primaryWeight) = MarketPriceEstimator.ResolveWeights(
+                hasLocalMedian: true,
+                localStrongCount: prices.Count,
+                terapeakStrongCount: Math.Max(1, primaryCount),
+                terapeakFreshnessWeight: 1.0,          // it was just fetched
+                localMedian: MarketplacePricingCalculator.Median(prices),
+                localSpread: Math.Max(0m, localSpread),
+                localFreshnessWeight: localFreshness);
+
+            return Math.Round(primaryAverage * primaryWeight + localAverage * localWeight, 2);
         }
         catch { return primaryAverage; }
     }
@@ -1806,7 +1857,7 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
     }
 
     // 1) Real Terapeak data, if the seller has connected their session (Settings > Terapeak)
-    if (terapeak.IsConnected)
+    if (terapeak.IsConnected && !justScraped)
     {
         try
         {
@@ -1816,7 +1867,7 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
                 var parsed = TerapeakMarketService.ParseTerapeakBodyText(scrape.BodyText, q);
                 if (parsed is not null)
                 {
-                    var average = await BlendLocalAverageAsync(parsed.Average);
+                    var average = await BlendLocalAverageAsync(parsed.Average, parsed.Count);
                     return Answer(parsed, average, "terapeak");
                 }
             }
@@ -1844,20 +1895,23 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
     }
 
     // 2) Marketplace Insights API (works automatically if eBay ever approves the scope)
-    try
+    if (!justScraped)
     {
-        var result = await ebay.SearchSoldCompsAsync(q);
-        if (result.Count > 0)
+        try
         {
-            var average = await BlendLocalAverageAsync(result.Average);
-            return Answer(result, average, "marketplace_insights");
+            var result = await ebay.SearchSoldCompsAsync(q);
+            if (result.Count > 0)
+            {
+                var average = await BlendLocalAverageAsync(result.Average, result.Count);
+                return Answer(result, average, "marketplace_insights");
+            }
         }
-    }
-    catch (Exception ex)
-    {
-        var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
-        log.Add("Warning", "Sold comps lookup failed", $"{failure.Kind} — {failure.Technical}");
-        if (dataNote.Length == 0) dataNote = failure.WhatHappened + " " + failure.WhatToDo;
+        catch (Exception ex)
+        {
+            var failure = FailureTranslator.Translate(ex, FailureDomain.Research);
+            log.Add("Warning", "Sold comps lookup failed", $"{failure.Kind} — {failure.Technical}");
+            if (dataNote.Length == 0) dataNote = failure.WhatHappened + " " + failure.WhatToDo;
+        }
     }
 
     // 3) The hosted sold-comps database, on its own rather than as a 40% blend into someone else's
@@ -1869,7 +1923,7 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
         var hosted = await marketplace.SearchByKeywordAsync(q, limit: 24);
         var hostedResult = BuildHostedCompsResult(hosted, q);
         if (hostedResult is not null)
-            return Answer(hostedResult, hostedResult.Average, "hosted_comps");
+            return Answer(hostedResult, hostedResult.Average, justScraped ? "live_ebay" : "hosted_comps");
     }
     catch (Exception ex)
     {
@@ -1889,6 +1943,38 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
         // useful on the one path where the market data is missing entirely.
         pricing = PricingFor(0m, 0m),
     });
+});
+
+// ── Live comps lookup ────────────────────────────────────────────────────────────────────────
+// Typing a model scrapes eBay for that exact model and files the result in the comps database.
+// A scrape takes about a minute, which no browser will wait through inside one request, so it is
+// started here and polled below — that is also what lets the panel draw a real progress bar
+// instead of a spinner that reads as a hang. See OnDemandCompsScraper.
+//
+// Starting is never an error. Every refusal — no scraper installed, hourly cap reached, this
+// model already fetched within the hour, another lookup in flight — comes back as an already
+// finished run, because the caller's next move is the same in all of them: read stored comps.
+static object CompsRunView(CompsScrapeRun r) => new
+{
+    id = r.Id, query = r.Query, stage = r.Stage, percent = r.Percent,
+    rowsFound = r.RowsFound, rowsNew = r.RowsNew, finished = r.Finished,
+    outcome = r.Outcome, message = r.Message,
+    blockedByEbay = r.BlockedByEbay, elapsedSeconds = r.ElapsedSeconds,
+};
+
+app.MapPost("/api/comps/live/start", (string q, OnDemandCompsScraper scraper) =>
+    Results.Ok(CompsRunView(scraper.Start(q))));
+
+app.MapGet("/api/comps/live/status", (string id, OnDemandCompsScraper scraper) =>
+{
+    var run = scraper.Get(id);
+    // A forgotten run is reported as finished rather than 404. The poller's job is to stop and
+    // read the comps; a 404 would strand a progress bar at whatever percentage it last saw.
+    return run is null
+        ? Results.Ok(new { id, finished = true, percent = 100, outcome = "gone", stage = "Finished",
+                           message = "", blockedByEbay = false, rowsFound = 0, rowsNew = 0,
+                           query = "", elapsedSeconds = 0 })
+        : Results.Ok(CompsRunView(run));
 });
 
 // Opportunity Finder — live auctions ending soon for a keyword, ranked by estimated profit
@@ -4655,6 +4741,24 @@ app.MapPost("/api/earnings/cost", (
 
     try { store.Upsert(flip); }
     catch (InvalidOperationException ex) { return Results.BadRequest(ex.Message); }
+
+    // A cost basis belongs to the PRODUCT, so answering for one sale of it answers for all of them.
+    // Without this, a seller who sold the same free-shipping cable five times had to press Save on
+    // five identical rows — and the four that stayed behind read as the first Save having failed,
+    // which is exactly the complaint. Only the confirmation travels; the money already came from
+    // the shared basis and is not copied onto the rows.
+    var siblings = shared
+        ? store.GetAll().Where(f => f.Id != flip.Id && f.CostConfirmedUtc is null
+            && ((!string.IsNullOrWhiteSpace(flip.ListingId) && string.Equals(f.ListingId, flip.ListingId, StringComparison.OrdinalIgnoreCase))
+             || (!string.IsNullOrWhiteSpace(flip.Sku) && string.Equals(f.Sku, flip.Sku, StringComparison.OrdinalIgnoreCase)))).ToList()
+        : [];
+
+    foreach (var sibling in siblings)
+    {
+        sibling.CostConfirmedUtc = flip.CostConfirmedUtc;
+        try { store.Upsert(sibling); }
+        catch (InvalidOperationException) { /* one unsavable old row must not fail the answer */ }
+    }
 
     log.Add("Info", "Cost recorded for a completed sale",
         $"\"{flip.Title}\" — {req.UnitCost.Value:C2}{(shared ? $" (shared cost basis; also prices {alsoAffected} other sale(s) of this item)" : "")}");
@@ -8209,7 +8313,9 @@ static async Task<MarketAnalysisResult> AnalyzeProductAsync(
         $"strong: {strongComparableCount}, exact-id: {exactIdentifierMatches}, model: {modelNumberMatches}" +
         $"{(priceEstimate.IdentityVerified ? "" : ", IDENTITY UNVERIFIED — no comp carries the model/part token")}" +
         $"); Source weighting: " +
-        $"local {result.Sources.LocalWeightPercent:0}%/Terapeak {result.Sources.TerapeakWeightPercent:0}%; " +
+        $"local {result.Sources.LocalWeightPercent:0}%/Terapeak {result.Sources.TerapeakWeightPercent:0}% " +
+        $"(local freshness x{priceEstimate.LocalFreshnessWeight:0.0}" +
+        $"{(mostRecentComparableAgeDays is { } age ? $", newest comp {age}d old" : ", no dated comps")}); " +
         $"Opportunity score: {result.Score.Score}; Confidence: {result.Confidence.Score} ({result.Confidence.Level}); " +
         $"Duration: {sw.ElapsedMilliseconds}ms");
 

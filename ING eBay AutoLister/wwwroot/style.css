@@ -6778,6 +6778,64 @@ body.drawer-open {
 .mr-status.working { color: var(--muted); }
 .mr-status.empty   { color: var(--warning); }
 
+/* Live eBay lookup progress. Fetching one model's sold history takes ~40-60s; the bar exists so
+   that minute reads as work in progress rather than a frozen screen. */
+.mr-live {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mr-live-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: var(--fs-sm);
+}
+
+.mr-live-stage { color: var(--ink); }
+
+/* The seconds counter does as much work as the bar: a number that ticks every second is
+   unambiguous proof the app is alive, even on the long flat stretch of a single page load. */
+.mr-live-elapsed {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mr-live-track {
+  height: 6px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.mr-live-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  /* Eased rather than stepped: progress arrives in a handful of poll-sized jumps, and an
+     un-transitioned bar snapping 15% -> 88% looks like a glitch instead of loading. */
+  transition: width 420ms ease-out;
+}
+
+.mr-live.done .mr-live-bar { background: var(--success); }
+.mr-live.blocked .mr-live-bar { background: var(--warning); }
+
+.mr-live-note { font-size: var(--fs-xs); color: var(--muted); }
+.mr-live-note:empty { display: none; }
+.mr-live.blocked .mr-live-note { color: var(--warning); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mr-live-bar { transition: none; }
+}
+
 .mr-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -13262,15 +13320,58 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 /* Room. The overlay's shared 1320px column is right for prose and forms and
    wrong for a ranking. Measured off the overlay body — the board's own
    panel is capped, so the block breaks out of it with a negative margin and
-   lands exactly on the body's content edges. The cap is generous rather than
-   absent: past this a table stops being scannable and becomes a runway. */
+   lands centred on the body's content edges.
+
+   The cap used to be 2200px, which on a wide monitor was the whole window:
+   the board became a white slab 880px wider than the card that had just
+   produced it, sticking out on both sides of everything else on the screen,
+   with the item name at one end and the money at the other and half a
+   window of nothing in between. Wide enough for nine columns is the goal;
+   as wide as the glass is not. Past this the columns stop getting denser
+   and just spread, and a table stops being scannable and becomes a runway. */
 #opportunity-section > .opportunity-overlay-body { container-type: inline-size; }
 
 #fb-arb-results {
-  --board-w: min(100cqw, 2200px);
+  --board-w: min(100cqw, 1560px);
   width: var(--board-w);
   max-width: none;
   margin-inline: calc((100% - var(--board-w)) / 2);
+}
+
+/* The count and the budget button are the right-hand end of the controls
+   row. Only the count carried the auto margin, so on the narrower board the
+   button wrapped to a second line and landed back at the left, under the
+   sort dropdown, reading as one of the filters. Auto margins resolve per
+   flex line, so giving the button its own keeps it at the right-hand end
+   whichever line it ends up on. */
+.fb-arb-controls #fb-arb-budget-btn { margin-left: auto; }
+
+/* The bars are holding rows back and this says which and how many, between
+   the switches that did it and the board that looks empty because of it. */
+.fb-arb-cut {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin: var(--s3) 0 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.fb-arb-cut-count { margin-right: auto; }
+
+/* Small print under a board that is wider than any paragraph should be. Left
+   at one measure it ended a third of the way across the frame and left the
+   rest of the board blank, which is most of what "off centre" looked like.
+   Flowed into columns it spans the same edges as the table it explains, and
+   collapses back to one column on a narrow window by itself. */
+#fb-arb-results .fb-arb-footnote {
+  max-width: none;
+  columns: 48ch;
+  column-gap: var(--s7);
 }
 
 /* The frame. `clip` rather than `auto` or `hidden`: it never scrolls, it
@@ -15372,6 +15473,22 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   display: block; font-size: 11px; color: var(--text-muted, #606e74);
 }
 .fb-pick-nodata { display: block; font-size: 11px; color: var(--text-muted, #606e74); font-style: italic; }
+
+/* A figure the server graded "low": the arithmetic is right and the price under it is a guess.
+   Dimmed rather than hidden — the seller can still use it as a starting point — but it must not
+   read like the confident number on the card next to it. Same treatment the deals board gives
+   its estimate rows, and for the same reason: an undimmed -93% off a mismatched comp is a lie
+   told in a confident voice. */
+.fb-pick-profit.is-guess { color: var(--text-muted, #606e74); font-weight: 700; opacity: .85; }
+.fb-pick-guess {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.3;
+  margin-top: 1px;
+  color: #b45309;
+  font-style: italic;
+  cursor: help;
+}
 
 /* Update banner. Deliberately calm: an update is worth knowing about, not worth alarming
    someone mid-listing. Sits with the recovery banner at the top of the dashboard. */

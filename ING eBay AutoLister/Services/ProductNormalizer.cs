@@ -140,11 +140,59 @@ public sealed partial class ProductNormalizer(ProductIdentityExtractor identityE
         // for iPad...") is the product being sold; one trailing after "with"/"and"/"+"/"includes"
         // is an included extra on a listing for something else.
         product.IsAccessoryListing = accessories.Any(a => IsLeadingAccessoryMention(lowerText, a));
+        product.IsCompatibilityListing = DetectCompatibilityListing(lowerText);
 
         product.ImportantKeywords = MarketplaceMatcher.ImportantWords(MarketplaceMatcher.Normalize(expanded));
 
         return product;
     }
+
+    /// <summary>
+    /// True when the title names a model in order to say what this item FITS, not what it IS.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The failure this exists for, measured 2026-08-11 on a live "fanuc" scan: <c>1Pc For FANUC
+    /// A05B-2518-C202 robot Teach Pendant new Wrist Strap hand grip tape</c> was bought at $38 and
+    /// priced against sold teach pendants, reporting <b>$981 profit at 2589% ROI</b>. Two more like
+    /// it sat above every honest row on the board. Every identity check passed, correctly — the
+    /// model token really is in the title. It is in the title because the strap fits that pendant.
+    /// </para>
+    /// <para>
+    /// The signal is position, not vocabulary: an accessory word list can never be complete (strap,
+    /// overlay, membrane keypad, rubber sleeve, grip tape...), but a model that appears AFTER
+    /// "for"/"fits"/"compatible with" is a compatibility statement in every category. A model that
+    /// appears BEFORE such a word is the product itself ("Fanuc A06B-0041-B605 Servo Motor for CNC"
+    /// is a servo motor), which is why the marker has to precede the identifier rather than merely
+    /// occur somewhere in the string.
+    /// </para>
+    /// <para>Pure and total: takes the lower-cased title, returns the verdict.</para>
+    /// </remarks>
+    public static bool DetectCompatibilityListing(string lowerText)
+    {
+        if (string.IsNullOrWhiteSpace(lowerText)) return false;
+
+        var marker = CompatibilityMarkerRegex().Match(lowerText);
+        if (!marker.Success) return false;
+
+        // An identifier is a token carrying a digit — part numbers, model codes, generations. A
+        // bare noun after "for" ("for sale", "for CNC", "for home use") is not one, so those titles
+        // are left alone.
+        var after = lowerText[(marker.Index + marker.Length)..];
+        return IdentifierTokenRegex().IsMatch(after);
+    }
+
+    // "for", "fits", "compatible with/for", "replacement for", "suitable for", "to fit".
+    // Word-bounded so "before", "forge" and "platform" cannot trigger it.
+    [GeneratedRegex(@"\b(?:replacement\s+for|compatible\s+(?:with|for)|suitable\s+for|suits|to\s+fit|fits(?:\s+for)?|for)\b",
+                    RegexOptions.IgnoreCase)]
+    private static partial Regex CompatibilityMarkerRegex();
+
+    // A token with at least one digit and one letter-or-dash neighbour — "a05b-2518-c202",
+    // "s042", "m12x1.5". A bare number ("for 2 pcs") is deliberately not enough.
+    [GeneratedRegex(@"\b(?=[a-z0-9\-\#\/]*\d)(?=[a-z0-9\-\#\/]*[a-z\-])[a-z0-9\-\#\/]{3,}\b",
+                    RegexOptions.IgnoreCase)]
+    private static partial Regex IdentifierTokenRegex();
 
     private static int ExtractQuantity(string text)
     {

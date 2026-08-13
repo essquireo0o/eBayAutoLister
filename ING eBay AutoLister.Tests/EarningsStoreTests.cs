@@ -168,4 +168,121 @@ public class EarningsStoreTests : IDisposable
 
         Assert.Equal(1, flip.Quantity);
     }
+
+    // "I paid zero for it and it will not save." The screen offers to take $0.00 as an answer and
+    // stop asking, and CostConfirmedUtc is what carries that answer — but it had no column, so it
+    // lived only on whichever object the request was holding. The row was rebuilt from the database
+    // on the very next read with the confirmation gone, and the sale reappeared on the list every
+    // time. A property the model reasons about and the table has never heard of is the whole bug,
+    // so this reads it back off disk rather than off the object it just wrote.
+    [Fact]
+    public void A_confirmed_cost_survives_the_round_trip_to_disk()
+    {
+        var store = NewStore();
+        var confirmed = new DateTimeOffset(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
+        var flip = EbayLine();
+        flip.UnitCost = 0m;
+        flip.CostConfirmedUtc = confirmed;
+        store.Upsert(flip);
+
+        // A second store over the same file: no in-memory state to accidentally pass the test.
+        var reread = NewStore().GetAll().Single();
+
+        Assert.Equal(confirmed, reread.CostConfirmedUtc);
+        Assert.Equal(0m, reread.UnitCost);
+    }
+
+    [Fact]
+    public void An_unanswered_cost_stays_unanswered()
+    {
+        var store = NewStore();
+        store.Upsert(EbayLine());
+
+        Assert.Null(NewStore().GetAll().Single().CostConfirmedUtc);
+    }
+
+    // The awaiting-cost list is driven by this pair, and $0.00 is the case it exists for: eBay
+    // sends it for anything that shipped free, so "a number is present" cannot mean "answered".
+    [Fact]
+    public void Zero_only_stops_the_asking_once_the_seller_has_confirmed_it()
+    {
+        var imported = EbayLine();
+        imported.UnitCost = 0m;
+        var store = NewStore();
+        store.Upsert(imported);
+
+        var calculator = new EarningsCalculator(new ProfitCalculator());
+        var fees = new FeeProfile();
+
+        var beforeAnswer = calculator.Compute(NewStore().GetAll().Single(), null, fees);
+        Assert.True(beforeAnswer.NeedsCost, "a $0.00 nobody confirmed is still an open question");
+
+        var answered = store.GetAll().Single();
+        answered.CostConfirmedUtc = DateTimeOffset.UtcNow;
+        store.Upsert(answered);
+
+        var afterAnswer = calculator.Compute(NewStore().GetAll().Single(), null, fees);
+        Assert.False(afterAnswer.NeedsCost, "the seller answered $0.00 and must stop being asked");
+    }
+
+    // Importing again is how a seller refreshes this screen. It already carried the costs they
+    // typed across a re-import; the answer "it was free" is one of those and has to survive too,
+    // or pressing Import puts every confirmed sale back on the list.
+    [Fact]
+    public void Re_importing_does_not_forget_that_the_seller_said_it_was_free()
+    {
+        var store = NewStore();
+        var first = EbayLine();
+        first.UnitCost = 0m;
+        first.CostConfirmedUtc = new DateTimeOffset(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
+        store.Upsert(first);
+
+        // What the importer builds from eBay on the next run: same order line, nothing local on it.
+        var fromEbay = EbayLine();
+        var existing = store.GetAll().Single();
+        fromEbay.Id = existing.Id;
+        fromEbay.UnitCost = existing.UnitCost;
+        fromEbay.CostConfirmedUtc = existing.CostConfirmedUtc;
+        store.Upsert(fromEbay);
+
+        Assert.Equal(first.CostConfirmedUtc, NewStore().GetAll().Single().CostConfirmedUtc);
+    }
+
+    // The importer used to read every existing row ONCE, before its first call to eBay, and carry
+    // that snapshot onto each row it wrote minutes later. Anything the seller typed while the
+    // import was talking to eBay was newer than the snapshot and got written back out — which is
+    // how seven sales confirmed as free un-confirmed themselves seconds after being saved.
+    // FindByOrderLine is the fix, so what it returns has to be the row as it is now.
+    [Fact]
+    public void A_row_read_by_order_line_is_the_row_as_it_stands_not_as_it_was()
+    {
+        var store = NewStore();
+        store.Upsert(EbayLine());
+
+        var stale = store.FindByOrderLine("ORD-1", "LI-1");
+        Assert.NotNull(stale);
+        Assert.Null(stale!.CostConfirmedUtc);
+
+        // The seller answers while the import is still fetching pages.
+        var answered = store.GetAll().Single();
+        answered.CostConfirmedUtc = DateTimeOffset.UtcNow;
+        answered.UnitCost = 0m;
+        store.Upsert(answered);
+
+        var fresh = store.FindByOrderLine("ORD-1", "LI-1");
+
+        Assert.NotNull(fresh!.CostConfirmedUtc);
+        Assert.Equal(0m, fresh.UnitCost);
+    }
+
+    [Fact]
+    public void An_order_line_that_was_never_imported_reads_back_as_nothing()
+    {
+        var store = NewStore();
+        store.Upsert(EbayLine());
+
+        Assert.Null(store.FindByOrderLine("ORD-1", "LI-NOPE"));
+        Assert.Null(store.FindByOrderLine("", ""));
+        Assert.Null(store.FindByOrderLine(null, null));
+    }
 }

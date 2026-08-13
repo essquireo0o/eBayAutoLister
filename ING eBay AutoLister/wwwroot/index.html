@@ -748,6 +748,22 @@
               <a id="nl-sold-comps-link" class="nl-sold-comps-link nl-sold-comps-link-secondary hidden" href="#" target="_blank" rel="noopener">Plain Sold Search ↗</a>
               <span id="nl-sold-comps-summary" class="nl-sold-comps-summary-text"></span>
             </div>
+
+            <!-- Live eBay lookup progress, shown while a fresh scrape runs for the item being
+                 listed. Same markup and styling as the Market Research panel's bar (the .mr-live
+                 classes are shared, only the ids differ) so the two never drift apart. Pricing an
+                 item you are about to list is one of only two places this runs. -->
+            <div id="nl-live" class="mr-live hidden" role="status" aria-live="polite">
+              <div class="mr-live-head">
+                <span id="nl-live-stage" class="mr-live-stage">Starting…</span>
+                <span id="nl-live-elapsed" class="mr-live-elapsed"></span>
+              </div>
+              <div class="mr-live-track">
+                <div id="nl-live-bar" class="mr-live-bar"></div>
+              </div>
+              <div id="nl-live-note" class="mr-live-note"></div>
+            </div>
+
             <div id="nl-sold-comps-stats" class="nl-sold-comps-stats hidden">
               <div class="nl-sold-comps-stat"><span class="nl-sold-comps-stat-val" id="nl-sold-comps-stat-avg">$0</span><span class="nl-sold-comps-stat-label">Average</span></div>
               <div class="nl-sold-comps-stat"><span class="nl-sold-comps-stat-val" id="nl-sold-comps-stat-median">$0</span><span class="nl-sold-comps-stat-label">Median</span></div>
@@ -1463,6 +1479,21 @@
             </div>
 
             <p id="ebay-scan-note" class="fb-blank-query-hint">Every result is priced against real eBay sold data and ranked by profit after fees, right below this box. The buy price is what actually leaves your wallet — item plus shipping.</p>
+
+            <!-- Live eBay lookup progress for a scan. The scrape runs first and writes what it
+                 finds into the comps database, so the board below is priced against sold data
+                 fetched moments ago rather than whatever was last stored. Same markup and
+                 .mr-live styling as the other three bars; only the ids differ. -->
+            <div id="es-live" class="mr-live hidden" role="status" aria-live="polite">
+              <div class="mr-live-head">
+                <span id="es-live-stage" class="mr-live-stage">Starting…</span>
+                <span id="es-live-elapsed" class="mr-live-elapsed"></span>
+              </div>
+              <div class="mr-live-track">
+                <div id="es-live-bar" class="mr-live-bar"></div>
+              </div>
+              <div id="es-live-note" class="mr-live-note"></div>
+            </div>
           </div>
 
           <!-- Where an eBay scan's status and results go. The results block is ONE set of elements
@@ -1668,6 +1699,14 @@
                      same question as how to spend a fixed amount of cash across all of them. -->
                 <button id="fb-arb-budget-btn" class="btn btn-secondary small" type="button">💵 Spend a budget on these…</button>
               </div>
+
+              <!-- What the filters above are holding back, and one click to have it. The bars are
+                   on by default for good reasons, but with them on a scan that priced 120 products
+                   can put a single row on the board — which reads as a broken scan rather than as
+                   a strict filter. The count per bar and the button that lifts it are built in
+                   renderArbitrageRows; the tiny "1 of 120 shown" in the row above was never going
+                   to answer this on its own. -->
+              <div id="fb-arb-cut" class="fb-arb-cut hidden"></div>
               <!-- Fourteen columns did not fit any window, so the board grew a horizontal
                    scrollbar and cut its own buttons in half at the right edge. These eight are
                    the buying decision and nothing else: what it is, where it is, what it costs,
@@ -1825,6 +1864,21 @@
                     <option value="daysToSell">Days to sell</option>
                   </select>
                 </div>
+                <!-- Live eBay lookup progress for an opportunity search. One scrape for the term
+                     being searched — never one per result — runs before anything is priced, so
+                     every row below is judged against sold prices fetched moments ago. Shares the
+                     .mr-live styling with the other two bars; only the ids differ. -->
+                <div id="opp-live" class="mr-live hidden" role="status" aria-live="polite">
+                  <div class="mr-live-head">
+                    <span id="opp-live-stage" class="mr-live-stage">Starting…</span>
+                    <span id="opp-live-elapsed" class="mr-live-elapsed"></span>
+                  </div>
+                  <div class="mr-live-track">
+                    <div id="opp-live-bar" class="mr-live-bar"></div>
+                  </div>
+                  <div id="opp-live-note" class="mr-live-note"></div>
+                </div>
+
                 <div id="opp-results-summary" class="opp-results-summary"></div>
                 <div id="opp-results-list" class="opp-results-list"></div>
               </div>
@@ -5567,6 +5621,22 @@
                 <button type="button" id="btn-mr-finder" class="btn btn-ghost small">Open Opportunity Finder</button>
               </div>
               <div id="mr-query" class="mr-query"></div>
+
+              <!-- Live eBay lookup progress. A fresh scrape of one model takes about a minute,
+                   and a minute of nothing moving reads as a hang — so this shows the stage it is
+                   on and the seconds elapsed rather than a spinner. Hidden unless a live lookup
+                   is actually running. -->
+              <div id="mr-live" class="mr-live hidden" role="status" aria-live="polite">
+                <div class="mr-live-head">
+                  <span id="mr-live-stage" class="mr-live-stage">Starting…</span>
+                  <span id="mr-live-elapsed" class="mr-live-elapsed"></span>
+                </div>
+                <div class="mr-live-track">
+                  <div id="mr-live-bar" class="mr-live-bar"></div>
+                </div>
+                <div id="mr-live-note" class="mr-live-note"></div>
+              </div>
+
               <div id="mr-status" class="mr-status"></div>
               <div id="mr-results" class="mr-results hidden">
                 <div class="mr-stats">

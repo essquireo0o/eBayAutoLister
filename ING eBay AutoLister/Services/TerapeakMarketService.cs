@@ -223,17 +223,11 @@ public sealed class TerapeakMarketService(TerapeakService terapeak, TerapeakPric
             TerapeakOutcome.Scraped);
     }
 
-    private static double FreshnessWeight(DateTime scrapedAtUtc, DateTime nowUtc)
-    {
-        var ageDays = (nowUtc - scrapedAtUtc).TotalDays;
-        return ageDays switch
-        {
-            <= 30 => 1.0,
-            <= 90 => 0.7,
-            <= 180 => 0.4,
-            _ => 0.2,
-        };
-    }
+    // Delegates to the one curve both sides of the blend are measured on. Age has to cost a source
+    // the same whether it is a Terapeak snapshot or a row in the local comps database — see
+    // MarketPriceEstimator.FreshnessWeight.
+    private static double FreshnessWeight(DateTime scrapedAtUtc, DateTime nowUtc) =>
+        MarketPriceEstimator.FreshnessWeight((nowUtc - scrapedAtUtc).TotalDays);
 
     // Text parse of the Seller Hub Research page, tuned against a real logged-in capture (see
     // /api/terapeak/debug-scrape). innerText renders each stat tile as "<value>\n<label>", e.g.

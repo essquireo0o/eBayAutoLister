@@ -55,11 +55,13 @@ public class EarningsImportRunner(
 
         import.OrdersRead = orders.Count;
         var knownCosts = costBasis.GetAll();
-        // Read once, not once per line: a 1,000-order import would otherwise re-read the whole
-        // flips table for every line item in it.
-        var existingByKey = store.GetAll()
+        // Which rows already exist, read once rather than once per line: a 1,000-order import would
+        // otherwise re-read the whole flips table for every line item in it. Only the KEYS are kept
+        // — what is on those rows is re-read one row at a time below, and that distinction matters.
+        var existingKeys = store.GetAll()
             .Where(f => !string.IsNullOrWhiteSpace(f.OrderId) && !string.IsNullOrWhiteSpace(f.LineItemId))
-            .ToDictionary(f => (f.OrderId, f.LineItemId));
+            .Select(f => (f.OrderId, f.LineItemId))
+            .ToHashSet();
 
         foreach (var order in orders)
         {
@@ -76,13 +78,28 @@ public class EarningsImportRunner(
                 // The seller's own figures survive a re-import. Someone who typed a shipping cost
                 // or a cost basis against an imported sale must not have it wiped by importing
                 // again — that turns a refresh into a way to lose work.
-                if (existingByKey.TryGetValue((flip.OrderId, flip.LineItemId), out var existing))
+                //
+                // Re-read per row rather than trusting a snapshot taken before the first eBay page
+                // was fetched. An import spends minutes on HTTP, and anything the seller typed
+                // during those minutes is newer than the snapshot: carrying the snapshot's values
+                // forward writes their answer back out of existence. Observed doing exactly that —
+                // twelve sales confirmed as free, seven of them silently un-confirmed by an import
+                // that was already in flight. One indexed lookup on (order_id, line_item_id).
+                var existing = existingKeys.Contains((flip.OrderId, flip.LineItemId))
+                    ? store.FindByOrderLine(flip.OrderId, flip.LineItemId)
+                    : null;
+                if (existing is not null)
                 {
                     flip.Id = existing.Id;
                     flip.ShippingCost = existing.ShippingCost;
                     flip.OtherCosts = existing.OtherCosts;
                     flip.UnitCost = existing.UnitCost;
                     flip.Note = existing.Note;
+                    // "Yes, this really was free" is one of those figures. eBay sends $0.00 for
+                    // anything that shipped free, so without this the next import would re-ask
+                    // about every sale the seller had already answered — and answering is the
+                    // only way off that list.
+                    flip.CostConfirmedUtc = existing.CostConfirmedUtc;
                 }
 
                 try

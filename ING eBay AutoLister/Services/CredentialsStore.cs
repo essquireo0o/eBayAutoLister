@@ -66,6 +66,13 @@ public class Credentials
     // set, the app queries the hosted marketplace instead of the local C:\INGListing Marketplace.db.
     public string MarketCompsApiUrl { get; set; } = "";
     public string MarketCompsApiKey { get; set; } = "";
+
+    // On-demand comps scraping (see OnDemandCompsScraper). The scraper is the collector's own
+    // toolchain — a separate checkout with its own venv and Playwright install — so it is pointed
+    // at rather than shipped. Blank means "use the default location"; a machine without it there
+    // simply prices from stored comps, which is what the app did before live lookups existed.
+    public string CompsScraperDir { get; set; } = "";
+    public string CompsScraperPython { get; set; } = "";
 }
 
 /// <summary>
@@ -120,6 +127,8 @@ public class CredentialsPatch
     public string? StripeWebhookSecret { get; set; }
     public string? MarketCompsApiUrl { get; set; }
     public string? MarketCompsApiKey { get; set; }
+    public string? CompsScraperDir { get; set; }
+    public string? CompsScraperPython { get; set; }
 }
 
 public class CredentialsStore
@@ -153,6 +162,8 @@ public class CredentialsStore
         SetSecret(patch.StripeWebhookSecret,  v => _data.StripeWebhookSecret  = v);
         SetSecret(patch.MarketCompsApiUrl,    v => _data.MarketCompsApiUrl    = v);
         SetSecret(patch.MarketCompsApiKey,    v => _data.MarketCompsApiKey    = v);
+        SetSecret(patch.CompsScraperDir,      v => _data.CompsScraperDir      = v);
+        SetSecret(patch.CompsScraperPython,   v => _data.CompsScraperPython   = v);
 
         if (!string.IsNullOrWhiteSpace(patch.EbayUserToken))
         {

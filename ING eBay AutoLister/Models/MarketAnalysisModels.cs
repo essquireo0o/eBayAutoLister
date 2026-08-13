@@ -28,6 +28,11 @@ public class NormalizedProduct
     public List<string> ImportantKeywords { get; set; } = [];
     public List<string> NegativeKeywords { get; set; } = [];
     public bool IsAccessoryListing { get; set; } // the item itself appears to BE an accessory, not the main product
+    // The title names a model only to say what this item FITS — "Membrane Keypad for Fanuc
+    // A05B-2518-C202", "1Pc For FANUC ... Wrist Strap". The model token is present, so every
+    // identity check passes, but the thing in the box is a $38 strap and the comps are $1,000
+    // teach pendants. See ProductNormalizer.DetectCompatibilityListing.
+    public bool IsCompatibilityListing { get; set; }
     public string RawText { get; set; } = "";
 }
 
@@ -99,6 +104,11 @@ public class PriceEstimate
     // freshness weight (1.0 / 0.7 / 0.4 / 0.2 at 30, 90 and 180 days) is what that cost it.
     public DateTime? TerapeakScrapedAtUtc { get; set; }
     public double TerapeakFreshnessWeight { get; set; } = 1.0;
+    // The same decay, applied to the local comps database off its NEWEST sold date. Terapeak
+    // carried this alone until 2026-08-11, which let a database that had stopped being topped up
+    // outvote a fresher live source purely on row count. 1.0 when nothing carried a date — missing
+    // is not old.
+    public double LocalFreshnessWeight { get; set; } = 1.0;
 
     // ── How much evidence these figures actually rest on ─────────────────────────────────────
     // How many local sold comps produced the numbers above, AFTER per-unit normalization, the

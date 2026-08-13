@@ -95,6 +95,23 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
             candidateProduct.NegativeKeywords.Any(k => k is "case" or "cover" or "accessory"))
             exclusionReason = "Candidate is an accessory (case/cover), target is the main product";
 
+        // ...and the same rule the other way round, which was missing and is the more expensive
+        // direction. An accessory FOR a machine is priced by what the accessory sells for, never by
+        // what the machine sells for.
+        if (exclusionReason is null && target.IsAccessoryListing && !candidateProduct.IsAccessoryListing &&
+            !candidateProduct.NegativeKeywords.Any(k => k is "case" or "cover" or "accessory"))
+            exclusionReason = "Target is an accessory, candidate is the main product";
+
+        // A title that names a model to say what it FITS is not a listing for that model. This is
+        // the one that produced $981 of imaginary profit on a $38 wrist strap: "1Pc For FANUC
+        // A05B-2518-C202 ... Wrist Strap" carries the pendant's part number, so every identity
+        // check passed and it was priced off sold teach pendants at 2589% ROI. Excluded in both
+        // directions — a real pendant must not be priced off strap sales either.
+        if (exclusionReason is null && target.IsCompatibilityListing != candidateProduct.IsCompatibilityListing)
+            exclusionReason = target.IsCompatibilityListing
+                ? "Target is an accessory sold FOR this model, candidate is the model itself"
+                : "Candidate is an accessory sold FOR this model, target is the model itself";
+
         // Both sides have a specific generation/capacity/model/part-number, and they disagree —
         // not "unknown vs known," but two different products (the RTX 4090 vs 4090-Ti case).
         if (exclusionReason is null && ConflictingValue(target.Generation, candidateProduct.Generation))

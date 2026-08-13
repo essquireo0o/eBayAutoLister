@@ -217,6 +217,20 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
             estimate.TerapeakFreshnessWeight = terapeak.FreshnessWeight;
         }
 
+        // Measured off the NEWEST local comp, not the average age: the question this answers is
+        // "how long ago did this database last see a real sale of this thing", and one recent sale
+        // keeps a set current in a way a hundred old ones do not. Undated comps are treated as
+        // fresh rather than stale — the date is missing, which is not evidence of age, and
+        // ConfidenceScoringService already reports the missing dates separately.
+        //
+        // Recorded on every path, including the single-source ones: with only local comps it does
+        // not change the weight (there is nothing to share with) but it is still the honest answer
+        // to "how old is what this price rests on", and the trail should not go quiet on the path
+        // where the number is least corroborated.
+        estimate.LocalFreshnessWeight = estimate.LocalNewestSoldAtUtc is { } newestLocal
+            ? FreshnessWeight((DateTime.UtcNow - newestLocal).TotalDays)
+            : 1.0;
+
         if (terapeak is null || terapeak.Data.Median <= 0)
         {
             estimate.LocalWeight = estimate.MedianPrice is > 0 ? 1.0m : 0m;
@@ -238,7 +252,7 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
 
         var (localWeight, terapeakWeight) = ResolveWeights(
             estimate.MedianPrice is > 0, localStrongCount, terapeakStrongCount, terapeak.FreshnessWeight,
-            localMedian, localSpread, terapeakMedian, terapeakSpread);
+            localMedian, localSpread, terapeakMedian, terapeakSpread, estimate.LocalFreshnessWeight);
 
         estimate.LocalWeight = localWeight;
         estimate.TerapeakWeight = terapeakWeight;
@@ -271,7 +285,8 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
     public static (decimal LocalWeight, decimal TerapeakWeight) ResolveWeights(
         bool hasLocalMedian, int localStrongCount, int terapeakStrongCount, double terapeakFreshnessWeight,
         decimal localMedian = 0m, decimal localSpread = 0m,
-        decimal terapeakMedian = 0m, decimal terapeakSpread = 0m)
+        decimal terapeakMedian = 0m, decimal terapeakSpread = 0m,
+        double localFreshnessWeight = 1.0)
     {
         // No usable estimate on one side -> the other carries everything.
         if (!hasLocalMedian || localStrongCount <= 0) return (0m, 1m);
@@ -285,9 +300,13 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         var localPrecision    = localStrongCount    * Reliability(localMedian,    localSpread);
         var terapeakPrecision = terapeakStrongCount * Reliability(terapeakMedian, terapeakSpread);
 
-        // Freshness decays Terapeak's effective weight — a stale scrape is worth less, and the
-        // lost share flows back to local rather than vanishing.
+        // Freshness decays each source's effective weight, on the same curve, and the share lost by
+        // one flows to the other rather than vanishing. Applying this to Terapeak only — as it did
+        // until 2026-08-11 — meant a live scrape was docked for age while a local comps database
+        // that had stopped being updated kept its full vote. Whichever source last saw a real sale
+        // most recently should carry the estimate; that is the whole point of weighting them.
         terapeakPrecision *= Math.Clamp((decimal)terapeakFreshnessWeight, 0m, 1m);
+        localPrecision    *= Math.Clamp((decimal)localFreshnessWeight,    0m, 1m);
 
         var total = localPrecision + terapeakPrecision;
         if (total <= 0m) return (1m, 0m);
@@ -297,6 +316,24 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
         terapeakWeight = Math.Clamp(terapeakWeight, 0.15m, 0.85m);
         return (1m - terapeakWeight, terapeakWeight);
     }
+
+    /// <summary>
+    /// How much of a source's weight survives its age. One curve for BOTH sides of the blend.
+    /// </summary>
+    /// <remarks>
+    /// This used to apply to Terapeak alone, which quietly meant a live scrape was penalised for
+    /// being three months old while a local comp of the same age was counted at full strength — so
+    /// the staler source could outvote the fresher one purely by having more rows. That asymmetry
+    /// matters most exactly when it is least visible: a comps database that has stopped being
+    /// topped up keeps its full say in the price long after it stopped knowing the market.
+    /// </remarks>
+    public static double FreshnessWeight(double ageDays) => ageDays switch
+    {
+        <= 30 => 1.0,
+        <= 90 => 0.7,
+        <= 180 => 0.4,
+        _ => 0.2,
+    };
 
     // Reliability multiplier in (0,1]: 1 when spread is unknown/zero, shrinking smoothly as the
     // relative spread (spread / median) grows. Bounded and monotonic, so a single wide-ranging

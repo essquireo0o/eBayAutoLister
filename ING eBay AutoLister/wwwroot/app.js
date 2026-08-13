@@ -2274,10 +2274,12 @@
     on('fb-arb-sort', 'change', renderArbitrageRows);
     on('fb-arb-category', 'change', renderArbitrageRows);
     on('fb-arb-price', 'change', renderArbitrageRows);
-    on('fb-arb-hide-losers', 'change', renderArbitrageRows);
-    on('fb-arb-proven-only', 'change', renderArbitrageRows);
-    on('fb-arb-fast-only', 'change', renderArbitrageRows);
-    on('fb-arb-warranty-only', 'change', renderArbitrageRows);
+    // Touching any quality bar switches the board out of auto-relax for good — see
+    // renderArbitrageRows. A filter the seller set themselves is an instruction, not a default.
+    on('fb-arb-hide-losers', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
+    on('fb-arb-proven-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
+    on('fb-arb-fast-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
+    on('fb-arb-warranty-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
     on('ebay-scan-btn', 'click', runEbayScan);
     on('fb-picks-btn', 'click', () => loadFacebookPicks(true));
     on('fb-picks-search-btn', 'click', () => loadFacebookPicks(true));
@@ -2922,7 +2924,7 @@
       return;
     }
 
-    let priced = 0;
+    let priced = 0, solid = 0, estimates = 0;
     for (const row of data.items) {
       const slot = document.querySelector(`[data-pick-money="${CSS.escape(row.itemId || '')}"]`);
       if (!slot) continue;
@@ -2931,20 +2933,37 @@
       const roi = row.roiPercent;
       const comp = row.ebayExpectedSale ?? row.ebayResaleMedian;
       const comps = row.soldCompCount || 0;
+      // How far to believe the figures, graded server-side by LocalArbitrageAnalyzer.GradeEvidence
+      // — the same grade the deals board dims its rows on. This panel used to ignore it entirely
+      // and print every price as a fact, which is how a $1,900 car came back as "-$1,771 · -93%":
+      // the only Saabs in the sold-comps database are Saab ECU modules at $75, so the car was
+      // priced as a car part and the loss was arithmetic on the wrong product. The server already
+      // knew — it graded that row "low" and wrote the reason — and the card threw it away.
+      const tier = row.evidenceTier || 'none';
 
       // No comps means no opinion. Saying "$0 profit" would be a claim; saying "no sold data" is
       // the truth, and the seller can still open the listing and judge it themselves.
-      if (comp == null || !comps) {
+      if (comp == null || !comps || tier === 'none') {
         slot.innerHTML = '<span class="fb-pick-nodata">no sold data</span>';
         continue;
       }
 
       const good = profit != null && profit > 0;
+      // "Not confident" covers both halves of being wrong: too few or too scattered comps, and a
+      // comp set that priced a different product than the one in the photo.
+      const guess = tier !== 'confident' || row.identityVerified === false;
+      const why = row.identityVerified === false
+        ? 'No sold comp matched this exact model — this price is for a different product that shares the brand.'
+        : (row.evidenceNote || 'Too few or too scattered sold comps to call this a market price.');
+
       slot.innerHTML =
-        `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}">` +
+        `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}${guess ? ' is-guess' : ''}">` +
           `${good ? '+' : ''}${money(profit)}${roi != null ? ` · ${Math.round(roi)}%` : ''}</span>` +
-        `<span class="fb-pick-comp">sells ~${money(comp)} · ${comps} sold</span>`;
+        (guess ? `<span class="fb-pick-guess" title="${esc(why)}">rough estimate — tap to see why</span>` : '') +
+        `<span class="fb-pick-comp">sells ~${money(comp)} · ${comps} sold${
+          row.pricedCompCount && row.pricedCompCount !== comps ? ` (${row.pricedCompCount} used)` : ''}</span>`;
       priced++;
+      if (guess) estimates++; else solid++;
     }
 
     // The numbers are on the cards; now put the best one first. Only worth doing — and only
@@ -2952,9 +2971,21 @@
     if (priced) reorderFacebookPicks(data.items);
 
     if (note) {
-      note.textContent = priced
-        ? `${priced} of ${feed.items.length} priced against real eBay sold data. Profit is after fees and shipping.`
-        : 'None of these could be priced — no matching eBay sold history.';
+      // What the panel found, split the way it matters. "5 of 30 priced" read as five answers when
+      // it was one answer and four guesses, and the seller quite reasonably asked why only one of
+      // them showed what they would make.
+      const nodata = feed.items.length - priced;
+      note.textContent = !priced
+        ? 'None of these could be priced — no matching eBay sold history.'
+        : [
+            solid
+              ? `${solid} of ${feed.items.length} priced against sold comps that actually match. Profit is after fees and shipping.`
+              : `None of these ${feed.items.length} could be priced against comps that actually match the item.`,
+            estimates
+              ? `${estimates} more ${estimates === 1 ? 'is a rough estimate' : 'are rough estimates'} — too few, too scattered, or the closest sold listings are a different product. Treat those figures as a starting point, not a price.`
+              : '',
+            nodata ? `${nodata} have no eBay sold history at all.` : '',
+          ].filter(Boolean).join(' ');
     }
   }
 
@@ -3064,7 +3095,7 @@
     $('fb-arb-results')?.classList.add('hidden');
     if (btn) btn.disabled = true;
 
-    setLocalStatus(`Searching eBay for "${query}", then pricing every result against real sold data — this can take a minute…`);
+    setLocalStatus(`Fetching fresh sold prices from eBay for "${query}" — up to three minutes — then searching eBay and pricing every result against them…`);
 
     const sort = $('fb-arb-sort')?.value || 'roi';
     const num = id => {
@@ -3101,6 +3132,12 @@
     // "searching..." line appears where the seller is looking rather than at the foot of the other
     // card. One block, moved — not a second copy to keep in sync.
     moveScanResultsTo('ebay-results-slot');
+
+    // Scrape THIS term's sold prices from eBay before the scan prices anything against them. The
+    // eBay Scanner is an opportunity search — one of the two places a live lookup is allowed to
+    // run — and it is the one that most needs it: every row on the board below is a buy/pass call
+    // made against these comps. One scrape for the term, never one per result.
+    await runLiveLookup(query, 'es');
 
     const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
     if (btn) btn.disabled = false;
@@ -3339,6 +3376,9 @@
 
     renderCouponStores(data.couponStores);
     renderArbitrageCategoryFilter(data.categories);
+    // A new scan is a new question, so the board is allowed to relax for it again. Without this,
+    // one manual filter change early on would leave every later scan silently showing one row.
+    arbFiltersTouched = false;
     renderArbitrageRows();
     wrap.classList.remove('hidden');
   }
@@ -3391,16 +3431,63 @@
          + `the resale figures on those rows are guesses.`;
   }
 
+  // Both quality bars ship ticked, and stacked on a thin comps corpus they can take a scan that
+  // priced 120 products down to one row. That board is not wrong, but it reads as broken, and the
+  // seller came here to see deals — not to learn that their filters are strict. So until they
+  // touch a filter themselves, the board relaxes whichever bar is starving it and says so.
+  // Set true by any manual change, and never reset except by a new scan.
+  let arbFiltersTouched = false;
+
+  // Fewer than this on the board, out of a scan that priced plenty, is the "is this broken?" point.
+  const ARB_MIN_BOARD = 5;
+
   function renderArbitrageRows() {
     const body = $('fb-arb-body');
     if (!body || !arbitrageData) return;
 
     const sort = $('fb-arb-sort')?.value || 'roi';
-    const hideLosers = !!$('fb-arb-hide-losers')?.checked;
-    const provenOnly = !!$('fb-arb-proven-only')?.checked;
-    const fastOnly = !!$('fb-arb-fast-only')?.checked;
-    const warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
+    let hideLosers = !!$('fb-arb-hide-losers')?.checked;
+    let provenOnly = !!$('fb-arb-proven-only')?.checked;
+    let fastOnly = !!$('fb-arb-fast-only')?.checked;
+    let warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
     const category = $('fb-arb-category')?.value || '';
+
+    // ── Auto-relax ────────────────────────────────────────────────────────────
+    // Only ever loosens, only before the seller has touched a filter, and only when the board
+    // would otherwise be nearly empty. Relaxed in order of what costs least to give up: warranty
+    // and speed are preferences, "backed by real sold comps" is evidence quality (the rows come
+    // back dimmed and labelled ESTIMATE ONLY, so nothing is being passed off as proven), and the
+    // $100 floor goes last because a $14 row really is not a deal.
+    const relaxed = [];
+    if (!arbFiltersTouched) {
+      const survives = (hl, po, fo, wo) => arbitrageData.items.filter(r =>
+        (!hl || (r.netProfit != null && r.netProfit >= WORTH_DOING_NET)) &&
+        (!po || r.evidenceTier === 'confident') &&
+        (!fo || r.speedTier === 'fast') &&
+        (!wo || (r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0))).length;
+
+      const steps = [
+        ['warrantyOnly', () => warrantyOnly, () => { warrantyOnly = false; }, 'items still under warranty'],
+        ['fastOnly',     () => fastOnly,     () => { fastOnly = false; },     'money back in 3 weeks'],
+        ['provenOnly',   () => provenOnly,   () => { provenOnly = false; },   'only prices backed by real sold comps'],
+        ['hideLosers',   () => hideLosers,   () => { hideLosers = false; },   `only deals that clear $${WORTH_DOING_NET}`],
+      ];
+      for (const [, isOn, turnOff, label] of steps) {
+        if (survives(hideLosers, provenOnly, fastOnly, warrantyOnly) >= ARB_MIN_BOARD) break;
+        if (!isOn()) continue;
+        turnOff();
+        relaxed.push(label);
+      }
+      // The checkboxes must agree with the board they produced, or the seller reads a ticked box
+      // beside rows it would have removed and stops trusting either.
+      if (relaxed.length) {
+        const set = (id, v) => { const el = $(id); if (el) el.checked = v; };
+        set('fb-arb-hide-losers', hideLosers);
+        set('fb-arb-proven-only', provenOnly);
+        set('fb-arb-fast-only', fastOnly);
+        set('fb-arb-warranty-only', warrantyOnly);
+      }
+    }
 
     let rows = arbitrageData.items.slice();
     // What KIND of thing, applied first: it is the widest cut and the one the seller picked most
@@ -3419,21 +3506,47 @@
       rows = rows.filter(r => { const paid = paidFor(r); return paid >= min && paid <= max; });
     }
 
-    // The $100 bar, not a "> 0" bar. A row that nets $14 on a 280% return is not a deal: it does
-    // not pay for finding it, listing it and packing it, and it pushes the rows that would down
-    // the board. Same figure the server grades verdicts on (LocalArbitrageAnalyzer.SolidProfit),
-    // so the filter and the badge cannot disagree about what "worth doing" means.
-    if (hideLosers) rows = rows.filter(r => r.netProfit != null && r.netProfit >= WORTH_DOING_NET);
-    // A price nobody could check is not a price. These rows kept arriving at the top of the board
-    // with the biggest numbers on them precisely BECAUSE they were unchecked — one unusual sold
-    // comp sets a resale figure no real sale supports.
-    if (provenOnly) rows = rows.filter(r => r.evidenceTier === 'confident');
-    // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
-    if (fastOnly) rows = rows.filter(r => r.speedTier === 'fast');
-    // Cover that is still running, whoever it protects. A seller's own guarantee is worth nothing
-    // on resale and is still the reason to buy this unit over the identical uncovered one, so it
-    // belongs in the same filter — see WarrantyPricer.
-    if (warrantyOnly) rows = rows.filter(r => r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0);
+    // Everything above this line is the seller saying what they are shopping for today. Everything
+    // below is a quality bar, and the difference matters: a scan that priced 120 products and puts
+    // one row on the board has not failed, but it looks exactly like a scan that failed unless the
+    // board says which bar took the other 119 and offers them back. So the bars are a list rather
+    // than a run of ifs — the list is what lets the board count what each one is holding.
+    const shopping = rows;
+    const bars = [
+      // The $100 bar, not a "> 0" bar. A row that nets $14 on a 280% return is not a deal: it does
+      // not pay for finding it, listing it and packing it, and it pushes the rows that would down
+      // the board. Same figure the server grades verdicts on (LocalArbitrageAnalyzer.SolidProfit),
+      // so the filter and the badge cannot disagree about what "worth doing" means.
+      hideLosers && {
+        id: 'fb-arb-hide-losers',
+        back: n => `Show ${n} that net under $${WORTH_DOING_NET}`,
+        keep: r => r.netProfit != null && r.netProfit >= WORTH_DOING_NET,
+      },
+      // A price nobody could check is not a price. These rows kept arriving at the top of the board
+      // with the biggest numbers on them precisely BECAUSE they were unchecked — one unusual sold
+      // comp sets a resale figure no real sale supports.
+      provenOnly && {
+        id: 'fb-arb-proven-only',
+        back: n => `Show ${n} priced off thinner comps`,
+        keep: r => r.evidenceTier === 'confident',
+      },
+      // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
+      fastOnly && {
+        id: 'fb-arb-fast-only',
+        back: n => `Show ${n} slower than 3 weeks`,
+        keep: r => r.speedTier === 'fast',
+      },
+      // Cover that is still running, whoever it protects. A seller's own guarantee is worth nothing
+      // on resale and is still the reason to buy this unit over the identical uncovered one, so it
+      // belongs in the same filter — see WarrantyPricer.
+      warrantyOnly && {
+        id: 'fb-arb-warranty-only',
+        back: n => `Show ${n} with no warranty mentioned`,
+        keep: r => r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0,
+      },
+    ].filter(Boolean);
+
+    for (const bar of bars) rows = rows.filter(bar.keep);
 
     // Unpriced rows always sort last whatever the key — "we couldn't price this" isn't a zero.
     const nullsLast = (a, b, key) => (a[key] == null) - (b[key] == null) || null;
@@ -3467,6 +3580,44 @@
         : `${rows.length} of ${arbitrageData.items.length} shown`;
     }
 
+    // What each bar is holding back, on its own: how many MORE rows would appear if this one
+    // switch went off and the others stayed on. Overlaps make the numbers not add up to the total
+    // hidden, and that is the point — each figure is the answer to "what happens if I untick
+    // THIS", which is the only question a seller is about to act on. Measured off the shopping
+    // cut, so the category and price band the seller deliberately chose are never offered back.
+    const held = bars
+      .map(bar => {
+        const others = bars.filter(o => o !== bar);
+        return { bar, n: shopping.filter(r => others.every(o => o.keep(r))).length - rows.length };
+      })
+      .filter(h => h.n > 0)
+      .sort((a, b) => b.n - a.n);
+
+    const cut = $('fb-arb-cut');
+    if (cut) {
+      // Only while there is still a board to read. With nothing showing, the empty state below is
+      // already the whole message and says the same thing at more length.
+      const show = rows.length && (held.length || relaxed.length);
+      cut.classList.toggle('hidden', !show);
+      // Said first and said plainly when it happened: a board that quietly loosened its own
+      // filters would be worse than the empty one it replaced. The estimate rows it lets back in
+      // are still dimmed and badged ESTIMATE ONLY in the table itself.
+      const relaxNote = relaxed.length
+        ? `<span class="fb-arb-cut-count">Your filters left almost nothing, so the board turned off `
+          + `<strong>${relaxed.map(esc).join('</strong> and <strong>')}</strong> to show you `
+          + `${rows.length} ${rows.length === 1 ? 'deal' : 'deals'}. `
+          + `Rows priced off thin comps are dimmed and marked ESTIMATE ONLY — tick the boxes back on to hide them.</span>`
+        : '';
+      cut.innerHTML = !show ? '' :
+        relaxNote
+        + (held.length
+            ? `<span class="fb-arb-cut-count">Showing ${rows.length} of the ${shopping.length} ${
+                shopping.length === 1 ? 'deal' : 'deals'} this scan priced — the filters are holding the rest.</span>`
+            : '')
+        + held.map(h => `<button type="button" class="btn btn-secondary small fb-arb-cut-btn" `
+          + `data-bar="${h.bar.id}">${esc(h.bar.back(h.n))}</button>`).join('');
+    }
+
     body.innerHTML = rows.length
       ? rows.map(arbitrageRowHtml).join('')
       : `<tr><td colspan="9" class="fb-arb-empty">${
@@ -3482,6 +3633,16 @@
               : (hideLosers || provenOnly) && arbitrageData.items.length
                 ? emptyUnderTheBarMessage()
                 : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
+
+    // Unticks the one bar the button names and re-renders — the same thing the checkbox does, so
+    // the checkbox and the board can't end up disagreeing about what is filtered.
+    cut?.querySelectorAll('.fb-arb-cut-btn').forEach(btn => btn.addEventListener('click', () => {
+      const box = $(btn.dataset.bar);
+      if (!box) return;
+      box.checked = false;
+      arbFiltersTouched = true;   // a deliberate choice, same as ticking the box by hand
+      renderArbitrageRows();
+    }));
 
     // Re-bound after every render: the table body is replaced wholesale by the sort and filter
     // controls, so listeners attached to the previous rows are gone with them.
@@ -16687,12 +16848,19 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
     results?.classList.remove('hidden');
     if (summary) summary.innerHTML = seller
-      ? 'Pulling this seller\'s listings and checking sold comps — verifying the top candidates can take up to a minute…'
-      : 'Searching live listings and checking sold comps — verifying the top candidates can take up to a minute…';
+      ? 'Fetching fresh sold prices from eBay, then pulling this seller\'s listings and pricing each against them. The live lookup is the slow part — up to three minutes.'
+      : 'Fetching fresh sold prices from eBay, then searching live listings and pricing each against them. The live lookup is the slow part — up to three minutes.';
     if (list) list.innerHTML = '';
     if (stats) stats.innerHTML = '';
     OPP_FILTERS.forEach(([id]) => { const el = $(id); if (el) el.checked = false; });
     OPP_RANGE_FILTERS.forEach(([id]) => { const el = $(id); if (el) el.value = ''; });
+
+    // An opportunity search is the other of the two moments a live lookup may run. One scrape for
+    // the term being searched, not one per result: a page of results would be forty scrapes and
+    // exactly the volume that got this machine tarpitted. That one scrape lands in the comps
+    // database before the server prices anything, so every result below is judged against it.
+    // Seller-only searches have no product term to scrape, so they skip straight to the search.
+    if (q) await runLiveLookup(q, 'opp');
 
     try {
       const params = new URLSearchParams({ listingType });
@@ -19271,6 +19439,148 @@
     return base > 0 ? Math.round(base * 100) / 100 : null;
   }
 
+  // ── Live eBay lookup ───────────────────────────────────────────────────────
+  // Scrapes eBay for one exact model before pricing it, and files what comes back into the comps
+  // database — so the corpus deepens on the models actually being worked on, and the next lookup
+  // of the same one is instant. The daily background crawl this replaced was retired on
+  // 2026-08-07 because its volume, not its speed, was what drew eBay's blocks.
+  //
+  // It runs in exactly TWO places, by the seller's instruction (2026-08-11): an opportunity
+  // search, and pricing something they are about to list. Both spend real money on the answer.
+  // Nothing else may trigger it — a scrape nobody asked for is the volume that gets us blocked.
+  //
+  // It can take up to three minutes, which the seller has accepted ON THE CONDITION that the app
+  // says so plainly while they wait. That is what the bar and its captions below are for; they
+  // are not decoration, they are the terms of the deal.
+
+  const LIVE_BUDGET_MS = 195000;   // just past the server's own 180s kill
+
+  // The same bar is drawn in the Market Research panel, the New Listing comps strip and the
+  // Opportunity Finder. They differ only by id prefix, so the driver takes the prefix rather than
+  // three copies of this logic drifting apart.
+  //
+  // State is held PER PANEL rather than in module-level variables. Two panels can have a lookup in
+  // flight at once — the server answers the second one "busy" immediately, but that answer still
+  // has to be painted, and with shared state it would be painted into the first panel's bar while
+  // the first panel's ticker wrote into the second's. Each bar owns its own timer and percentages.
+  const liveBars = new Map();
+
+  function liveState(prefix) {
+    let s = liveBars.get(prefix);
+    if (!s) { s = { timer: null, target: 0, shown: 0 }; liveBars.set(prefix, s); }
+    return s;
+  }
+
+  function liveEl(prefix, suffix) { return $(`${prefix}-live${suffix}`); }
+  function setLiveText(prefix, suffix, text) { const el = liveEl(prefix, suffix); if (el) el.textContent = text; }
+
+  function startLiveBar(prefix) {
+    const box = liveEl(prefix, '');
+    if (!box) return;
+    const st = liveState(prefix);
+    box.classList.remove('hidden', 'done', 'blocked');
+    st.target = st.shown = 0;
+    setLiveText(prefix, '-note', 'This is a live lookup on eBay, not a cached number — it usually takes about a minute and can take up to three.');
+    setLiveText(prefix, '-stage', 'Asking eBay for recent sold prices…');
+    const started = Date.now();
+
+    stopLiveBar(prefix);
+    st.timer = setInterval(() => {
+      const secs = Math.round((Date.now() - started) / 1000);
+      setLiveText(prefix, '-elapsed', `${secs}s`);
+
+      // Creep toward — but never past — the next reported milestone. A single Seller Hub page can
+      // take 45 seconds, during which the server has nothing new to say; a bar parked at exactly
+      // 15% for that long is the "is it frozen?" moment this feature exists to remove. Creeping
+      // stays honest because it can never overtake real progress or reach the end on its own.
+      //
+      // Asymptotic rather than linear-then-stopped: the step shrinks as it nears the ceiling but
+      // never reaches zero, so on a slow page the bar keeps inching instead of freezing partway,
+      // which reads exactly like the hang it is supposed to disprove.
+      const ceiling = Math.min(st.target + 28, 95);
+      if (st.shown < ceiling) {
+        st.shown = Math.min(ceiling, st.shown + Math.max(0.04, (ceiling - st.shown) * 0.012));
+      }
+      const bar = liveEl(prefix, '-bar');
+      if (bar) bar.style.width = `${Math.max(st.shown, st.target).toFixed(1)}%`;
+
+      // Past this the seller deserves an actual sentence, not just a moving bar. A long wait with
+      // no explanation is where people conclude the app is broken and reach for the close button —
+      // and the scrape is genuinely still running at this point. Spread across the full three
+      // minutes so the last stretch, which is the one that feels broken, is the best explained.
+      if (secs === 30 || secs === 75 || secs === 130) {
+        setLiveText(prefix, '-note',
+          secs >= 130 ? 'Still going. It will give up at three minutes and price this from stored comps instead — you will not be left waiting past that.'
+          : secs >= 75 ? 'eBay is slower than usual today. Still worth waiting: this writes fresh sold prices into your database for next time.'
+          : 'Still waiting on eBay. A fresh lookup is usually about a minute, and up to three when eBay is slow.');
+      }
+    }, 250);
+  }
+
+  function stopLiveBar(prefix) {
+    const st = liveBars.get(prefix);
+    if (st?.timer) { clearInterval(st.timer); st.timer = null; }
+  }
+
+  function paintLive(prefix, run) {
+    const st = liveState(prefix);
+    st.target = Math.max(st.target, Number(run.percent) || 0);
+    // Creep resumes from wherever the bar actually is, not from behind it. Without this the
+    // ticker spends its first eighteen seconds climbing back up to a milestone the server had
+    // already reported — which is exactly the stretch that looks frozen.
+    st.shown = Math.max(st.shown, st.target);
+    if (run.stage) setLiveText(prefix, '-stage', run.stage);
+    if (Number(run.rowsFound) > 0) setLiveText(prefix, '-note', `${run.rowsFound} sold listings so far…`);
+  }
+
+  function finishLiveBar(prefix, run) {
+    stopLiveBar(prefix);
+    const box = liveEl(prefix, '');
+    const bar = liveEl(prefix, '-bar');
+    if (bar) bar.style.width = '100%';
+    if (!box) return;
+
+    box.classList.toggle('blocked', !!run.blockedByEbay);
+    box.classList.toggle('done', !run.blockedByEbay);
+    if (run.stage) setLiveText(prefix, '-stage', run.stage);
+
+    // The message matters more than the bar. "eBay isn't answering us" and "this model has no
+    // recent sales" are the same zero rows and opposite conclusions, and a seller who reads the
+    // first as the second concludes their item is worthless.
+    setLiveText(prefix, '-note', run.message ||
+      (run.outcome === 'ok' ? `${run.rowsFound} sold listings fetched, ${run.rowsNew} new to your database.` : ''));
+
+    // Cleared after a beat on the happy path so the panel isn't permanently half progress bar.
+    if (run.outcome === 'ok') setTimeout(() => box.classList.add('hidden'), 2500);
+  }
+
+  // Runs the live lookup to completion and hands back the finished run. Never throws: every
+  // failure mode ends as a run with an outcome, because the caller's next step — read the comps —
+  // is identical whether eBay answered, blocked, or was never reachable.
+  async function runLiveLookup(q, prefix) {
+    const panel = prefix || 'mr';
+    const deadlineAt = Date.now() + LIVE_BUDGET_MS;
+    try {
+      startLiveBar(panel);
+      let run = await fetch('/api/comps/live/start?q=' + encodeURIComponent(q), { method: 'POST' })
+        .then(r => r.json());
+      paintLive(panel, run);
+
+      while (!run.finished && Date.now() < deadlineAt) {
+        await new Promise(r => setTimeout(r, 900));
+        run = await fetch('/api/comps/live/status?id=' + encodeURIComponent(run.id)).then(r => r.json());
+        paintLive(panel, run);
+      }
+      finishLiveBar(panel, run);
+      return run;
+    } catch (err) {
+      const run = { finished: true, outcome: 'error', blockedByEbay: false, rowsFound: 0, rowsNew: 0,
+                    stage: 'Using stored comps', message: 'Live eBay lookup unavailable — pricing from stored comps.' };
+      finishLiveBar(panel, run);
+      return run;
+    }
+  }
+
   async function runSoldResearch() {
     const { q, basis } = buildResearchQuery();
     const results = $('mr-results');
@@ -19285,6 +19595,11 @@
     setResearchStatus('Searching sold listings…', 'working');
     $('btn-mr-sold')?.setAttribute('disabled', 'disabled');
 
+    // Scrape this exact model from eBay first, and let it write to the comps database, before
+    // anything is priced. This panel is part of the listing flow — one of the two places a live
+    // lookup is allowed to run.
+    const live = await runLiveLookup(q, 'mr');
+
     try {
       // Cost and current ask ride along so the answer comes back already costed — a median is a
       // gross number, and the seller pricing off it needs to see what is left of it.
@@ -19296,9 +19611,20 @@
       const buyerShipping = thNum('f-buyer-shipping');
       if (buyerShipping > 0) params.set('buyerShipping', String(buyerShipping));
 
+      // Only when the scrape actually returned rows. A blocked one leaves this off so Terapeak
+      // still gets its turn — one live source failing says nothing about the other.
+      if (live.outcome === 'ok') params.set('fresh', 'true');
+
       const res = await fetch('/api/sold-comps?' + params.toString());
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+
+      // When eBay blocked the live lookup, say so alongside whatever the stored comps produced.
+      // Prices that are three weeks old are perfectly usable for a decision, but only if the
+      // seller knows that is what they are looking at.
+      // renderResearch appends "Showing <source> instead", so this only has to supply the reason.
+      if (live.blockedByEbay && Number(data.count) > 0 && live.message) data.dataNote = live.message;
+
       lastResearch = data;
       renderResearch(data);
     } catch (err) {
@@ -19335,7 +19661,8 @@
     // depending on which one produced it — the server names the source, so nothing here has to
     // guess from a slug.
     const srcLabel = d.sourceLabel ||
-      { marketplace_insights: 'eBay Insights', hosted_comps: 'Sold-comps database', none: 'Links only' }[d.source] ||
+      { marketplace_insights: 'eBay Insights', live_ebay: 'Fetched from eBay just now',
+        hosted_comps: 'Sold-comps database', none: 'Links only' }[d.source] ||
       d.source || '—';
 
     // A source that answered does not mean every source did. When Terapeak dropped out and the
@@ -21608,6 +21935,11 @@
     link.classList.add('hidden');
     terapeak.classList.add('hidden');
 
+    // Pricing something you are about to list is one of the two moments a live eBay lookup is
+    // allowed to run. It is worth the wait here specifically: this number is what the item gets
+    // listed at, and a stale median is how you underprice something by fifty dollars.
+    const live = await runLiveLookup(itemName, 'nl');
+
     try {
       // Same costing ride-along as the Market Research panel — see runSoldResearch.
       const params = new URLSearchParams({ q: itemName });
@@ -21617,6 +21949,9 @@
       if (nlAsk  > 0) params.set('ask',  String(nlAsk));
       const nlBuyerShipping = thNum('nl-buyer-shipping');
       if (nlBuyerShipping > 0) params.set('buyerShipping', String(nlBuyerShipping));
+
+      // Only when the scrape actually returned rows — a blocked one must not claim freshness.
+      if (live.outcome === 'ok') params.set('fresh', 'true');
 
       const res  = await fetch(`/api/sold-comps?${params.toString()}`);
       const data = await res.json().catch(() => ({}));

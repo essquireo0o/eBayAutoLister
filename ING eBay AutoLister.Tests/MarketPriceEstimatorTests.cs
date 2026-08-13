@@ -108,6 +108,58 @@ public class MarketPriceEstimatorTests : IDisposable
         Assert.Equal(0.85m, local, 2);
     }
 
+    [Fact]
+    public void ResolveWeights_StaleLocalData_LosesShareOfTheBlendToTerapeak()
+    {
+        var fresh = MarketPriceEstimator.ResolveWeights(true, localStrongCount: 10, terapeakStrongCount: 5,
+            terapeakFreshnessWeight: 1.0, localFreshnessWeight: 1.0);
+        var stale = MarketPriceEstimator.ResolveWeights(true, localStrongCount: 10, terapeakStrongCount: 5,
+            terapeakFreshnessWeight: 1.0, localFreshnessWeight: 0.2);
+
+        Assert.True(stale.LocalWeight    < fresh.LocalWeight);
+        Assert.True(stale.TerapeakWeight > fresh.TerapeakWeight);
+    }
+
+    [Fact]
+    public void ResolveWeights_AgeCostsBothSourcesTheSame()
+    {
+        // The asymmetry this replaced: decaying only Terapeak let a stale comps database outvote a
+        // fresher live source purely on row count. Mirror-image inputs must give mirror-image
+        // weights, or one source is still being graded on a kinder curve than the other.
+        var localStale = MarketPriceEstimator.ResolveWeights(true, localStrongCount: 8, terapeakStrongCount: 8,
+            terapeakFreshnessWeight: 1.0, localFreshnessWeight: 0.4);
+        var terapeakStale = MarketPriceEstimator.ResolveWeights(true, localStrongCount: 8, terapeakStrongCount: 8,
+            terapeakFreshnessWeight: 0.4, localFreshnessWeight: 1.0);
+
+        Assert.Equal(localStale.LocalWeight, terapeakStale.TerapeakWeight, 4);
+        Assert.Equal(localStale.TerapeakWeight, terapeakStale.LocalWeight, 4);
+    }
+
+    [Fact]
+    public void ResolveWeights_FresherSourceOutweighsAStalerOneHoldingTwiceAsManyComps()
+    {
+        // The real-world case that motivated this: the local corpus stopped being topped up, so
+        // its row count kept growing stale while a live lookup saw the actual market. Twice the
+        // comps must not beat five-times-fresher evidence.
+        var (local, terapeak) = MarketPriceEstimator.ResolveWeights(true,
+            localStrongCount: 20, terapeakStrongCount: 10,
+            terapeakFreshnessWeight: 1.0, localFreshnessWeight: 0.2);
+
+        Assert.True(terapeak > local);
+    }
+
+    [Theory]
+    [InlineData(0, 1.0)]
+    [InlineData(30, 1.0)]
+    [InlineData(31, 0.7)]
+    [InlineData(90, 0.7)]
+    [InlineData(120, 0.4)]
+    [InlineData(200, 0.2)]
+    public void FreshnessWeight_DecaysOnOneCurveForBothSources(double ageDays, double expected)
+    {
+        Assert.Equal(expected, MarketPriceEstimator.FreshnessWeight(ageDays));
+    }
+
     // ── Disagreement detection (unchanged behavior) ──────────────────────────────
 
     [Fact]

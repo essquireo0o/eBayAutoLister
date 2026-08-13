@@ -33,7 +33,7 @@ public sealed class EarningsStore
         command.CommandText = """
             SELECT id, source, order_id, line_item_id, listing_id, sku, title, sold_at, quantity,
                    sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
-                   unit_cost, refunded_amount, status, note, updated_at
+                   unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at
             FROM flips
             ORDER BY sold_at DESC, id DESC;
             """;
@@ -45,6 +45,33 @@ public sealed class EarningsStore
     }
 
     public FlipRecord? Get(long id) => GetAll().FirstOrDefault(f => f.Id == id);
+
+    /// <summary>
+    /// One eBay order line, read fresh. Used by the importer so that what it carries forward onto a
+    /// re-imported row is what is on that row NOW, not what was there before the import started
+    /// talking to eBay — the seller may have typed a cost in the meantime, and it would be written
+    /// straight back out. Hits the unique (order_id, line_item_id) index.
+    /// </summary>
+    public FlipRecord? FindByOrderLine(string? orderId, string? lineItemId)
+    {
+        if (string.IsNullOrWhiteSpace(orderId) || string.IsNullOrWhiteSpace(lineItemId)) return null;
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, source, order_id, line_item_id, listing_id, sku, title, sold_at, quantity,
+                   sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
+                   unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at
+            FROM flips
+            WHERE order_id = @order_id AND line_item_id = @line_item_id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("@order_id", orderId);
+        command.Parameters.AddWithValue("@line_item_id", lineItemId);
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? Read(reader) : null;
+    }
 
     /// <summary>
     /// Inserts or updates one flip. eBay lines match on (order_id, line_item_id); everything else
@@ -66,11 +93,11 @@ public sealed class EarningsStore
                 INSERT INTO flips
                     (source, order_id, line_item_id, listing_id, sku, title, sold_at, quantity,
                      sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
-                     unit_cost, refunded_amount, status, note, updated_at)
+                     unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at)
                 VALUES
                     (@source, @order_id, @line_item_id, @listing_id, @sku, @title, @sold_at, @quantity,
                      @sale_price, @shipping_charged, @marketplace_fee, @shipping_cost, @other_costs,
-                     @unit_cost, @refunded_amount, @status, @note, @updated_at);
+                     @unit_cost, @refunded_amount, @status, @note, @updated_at, @cost_confirmed_at);
                 SELECT last_insert_rowid();
                 """;
             Bind(insert, flip);
@@ -87,7 +114,8 @@ public sealed class EarningsStore
                 quantity = @quantity, sale_price = @sale_price, shipping_charged = @shipping_charged,
                 marketplace_fee = @marketplace_fee, shipping_cost = @shipping_cost,
                 other_costs = @other_costs, unit_cost = @unit_cost, refunded_amount = @refunded_amount,
-                status = @status, note = @note, updated_at = @updated_at
+                status = @status, note = @note, updated_at = @updated_at,
+                cost_confirmed_at = @cost_confirmed_at
             WHERE id = @id;
             """;
         Bind(update, flip);
@@ -120,7 +148,9 @@ public sealed class EarningsStore
         if (edit.MarketplaceFee.HasValue) flip.MarketplaceFee = edit.MarketplaceFee.Value;
         if (edit.ShippingCost.HasValue) flip.ShippingCost = edit.ShippingCost.Value;
         if (edit.OtherCosts.HasValue) flip.OtherCosts = edit.OtherCosts.Value;
-        if (edit.UnitCost.HasValue) flip.UnitCost = edit.UnitCost.Value;
+        // A cost typed here is the seller answering too, zero included — the same answer the
+        // awaiting-cost panel takes, so it has to stop the asking the same way.
+        if (edit.UnitCost.HasValue) { flip.UnitCost = edit.UnitCost.Value; flip.CostConfirmedUtc = DateTimeOffset.UtcNow; }
         if (edit.RefundedAmount.HasValue) flip.RefundedAmount = edit.RefundedAmount.Value;
         if (!string.IsNullOrWhiteSpace(edit.Status)) flip.Status = NormalizeStatus(edit.Status);
         if (edit.Note is not null) flip.Note = edit.Note.Trim();
@@ -224,6 +254,13 @@ public sealed class EarningsStore
         command.Parameters.AddWithValue("@status", flip.Status ?? "paid");
         command.Parameters.AddWithValue("@note", flip.Note ?? "");
         command.Parameters.AddWithValue("@updated_at", flip.UpdatedUtc.ToString("O"));
+        // The seller's own answer about what this cost, as opposed to a zero that arrived from an
+        // eBay import. Null until they say. Without this column the confirmation lived only on the
+        // in-memory object the request happened to be holding, so "save $0.00 to stop being asked"
+        // did nothing at all: the next read rebuilt the row from the database with no memory of it,
+        // and the sale came straight back to the awaiting-cost list.
+        command.Parameters.AddWithValue("@cost_confirmed_at",
+            (object?)flip.CostConfirmedUtc?.ToString("O") ?? DBNull.Value);
     }
 
     private static FlipRecord Read(SqliteDataReader reader) => new()
@@ -247,6 +284,8 @@ public sealed class EarningsStore
         Status = reader.GetString(16),
         Note = reader.GetString(17),
         UpdatedUtc = DateTimeOffset.TryParse(reader.GetString(18), out var updated) ? updated : DateTimeOffset.MinValue,
+        CostConfirmedUtc = reader.IsDBNull(19) ? null
+            : DateTimeOffset.TryParse(reader.GetString(19), out var confirmed) ? confirmed : null,
     };
 
     private void Initialize()
@@ -273,7 +312,11 @@ public sealed class EarningsStore
                 refunded_amount NUMERIC NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'paid',
                 note TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
+                updated_at TEXT NOT NULL DEFAULT '',
+                -- When the SELLER said what this cost, as opposed to a cost that arrived with an
+                -- import. Only this column can tell "free, and I'm sure" from "$0.00 because eBay
+                -- had nothing to send" — a bare 0 in unit_cost reads identically for both.
+                cost_confirmed_at TEXT NULL
             );
 
             -- The one index that matters: it is what makes a re-import an update instead of a
@@ -284,6 +327,23 @@ public sealed class EarningsStore
             CREATE INDEX IF NOT EXISTS ix_flips_sold_at ON flips(sold_at);
             """;
         command.ExecuteNonQuery();
+
+        // Every database created before the confirmation existed still has the original schema and
+        // will carry it for as long as it runs. Added in place rather than rebuilt: NULL is exactly
+        // what those rows know — nobody has confirmed any of their costs yet.
+        AddColumnIfMissing(connection, "cost_confirmed_at", "TEXT NULL");
+    }
+
+    private static void AddColumnIfMissing(SqliteConnection connection, string column, string declaration)
+    {
+        using var probe = connection.CreateCommand();
+        probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('flips') WHERE name = @name;";
+        probe.Parameters.AddWithValue("@name", column);
+        if (Convert.ToInt32(probe.ExecuteScalar()) > 0) return;
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE flips ADD COLUMN {column} {declaration};";
+        alter.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()
