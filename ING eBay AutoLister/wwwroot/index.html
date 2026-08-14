@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=128" />
+  <link rel="stylesheet" href="style.css?v=129" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2876,7 +2876,22 @@
                 <input id="wn-watch" type="checkbox" />
                 <span>Keep reading</span>
               </label>
+              <!-- Reads the VIDEO, not the page. Whatnot refuses to be embedded and a browser cannot
+                   see inside a cross-origin frame, so this asks you to share your Whatnot tab, samples
+                   a frame from it every few seconds, and has AI name what is physically on screen —
+                   then prices it exactly like a typed name. This is the one control that spends an AI
+                   read per frame, on purpose and only while it is on. -->
+              <button id="wn-video-btn" class="btn btn-ghost wn-video-btn" type="button"
+                      title="Share your Whatnot tab and let AI read what's on screen, then price it">🎥 Read the video (AI)</button>
             </div>
+            <!-- Visual status only, deliberately NOT a live region: #wn-say is the one live region on
+                 this screen, and a second announcement competing with it during a live sale leaves a
+                 screen reader saying nothing usable. -->
+            <div id="wn-video-status" class="wn-video-status hidden"></div>
+            <!-- Off-screen capture surface for the shared tab. The video is muted and never shown; it
+                 exists only so a frame can be drawn to the canvas and sent as base64. -->
+            <video id="wn-video-el" muted playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px"></video>
+            <canvas id="wn-video-canvas" style="display:none"></canvas>
             <div id="wn-read-out" class="wn-read-out hidden"></div>
             <!-- What the photo says about the name. Not a live region — #wn-say is the only one on
                  this screen, and two competing announcements during a live sale is a screen reader
@@ -6315,6 +6330,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=145"></script>
+  <script src="app.js?v=146"></script>
 </body>
 </html>

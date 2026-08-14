@@ -2133,6 +2133,21 @@ textarea {
   color: var(--danger);
 }
 
+/* Waiting on eBay: the seller's consent screen is open in another tab and this page is holding
+   its place. Deliberately neither green nor red — nothing has succeeded or failed yet, and the
+   whole point of the new tab is that this page did not go anywhere. */
+#result.waiting {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+
+#result.waiting a,
+#result.error a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -16831,6 +16846,23 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-read-hint {
   margin: 6px 0 0;
 }
+
+/* The AI video read: while it is on, its button reads as an armed switch, and its status line
+   says what was last seen on screen. Colours borrow the same success/warning tokens the rest of
+   this screen uses so a "read worked" and a "read failed" look the same here as everywhere. */
+.wn-video-btn.active {
+  background: var(--warning, #d4a24a);
+  color: #10141c;
+  border-color: var(--warning, #d4a24a);
+}
+.wn-video-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+}
+.wn-video-status.hidden { display: none; }
+.wn-video-status.wn-video-ok  { color: var(--success, #59c17a); }
+.wn-video-status.wn-video-bad { color: var(--warning, #d4a24a); }
 
 .wn-read-out {
   margin-top: 8px;

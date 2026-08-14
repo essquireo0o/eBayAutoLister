@@ -23,6 +23,26 @@ public sealed class LotPhotoRequest
     public string? Title { get; set; }
 }
 
+/// <summary>
+/// One frame grabbed off the shared live video, to read what is physically on screen. See
+/// <c>POST /api/whatsnot/watch</c>.
+/// </summary>
+/// <remarks>
+/// This is the answer to the one thing the page read (<c>/api/whatsnot/read</c>) cannot do: read the
+/// <b>video</b>, not the listing behind it. Whatnot refuses to be embedded and a browser cannot see
+/// inside a cross-origin frame, so the picture arrives the only way it can — the seller shares their
+/// Whatnot tab, the browser samples a frame to a canvas, and the JPEG rides here as base64. The
+/// server never touches Whatnot; it looks at a picture the seller's own screen produced.
+/// </remarks>
+public sealed class LiveWatchRequest
+{
+    /// <summary>The captured frame as base64 JPEG/PNG. A <c>data:</c> URL prefix is tolerated and stripped.</summary>
+    public string? ImageBase64 { get; set; }
+
+    /// <summary>The frame's media type, e.g. <c>image/jpeg</c>. Defaults to JPEG when absent.</summary>
+    public string? MediaType { get; set; }
+}
+
 /// <summary>The answers a look can give. Spelled once so the endpoint, the screen and the tests agree.</summary>
 public static class LotPhotoStatuses
 {

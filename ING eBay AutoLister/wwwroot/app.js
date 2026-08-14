@@ -1,4 +1,91 @@
 (() => {
+  // ── The signed-in session, on the hosted build only ─────────────────────────
+  // The desktop app has no sign-in and never will — it is one seller on a loopback port — so both
+  // of these are written to do nothing at all unless the server says otherwise, rather than being
+  // switched on by a build flag the browser cannot see.
+  //
+  // The wrapper: 155 fetch calls in this file, and any of them can be the one that discovers the
+  // session expired. Wrapping fetch once means every one of them lands the seller on the sign-in
+  // page instead of on a screen full of "Failed to fetch". It reacts to the header HostedAuth puts
+  // on its own 401s and to nothing else, so a 401 relayed back from eBay still reaches the caller
+  // that asked for it, and the desktop build — where no response ever carries the header — behaves
+  // exactly as it did before this existed.
+  const passThroughFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await passThroughFetch(...args);
+    if (response.status === 401 && response.headers.get('X-Auth-Required') === 'sign-in') {
+      const next = encodeURIComponent(location.pathname + location.search + location.hash);
+      location.replace('/signin.html?next=' + next);
+    }
+    return response;
+  };
+
+  // ── Is this page the eBay tab, coming back? ─────────────────────────────────
+  // The consent screen opens in a tab of its own (see startEbayConnect) and eBay redirects that
+  // tab, not the seller's, to /?ebay_connected=1. So this same file gets loaded a second time in
+  // a window whose only job is to tell the window that opened it and get out of the way.
+  //
+  // Run at the top of the file, before anything boots: everything below this line is a dashboard
+  // nobody is going to look at, and every fetch it fires is work done for a tab about to close.
+  // Doing nothing at all unless there is an opener AND an eBay parameter is what keeps the
+  // ordinary same-tab return — which the desktop build still uses if the tab was blocked —
+  // landing on checkSetupOnLoad exactly as it did before.
+  const ebayReturn = new URLSearchParams(location.search);
+  const ebayReturnConnected = ebayReturn.get('ebay_connected') === '1';
+  const ebayReturnError     = ebayReturn.get('ebay_error');
+
+  if ((ebayReturnConnected || ebayReturnError) && window.opener && window.opener !== window) {
+    try {
+      // Targeted at this origin, never '*': the message says whether an eBay account just got
+      // connected, and it is nobody else's business which tab is listening.
+      window.opener.postMessage(
+        { source: 'ing-ebay-signin', connected: ebayReturnConnected, error: ebayReturnError || null },
+        location.origin);
+    } catch { /* the opener is gone — the other tab is polling anyway */ }
+
+    // close() is allowed for a script-opened window, and is refused SILENTLY in enough situations
+    // that it cannot be the only plan. So the page is also rewritten to say the tab can be closed:
+    // if close() worked, nobody ever sees it; if it didn't, the seller is not left staring at a
+    // dashboard they did not ask for, wondering whether the sign-in took.
+    document.title = ebayReturnConnected ? 'eBay connected' : 'eBay sign-in stopped';
+    try { window.close(); } catch { /* refused; the message below is what they get */ }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.innerHTML =
+        '<main style="font:600 16px/1.6 system-ui,sans-serif;padding:48px;text-align:center">' +
+        (ebayReturnConnected
+          ? '<h1 style="font-size:22px">eBay is connected.</h1>'
+          : '<h1 style="font-size:22px">The eBay sign-in stopped before it finished.</h1>') +
+        '<p>You can close this tab — the ING Listing Engine tab has already been told.</p></main>';
+    });
+    return;
+  }
+
+  // The way out. /api/auth/me is mapped only by the hosted build, so a 404 here is the desktop
+  // app saying there is nobody to sign out and no control to draw.
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const who = await passThroughFetch('/api/auth/me');
+      if (!who.ok) return;
+
+      const { email } = await who.json();
+      const actions = document.querySelector('.topbar-actions');
+      if (!actions) return;
+
+      const button = document.createElement('button');
+      button.id = 'btn-sign-out';
+      button.type = 'button';
+      button.className = 'btn btn-ghost';
+      button.title = `Signed in as ${email}`;
+      button.textContent = 'Sign out';
+      button.addEventListener('click', async () => {
+        await passThroughFetch('/api/auth/sign-out', { method: 'POST' });
+        location.replace('/signin.html');
+      });
+      actions.prepend(button);
+    } catch { /* no session endpoint, no sign-out button */ }
+  });
+
   let nlImageBase64 = '';
   let nlMimeType = 'image/jpeg';
   let ebayToken = '';
@@ -1218,7 +1305,10 @@
     promoted:    { section: 'promoted-section',      open: showPromotedSection },
     copilot:     { section: 'copilot-section',       open: showCopilotSection },
     shipping:    { section: 'shipping-section',      open: showShippingSection },
-    whatsnot:    { section: 'whatsnot-section',      open: showWhatsNotSection },
+    whatsnot:    { section: 'whatsnot-section',      open: showWhatsNotSection,
+                   // Switching tabs holds the screen in the DOM, so the video read would keep its
+                   // screen-share and its AI spend on a screen nobody is looking at. Stop it on hide.
+                   onHide: () => wnStopVideoWatch('') },
 
     // These five have no sidebar entry — they were removed from the nav — so they carry their own
     // title and icon. Everything else takes both off its nav button, which is why renaming a
@@ -1783,15 +1873,52 @@
     await loadFacebookStatus();
   }
 
+  // ── Signing in to eBay, without losing the page you were on ───────────────
+  //
+  // eBay's consent screen opens in a tab of its own and this page stays exactly where it is.
+  // It used to be `window.location.href = url`, which threw away whatever the seller had open —
+  // a half-filled listing, a deal board mid-scan — and returned them to a dashboard with no
+  // account of whether the sign-in had worked. On a hosted deployment that is worse still: the
+  // round trip crosses two other sites, and coming back to a reloaded page is indistinguishable
+  // from coming back to a page that never changed.
+  //
+  // THE TRAP. A browser only honours window.open() from inside the click that asked for it. The
+  // URL is not known at that moment — it comes from /api/ebay/auth-url, an await away — so the
+  // tab is opened blank, synchronously, on the click, and pointed at eBay when the URL lands.
+  // Opening it after the await is blocked every time, in every browser, and silently.
+
+  /** Which sign-in this page is watching, so a second click doesn't leave two watchers running. */
+  let ebayWatch = null;
+
+  /**
+   * The blank tab, opened on the click itself. Null means a pop-up blocker refused it — which is
+   * a thing to say out loud, not a thing to fail quietly on.
+   */
+  function openBlankEbayTab() {
+    try {
+      // No features string: that gives a tab rather than a stripped-down pop-up window. No
+      // 'noopener' either — the opener reference is how the callback page reports back.
+      return window.open('about:blank', 'ing-ebay-signin');
+    } catch { return null; }
+  }
+
+  function closeEbayTab(tab) {
+    try { if (tab && !tab.closed) tab.close(); } catch { /* already gone, or never opened */ }
+  }
+
   // The topbar's "Log into eBay" and the connection doctor's "Connect eBay" have
   // to start the same flow, including the part where missing developer keys send
   // you to the setup modal instead of to a broken auth URL — two copies of that
   // is how one of them ends up sending people somewhere useless.
   async function startEbayConnect() {
+    // FIRST LINE, before any await. See THE TRAP above.
+    const tab = openBlankEbayTab();
+
     try {
       const status = await fetch('/api/setup/status').then(r => r.json());
       const hasEbayCreds = status.hasEbayClientId && status.hasEbayClientSecret;
       if (!hasEbayCreds) {
+        closeEbayTab(tab);
         openSetup(status);
         showResult('error', 'Add your eBay Client ID and Client Secret in Settings first.');
         return;
@@ -1802,17 +1929,121 @@
       const res  = await fetch('/api/ebay/auth-url');
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.url) {
+        closeEbayTab(tab);
         openSetup(null);
         showResult('error', body?.error
           ? `Can't start the eBay sign-in: ${esc(body.error)} ${esc(body.nextAction || '')}`
           : 'Can\'t start the eBay sign-in, and the app gave no reason. Check Settings → eBay → Advanced.');
         return;
       }
-      window.location.href = body.url;
+      sendToEbayConsent(tab, body.url);
     } catch (err) {
+      closeEbayTab(tab);
       openSetup(null);
       showResult('error', `eBay login failed: ${esc(errorText(err))}`);
     }
+  }
+
+  /**
+   * Points the tab at eBay and puts this page into "waiting" — or, when the tab never opened,
+   * hands over the link instead of pretending the button did something.
+   */
+  function sendToEbayConsent(tab, url) {
+    if (!tab || tab.closed) {
+      // rel="opener" because target="_blank" implies noopener now, and the callback page reports
+      // back through window.opener. The poll below covers it either way.
+      showResult('error',
+        'Your browser blocked the eBay sign-in window. ' +
+        `<a href="${esc(url)}" target="_blank" rel="opener">Open the eBay sign-in yourself</a>, ` +
+        'or allow pop-ups for this site and click Log into eBay again. ' +
+        'This page will notice when you finish either way.');
+      addActivity('eBay sign-in window blocked', 'A pop-up blocker stopped the sign-in tab from opening.');
+      watchForEbayGrant(null);
+      return;
+    }
+
+    tab.location.href = url;
+    showResult('waiting',
+      'Waiting for eBay… finish signing in and approve the permissions in the tab that just opened. ' +
+      'This page updates itself when you\'re done — nothing here needs reloading.');
+    addActivity('eBay sign-in started', 'The consent screen opened in a new tab.');
+    watchForEbayGrant(tab);
+  }
+
+  /**
+   * Notices that the grant finished. Two ways, because neither one can be relied on alone:
+   *
+   *   * The callback page posts a message to window.opener. It lands back on this origin, so the
+   *     message is same-origin and instant. But the reference survives the trip through eBay only
+   *     if nothing on the way set noopener — a link the seller opened themselves, a browser with
+   *     cross-origin-opener-policy of its own, or a redirect chain that spawned a fresh context
+   *     all lose it, and the page would sit on "waiting" forever.
+   *   * So it also polls /api/ebay/status. Cheap — booleans and timestamps, no network call to
+   *     eBay — and it is the only signal that works when the opener reference is gone.
+   *
+   * Success is measured as a CHANGE. A seller reconnecting already has a token stored, and a
+   * watcher that concluded on "a token exists" would report success one second after the click,
+   * before they had typed anything.
+   */
+  function watchForEbayGrant(tab) {
+    stopEbayWatch();
+
+    const startedAt = Date.now();
+    const LIMIT_MS  = 15 * 60 * 1000;   // EbayOAuthSessionLedger.Lifetime, server-side
+    let hadRefreshToken = null;         // filled by the first poll
+
+    const conclude = async (ok, detail) => {
+      stopEbayWatch();
+      closeEbayTab(tab);
+      if (ok) {
+        // Repaints the topbar and, because this is a connection landing *now*, runs the live
+        // link check — see updateAuthUI, which is the one place that decides that.
+        updateAuthUI(true);
+        showResult('success', '✓ Connected to eBay.');
+        addActivity('eBay connected', detail || 'The sign-in finished in the eBay tab.');
+      } else {
+        showResult('error', detail || 'The eBay sign-in didn\'t finish.');
+        addActivity('eBay sign-in did not finish', detail || '');
+      }
+    };
+
+    const poll = async () => {
+      const s = await fetch('/api/ebay/status').then(r => r.json()).catch(() => null);
+      if (!s) return;                                   // a blip; the next tick asks again
+      if (hadRefreshToken === null) hadRefreshToken = !!s.hasRefreshToken;
+
+      if (s.signIn?.stage === 'Connected' || (!hadRefreshToken && s.hasRefreshToken)) {
+        await conclude(true, s.signIn?.message);
+        return;
+      }
+      if (s.signIn?.stage === 'Failed') {
+        await conclude(false, `${esc(s.signIn.message || '')} ${esc(s.signIn.nextAction || '')}`.trim());
+        return;
+      }
+      if (Date.now() - startedAt > LIMIT_MS) {
+        await conclude(false,
+          'The eBay sign-in was started 15 minutes ago and never came back. Click Log into eBay to start again.');
+      }
+    };
+
+    const onMessage = (event) => {
+      if (event.origin !== location.origin) return;
+      if (event.data?.source !== 'ing-ebay-signin') return;
+      if (event.data.connected) conclude(true, 'The eBay tab reported back.');
+      else poll();   // it failed; the server has the sentence for why
+    };
+
+    window.addEventListener('message', onMessage);
+    const timer = setInterval(poll, 2500);
+    ebayWatch = { timer, onMessage };
+    poll();          // once immediately, to take the "before" reading
+  }
+
+  function stopEbayWatch() {
+    if (!ebayWatch) return;
+    clearInterval(ebayWatch.timer);
+    window.removeEventListener('message', ebayWatch.onMessage);
+    ebayWatch = null;
   }
 
   // ── Connection doctor ────────────────────────────────────────────────────
@@ -10118,6 +10349,9 @@
     wnClearWatchTimer();
     const watch = $('wn-watch');
     if (watch) watch.checked = false;
+    // The video read holds a screen-share and spends an AI call per frame; a screen nobody is on
+    // must not keep doing either. Stops the capture and releases the shared tab.
+    wnStopVideoWatch('');
     wnReadSeq++;
     // A look already in flight has nothing left to paint onto.
     wnPhotoSeq++;
@@ -10640,6 +10874,132 @@
       return;
     }
     wnReadShow({ auto: true });
+  }
+
+  // ── WhatsNot: AI reads the shared VIDEO ──────────────────────────────────────
+  // The page read above answers from the show's listing data; this answers from the
+  // picture — what the host is physically holding up. Whatnot refuses to be embedded
+  // and a browser cannot see inside a cross-origin frame, so the only way to the video
+  // is to ask the seller to share their own Whatnot tab: the browser samples a frame to
+  // a canvas, the frame goes to /api/whatsnot/watch, AI names what is on screen, and the
+  // name runs through the same ⚡ Price it a typed one does. It spends one AI read per
+  // frame — the one control here that does — so it is off until pressed and it stops
+  // itself: on the cap, on the seller stopping the share, and on leaving the screen.
+  let wnVideoStream = null;
+  let wnVideoTimer = null;
+  let wnVideoReads = 0;
+  let wnVideoBusy = false;
+  let wnVideoLastSeen = '';   // the last item AI named, so the same lot isn't re-priced every frame
+  let wnVideoFilled = '';     // exactly what this loop last put in the item box, so typing over it shows
+
+  function wnVideoStatus(text, kind) {
+    const box = $('wn-video-status');
+    if (!box) return;
+    box.className = 'wn-video-status' + (kind ? ' wn-video-' + kind : '') + (text ? '' : ' hidden');
+    box.textContent = text || '';
+  }
+
+  function wnVideoOn() { return wnVideoStream !== null; }
+
+  async function wnToggleVideoWatch() {
+    if (wnVideoOn()) { wnStopVideoWatch('Stopped reading the video.'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      wnVideoStatus("This browser can't share a tab — use Chrome or Edge, or press 📡 Read the show instead.", 'bad');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false });
+    } catch (err) {
+      wnVideoStatus('', '');   // the seller closed the share picker — nothing to do
+      return;
+    }
+    wnVideoStream = stream;
+    wnVideoReads = 0;
+    wnVideoLastSeen = '';
+    wnVideoFilled = '';
+    const vid = $('wn-video-el');
+    if (vid) { vid.srcObject = stream; try { await vid.play(); } catch { /* muted autoplay is fine */ } }
+    // The seller can end the share from the browser's own bar; when they do, this stops.
+    stream.getVideoTracks().forEach(t =>
+      t.addEventListener('ended', () => wnStopVideoWatch('The tab share ended, so the video read stopped.')));
+    const btn = $('wn-video-btn');
+    if (btn) { btn.classList.add('active'); btn.textContent = '⏹ Stop reading the video'; }
+    wnVideoStatus(`Reading the video every ${Math.round(WN_WATCH_MS / 1000)}s — point the shared tab at the show.`, 'busy');
+    wnVideoTimer = setInterval(wnVideoTick, WN_WATCH_MS);
+    wnVideoTick();   // now, not in twenty seconds — a toggle that does nothing for that long reads as broken
+  }
+
+  function wnStopVideoWatch(why) {
+    if (wnVideoTimer) { clearInterval(wnVideoTimer); wnVideoTimer = null; }
+    if (wnVideoStream) { try { wnVideoStream.getTracks().forEach(t => t.stop()); } catch { /* already gone */ } }
+    wnVideoStream = null;
+    wnVideoBusy = false;
+    const vid = $('wn-video-el');
+    if (vid) { try { vid.pause(); } catch { /* fine */ } vid.srcObject = null; }
+    const btn = $('wn-video-btn');
+    if (btn) { btn.classList.remove('active'); btn.textContent = '🎥 Read the video (AI)'; }
+    wnVideoStatus(why || '', why ? 'idle' : '');
+  }
+
+  // Draws the current shared frame to the off-screen canvas and returns it as a JPEG data URL. The
+  // long edge is capped so the upload and the vision read stay quick; the aspect ratio is kept.
+  function wnCaptureFrame() {
+    const vid = $('wn-video-el');
+    const canvas = $('wn-video-canvas');
+    if (!vid || !canvas || !vid.videoWidth) return null;
+    const maxEdge = 1024;
+    const scale = Math.min(1, maxEdge / Math.max(vid.videoWidth, vid.videoHeight));
+    canvas.width = Math.max(1, Math.round(vid.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(vid.videoHeight * scale));
+    canvas.getContext('2d').drawImage(vid, 0, 0, canvas.width, canvas.height);
+    try { return canvas.toDataURL('image/jpeg', 0.7); } catch { return null; }
+  }
+
+  async function wnVideoTick() {
+    if (!wnVideoOn() || wnVideoBusy) return;
+    if (++wnVideoReads > WN_WATCH_MAX_READS) {
+      wnStopVideoWatch(`Stopped after ${WN_WATCH_MAX_READS} reads — it is not something to leave running ` +
+                       'all night. Press 🎥 to start again for the next lot.');
+      return;
+    }
+    const dataUrl = wnCaptureFrame();
+    if (!dataUrl) { wnVideoStatus('Waiting for the shared video to start…', 'busy'); return; }
+
+    wnVideoBusy = true;
+    try {
+      const { res, body } = await safePost('/api/whatsnot/watch', { imageBase64: dataUrl, mediaType: 'image/jpeg' });
+      if (!wnVideoOn()) return;   // stopped while the read was out
+      if (!res.ok) { wnVideoStatus(body.error || "That video read didn't happen.", 'bad'); return; }
+
+      const seen = (body.seen || '').trim();
+      if (!seen) { wnVideoStatus('Nothing nameable on screen right now — still watching.', 'busy'); return; }
+
+      if (seen.toLowerCase() === wnVideoLastSeen) {
+        wnVideoStatus(`On screen: ${seen} (${body.certainty || '?'}) — same lot, already priced.`, 'ok');
+        return;   // the card already answers this one
+      }
+
+      // A new item. Get out of the way if the seller has typed their own name into the box since.
+      const current = ($('wn-item')?.value || '').trim();
+      if (current && current !== wnVideoFilled) {
+        wnStopVideoWatch('Video read stopped — you typed over the item, and the box is yours.');
+        return;
+      }
+
+      wnVideoLastSeen = seen.toLowerCase();
+      wnVideoFilled = seen;
+      setVal('wn-item', seen);
+      wnDropToken();          // a different item is a different question; the comps in hand answer the old one
+      wnResetLotBoxes();      // qty / condition belong to the lot they were read on, not the next one
+      wnVideoStatus(`On screen: ${seen} (${body.certainty || '?'}) — pricing…` +
+                    (body.checkThis ? `  Check: ${body.checkThis}` : ''), 'ok');
+      wnPriceItem();
+    } catch (err) {
+      if (wnVideoOn()) wnVideoStatus(errorText(err, "That video read didn't happen."), 'bad');
+    } finally {
+      wnVideoBusy = false;
+    }
   }
 
   // ── Is that actually what it says it is? ─────────────────────────────────────
@@ -12454,6 +12814,8 @@
 
     // ── Reading the lot off the show ──────────────────────────────────────────
     on('wn-read-btn', 'click', () => wnReadShow());
+    // Reading the VIDEO, not the page: share the Whatnot tab, AI names what's on screen, price it.
+    on('wn-video-btn', 'click', wnToggleVideoWatch);
     // The panel at the bottom is where the seller navigated to the show; retyping
     // that address into a second box is the friction this button removes. Same handler
     // as the one on the refusal overlay — two ways in, one behaviour.
@@ -18480,25 +18842,20 @@
         addActivity('Settings saved', 'eBay token is active.');
         setTimeout(() => $('setup-overlay')?.classList.add('hidden'), 700);
       } else {
-        msg.textContent = 'Saved. Redirecting to eBay login...';
+        // Not started here. Saving settings is not a click on "sign in to eBay", and a window
+        // opened from a timer half a second later is a window every pop-up blocker refuses —
+        // which is how this used to arrive as a page that navigated itself away instead. The
+        // button below is a real click, and a real click is what a new tab needs. See THE TRAP
+        // above startEbayConnect.
+        msg.innerHTML =
+          'Saved. <button type="button" id="setup-connect-ebay" class="btn btn-primary">Log in to eBay</button> ' +
+          'to connect your account — it opens in a new tab and this page stays where it is.';
         msg.className = 'ok';
-        addActivity('Settings saved', 'Starting eBay OAuth login.');
-        setTimeout(async () => {
-          // Not "await ... .url" straight into location.href: when the URL can't be built the
-          // server answers with the reason, and navigating to `undefined` showed the seller a 404
-          // for a problem that had already been diagnosed one line earlier.
-          const body = await fetch('/api/ebay/auth-url').then(r => r.json()).catch(() => null);
-          if (!body?.url) {
-            msg.textContent = body?.error
-              ? `${body.error} ${body.nextAction || ''}`
-              : 'Saved, but the eBay sign-in URL could not be built.';
-            msg.className = 'error';
-            addActivity('eBay sign-in not started', msg.textContent);
-            return;
-          }
+        addActivity('Settings saved', 'Ready to connect eBay.');
+        $('setup-connect-ebay')?.addEventListener('click', () => {
           $('setup-overlay')?.classList.add('hidden');
-          window.location.href = body.url;
-        }, 700);
+          startEbayConnect();
+        });
       }
     } catch (err) {
       msg.textContent = `Error: ${errorText(err)}`;

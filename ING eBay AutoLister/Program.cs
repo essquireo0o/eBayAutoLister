@@ -46,7 +46,12 @@ bool isWindowsService = WindowsServiceHelpers.IsWindowsService();
 // localhost:9332 and nowhere else, so an instance on any other port is one whose
 // eBay sign-in cannot complete. If 9332 is taken, this app focuses the copy that
 // has it or stops and says so — see AppInstance. It never moves.
-var port    = AppPaths.Port;
+//
+// A hosted build never reads it: the platform hands that build a port, and everything here that
+// defends 9332 — the owner check, the mutex, the bind assertion — is compiled out.
+#if !HOSTED
+var port = AppPaths.Port;
+#endif
 var baseUrl = AppPaths.BaseUrl;
 
 // ── Elevated helper: add inglist.com → 127.0.0.1 to hosts ──────────
@@ -61,6 +66,7 @@ var baseUrl = AppPaths.BaseUrl;
 // a port or start the tray/server (the installed Windows service already owns
 // port 9332), so there's no conflict — it only pops the browser to the running
 // app so the user lands on the page immediately after installing.
+#if !HOSTED
 if (args.Contains("--open-browser"))
 {
     try
@@ -71,11 +77,13 @@ if (args.Contains("--open-browser"))
     catch { }
     return;
 }
+#endif
 
 // ── Who owns port 9332? ───────────────────────────────────────────────────────
 // Asked before anything binds, and answered the same way in both modes: the app
 // gets the port, or it doesn't run. There is no third outcome where it comes up
 // on a different URL — that URL is where eBay sends the seller back to.
+#if !HOSTED
 async Task<PortOwner> DetectPortOwnerAsync()
 {
     using var probeHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
@@ -102,6 +110,10 @@ async Task<PortOwner> DetectPortOwnerAsync()
 //      browser at it and show a tray icon, without starting a second server.
 //   3. If something that is not this app holds 9332, say so and exit cleanly.
 //   4. Otherwise start the server ourselves, then show the tray icon.
+//
+// None of it applies to a hosted build: a container gets one process and a port handed to it by
+// the platform, there is no second copy on this machine to focus, and there is no desktop to put
+// a message box on — so the whole guard, and the mutex it hangs off, are desktop-only.
 System.Threading.Mutex? _mutex = null;
 if (isWindowsService)
 {
@@ -171,6 +183,7 @@ else
         return;
     }
 }
+#endif
 
 // ── Data directory ───────────────────────────────────────────────────────────
 // One fixed home, whatever folder this exe was launched from. It used to be the
@@ -197,13 +210,45 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 builder.Host.UseWindowsService();
 builder.Services.AddHttpClient();
-// Named by its absolute path, not by ContentRootPath. This file holds the eBay refresh token — an
-// 18-month grant that only the seller, in a browser, can replace — so where it is written must not
-// depend on a hosting property that a future change to ContentRootPath could quietly move.
-builder.Services.AddSingleton(new CredentialsStore(Path.Combine(AppPaths.DataHome, "credentials.json")));
+// Credentials — one file for the one seller, or one encrypted row per signed-in user.
+//
+// The desktop build is unchanged: a single credentials.json, named by its absolute path rather than
+// by ContentRootPath, because it holds the eBay refresh token — an 18-month grant that only the
+// seller, in a browser, can replace — and where that is written must not depend on a hosting
+// property a future change to ContentRootPath could quietly move.
+//
+// The hosted build cannot use that file at all. One process-wide credentials file on a server is
+// one eBay account, one refresh token and one set of business policies shared by everybody who
+// signs up, so under HOSTED the same CredentialsStore reads the row belonging to whoever is making
+// the request, encrypted with a key from the host's configuration. The owner's Anthropic key stays
+// shared and server-side on purpose — nobody on the hosted trial is asked for their own. See
+// PerUserCredentials.
+PerUserCredentials.AddCredentials(builder, Path.Combine(AppPaths.DataHome, "credentials.json"));
+// Whose rows are whose. The desktop build has one seller and every row is theirs; the hosted build
+// resolves the owner from the request, and the stores below filter every read and write on it. One
+// database either way — what changes is that on a server the second person to sign up opens Money
+// Made onto their own empty board instead of the first person's revenue. See PerUserData.
+PerUserData.AddUserScope(builder);
+// What every AI call has to get past first. On the hosted trial the owner's own Anthropic key pays
+// for every user's analysis, so an unmetered endpoint is an unbounded bill — one signed-up account
+// with a script can spend more in an afternoon than the trial was budgeted for. Each account gets a
+// configurable number of generations a day, counted server-side inside ClaudeService rather than at
+// the eleven endpoints that reach it, and a person who runs out is told when the next ones arrive.
+// A no-op in the desktop build, where the seller is spending their own key. See AiQuota.
+AiQuota.AddAiQuota(builder);
 // Filled in once the server has started and been asked what it actually bound. See ServerBinding:
 // the eBay relay redirects to one fixed address and nothing tells it otherwise.
 builder.Services.AddSingleton<ServerBinding>();
+// Where eBay sends a seller back to. Configuration, not a constant, because a hosted deployment is
+// reached at its own hostname and the desktop build is reached through the relay — see EbayRedirect.
+builder.Services.AddSingleton(EbayRedirect.FromConfiguration(builder.Configuration));
+// And which optional eBay permissions this deployment's keyset is allowed to ask for. Off by
+// default: eBay refuses the WHOLE sign-in over a scope a keyset lacks. See EbayScopeOptions.
+builder.Services.AddSingleton(EbayScopeOptions.FromConfiguration(builder.Configuration));
+// One letter on the OAuth state, and it is the difference between the relay handing a hosted
+// seller back to app.inglisting.com and handing them to a port on their own machine that nothing
+// is listening on. The desktop build appends nothing and is unchanged. See EbayRelayReturn.
+builder.Services.AddSingleton(EbayRelayReturn.For(HostedAuth.IsHostedBuild));
 builder.Services.AddSingleton<ClaudeService>();
 builder.Services.AddSingleton<EbayService>();
 builder.Services.AddSingleton<ListingDatabase>();
@@ -549,9 +594,20 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DealRadarService>(
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+// Sign-in for the hosted build, and nothing at all for the desktop build. Everything mapped below
+// this line — every one of the 189 endpoints — is closed to anyone who is not signed in once
+// HOSTED is defined, without any of them saying so: that is a fallback authorization policy, and
+// the short list of things that stay open is in HostedAuth. The desktop app is one seller on a
+// loopback port and keeps working exactly as it does today, with no cookie and no users table.
+HostedAuth.AddAccounts(builder);
+
 var app = builder.Build();
 
 app.UseCors();
+
+// Reads the session cookie before any static file is served, so the photo mounts below can be
+// closed. Must come before them; a no-op in the desktop build.
+HostedAuth.UseSignedInUser(app);
 
 // Serve UI files from embedded resources (bundled inside the exe)
 {
@@ -583,6 +639,11 @@ app.UseCors();
         RequestPath  = "/photos"
     });
 }
+
+// The line the 189 endpoints sit behind. After the static UI assets, because those are the
+// sign-in page itself; before every MapGet/MapPost, because that is what it applies to.
+HostedAuth.RequireSignIn(app);
+HostedAuth.MapAccountEndpoints(app);
 
 // Stripe keys are configured via the Settings page and stored in credentials.json
 
@@ -857,7 +918,19 @@ app.MapGet("/api/onboarding", (CredentialsStore store, OnboardingStore onboardin
 // analysis, five minutes and three screens later. See AiKeyCheck.
 app.MapPost("/api/ai-key/check", async (ClaudeService claude, CredentialsStore store, OnboardingStore onboarding) =>
 {
-    var verdict = await claude.CheckKeyAsync();
+    AiKeyCheck.Verdict verdict;
+    try
+    {
+        verdict = await claude.CheckKeyAsync();
+    }
+    catch (AiQuotaExceededException ex)
+    {
+        // The one endpoint here that reaches Anthropic is also the one that can be refused by the
+        // daily limit. Without this the refusal leaves the endpoint as an unhandled exception and
+        // ASP.NET answers with an HTML error page — the exact failure the envelope below exists to
+        // stop. See FailureJson.
+        return FailureJson(ex.Failure);
+    }
 
     // Only an answer about the key is recorded. "Could not reach Anthropic" is an answer about the
     // moment, and writing it down would take a green tick off a key this app has watched work.
@@ -945,7 +1018,17 @@ static IResult FailureJson(FailureInfo failure) => Results.Json(new
         workPreserved = failure.WorkPreserved,
         technical = failure.Technical,
     },
-}, statusCode: 400);
+    // The numbers behind a refusal the seller can do nothing about except wait, so a page can draw
+    // "0 of 10 left, back at 00:00 UTC" rather than re-parsing the sentence above.
+    quota = failure.Kind == FailureKind.AiQuotaExhausted
+        ? new { resetsInSeconds = failure.RetryAfterSeconds }
+        : null,
+},
+// 429 only for the one failure that really is a rate limit, and never on its own: the body above
+// carries the whole explanation, because a bare status code is a thing a browser understands and a
+// seller does not. Everything else keeps the 400 every caller in app.js was written against —
+// callApi branches on the envelope rather than the code, so both render identically.
+statusCode: failure.Kind == FailureKind.AiQuotaExhausted ? 429 : 400);
 
 // Something the seller supplied is missing or unusable. Same shape as a real failure so one bit of
 // UI renders both, but never retryable — repeating the same bad input repeats the same answer.
@@ -977,6 +1060,12 @@ static async Task<IResult> Guarded<T>(FailureDomain domain, string operation, Ac
 }
 
 // ── AI analysis ───────────────────────────────────────────────────
+
+// What this account has left today. Mapped in both builds, and answers `enforced: false` on the
+// desktop one — a page that has to know which build it is talking to before it can ask a question
+// is a page that gets it wrong on one of them. Reads the counter; never spends from it.
+app.MapGet("/api/ai-quota", (AiQuotaGate quota) => Results.Ok(quota.Status()));
+
 app.MapPost("/api/analyze", async (AnalyzeRequest req, ClaudeService claude, CredentialsStore store,
     LicenseService license, ActionLog log, OnboardingStore onboarding, CancellationToken ct) =>
 {
@@ -3860,6 +3949,67 @@ app.MapPost("/api/whatsnot/photo", async (
             : $"{look.Status}: {look.Headline} ({look.ElapsedMs}ms)");
 
     return Results.Ok(look);
+});
+
+// ── AI reads the live VIDEO, not the page ─────────────────────────────────────────────────────
+// The page read above answers from the show's listing data; this answers from the picture itself —
+// what the host is physically holding up. It exists because a show's page and its camera do not
+// always agree: the page still shows the last lot's title while the next thing is already on screen,
+// or the host is freestyling a bundle the listing never named. The frame arrives as base64 because
+// Whatnot refuses embedding and a browser cannot read a cross-origin video — so the seller shares
+// their own tab, their browser samples a frame, and it comes here. The server never reaches Whatnot.
+//
+// It identifies and nothing else — the same IdentifyItemAsync the photo check and Snap & Source use.
+// The screen takes the name it returns and runs it through the very same ⚡ Price it as a typed one,
+// so the sold-comps path is not duplicated here: one place decides what an item is worth.
+app.MapPost("/api/whatsnot/watch", async (
+    LiveWatchRequest req, ClaudeService claude,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    // Tolerate a full data: URL — the browser's canvas.toDataURL produces one — and keep only the
+    // base64 payload the model wants.
+    var raw = (req.ImageBase64 ?? "").Trim();
+    var comma = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? raw.IndexOf(',') : -1;
+    var base64 = comma >= 0 ? raw[(comma + 1)..] : raw;
+    if (base64.Length == 0)
+        return BadInputJson("No frame arrived",
+            "The captured picture was empty.",
+            "Share the Whatnot tab again — the app reads a frame from it, not from Whatnot directly.");
+
+    var mediaType = string.IsNullOrWhiteSpace(req.MediaType) ? "image/jpeg" : req.MediaType!.Trim();
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    SnapIdentity identity;
+    try
+    {
+        identity = await claude.IdentifyItemAsync(base64, mediaType, ct);
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
+        log.Add("Warning", "Live video read failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+
+    var seen = (identity.Title ?? "").Trim();
+    log.Add(seen.Length > 0 ? "Research" : "Info", "Read the live video",
+        seen.Length > 0 ? $"\"{seen}\" ({identity.Certainty}); {sw.ElapsedMilliseconds}ms"
+                        : $"nothing nameable on screen; {sw.ElapsedMilliseconds}ms");
+
+    // The screen prices this by feeding `seen` into /api/whatsnot/bid, exactly as a typed name goes.
+    return Results.Ok(new
+    {
+        seen,
+        identity.Brand,
+        identity.Model,
+        identity.Condition,
+        identity.Certainty,
+        identity.CheckThis,
+        elapsedMs = sw.ElapsedMilliseconds,
+    });
 });
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the
@@ -8596,13 +8746,21 @@ app.MapGet("/api/ebay/auth-url", (EbayService ebay) =>
         : Results.Ok(new { url = result.Url });
 });
 
-// Legacy direct callback (sandbox / local dev only): eBay redirects here with the code and this
-// end does the exchange itself, rather than through the relay.
-app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, CredentialsStore store, ActionLog log, OnboardingStore onboarding, HttpContext ctx) =>
+// The direct callback: eBay redirects here with the code and this end does the exchange itself,
+// rather than through the relay. Sandbox and local dev used to be the only callers — a HOSTED
+// deployment is the third, and the one this path now matters most for. It is reached at a real
+// hostname eBay can resolve (EbayRedirect), so there is nothing for a relay to do.
+//
+// Every ending is recorded on EbayService before the redirect, because on a hosted deployment the
+// seller is not looking at this tab. They are looking at the one they started in, which is polling
+// /api/ebay/status for exactly the answer written here. See watchForEbayGrant in app.js.
+app.MapGet("/api/ebay/callback", async (string? code, string? state, EbayService ebay, CredentialsStore store, ActionLog log, OnboardingStore onboarding, HttpContext ctx) =>
 {
     if (string.IsNullOrWhiteSpace(code))
     {
-        log.Add("Warning", "eBay sign-in did not complete", "no_code: eBay returned to the app without an authorization code.");
+        ebay.MarkDirectSignInFailed("no_code",
+            "eBay returned to the app without an authorization code, which is what it does when the consent screen is declined or closed.",
+            "Click Log into eBay and approve the permissions on eBay's screen.");
         ctx.Response.Redirect("/?ebay_error=no_code");
         return;
     }
@@ -8612,7 +8770,9 @@ app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, Credenti
         var token = await ebay.ExchangeCodeForTokenResultAsync(code);
         if (string.IsNullOrWhiteSpace(token.AccessToken))
         {
-            log.Add("Warning", "eBay sign-in did not complete", "exchange_empty: eBay accepted the code but issued no token.");
+            ebay.MarkDirectSignInFailed("exchange_empty",
+                "eBay accepted the sign-in code but issued no token, so there is nothing to connect with.",
+                "Click Log into eBay to start the sign-in again.");
             ctx.Response.Redirect("/?ebay_error=exchange_empty");
             return;
         }
@@ -8621,14 +8781,19 @@ app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, Credenti
         // Whatever eBay last said was said about a grant that has just been replaced. A seller who
         // signs in again to fix a refused connection must not still be told it is refused.
         onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
+        ebay.MarkDirectSignInConnected(!string.IsNullOrWhiteSpace(token.RefreshToken), state);
         log.Add("Info", "eBay connected", "Sign-in completed through the direct callback; tokens stored.");
         ctx.Response.Redirect("/?ebay_connected=1");
     }
     catch (Exception ex)
     {
         // Never a bare 500 here: this response is a browser tab the seller is looking at, and an
-        // unhandled exception page is the dead end this whole path exists to stop.
+        // unhandled exception page is the dead end this whole path exists to stop. The message is
+        // this app's own — an eBay response body is not something to redirect a browser with.
         log.Add("Warning", "eBay sign-in did not complete", $"exchange_failed: {ex.Message}");
+        ebay.MarkDirectSignInFailed("exchange_failed",
+            "eBay would not exchange the sign-in for a token. The usual cause is a Client Secret that does not match the Client ID, or a redirect URL that is not the one registered against the RuName.",
+            "Check Settings → eBay → Advanced, then click Log into eBay again.");
         ctx.Response.Redirect("/?ebay_error=exchange_failed");
     }
 });
@@ -8638,9 +8803,27 @@ app.MapGet("/api/ebay/callback", async (string? code, EbayService ebay, Credenti
 // All of the judgement — session validity, how long to wait, what each relay answer means — lives
 // in EbayService.CompleteRelaySignInAsync, which records the outcome so /api/ebay/status can still
 // explain it after this redirect has been navigated away from.
+//
+// THE LINE THIS ENDPOINT TURNS ON. What is about to be claimed is one seller's eighteen-month grant
+// to list and sell on their eBay account, and the only thing on this request that says whose it is
+// is the session cookie. On the hosted build the store writes to the signed-in user's encrypted row
+// (PerUserCredentialsSource) and answers a write with no user by dropping it — so a sign-in
+// completed by a stranger would spend the one-time pickup, store nothing, and report success. The
+// fallback authorization policy already refuses an anonymous caller here, which is why this guard
+// has nothing to do in practice; it is written down anyway, because the cost of it stopping being
+// true — somebody marking this endpoint AllowAnonymous to fix an OAuth redirect — is one eBay
+// account shared by everybody who signs up.
 app.MapGet("/api/ebay/finish", async (string? session, string? pickup, EbayService ebay,
     OnboardingStore onboarding, HttpContext ctx) =>
 {
+    if (HostedAuth.IsHostedBuild && HostedAuth.CurrentUserId(ctx) is null)
+    {
+        // Not a 401: this is a browser tab at the end of an OAuth round trip, and a status code is
+        // a blank page. The sign-in page knows how to send them back to the app afterwards.
+        ctx.Response.Redirect($"{HostedAuth.SignInPath}?ebay_error=not_signed_in");
+        return;
+    }
+
     var status = await ebay.CompleteRelaySignInAsync(session, pickup, ctx.RequestAborted);
     if (status.Stage == EbaySignInStage.Connected)
         onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
@@ -8921,7 +9104,8 @@ app.MapGet("/api/ebay/token-status", (CredentialsStore store) =>
 //
 // Carries no token, no secret and no eBay response body — booleans, timestamps and this app's own
 // sentences only.
-app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, ServerBinding binding) =>
+app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, ServerBinding binding,
+    EbayRedirect redirect) =>
 {
     var c = store.Get();
     var signIn = ebay.SignInStatus;
@@ -8952,6 +9136,15 @@ app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, Server
             verified = binding.Verified,
             ok       = binding.IsCorrect,
             problem  = binding.Problem,
+        },
+        // The URL that must be registered against the RuName for a sign-in started here to come
+        // back. Not the redirect_uri sent to eBay — that is the RuName itself — which is exactly
+        // why it is worth reporting: it is the one part of the round trip this app cannot verify.
+        redirect = new
+        {
+            uri        = redirect.Uri,
+            configured = redirect.IsConfigured,
+            problem    = redirect.Problem,
         },
     });
 });
@@ -9995,17 +10188,33 @@ app.MapPost("/api/work/discard-all", (WorkRecoveryStore work, ActionLog log) =>
 });
 
 // ── Owner dashboard ───────────────────────────────────────────────
-app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStore analytics, ActionLog log, StripeService stripe) =>
+app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStore analytics, ActionLog log, StripeService stripe, IServiceProvider services) =>
 {
     var adminKey = store.EnsureAdminKey();
     if (string.IsNullOrWhiteSpace(k) || k != adminKey)
         return Results.Unauthorized();
     var snap = analytics.GetSnapshot();
+
+    // Who is spending the owner's Anthropic key today, and how much. The per-user counter exists
+    // because the owner is paying for it, so the owner is who gets to read all of it — every other
+    // per-user table in this app is deliberately unreadable across accounts, and this one is
+    // deliberately not. Resolved rather than injected: the store is registered only where the
+    // quota is enforced, and the desktop build has neither. See AiUsageStore.
+    var usage = services.GetService<AiUsageStore>();
+    var today = AiUsageStore.DayOf(DateTimeOffset.UtcNow);
+
     return Results.Ok(new
     {
         analytics       = snap,
         recentLogs      = log.Recent(),
         stripeConfigured = stripe.IsConfigured,
+        aiUsage         = new
+        {
+            day     = today,
+            limit   = AiQuota.LimitFrom(app.Configuration),
+            metered = usage is not null,
+            byUser  = usage?.UsageOn(today) ?? [],
+        },
         dashboardUrl    = $"{baseUrl}/owner?k={adminKey}"
     });
 });
@@ -10175,6 +10384,18 @@ app.MapPost("/api/sniper/bid", async (SniperBidRequest req, EbayService ebay, Ac
     }
 });
 
+#if HOSTED
+// ── Hosted: bind whatever the platform says, then serve until it stops us ────
+// Everything below this line in the desktop build exists to defend one fixed port, because the
+// eBay OAuth relay redirects to http://localhost:9332 and nowhere else. A hosted instance has the
+// opposite problem: the port belongs to the platform (ASPNETCORE_URLS, or a PORT the container
+// runtime picks), it sits behind a reverse proxy on a real hostname, and pinning 9332 here would
+// mean binding a port nothing outside the container is talking to.
+//
+// So no Urls.Clear(), no bind assertion, no browser, no tray. RunAsync installs the SIGTERM
+// handler and blocks until the orchestrator stops the container.
+await app.RunAsync();
+#else
 // ── Bind the one port ────────────────────────────────────────────────────────
 // Started explicitly rather than through RunAsync(url) so a failed bind is caught here. The
 // already-running check above is a snapshot, and something can still take 9332 in the moment
@@ -10322,7 +10543,9 @@ desktopNotifier.DetachDesktopChannel();
 uiMarshal.Dispose();
 await app.StopAsync(TimeSpan.FromSeconds(3));
 _mutex?.Dispose();
+#endif
 
+#if !HOSTED
 static System.Drawing.Icon CreateAppIcon()
 {
     var bmp = new System.Drawing.Bitmap(32, 32, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -10371,6 +10594,7 @@ void OpenBrowser() =>
 void OpenBrowserAt(string hash) =>
     System.Diagnostics.Process.Start(
         new System.Diagnostics.ProcessStartInfo(baseUrl + hash) { UseShellExecute = true });
+#endif
 
 // EnsureLocalDns removed: no hosts-file write means nothing for antivirus/EDR to
 // flag as hosts hijacking. The app is reached at http://localhost:9332.
