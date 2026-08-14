@@ -50,13 +50,16 @@ public sealed class SignupNotifier(IConfiguration config, ILogger<SignupNotifier
     /// Fire-and-forget: tell the owner a new account was created. Never throws — a failure here is
     /// logged and dropped, because the account already exists and the user is already signed in.
     /// </summary>
-    public async Task NotifySignupAsync(string newUserEmail, string? ip, string? userAgent, CancellationToken ct = default)
+    /// <param name="newUserName">What they said they are called. Blank for a sign-up that predates the field.</param>
+    public async Task NotifySignupAsync(string newUserEmail, string? ip, string? userAgent,
+                                        string? newUserName = null, CancellationToken ct = default)
     {
         if (!IsConfigured) return;
         try
         {
             var body =
                 "A new account was created on app.inglisting.com.\n\n" +
+                $"Name:       {(string.IsNullOrWhiteSpace(newUserName) ? "not given" : newUserName)}\n" +
                 $"Email:      {newUserEmail}\n" +
                 $"When (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}\n" +
                 $"IP:         {(string.IsNullOrWhiteSpace(ip) ? "unknown" : ip)}\n" +
@@ -65,7 +68,9 @@ public sealed class SignupNotifier(IConfiguration config, ILogger<SignupNotifier
 
             using var message = new MailMessage(From, To!)
             {
-                Subject = $"New ING Listing Engine sign-up: {newUserEmail}",
+                Subject = string.IsNullOrWhiteSpace(newUserName)
+                    ? $"New ING Listing Engine sign-up: {newUserEmail}"
+                    : $"New ING Listing Engine sign-up: {newUserName} ({newUserEmail})",
                 Body = body,
                 IsBodyHtml = false,
             };

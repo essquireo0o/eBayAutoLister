@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create an account | ING Listing Engine™</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="style.css?v=130" />
+  <script>
+    (function () {
+      var stored = null;
+      try { stored = localStorage.getItem('ingTheme'); } catch (e) { /* private mode */ }
+      var choice = (stored === 'light' || stored === 'dark') ? stored : 'system';
+      var dark = choice === 'dark' || (choice === 'system' && window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme-choice', choice);
+    })();
+  </script>
+  <style>
+    .auth-page { min-height:100vh; display:grid; place-items:center; padding:32px 20px; background:var(--bg); }
+    .auth-card { width:100%; max-width:400px; background:var(--surface); border:1px solid var(--border);
+                 border-radius:14px; padding:28px; box-shadow:0 12px 32px rgba(0,0,0,.08); }
+    .auth-card h1 { font-size:var(--fs-xl); margin:0 0 4px; color:var(--text); letter-spacing:var(--tracking-tight); }
+    .auth-sub { font-size:var(--fs-sm); color:var(--text-muted); margin:0 0 22px; }
+    .auth-field { display:block; margin-bottom:16px; }
+    .auth-field span { display:block; font-size:var(--fs-xs); font-weight:var(--fw-bold); color:var(--text);
+                       margin-bottom:6px; }
+    .auth-field input { width:100%; box-sizing:border-box; padding:10px 12px; font-size:var(--fs-base);
+                        color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:8px; }
+    .auth-hint { display:block; margin-top:6px; font-size:var(--fs-xs); color:var(--text-muted); font-weight:var(--fw-normal); }
+    .auth-submit { width:100%; padding:11px; font-size:var(--fs-base); font-weight:var(--fw-bold);
+                   border:0; border-radius:8px; background:var(--gold); color:var(--on-gold); cursor:pointer; }
+    .auth-submit[disabled] { opacity:.6; cursor:progress; }
+    .auth-msg { display:none; margin:0 0 16px; padding:10px 12px; border-radius:8px; font-size:var(--fs-sm);
+                background:var(--danger-tint, #fdecec); color:var(--danger, #a12626); }
+    .auth-msg.shown { display:block; }
+    .auth-alt { margin:18px 0 0; font-size:var(--fs-sm); color:var(--text-muted); text-align:center; }
+    .auth-alt a { color:var(--gold-dark); font-weight:var(--fw-semibold); }
+  </style>
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <h1>Create an account</h1>
+    <p class="auth-sub">ING Listing Engine™</p>
+
+    <p id="auth-error" class="auth-msg" role="alert"></p>
+
+    <form id="signup-form" novalidate>
+      <label class="auth-field">
+        <span>Full name</span>
+        <!-- maxlength matches UserStore.MaximumNameLength. No pattern and no "letters only":
+             names have spaces, hyphens, apostrophes and every alphabet in them. -->
+        <input id="signup-name" type="text" name="name" autocomplete="name" required maxlength="100" />
+      </label>
+      <label class="auth-field">
+        <span>Email</span>
+        <input id="signup-email" type="email" name="email" autocomplete="username" required
+               autocapitalize="none" spellcheck="false" />
+      </label>
+      <label class="auth-field">
+        <span>Password</span>
+        <!-- minlength matches PasswordPolicy.MinimumLength; the server refuses anything shorter
+             regardless, and refuses the common ones besides. This only saves the round trip. -->
+        <input id="signup-password" type="password" name="password" autocomplete="new-password"
+               required minlength="12" />
+        <span class="auth-hint">At least 12 characters. A few words you will remember is stronger
+          than a short one with a symbol in it.</span>
+      </label>
+      <label class="auth-field">
+        <span>Confirm password</span>
+        <input id="signup-confirm" type="password" name="confirm" autocomplete="new-password" required />
+      </label>
+      <label class="auth-field">
+        <span>Sign-up code</span>
+        <input id="signup-code" type="text" name="code" autocomplete="off" />
+        <span class="auth-hint">Only if you were given one. Leave blank otherwise.</span>
+      </label>
+      <button id="signup-submit" class="auth-submit" type="submit">Create account</button>
+    </form>
+
+    <p class="auth-alt">Already have an account? <a href="/signin.html">Sign in</a></p>
+  </main>
+
+  <script>
+    (function () {
+      var form = document.getElementById('signup-form');
+      var error = document.getElementById('auth-error');
+      var submit = document.getElementById('signup-submit');
+
+      function show(message) {
+        error.textContent = message;
+        error.classList.add('shown');
+      }
+
+      form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        error.classList.remove('shown');
+
+        // Everything below is a courtesy that saves a round trip. The server checks all of it
+        // again and is the one that decides — see PasswordPolicy and UserStore.Create.
+        var name = document.getElementById('signup-name').value;
+        if (!name.trim()) {
+          show('Enter your name.');
+          return;
+        }
+
+        var password = document.getElementById('signup-password').value;
+        if (password !== document.getElementById('signup-confirm').value) {
+          show('The two passwords do not match.');
+          return;
+        }
+        if (password.length < 12) {
+          show('Choose a password of at least 12 characters.');
+          return;
+        }
+
+        submit.disabled = true;
+        try {
+          var response = await fetch('/api/auth/sign-up', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: name,
+              email: document.getElementById('signup-email').value,
+              password: password,
+              code: document.getElementById('signup-code').value
+            })
+          });
+          var body = await response.json().catch(function () { return {}; });
+
+          // Signing up signs you in, so there is nothing to do afterwards but start using it.
+          if (response.ok) { location.replace('/'); return; }
+          show(body.error || 'Could not create the account. Please try again.');
+        } catch (e) {
+          show('Could not reach the server: ' + e.message);
+        }
+        submit.disabled = false;
+      });
+    })();
+  </script>
+</body>
+</html>

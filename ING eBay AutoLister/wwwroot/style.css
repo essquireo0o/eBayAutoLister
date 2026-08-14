@@ -729,6 +729,19 @@ button { cursor: pointer; }
   flex-wrap: wrap;
 }
 
+/* Who is signed in, on the hosted build. Added by app.js only when /api/auth/me answers, so the
+   desktop build — which does not map it — never draws one and never needs the space. Truncated
+   rather than wrapped: a long name must not push the buttons beside it onto a second row. */
+.signed-in-as {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-muted);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

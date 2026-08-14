@@ -68,21 +68,31 @@
       const who = await passThroughFetch('/api/auth/me');
       if (!who.ok) return;
 
-      const { email } = await who.json();
+      const { email, displayName } = await who.json();
       const actions = document.querySelector('.topbar-actions');
       if (!actions) return;
+
+      // Who is signed in, said on the screen rather than only in a tooltip nobody hovers over.
+      // displayName is the name they gave at sign-up, and falls back to the address server-side
+      // for the accounts that were created before the name field existed.
+      const whoami = document.createElement('span');
+      whoami.id = 'signed-in-as';
+      whoami.className = 'signed-in-as';
+      whoami.textContent = displayName || email;
+      whoami.title = email;
 
       const button = document.createElement('button');
       button.id = 'btn-sign-out';
       button.type = 'button';
       button.className = 'btn btn-ghost';
-      button.title = `Signed in as ${email}`;
+      button.title = `Signed in as ${displayName || email} (${email})`;
       button.textContent = 'Sign out';
       button.addEventListener('click', async () => {
         await passThroughFetch('/api/auth/sign-out', { method: 'POST' });
         location.replace('/signin.html');
       });
       actions.prepend(button);
+      actions.prepend(whoami);
     } catch { /* no session endpoint, no sign-out button */ }
   });
 
