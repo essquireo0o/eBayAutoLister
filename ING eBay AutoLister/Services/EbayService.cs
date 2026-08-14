@@ -12,8 +12,26 @@ public class EbayService(
     CredentialsStore creds,
     IHttpClientFactory httpClientFactory,
     ActionLog log,
-    ServerBinding? serverBinding = null)
+    ServerBinding? serverBinding = null,
+    EbayRedirect? ebayRedirect = null,
+    EbayScopeOptions? scopeOptions = null,
+    EbayRelayReturn? relayReturn = null)
 {
+    /// <summary>Which optional permissions this deployment's keyset may ask for.</summary>
+    private EbayScopeOptions Scopes => scopeOptions ?? EbayScopeOptions.Default;
+
+    /// <summary>
+    /// Which app the relay sends the browser back to when this sign-in is done. Defaults to the
+    /// desktop, so a caller that says nothing sends the bare state it always has.
+    /// </summary>
+    private EbayRelayReturn RelayReturn => relayReturn ?? EbayRelayReturn.Desktop;
+
+    /// <summary>
+    /// Where eBay returns a seller to. Not sent to eBay — the RuName is, see
+    /// <see cref="GetOAuthRedirectUri"/> — but it is what the log and the status endpoint report,
+    /// and on a hosted deployment it is not localhost. Defaults to the desktop address.
+    /// </summary>
+    private EbayRedirect Redirect => ebayRedirect ?? EbayRedirect.Desktop;
 
     private static readonly XNamespace EbayNs = "urn:ebay:apis:eBLBaseComponents";
 
@@ -85,7 +103,8 @@ public class EbayService(
             c.EbayClientId, c.EbayClientSecret, c.EbayRuName, c.EbaySandbox,
             // Only assert the binding once it has actually been checked: during startup, and in
             // tests, "not verified yet" is not the same as "bound to the wrong port".
-            serverBinding is { Verified: true } ? serverBinding.Problem : null);
+            serverBinding is { Verified: true } ? serverBinding.Problem : null,
+            Redirect.Uri);
 
         if (problem is not null)
         {
@@ -98,6 +117,11 @@ public class EbayService(
 
         // Random 32-hex-char session ID: eBay's state parameter, the relay's correlation key, and
         // this app's proof that the callback belongs to a sign-in it actually started.
+        //
+        // The ledger and the relay's pickup both key on this bare value. Only the copy that goes to
+        // eBay carries the build's return suffix, and only the hosted build has one — see
+        // EbayRelayReturn for why that letter is the whole difference between a hosted sign-in
+        // finishing and one ending on a dead localhost tab.
         var session = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
         var now = DateTimeOffset.UtcNow;
         _sessions.Issue(session, now);
@@ -109,11 +133,60 @@ public class EbayService(
             StartedAt: now, UpdatedAt: now));
 
         log.Add("Info", "eBay sign-in started",
-            $"Environment: {(c.EbaySandbox ? "Sandbox" : "Production")}; scopes: {EbayAuthUrlCheck.Scopes.Length}; returns to {AppPaths.BaseUrl}.");
+            $"Environment: {(c.EbaySandbox ? "Sandbox" : "Production")}; " +
+            $"scopes: {EbayAuthUrlCheck.ScopesFor(Scopes.IncludeNegotiation).Length}" +
+            $"{(Scopes.IncludeNegotiation ? " (Send Offer included)" : "")}; " +
+            $"eBay returns to whatever URL is registered against this RuName, which should be {Redirect.Uri}.");
 
         return new EbayAuthUrlResult(
-            EbayAuthUrlCheck.Build(AuthUrl, c.EbayClientId, GetOAuthRedirectUri(forceProduction: false), session),
+            EbayAuthUrlCheck.Build(AuthUrl, c.EbayClientId, GetOAuthRedirectUri(forceProduction: false),
+                RelayReturn.StateFor(session), Scopes.IncludeNegotiation),
             null);
+    }
+
+    // ── Finishing a DIRECT sign-in ────────────────────────────────────────────
+    //
+    // The direct callback — eBay straight back to /api/ebay/callback, no relay — did the token
+    // exchange and then said nothing about it, so SignInStatus stayed on "awaiting consent" through
+    // a sign-in that had already worked and, fifteen minutes later, aged itself into
+    // "sign_in_abandoned". Nobody noticed while the desktop build's answer was a whole page reload
+    // carrying ?ebay_connected=1. A hosted seller waiting in the tab they never left has nothing
+    // else to read: this status IS the answer.
+
+    /// <summary>Records a sign-in that finished through the direct callback.</summary>
+    /// <param name="hasRefreshToken">
+    /// False means eBay issued an access token and no refresh token — a connection that works for
+    /// two hours and then stops. Reported as connected, because it is, with the catch named.
+    /// </param>
+    /// <param name="session">The <c>state</c> eBay echoed back, retired here so a link cannot be replayed.</param>
+    public EbaySignInStatus MarkDirectSignInConnected(bool hasRefreshToken, string? session = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        // eBay echoes state back exactly as it was sent, so on the hosted build this still has the
+        // return suffix on it and the ledger — which keys on the bare session — would retire
+        // nothing. See EbayRelayReturn.SessionFrom.
+        session = EbayRelayReturn.SessionFrom(session);
+        if (!string.IsNullOrWhiteSpace(session)) _sessions.Consume(session!, now);
+
+        return SetSignIn(new EbaySignInStatus(
+            EbaySignInStage.Connected,
+            hasRefreshToken ? "connected" : "no_refresh_token",
+            hasRefreshToken
+                ? "Your eBay account is connected."
+                : "eBay issued an access token but no refresh token, so this connection will stop working in about two hours.",
+            hasRefreshToken
+                ? "Nothing to do."
+                : "Click Log into eBay again and approve the permissions without skipping any of eBay's screens.",
+            SignInStatus.StartedAt ?? now, now));
+    }
+
+    /// <summary>Records a direct sign-in that ended without tokens. The message is shown to the seller.</summary>
+    public EbaySignInStatus MarkDirectSignInFailed(string code, string message, string nextAction)
+    {
+        var now = DateTimeOffset.UtcNow;
+        log.Add("Warning", "eBay sign-in did not complete", $"{code}: {message}");
+        return SetSignIn(new EbaySignInStatus(
+            EbaySignInStage.Failed, code, message, nextAction, SignInStatus.StartedAt ?? now, now));
     }
 
     // ── Finishing a relay sign-in ─────────────────────────────────────────────
@@ -140,6 +213,11 @@ public class EbayService(
     {
         var now = DateTimeOffset.UtcNow;
         var started = SignInStatus.StartedAt ?? now;
+
+        // Defensive: the relay strips the return suffix before it redirects here, so this is
+        // already bare. If a future relay stops doing that, the sign-in must still finish rather
+        // than fail as a session this app never issued.
+        session = EbayRelayReturn.SessionFrom(session);
 
         EbaySignInStatus Fail(string code, string message, string next, string? detail = null)
         {
@@ -197,6 +275,22 @@ public class EbayService(
                     tokens.ExpiresIn, tokens.RefreshTokenExpiresIn, tokens.TokenType);
                 _sessions.Consume(session!, DateTimeOffset.UtcNow);
 
+                // The write is read back, and this is not paranoia about disks. On the hosted build
+                // the store writes to the row of whoever is signed in ON THIS REQUEST, and two of
+                // its answers are silence: nobody signed in, and a row that would not decrypt. Both
+                // drop the write on purpose (PerUserCredentialsSource) — which is right, because the
+                // alternatives are writing one seller's eighteen-month grant into a shared record or
+                // over a row that could not be read. What would be wrong is what came next: saying
+                // "Connected". The pickup is one-time, so the tokens are already gone from the relay
+                // by then, and the seller is left with a page claiming their eBay account is linked,
+                // no tokens anywhere, and nothing to try again with.
+                if (!StoredTokensMatch(tokens))
+                    return Fail("tokens_not_stored",
+                        "eBay issued the tokens and this app could not store them, so the connection was not kept. " +
+                        "Nothing was written anywhere else — most often this means the sign-in finished without a " +
+                        "signed-in account to attach it to.",
+                        "Sign in to your account first, then click Connect eBay Account and complete the eBay screens again.");
+
                 if (string.IsNullOrWhiteSpace(tokens.RefreshToken))
                 {
                     // Usable for about two hours and then dead, with no way to renew it. Connected,
@@ -246,14 +340,38 @@ public class EbayService(
     }
 
     /// <summary>
+    /// True when the tokens just handed to the store can be read back out of it.
+    /// </summary>
+    /// <remarks>
+    /// Reads through the same <see cref="CredentialsStore"/> the rest of the app publishes with, so
+    /// what is proved is the thing that matters: the next request, from this same seller, will find
+    /// this grant. The refresh token is what is checked when there is one — it is the connection —
+    /// and the access token only when eBay issued no refresh token at all.
+    /// </remarks>
+    private bool StoredTokensMatch(EbayRelayTokens tokens)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(tokens.RefreshToken)
+                ? string.Equals(creds.GetUserToken(), tokens.AccessToken.Trim(), StringComparison.Ordinal)
+                : string.Equals(creds.GetRefreshToken(), tokens.RefreshToken.Trim(), StringComparison.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            // A store that cannot even be read is not a store that kept anything.
+            log.Add("Warning", "eBay tokens could not be read back after storing", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Polls the relay's pickup endpoint until it has the tokens, hits
     /// <see cref="EbayRelayPickup.TotalTimeout"/>, or gets an answer worth stopping on.
     /// </summary>
     private async Task<(EbayPickupOutcome Outcome, EbayRelayTokens? Tokens, int? Status, string? Detail)>
         FetchRelayTokensAsync(string session, string pickup, CancellationToken ct)
     {
-        var url = "https://inglisting.com/api/ebay/pickup/" +
-                  $"?session={Uri.EscapeDataString(session)}&pickup={Uri.EscapeDataString(pickup)}";
+        var url = EbayRelayPickup.Url(session, pickup);
 
         var deadline = DateTimeOffset.UtcNow + EbayRelayPickup.TotalTimeout;
         var attempts = 0;
@@ -1659,17 +1777,35 @@ public class EbayService(
         _                              => "PackageThickEnvelope"
     };
 
-    private static int ConditionId(string condition) => condition switch
+    // eBay condition IDs 4000 / 5000 / 6000 ("Very Good" / "Good" / "Acceptable") exist ONLY in the
+    // media categories — Books, Movies & TV, Music, Video Games. Every other category, Business &
+    // Industrial included, refuses them with "The provided condition id is invalid for the selected
+    // primary category id" — which is exactly what bounced a Fanuc servo amplifier the AI graded
+    // USED_GOOD. Outside media, every used grade collapses to plain Used (3000); the grade the AI
+    // saw still reaches the buyer through ConditionDescription, so nothing is lost but the rejection.
+    // 2000 (Certified Refurbished) and 2750 (Like New) are eligibility- and category-gated and get
+    // refused just as widely, so "like new" is the universally-safe 3000 too.
+    private static int ConditionId(string condition, bool mediaCategory) => condition switch
     {
         "NEW"                       => 1000,
-        "LIKE_NEW"                  => 2000,
-        "USED_EXCELLENT"            => 3000,
-        "USED_VERY_GOOD"            => 4000,
-        "USED_GOOD"                 => 5000,
-        "USED_ACCEPTABLE"           => 6000,
         "FOR_PARTS_OR_NOT_WORKING"  => 7000,
-        _                           => 3000
+        "USED_VERY_GOOD"            => mediaCategory ? 4000 : 3000,
+        "USED_GOOD"                 => mediaCategory ? 5000 : 3000,
+        "USED_ACCEPTABLE"           => mediaCategory ? 6000 : 3000,
+        _                           => 3000,   // LIKE_NEW, USED_EXCELLENT, and anything unmapped
     };
+
+    // Whether a category uses the graded media conditions (4000/5000/6000). The reliable signal
+    // without a second eBay metadata round trip is the category's NAME: media leaf categories are
+    // named for what they hold. Conservative on purpose — an unrecognised name is treated as
+    // non-media, so the safe 3000 is the default and only a clear media category opts into the
+    // graded IDs. "video game"/"console" rather than a bare "game" so Toys' Board Games do not match.
+    private static readonly System.Text.RegularExpressions.Regex MediaCategoryName = new(
+        @"\b(books?|magazines?|textbooks?|dvds?|blu-?rays?|movies?|films?|music|cds?|vinyl|records?|cassettes?|video ?games?|game consoles?)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static bool IsMediaCategory(string? categoryName) =>
+        !string.IsNullOrWhiteSpace(categoryName) && MediaCategoryName.IsMatch(categoryName);
 
     private static string Xe(string? s) =>
         string.IsNullOrEmpty(s) ? "" : System.Security.SecurityElement.Escape(s)!;
@@ -1756,7 +1892,7 @@ public class EbayService(
 
         var country  = string.IsNullOrWhiteSpace(req.ItemLocationCountry) ? "US" : req.ItemLocationCountry;
         var duration = req.ListingFormat == "AUCTION" ? $"Days_{req.DurationDays}" : "GTC";
-        var condId   = ConditionId(req.Condition);
+        var condId   = ConditionId(req.Condition, IsMediaCategory(req.Category));
 
         // Validate category — if the AI gave us a malformed or unknown ID, fall back via suggestions
         var categoryId = (req.CategoryId ?? "").Replace(",", "").Trim();
@@ -2096,7 +2232,7 @@ public class EbayService(
         if (!string.IsNullOrWhiteSpace(req.Condition))
         {
             fields.Add("condition");
-            conditionXml = $"<ConditionID>{ConditionId(req.Condition)}</ConditionID>";
+            conditionXml = $"<ConditionID>{ConditionId(req.Condition, IsMediaCategory(req.Category))}</ConditionID>";
         }
 
         // Price and quantity are the two that already worked; keep them, and only when sane.
