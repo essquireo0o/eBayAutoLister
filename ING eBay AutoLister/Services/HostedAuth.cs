@@ -357,10 +357,13 @@ public static class HostedAuth
             // Tell the owner, fire-and-forget: the notification must not delay the response or fail
             // the sign-up (SignupNotifier swallows its own errors). Behind Caddy the socket peer is
             // the proxy, so prefer the forwarded client IP when the proxy set one.
+            //
+            // Four things go out and no more — name, address, time, IP. Nothing that identifies the
+            // session and nothing that could be used to sign in as them: the password is not in
+            // scope here, and result.User carries no token. See SignupNotifier.
             var ip = context.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
             if (string.IsNullOrWhiteSpace(ip)) ip = context.Connection.RemoteIpAddress?.ToString();
-            _ = notifier.NotifySignupAsync(result.User!.Email, ip, context.Request.Headers.UserAgent.ToString(),
-                                           result.User!.Name);
+            _ = notifier.NotifySignupAsync(result.User!.Email, ip, result.User!.Name);
 
             return Results.Ok(new { email = result.User!.Email, name = result.User!.Name });
         }).AllowAnonymous().RequireRateLimiting(AuthRateLimitPolicy);
