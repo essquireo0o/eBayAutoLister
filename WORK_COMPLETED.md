@@ -14266,3 +14266,166 @@ that screenshot proves the styling and the shape of the copy, and the tests prov
   names — the test proves the *page* exists, not that the search box still does.
 - **Still nothing measures whether it helps.** No funnel, no telemetry, no way to know from here how
   many testers found step 3 because of it.
+
+---
+
+# Amazon phase 1: get in the door, and be honest about which door it is
+
+The app has talked to one marketplace for its whole life. This is the first half of a second one —
+not a listing, not a product type, just the part every later Amazon call sits on: obtain a token,
+renew it before it dies, attach it to a request, and say plainly when none of that is possible.
+
+It is built to be read next to the eBay flow, because the shapes genuinely are the same — a
+long-lived grant traded for a short-lived access token, one classifier deciding which failures are
+allowed to condemn the grant, one diagnostic reporting what is stored without reporting any of it.
+Where it differs, it differs for a reason that is written down in the file.
+
+## What was added
+
+`AmazonAuthFlow.cs` is the pure half, mirroring `EbayAuthFlow.cs`: the environments and their hosts,
+the config checks, the LWA failure classifier, the token response reader, and the expiry arithmetic.
+No network, no clock, no I/O — all 39 of its tests run against it directly.
+
+`AmazonService.cs` is the connection. One access token held **in memory only**, renewed a minute
+before Amazon expires it, fetched behind a semaphore so a burst of concurrent calls produces one
+exchange rather than a stampede into LWA's throttle. `SendAsync` resolves relative paths against the
+host for this environment, so no caller anywhere picks a hostname.
+
+`AmazonStatusEndpoint.cs` is `/api/amazon/status`, kept in its own file — the way
+`CalibrationEndpoints.cs` is — so the handler the tests exercise is the handler the app serves. A
+diagnostic whose test asserts against a copy of itself proves nothing about the answer an operator
+gets.
+
+## The two distinctions the whole thing is built around
+
+**"Never asked" is not "was refused."** `tokenObtainable` is `null` when the configuration could not
+have supported a token, `false` only when Amazon actually said no. Collapsing those into one boolean
+is exactly how an environment variable nobody set comes to be read as a broken credential — and it
+is the state this deployment is in today.
+
+**The application is not the seller.** The Client ID and Secret say which app is calling; the refresh
+token says whose account it calls for. So the check is split — `CheckToken` for what it takes to get
+a token, `CheckCalls` for what it takes to then say something useful — and a deployment that has the
+first and not the second is reported as precisely that, rather than as a flat "not connected."
+
+## What it refuses to do
+
+**It never invents a value.** The US marketplace ID is a well-known constant and defaulting to it
+would have been one line. It would also mean a seller in Canada silently listing into amazon.com, so
+an unset marketplace stays unset and is reported by name. `A_marketplace_is_never_invented` is the
+test.
+
+**It stays in the sandbox unless something explicitly says otherwise.** A missing, blank or
+unparseable `Credentials__AmazonSandbox` is sandbox; only the literal `false` moves it. The two
+mistakes are not the same size — a wrong sandbox flag lists nothing, a wrong production flag
+publishes a real listing to a real Selling Partner account.
+
+**The Amazon refresh token cannot reach `ServerCredentials`.** That type is overlaid onto every
+signed-in user's record on the hosted build, so a seller grant on it would be one Amazon account
+shared by everybody who signs up — the failure `HostedEbayCredentialsTests` exists to prevent on the
+eBay side. The Amazon credentials live on their own `AmazonOptions` so there is nothing there to
+spread, and `No_amazon_seller_grant_can_reach_ServerCredentials` fails if a property is ever added.
+
+**Only `invalid_grant` condemns the grant.** Not a bare 400, not a 401 — which on this endpoint means
+the *client* credentials were refused and says nothing about the seller's authorisation — and not a
+5xx quoting the marker back, which is an error page talking about itself. Same rule as
+`EbayRefreshClassifier`, and for the same reason: a grant that can only be replaced by the seller
+personally re-authorising is not something to discard over a bad minute.
+
+## It actually reached Amazon, and what came back
+
+The endpoint was stood up on a free port outside the repo (the desktop app owns 9332 and was left
+alone) and asked three times. Verbatim, with the credential values never printed:
+
+**Nothing configured** — answered offline, no request made:
+
+```json
+{ "configured": false, "applicationConfigured": false, "tokenObtainable": null,
+  "sandbox": true, "environment": "Sandbox", "region": "NorthAmerica",
+  "apiHost": "sandbox.sellingpartnerapi-na.amazon.com",
+  "tokenEndpoint": "https://api.amazon.com/auth/o2/token",
+  "code": "no_client_id",
+  "message": "The Amazon LWA Client ID isn't set, so there is no application for Amazon to issue a token to.",
+  "nextAction": "Set Credentials__AmazonClientId to the client identifier from Seller Central -> Apps & Services -> Develop Apps.",
+  "tokenExpiresAt": null, "httpStatus": null,
+  "has": { "clientId": false, "clientSecret": false, "refreshToken": false, "marketplaceId": false, "sellerId": false } }
+```
+
+**The real `amazon_spapi` client id and secret loaded** — still answered offline, because no seller
+has authorised anything:
+
+```json
+{ "configured": false, "applicationConfigured": true, "tokenObtainable": null,
+  "sandbox": true, "environment": "Sandbox", "region": "NorthAmerica",
+  "apiHost": "sandbox.sellingpartnerapi-na.amazon.com", "code": "no_refresh_token",
+  "message": "No Amazon refresh token is stored. The Client ID and Secret identify the application, not the seller - the refresh token is what says which Selling Partner account the calls are made on behalf of, and it is issued once, when that seller authorises the app.",
+  "has": { "clientId": true, "clientSecret": true, "refreshToken": false, "marketplaceId": false, "sellerId": false } }
+```
+
+**A deliberately invalid refresh token**, to prove the exchange actually leaves the building — this
+one is a real round trip to `api.amazon.com`:
+
+```json
+{ "configured": false, "applicationConfigured": true, "tokenObtainable": false,
+  "sandbox": true, "environment": "Sandbox", "code": "invalid_client", "httpStatus": 401,
+  "message": "Amazon rejected the Client ID or Client Secret (invalid_client). The credentials are for a different application, or one of them was truncated when it was set.",
+  "nextAction": "Check Credentials__AmazonClientId and Credentials__AmazonClientSecret, then try again." }
+```
+
+So the transport, the request shape, the status handling and the classifier are all proven against
+the real endpoint. **`invalid_client` is the correct answer, not a bug** — see below.
+
+## The blocker this turned up
+
+**The stored Amazon client secret was never actually captured.** The `amazon_spapi.client_secret`
+field does not hold a secret; it holds a sentence saying the Client secret disclosure was still
+collapsed in the screenshot it was captured from, so the value was never shown — 203 characters
+where an LWA secret is 80. The client **ID** is real and well-formed (61 chars,
+`amzn1.application-oa2-client.` followed by 32 hex).
+
+That is why Amazon said `invalid_client`, and it is the endpoint doing its job: a placeholder was
+sent as a credential and the answer named the two variables to fix.
+
+**To unblock phase 2:** expand the Client secret in Seller Central (or use Rotate secret) and store
+the real value, then authorise the application against the seller account to mint a refresh token.
+
+## Files
+
+| File | What changed |
+|---|---|
+| `ING eBay AutoLister/Services/AmazonAuthFlow.cs` | **New.** `AmazonEnvironment`, `AmazonRegion`, `AmazonEndpoints`, `AmazonConfigProblem`/`AmazonConfigCheck`, `AmazonLwaFailure`/`AmazonLwaClassifier`, `AmazonAccessToken`, `AmazonTokenExpiry`, `AmazonLwaResponse`, `AmazonTokenException` — all pure |
+| `ING eBay AutoLister/Services/AmazonService.cs` | **New.** `AmazonOptions` (the five credentials + sandbox + region, read from `Credentials__*`), and `AmazonService` — token cache, single-flight refresh, `SendAsync`, `GetStatusAsync` |
+| `ING eBay AutoLister/Services/AmazonStatusEndpoint.cs` | **New.** `/api/amazon/status`, mapped from its own file so the tests hit the real handler |
+| `ING eBay AutoLister/Program.cs` | Registers `AmazonOptions` + `AmazonService` beside `EbayService`; maps the endpoint beside `/api/ebay/status` |
+| `ING eBay AutoLister.Tests/AmazonAuthFlowTests.cs` | **New**, 39 tests — what "configured" means and in which order it is reported, the hosts per region and environment, the sandbox default under five kinds of junk input, every env var name, the marketplace that is never invented, which failures may condemn a grant, the token reader, the expiry skew, and the `ServerCredentials` guard |
+| `ING eBay AutoLister.Tests/AmazonStatusEndpointTests.cs` | **New**, 5 tests — the endpoint over real HTTP on a real socket, including that a fully-configured deployment leaks none of its five credentials into the response |
+
+`app.js` was not touched, so no `?v=` bump.
+
+## How it was checked
+
+| Check | Result |
+|---|---|
+| `dotnet build "ING eBay AutoLister.slnx"` | **Succeeded** — 0 errors; only the pre-existing NU1903 / CS8619 / CS8625 warnings |
+| `dotnet test "ING eBay AutoLister.slnx"` | **5,340 passed**, 0 failed, 0 skipped (44 of them new) |
+| `/api/amazon/status` on a real Kestrel socket, three configurations | Quoted verbatim above |
+| Real round trip to `api.amazon.com/auth/o2/token` | HTTP 401 `invalid_client`, classified as transient, grant not condemned |
+| eBay regression | The eBay suite is inside the 5,340 and passing; no eBay source file was edited |
+
+## Known limits
+
+- **No SP-API call has been made yet.** LWA has been reached and its refusal correctly classified,
+  but nothing has been sent to `sandbox.sellingpartnerapi-na.amazon.com` — there is no token to send
+  it with. `SendAsync` is written and unit-tested around, not exercised end to end.
+- **It is blocked on two things nobody in this repo can supply.** A real client secret, and a seller
+  authorisation to mint a refresh token from. Until both exist, `configured` cannot become true.
+- **The credentials are the owner's, not per-seller.** `AmazonOptions` is one application for the
+  whole deployment, which is right for a sandbox diagnostic and wrong for hosted selling. When a real
+  seller authorisation arrives it belongs in the per-user store the eBay grant already uses.
+- **Nothing refreshes in the background.** eBay has a proactive refresh loop; this renews lazily, on
+  the first call that finds the token spent. Fine for an hour-long token, worth revisiting if a long
+  batch ever straddles an expiry.
+- **The region is a setting nobody will remember to set.** It defaults to North America, and a wrong
+  one is a 403 that names neither the region nor the marketplace.
+- **`applicationConfigured: true` only means both strings are non-empty.** As this session proved, a
+  placeholder sentence satisfies it. Only Amazon can tell you the secret is real.

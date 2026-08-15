@@ -257,6 +257,11 @@ builder.Services.AddSingleton(EbayScopeOptions.FromConfiguration(builder.Configu
 builder.Services.AddSingleton(EbayRelayReturn.For(HostedAuth.IsHostedBuild));
 builder.Services.AddSingleton<ClaudeService>();
 builder.Services.AddSingleton<EbayService>();
+// The Amazon half. Read from configuration at startup like the eBay registration above, and
+// SANDBOX unless something explicitly says otherwise — a wrong sandbox flag lists nothing, a wrong
+// production flag publishes to a real Selling Partner account. See AmazonOptions.
+builder.Services.AddSingleton(AmazonOptions.FromConfiguration(builder.Configuration));
+builder.Services.AddSingleton<AmazonService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
@@ -9304,6 +9309,10 @@ app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, Server
         },
     });
 });
+
+// The Amazon counterpart of the endpoint above. Mapped from its own file so the handler the tests
+// exercise is the handler this app serves — see AmazonStatusEndpoint.
+AmazonStatusEndpoint.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {
