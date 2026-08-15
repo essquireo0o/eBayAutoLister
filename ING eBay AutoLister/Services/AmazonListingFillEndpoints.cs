@@ -48,12 +48,20 @@ public static class AmazonListingFillEndpoints
     /// Finds the product type, reads its schema, and fills it from the draft.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The two ways in differ in who chose the product type. A named one is taken as given — the
     /// seller picked it from the candidates and second-guessing that would be this app overruling
     /// them. An unnamed one goes through <see cref="AmazonProductTypeChooser"/>, which refuses when
     /// the words do not decide it, and the refusal is passed straight through as the status.
+    /// </para>
+    /// <para>
+    /// Public because <see cref="AmazonListingSubmitService.SubmitProductAsync"/> calls it before
+    /// submitting, and it has to be the SAME fill the seller reviewed here. A second implementation
+    /// that agreed today is a second implementation that can disagree later, and the disagreement
+    /// would be between what a report showed and what was actually sent to Amazon.
+    /// </para>
     /// </remarks>
-    private static async Task<AmazonListingFill> BuildAsync(
+    public static async Task<AmazonListingFill> BuildAsync(
         AmazonFillRequest request, AmazonProductTypeService productTypes,
         AmazonService amazon, CancellationToken cancellationToken)
     {

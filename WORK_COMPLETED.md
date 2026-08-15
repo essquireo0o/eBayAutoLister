@@ -14888,3 +14888,133 @@ flakiness, not a regression.
   collapsing them into a tick and a cross loses the instruction.
 - **A test asserting "the payload is complete" would be asserting the bug.** The correct output for
   this draft is a blocked listing.
+
+---
+
+# Amazon SP-API Phase 4 — submitting a listing to the sandbox, both paths
+
+Branch `auto/queue-features-20260726`. Phase 4 is the first Amazon code in this app that **writes**.
+
+## What was built
+
+| File | What it is |
+|---|---|
+| `Models/AmazonSubmissionModels.cs` | The offer/product requests, the submission result, Amazon's issues, and what became of a SKU |
+| `Services/AmazonListingSubmission.cs` | Pure: paths, the production guard, the refusal checks, the payload builders, the response classifiers, and the sentences the phase is allowed to say |
+| `Services/AmazonListingSubmitService.cs` | The network half — PUT the listing, GET what became of it, record the exchange |
+| `Services/AmazonSubmitEndpoints.cs` | `POST /api/amazon/offer`, `POST /api/amazon/product`, `GET /api/amazon/listing-state` (+ two `/report` routes) |
+| `Services/AmazonSubmissionReport.cs` | The same, as plain text, with the request and response quoted |
+| `AmazonSubmissionTests.cs` / `AmazonSubmitEndpointTests.cs` | 45 tests |
+| `verification/amazon-phase4-submission.txt` | The acceptance artefact |
+
+`AmazonListingFillEndpoints.BuildAsync` was made public so the product path submits the **same fill
+the seller reviewed**, rather than a second implementation of it that can drift.
+
+## The design problem: a 200 does not mean live
+
+eBay is synchronous — `AddFixedPriceItem` answers with an item ID and the response *is* the verdict.
+Amazon's Listings Items API answers the way a post office answers a parcel: it took it. Two
+consequences, and the code is shaped around both.
+
+1. **HTTP 200 + `ACCEPTED` means queued, not listed.** The app says *"Submitted, awaiting Amazon"* and
+   never "Published". There is no `published`, `live` or `success` field anywhere in the JSON for a UI
+   to bind to by mistake — the field is `awaitingAmazon`. `AmazonSubmissionWords.ForbiddenWords` is
+   asserted against **every** sentence the phase can produce, including the good-news ones, which are
+   the ones that would drift.
+2. **HTTP 200 + `INVALID` is a rejection.** Amazon refuses a listing *inside* a successful HTTP
+   response. Anything that branches on `IsSuccessStatusCode` and stops there reports a refused listing
+   as a published one, so the status field is read first and the HTTP code is consulted only when
+   there is no status to read.
+
+A rejection therefore surfaces in two places and both are covered: synchronously (200 + INVALID), and
+asynchronously — `ACCEPTED` with an empty issue list, then an `ERROR` against the SKU on the next GET,
+which is the **only** place that fact ever exists. An `ACCEPTED` carrying ERROR issues is Amazon
+contradicting itself and is read as a rejection: the safe reading of a contradiction about whether a
+listing exists is that it does not.
+
+## What was measured live (2026-08-15)
+
+Still blocked, re-verified rather than assumed. `POST https://api.amazon.com/auth/o2/token` →
+**HTTP 401 `{"error":"invalid_client"}`**. The stored LWA client secret is a 203-character prose note;
+a real one is 80. So no submission with a token can be made from here.
+
+What *could* be measured is the request itself, sent to the real sandbox host with no token — the
+exact PUT the app builds:
+
+```
+PUT https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{seller}/{sku}
+    ?marketplaceIds=ATVPDKIKX0DER&issueLocale=en_US
+HTTP 403  {"errors":[{"code":"Unauthorized","message":"Access to requested resource is denied.",
+                      "details":"Access token is missing in the request header."}]}
+```
+
+**The control is the part worth keeping.** A 403 alone proves nothing — a gateway that refuses
+everything refuses this too. But an *unroutable* path returns a 403 with an **empty** `details`, while
+the three real operations return the populated one:
+
+| Request | `details` |
+|---|---|
+| `PUT`/`GET`/`DELETE /listings/2021-08-01/items/…` | `Access token is missing in the request header.` |
+| `GET /listings/9999-99-99/items/…` | *(empty)* |
+| `GET /listings/2021-08-01/zzz/…` | *(empty)* |
+
+Amazon routes before it authenticates. So the probe **proves** the host, API version, path shape,
+method and query parameters address real Listings Items operations and only the token is missing — and
+**proves nothing about the payload**: a deliberately malformed body (`this is not json at all {{{`)
+got the identical token 403, so the body is never looked at before authentication.
+
+## What the sandbox does and does not prove
+
+- **Would prove:** the request is well-formed enough for Amazon to parse, route and answer; the app
+  reads `ACCEPTED`, `INVALID` and the issues array correctly; the token is attached where Amazon wants it.
+- **Would not prove the listing is right.** It is a *static* sandbox — it replays canned responses
+  rather than evaluating what was sent. Phase 2 measured the sharp end: the definitions endpoint
+  returns a fixed `LUGGAGE` product type whatever the keywords say. A sandbox acceptance is not
+  evidence production would accept the same submission.
+- **Nothing is proven about a real account, deliberately.** `AmazonSubmitGuard` refuses to submit
+  whenever `Credentials__AmazonSandbox` is false, *even when every credential is present* — the test
+  asserts `CanCall` is true and the guard still refuses. Every other Amazon call here is a read; a
+  mistaken one of these is a real listing a shopper can buy from before anyone notices.
+
+## What it refuses to send
+
+Each missing fact comes back named, with what to do about it — never defaulted. Missing/malformed
+ASIN, missing or over-length SKU, missing or unknown condition token, missing or non-positive price,
+missing quantity. `Quantity` is `int?` **because 0 is a real answer** meaning out of stock, so a plain
+`int` could not tell it from "nobody said", and defaulting to 1 would publish a stock level the app
+invented. A SKU is never generated: a submission *replaces* whatever is at that SKU, so an invented one
+is a coin flip between creating an offer and overwriting an existing listing. The product path will not
+send a fill whose `CanSubmit` is false — it is allowed to *read* (the product-type lookup happens) and
+not to write.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` (solution) | **succeeded**, 0 errors, 4 warnings (all pre-existing) |
+| `dotnet test` (full suite) | **5499 passed, 0 failed** |
+| New tests | 30 in `AmazonSubmissionTests`, 15 in `AmazonSubmitEndpointTests` |
+| eBay regression | none — no eBay path was modified |
+
+The endpoint tests stand Amazon in at the HTTP layer via `IHttpClientFactory`, so everything from the
+route down to the bytes on the wire is the real code path and only the far end is substituted. The stub
+is **not** injected by pointing the app at a local URL, because `AmazonEndpoints` must stay the only
+thing that picks a host — a test hook that let the host be overridden would be the exact hole that rule
+exists to close. The tests also assert the app attaches `x-amz-access-token`, and that the report
+carries neither the seller ID, the access token, the client secret nor the refresh token.
+
+## Traps for whoever picks this up
+
+- **Never read `IsSuccessStatusCode` as the verdict.** The rejection is inside the 200.
+- **Never add a `published`/`live`/`success` field.** The phase cannot support the claim; the test that
+  scans every sentence will catch the prose, but a new JSON field would slip past a reader.
+- **`LISTING_OFFER_ONLY` vs `LISTING` is the expensive mistake.** Sending `LISTING` for an offer makes
+  Amazon demand the whole product schema — title, bullets, dimensions, country of origin — for a
+  product it already has, and the submission fails on a dozen attributes that were never the seller's.
+- **`fulfillment_availability` carries no `marketplace_id` or `language_tag`.** Stock is a fact about a
+  warehouse, not a presentation; stamping the envelope on it sends Amazon an attribute it did not ask for.
+- **An empty issues array is not a clean bill of health.** Amazon attaches most issues during
+  processing, after the submission response has already been sent. The report says so in that section.
+- **The seller ID is redacted from the recorded URL; the host is not.** The host is what proves this
+  went to the sandbox, and it is the single most important fact in the record.
+

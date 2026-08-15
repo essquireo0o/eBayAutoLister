@@ -266,6 +266,9 @@ builder.Services.AddSingleton<AmazonService>();
 // and serialises writes to it; the service is one because the cache is. See AmazonSchemaCache.
 builder.Services.AddSingleton<AmazonSchemaCache>();
 builder.Services.AddSingleton<AmazonProductTypeService>();
+// The write path. Refuses outright unless this build is pointed at the sandbox — every other Amazon
+// call here is a read, and a mistaken one of these is a real listing. See AmazonSubmitGuard.
+builder.Services.AddSingleton<AmazonListingSubmitService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
@@ -9325,6 +9328,11 @@ AmazonProductTypeEndpoints.Map(app);
 // And the same draft the AI filled for eBay, read onto those requirements — which of them it
 // already answers, which it cannot, and the payload that comes out. Submits nothing.
 AmazonListingFillEndpoints.Map(app);
+
+// Phase 4, the one that writes: an offer on an existing ASIN, a new product, and — separately,
+// because on Amazon it is a separate question asked minutes later — what became of either. A
+// submission that came back 200 ACCEPTED is queued, not published. See AmazonSubmissionWords.
+AmazonSubmitEndpoints.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {

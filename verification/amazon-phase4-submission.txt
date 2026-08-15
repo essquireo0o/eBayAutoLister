@@ -1,0 +1,459 @@
+Amazon phase 4 - submitting a listing, and admitting a 200 is not a listing
+==========================================================================
+
+Regenerate the report sections below with:
+  dotnet test --filter The_submission_report_shows_both --logger "console;verbosity=detailed"
+
+Phase 4 is the first Amazon code in this app that WRITES. It does two things: (a)
+puts an offer on a product Amazon's catalogue already has, and (b) creates a new
+product from the draft the AI wrote. And it does a third thing that is not
+optional and has no eBay counterpart - it asks, afterwards, what became of the
+submission.
+
+
+WHAT AMAZON'S ASYNCHRONY ACTUALLY COSTS
+---------------------------------------
+eBay is synchronous. AddFixedPriceItem answers with an item ID and the listing is
+live; the response IS the verdict. Amazon's Listings Items API answers the way a
+post office answers a parcel: it took it. Validation happens later, on Amazon's
+schedule, and a listing can fail then - with the reason attached to the SKU
+rather than returned to the caller, who left minutes ago.
+
+Two consequences, and the code is shaped around both:
+
+  1. A 200 IS NOT A LISTING. HTTP 200 with status ACCEPTED means queued. The app
+     says "Submitted, awaiting Amazon" and never "Published". There is no
+     `published`, `live` or `success` field anywhere in the response a UI could
+     bind to by mistake - AmazonSubmissionWords.ForbiddenWords is asserted
+     against every sentence the phase can produce, including the good-news ones.
+
+  2. A 200 CAN BE A REJECTION. Amazon refuses a listing INSIDE a successful HTTP
+     response, with status INVALID and the reasons in an issues array. Code that
+     checks IsSuccessStatusCode and stops there reports a refused listing as a
+     published one. So the status field is read first and the HTTP code is only
+     consulted when there is no status to read.
+
+The rejection therefore surfaces in two different places, and the report sections
+below show both: synchronously (200 + INVALID) and asynchronously (ACCEPTED, then
+an ERROR against the SKU on the next GET).
+
+
+WHAT WAS MEASURED LIVE, AND WHAT IT PROVES
+------------------------------------------
+This deployment cannot obtain an Amazon access token. The stored LWA client
+secret is a 203-character prose note saying the disclosure was collapsed in a
+screenshot; a real secret is 80 characters. Re-measured 2026-08-15 against the
+real LWA endpoint - request body redacted, only the app's own client id and that
+note were sent:
+
+  POST https://api.amazon.com/auth/o2/token
+  HTTP 401
+  {"error_description":"Client authentication failed","error":"invalid_client"}
+
+So no submission with a token can be made from here. What CAN be measured is the
+request itself, sent to the real sandbox host with no token. This is the exact
+PUT the app builds - same host, same path, same query, same JSON body:
+
+  PUT https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/
+      A1B2C3D4E5F6G7/ING-TEST-SKU-001?marketplaceIds=ATVPDKIKX0DER&issueLocale=en_US
+  Content-Type: application/json
+  {"productType":"PRODUCT","requirements":"LISTING_OFFER_ONLY","attributes":{...}}
+
+  HTTP 403
+  {
+    "errors": [
+      {
+        "code": "Unauthorized",
+        "message": "Access to requested resource is denied.",
+        "details": "Access token is missing in the request header."
+      }
+    ]
+  }
+
+A 403 on its own would prove very little - a gateway that refuses everything
+refuses this too. So a control was run. It is the one non-obvious measurement
+here and it is what makes the probe worth quoting:
+
+  PUT  /listings/2021-08-01/items/{seller}/{sku}   403, details "Access token is missing…"
+  GET  /listings/2021-08-01/items/{seller}/{sku}   403, details "Access token is missing…"
+  DEL  /listings/2021-08-01/items/{seller}/{sku}   403, details "Access token is missing…"
+  GET  /listings/9999-99-99/items/{seller}/{sku}   403, details ""     <- unroutable
+  GET  /listings/2021-08-01/zzz/{seller}/{sku}     403, details ""     <- unroutable
+
+Amazon's gateway ROUTES the request before it checks the token, and an
+unroutable path gets a 403 with an EMPTY details field. The three real operations
+get the populated one. That distinction was stable across repeats and matches the
+already-working definitions endpoint, which answers the same way.
+
+  PROVEN by the probe: the host, the API version, the path shape, the HTTP method
+  and the query parameters this app builds address real, routed Listings Items
+  operations on the sandbox, and the only thing missing is the access token.
+
+  NOT PROVEN by the probe: anything about the payload. A deliberately malformed
+  body ("this is not json at all {{{") got the identical token 403, so the body
+  is never looked at before authentication. The probe says nothing about whether
+  Amazon would accept these attributes.
+
+
+WHAT THE SANDBOX WOULD AND WOULD NOT PROVE EVEN WITH CREDENTIALS
+---------------------------------------------------------------
+Worth stating plainly, because "it worked in the sandbox" is the claim this
+phase is most likely to be over-read as making.
+
+  The sandbox WOULD prove: the request is well-formed enough for Amazon to parse,
+  route and answer it; the app reads ACCEPTED, INVALID and the issues array
+  correctly; the token is attached where Amazon expects it.
+
+  The sandbox would NOT prove the listing is right. It is a STATIC sandbox - it
+  replays canned responses rather than evaluating what was sent. Phase 2 already
+  measured the sharp end of this: the definitions endpoint returns a fixed
+  LUGGAGE product type whatever the keywords say, so a query about a bluetooth
+  speaker comes back 200 OK, well-formed, and completely wrong. A sandbox
+  acceptance is therefore not evidence that production would accept the same
+  submission, and nothing here treats it as such.
+
+  Nothing at all is proven about a real Selling Partner account, and deliberately
+  so: AmazonSubmitGuard refuses to submit whenever Credentials__AmazonSandbox is
+  false, even when every credential is present. Every other Amazon call this app
+  makes is a read; a mistaken one of these is a real listing on a real account
+  that a shopper can buy from before anyone notices. Publishing for real needs
+  the seller's explicit consent, and nothing in this build asks for it yet.
+
+
+HOW THE SECTIONS BELOW WERE PRODUCED
+------------------------------------
+Amazon is stood in for at the HTTP layer by a stub answering with Amazon's own
+documented bodies. Everything from the route down to the bytes on the wire is the
+real code path - the real endpoint, the real service, the real token attachment,
+the real URL and the real payload - and only the far end is substituted. The stub
+is injected through IHttpClientFactory rather than by pointing the app at a local
+URL, because AmazonEndpoints must stay the only thing that picks a host: a test
+hook that let the host be overridden would be the exact hole that rule exists to
+close.
+
+The final section is not a stub. It is the verbatim 403 measured above, put
+through the same code path as the rest, so the one answer this deployment can
+really get from Amazon is shown being handled.
+
+The seller ID is replaced by {sellerId} in everything meant to be read - it is
+the merchant token, it identifies the account rather than describing the call,
+and a report is a thing people paste into messages. The host is left intact: it
+is what proves this went to the sandbox rather than to a seller.
+
+(a) OFFER ON AN EXISTING ASIN - Amazon answers ACCEPTED
+=======================================================
+
+SKU          : ING-TEST-001
+Environment  : Sandbox   Marketplace: ATVPDKIKX0DER
+Product type : PRODUCT
+State        : submitted   Amazon says: ACCEPTED
+Submission   : 7b1e4f92
+
+Submitted, awaiting Amazon. Amazon has the submission and has not yet said
+what became of it — processing happens afterwards, and a listing can still
+fail then with the reason attached to the SKU.
+
+NEXT
+------------------------------------------------------------------------------
+Check what became of it: GET /api/amazon/listing-state?sku=ING-TEST-001. Until
+that reports Amazon's own status for the SKU, the only true statement is that
+Amazon has it.
+
+ISSUES: none. Note that an empty issue list is not a promise — Amazon attaches most of them during processing, after the submission response has been sent.
+
+THE EXCHANGE
+------------------------------------------------------------------------------
+  PUT https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sellerId}/ING-TEST-001?marketplaceIds=ATVPDKIKX0DER&issueLocale=en_US
+
+  Request body:
+    {
+      "productType": "PRODUCT",
+      "requirements": "LISTING_OFFER_ONLY",
+      "attributes": {
+        "merchant_suggested_asin": [
+          {
+            "value": "B08N5WRWNW",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "condition_type": [
+          {
+            "value": "new_new",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "purchasable_offer": [
+          {
+            "currency": "USD",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "our_price": [
+              {
+                "schedule": [
+                  {
+                    "value_with_tax": 549.99
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "fulfillment_availability": [
+          {
+            "fulfillment_channel_code": "DEFAULT",
+            "quantity": 3
+          }
+        ],
+        "condition_note": [
+          {
+            "value": "Sealed retail box.",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "language_tag": "en_US"
+          }
+        ]
+      }
+    }
+
+  Response: HTTP 200   x-amzn-RequestId: 11111111-2222-3333-4444-555555555555
+    {
+      "sku": "ING-TEST-001",
+      "status": "ACCEPTED",
+      "submissionId": "7b1e4f92",
+      "issues": []
+    }
+
+This is not a published listing. Amazon has the submission and decides later; ask /api/amazon/listing-state what became of it.
+
+
+A REJECTION THAT ARRIVES INSIDE AN HTTP 200
+===========================================
+
+SKU          : ING-TEST-001
+Environment  : Sandbox   Marketplace: ATVPDKIKX0DER
+Product type : PRODUCT
+State        : rejected   Amazon says: INVALID
+Submission   : 7b1e4f93
+
+Amazon rejected this submission: 1 error. The first is 4000001
+(condition_type): The value 'used_god' for 'condition_type' is not one of the
+accepted values.
+
+NEXT
+------------------------------------------------------------------------------
+Fix the attributes the errors name and submit again. The same SKU is correct —
+a submission replaces what is at it, so a rejected one leaves nothing behind
+to collide with.
+
+ISSUES (1 error, 0 warnings, 1 total)
+------------------------------------------------------------------------------
+  [ERROR  ] 4000001  condition_type
+           The value 'used_god' for 'condition_type' is not one of the
+           accepted values.
+
+THE EXCHANGE
+------------------------------------------------------------------------------
+  PUT https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sellerId}/ING-TEST-001?marketplaceIds=ATVPDKIKX0DER&issueLocale=en_US
+
+  Request body:
+    {
+      "productType": "PRODUCT",
+      "requirements": "LISTING_OFFER_ONLY",
+      "attributes": {
+        "merchant_suggested_asin": [
+          {
+            "value": "B08N5WRWNW",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "condition_type": [
+          {
+            "value": "new_new",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "purchasable_offer": [
+          {
+            "currency": "USD",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "our_price": [
+              {
+                "schedule": [
+                  {
+                    "value_with_tax": 549.99
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "fulfillment_availability": [
+          {
+            "fulfillment_channel_code": "DEFAULT",
+            "quantity": 3
+          }
+        ],
+        "condition_note": [
+          {
+            "value": "Sealed retail box.",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "language_tag": "en_US"
+          }
+        ]
+      }
+    }
+
+  Response: HTTP 200   x-amzn-RequestId: 11111111-2222-3333-4444-555555555555
+    {
+      "sku": "ING-TEST-001",
+      "status": "INVALID",
+      "submissionId": "7b1e4f93",
+      "issues": [
+        {
+          "code": "4000001",
+          "message": "The value 'used_god' for 'condition_type' is not one of the accepted values.",
+          "severity": "ERROR",
+          "attributeNames": [
+            "condition_type"
+          ]
+        }
+      ]
+    }
+
+Nothing here claims a listing exists on Amazon.
+
+
+THE ISSUE CHECK - the rejection that the submission response could not carry
+============================================================================
+
+SKU          : ING-TEST-001
+Lookup       : ok
+Amazon says  : nothing yet
+
+Amazon rejected this listing after processing it: 1 error against SKU
+ING-TEST-001. The first is 90220 (merchant_suggested_asin):
+'merchant_suggested_asin' does not match a product in the Amazon catalog.
+
+ISSUES (1 error, 1 warning, 2 total)
+------------------------------------------------------------------------------
+  [ERROR  ] 90220  merchant_suggested_asin
+           'merchant_suggested_asin' does not match a product in the Amazon
+           catalog.
+  [warning] 18027  main_product_image_locator
+           A main product image is recommended.
+
+THE EXCHANGE
+------------------------------------------------------------------------------
+  GET https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sellerId}/ING-TEST-001?marketplaceIds=ATVPDKIKX0DER&includedData=issues%2Csummaries&issueLocale=en_US
+
+  Response: HTTP 200   x-amzn-RequestId: 11111111-2222-3333-4444-555555555555
+    {
+      "sku": "ING-TEST-001",
+      "summaries": [
+        {
+          "marketplaceId": "ATVPDKIKX0DER",
+          "productType": "PRODUCT",
+          "status": []
+        }
+      ],
+      "issues": [
+        {
+          "code": "90220",
+          "message": "'merchant_suggested_asin' does not match a product in the Amazon catalog.",
+          "severity": "ERROR",
+          "attributeNames": [
+            "merchant_suggested_asin"
+          ]
+        },
+        {
+          "code": "18027",
+          "message": "A main product image is recommended.",
+          "severity": "WARNING",
+          "attributeNames": [
+            "main_product_image_locator"
+          ]
+        }
+      ]
+    }
+
+
+THE BODY THIS DEPLOYMENT ACTUALLY GETS (measured 2026-08-15)
+============================================================
+
+SKU          : ING-TEST-001
+Environment  : Sandbox   Marketplace: ATVPDKIKX0DER
+Product type : PRODUCT
+State        : rejected   (Amazon gave no status)
+
+Amazon rejected this submission (status unstated) without attaching a reason
+to it.
+
+NEXT
+------------------------------------------------------------------------------
+Amazon named no attribute, so the response below is the whole of what it said.
+Its request ID is what Selling Partner Support will ask for.
+
+ISSUES: none. Note that an empty issue list is not a promise — Amazon attaches most of them during processing, after the submission response has been sent.
+
+THE EXCHANGE
+------------------------------------------------------------------------------
+  PUT https://sandbox.sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/{sellerId}/ING-TEST-001?marketplaceIds=ATVPDKIKX0DER&issueLocale=en_US
+
+  Request body:
+    {
+      "productType": "PRODUCT",
+      "requirements": "LISTING_OFFER_ONLY",
+      "attributes": {
+        "merchant_suggested_asin": [
+          {
+            "value": "B08N5WRWNW",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "condition_type": [
+          {
+            "value": "new_new",
+            "marketplace_id": "ATVPDKIKX0DER"
+          }
+        ],
+        "purchasable_offer": [
+          {
+            "currency": "USD",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "our_price": [
+              {
+                "schedule": [
+                  {
+                    "value_with_tax": 549.99
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "fulfillment_availability": [
+          {
+            "fulfillment_channel_code": "DEFAULT",
+            "quantity": 3
+          }
+        ],
+        "condition_note": [
+          {
+            "value": "Sealed retail box.",
+            "marketplace_id": "ATVPDKIKX0DER",
+            "language_tag": "en_US"
+          }
+        ]
+      }
+    }
+
+  Response: HTTP 403   x-amzn-RequestId: 11111111-2222-3333-4444-555555555555
+    {
+      "errors": [
+        {
+          "code": "Unauthorized",
+          "message": "Access to requested resource is denied.",
+          "details": "Access token is missing in the request header."
+        }
+      ]
+    }
+
+Nothing here claims a listing exists on Amazon.
