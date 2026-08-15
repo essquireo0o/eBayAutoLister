@@ -14712,3 +14712,179 @@ call it makes is a GET.
 - **A 200 from the sandbox is not an answer to your question.** See above.
 - **A product type that exists in one marketplace need not exist in another**, which arrives as a
   400 and reads as a misspelling.
+
+---
+
+# Amazon phase 3 — let the AI fill an Amazon listing the way it fills an eBay one
+
+Phase 2 asked Amazon what a product needs. This phase answers the next question: of the things the
+AI **already** pulled off the photos and the source page, which ones answer it — and where nothing
+does, why the listing cannot go yet.
+
+Nothing is submitted. The output is a payload and a verdict.
+
+## The shape of the problem
+
+The AI's work is marketplace-agnostic. It produced a `ListingData` — title, brand, MPN, price,
+condition, box, HTML description, thirteen Item Specifics — and the item does not change shape
+because it is being sold somewhere else. What changes is the **form it has to be written on**.
+
+| | eBay | Amazon |
+|---|---|---|
+| Field list | flat: name + string | JSON Schema per product type |
+| Envelope | none | every value is an array of objects with selectors |
+| Composites | none | a price is a currency wrapping a price list wrapping a schedule |
+| Vocabulary | mostly free text | closed lists — `China` is illegal, `CN` is not |
+| "Required" | required / optional | required / optional / **required-unless-you-supplied-the-other-one** |
+| Cost of a wrong value | a listing that sells badly | a suspended account |
+
+That last row is why this is a join with a refusal built in rather than a field-copying exercise.
+
+## What was built
+
+| File | What it is |
+|---|---|
+| `Models/AmazonListingFillModels.cs` | `AmazonListingFill`, `AmazonFilledAttribute`, `AmazonFillState`, `AmazonRequirementChoice`, `AmazonFillRequest` |
+| `Services/AmazonDraftReader.cs` | **which draft field answers which attribute** — the joins, and the reasons where none does |
+| `Services/AmazonListingMapper.cs` | **Amazon's rules about the value** — closed lists, lengths, types, envelope, either/or groups |
+| `Services/AmazonListingFillReport.cs` | the same answer as plain text, for reading rather than parsing |
+| `Services/AmazonListingFillEndpoints.cs` | `POST /api/amazon/listing-fill` and `.../report` |
+
+Three properties were added to `AmazonAttribute` because the payload builder genuinely needs them and
+prose could not be parsed back into facts: `Selectors` (which envelope keys this attribute declares),
+`MaxCount` (how many values Amazon takes — a sixth bullet point is a rejection, not a dropped
+bullet), and `Alternatives` (the same fact `RequirementNote` states in English, in a form that can
+answer "is this requirement met?", which is a question about the **group**).
+
+**Reuse, not reimplementation.** Where the question is one eBay already answers — "does this
+seller-typed key mean that marketplace-defined field?" — this calls `AspectMatcher.MatchAspectName`
+with the draft's own Item Specifics standing in as the vocabulary, so the two marketplaces cannot
+drift apart on what "Model" means. `CrossListingExporter.HtmlToText` strips the eBay description.
+The identifier precedence matches `CrossListingExporter.GtinFor`, so a draft exported to a flat file
+and the same draft sent through the API claim the same barcode.
+
+## The refusals — the part that matters
+
+`AmazonListingMapper.NeverInvent` is a table of attributes with an obvious-looking source that is the
+wrong source, each with the reason attached:
+
+- **`number_of_items`** — the draft's `Quantity` is how many are *in stock*. Twenty miners on a shelf
+  are not a twenty-pack, and the difference is a refund.
+- **`item_dimensions` / `item_weight`** — the product's own size. The draft carries the **shipping
+  box**, larger by whatever padding went round it. (The box *is* used where Amazon asks for the box:
+  `item_package_weight` and `item_package_dimensions`.)
+- **`batteries_required`, `supplier_declared_dg_hz_regulation`** — regulatory declarations about
+  lithium cells. A default is a false declaration to Amazon and to a carrier.
+- **`merchant_suggested_asin`** — a guessed ASIN attaches this seller's offer to someone else's
+  product.
+- **`fulfillment_availability`** — FBA or merchant-fulfilled is not something an eBay draft knows.
+
+Three more refusals live in the readers rather than the table:
+
+- **No barcode is ever manufactured.** A draft with no UPC/EAN/ISBN comes back with the requirement
+  blocked and a sentence saying a made-up one is an account suspension, not a rejected listing.
+- **`FOR_PARTS_OR_NOT_WORKING` has no `condition_type` mapping.** Amazon's lowest grade means a
+  *working* item with wear. `CrossListingExporter` does downgrade it, with a warning, because a
+  spreadsheet a human reviews before uploading is a different artefact from a payload — this builds
+  the payload, so it refuses.
+- **A value outside a closed list is withheld, not sent.** Amazon does not say which attribute failed
+  until after submission, so an illegal value is worth *less* than none: same rejection, and it hides
+  which field caused it.
+
+One middle case: `list_price` is filled from the asking price **with a caution attached**, because
+Amazon reads that field as the struck-through manufacturer's price. Refusing would leave a required
+field blank over a caveat; filling it silently would publish an invented discount.
+
+## Acceptance — a real draft, verbatim
+
+Full artefact: **`verification/amazon-phase3-fill-report.txt`**. Regenerate with
+`dotnet test --filter The_report_marks_every_required --logger "console;verbosity=detailed"`.
+
+The draft is a **capture, not a reconstruction** — a verbatim copy of
+`Bitaxe_NerdQaxe_48THs_BM1370_...json` out of the seller's own eBayListing folder, with only the
+three eBay business-policy ids zeroed (account credentials, irrelevant to Amazon attributes). It was
+not composed for this test, and it has no UPC, which is exactly the case that must block.
+
+```
+Not ready: 8 of 10 required attributes for Bluetooth Speaker filled from the draft —
+2 required attributes have no value, 1 either/or requirement is unmet.
+Nothing was invented to close the gap.
+
+REQUIRED ATTRIBUTES (8 of 10 filled)
+  [filled ] item_name              Bitaxe NerdQaxe++ 4.8TH/s BM1...  from the draft title
+  [filled ] brand                  NerdQaxe                          from the draft's brand
+  [filled ] bullet_point           ASIC Chips: 4x Bitmain BM1370 (+4)  Amazon takes 5; 21 left off
+  [filled ] product_description    NerdQaxe++ 4.8TH/s Bitcoin So...  from the draft description
+  [filled ] condition_type         new_new                           from the draft's condition (NEW)
+  [MISSING] batteries_required     -    A regulatory declaration about batteries...
+  [MISSING] supplier_declared_dg_hz_regulation  -  Amazon's dangerous-goods declaration...
+  [filled ] country_of_origin      CN    from Item Specific "Country of Manufacture"
+                                         "China" matched Amazon's "CN".
+  [filled ] list_price             549.99 USD   (+ the MSRP caution)
+  [filled ] purchasable_offer      549.99 USD   from the draft's price
+
+EITHER/OR REQUIREMENTS (0 of 1 satisfied)
+  [BLOCKED] Amazon needs one of these and the draft has none:
+            External Product ID, Merchant Suggested ASIN.
+```
+
+Two things in there are worth pointing at:
+
+**The seller wrote the label; Amazon got the token.** The Item Specific says *Country of Manufacture:
+China*. Amazon publishes that enum as `["US","CN","VN","MX"]` and only shows "China" as a display
+label, so the payload carries `CN` — and the report says so, rather than silently substituting.
+
+**The price came out in the shape Amazon charges from**, three levels deep, with `audience` left off
+because omitting it means all buyers and guessing would publish the wrong price to the wrong ones:
+
+```json
+"purchasable_offer": [ { "currency": "USD",
+  "our_price": [ { "schedule": [ { "value_with_tax": 549.99 } ] } ],
+  "marketplace_id": "ATVPDKIKX0DER" } ]
+```
+
+Ten attributes reach the payload in total (eight required, plus `color` and `item_package_weight`
+from the optional set). `item_type_keyword` is reported as *not a gap* — it is hidden and
+non-editable, so Amazon sets it and rejects a seller who does.
+
+## Standing caveat, unchanged
+
+The product type schema in the acceptance run is the reconstruction from `AmazonProductTypeFixtures`,
+not a live fetch. This deployment still cannot obtain an Amazon access token (the stored LWA client
+secret is still the placeholder note), and the SP-API sandbox still answers every product type query
+with **luggage** regardless of the keywords. So what is proven here is the **join and the payload
+shape**, offline and completely. Which required attributes `BLUETOOTH_SPEAKER` really has is a
+question only production can answer, and `AmazonSandboxNotice` is carried through the fill unchanged
+so the distinction cannot be lost downstream — `The_sandbox_notice_survives_the_fill` asserts it.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` (solution) | **succeeded**, 0 errors, 7 warnings (all pre-existing) |
+| `dotnet test` (full suite) | **5454 total**, 0 failed on 3 of 4 runs |
+| New tests | 20 in `AmazonListingMapperTests`, 4 in `AmazonListingFillEndpointTests` |
+| eBay regression | none — no eBay path was modified |
+
+One intermittent failure was seen on one full run:
+`AdminKeyTests.A_wrong_key_that_shares_a_prefix_costs_the_same_to_refuse_as_one_that_shares_nothing`
+("near-miss 102182 ticks vs wild-miss 18958 ticks"). It is a **wall-clock timing assertion** on
+constant-time key comparison, it touches nothing this session changed, and it passed 8/8 when run in
+isolation and on the other three full runs — it fails only under parallel load. Pre-existing
+flakiness, not a regression.
+
+## Traps for whoever picks this up
+
+- **The schema decides the shape; nothing here hard-codes an attribute's layout.** Envelope,
+  selectors, closed lists, child names, units and length limits all come from the parsed schema, so a
+  product type this app has never seen still comes out right. Adding a special case for one
+  attribute's layout is how that stops being true.
+- **Stamp only the selectors you can answer.** `marketplace_id` and `language_tag` are known;
+  `audience` is not, and filling it is a pricing decision.
+- **A composite's unit is matched against the schema's own enum**, never assumed. A product type that
+  does not publish `inches` gets no value rather than a silently converted one.
+- **`AmazonFillState` has six states and only one is "filled".** Missing, missing-conditional,
+  satisfied-by-alternative, invalid-value and too-long are five different instructions to a seller;
+  collapsing them into a tick and a cross loses the instruction.
+- **A test asserting "the payload is complete" would be asserting the bug.** The correct output for
+  this draft is a blocked listing.

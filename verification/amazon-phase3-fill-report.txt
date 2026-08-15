@@ -1,0 +1,186 @@
+Amazon phase 3 - one real eBay draft, read onto an Amazon product type
+======================================================================
+
+Regenerate with:
+  dotnet test --filter The_report_marks_every_required --logger "console;verbosity=detailed"
+
+The draft is a verbatim capture from the seller's own eBayListing folder (see
+AmazonListingFillFixtures). The product type schema is the reconstruction in
+AmazonProductTypeFixtures - this deployment cannot obtain an Amazon access token,
+so no schema here came off Amazon's wire, and the SP-API sandbox answers every
+product type query with luggage regardless of the keywords. What is proven below
+is the JOIN: which of the AI's already-extracted fields answer which Amazon
+attributes, what payload comes out, and what happens where nothing answers.
+
+Nothing was submitted.
+
+Draft        : Bitaxe NerdQaxe++ 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan
+Product type : BLUETOOTH_SPEAKER  (Bluetooth Speaker)
+Marketplace  : ATVPDKIKX0DER   Locale: en_US
+Status       : ok
+
+Not ready: 8 of 10 required attributes for Bluetooth Speaker filled from the draft — 2 required attributes have no value, 1 either/or requirement is unmet. Nothing was invented to close the gap.
+
+REQUIRED ATTRIBUTES (8 of 10 filled)
+------------------------------------------------------------------------------
+  [filled ] item_name                                  Bitaxe NerdQaxe++ 4.8TH/s BM1…
+           from the draft title
+  [filled ] brand                                      NerdQaxe
+           from the draft's brand
+  [filled ] bullet_point                               ASIC Chips: 4x Bitmain BM1370  (+4)
+           from the draft's features and specifics
+           Amazon takes 5; the remaining 21 values were left off.
+           + Hashrate: Up to 4.8 TH/s
+           + Algorithm: SHA-256 (Bitcoin / BTC)
+           + Power Draw: Approx 75-82W typical
+           + Input Voltage: 12V DC barrel connector
+  [filled ] product_description                        NerdQaxe++ 4.8TH/s Bitcoin So…
+           from the draft description
+  [filled ] condition_type                             new_new
+           from the draft's condition (NEW)
+  [MISSING] batteries_required                         —
+           A regulatory declaration about batteries, not a description.
+           Nothing in the draft states it, and a default here is a false
+           declaration to Amazon and to the carrier.
+  [MISSING] supplier_declared_dg_hz_regulation         —
+           Amazon's dangerous-goods declaration. It governs how the item may
+           be shipped and stored, and it is the seller's legal statement —
+           this app has no basis to make it.
+  [filled ] country_of_origin                          CN
+           from Item Specific "Country of Manufacture"
+           "China" matched Amazon's "CN".
+  [filled ] list_price                                 549.99 USD
+           from the draft's asking price
+           Amazon reads list_price as the manufacturer's list price — the
+           struck-through one. This is the draft's asking price, which is the
+           same number only if the item is not discounted. Where it has an
+           RRP, put that here; the price you charge is in purchasable_offer
+           either way.
+  [filled ] purchasable_offer                          549.99 USD
+           from the draft's price
+
+EITHER/OR REQUIREMENTS (0 of 1 satisfied)
+------------------------------------------------------------------------------
+  [BLOCKED] Amazon needs one of these and the draft has none: External Product ID, Merchant Suggested ASIN.
+
+  [missing] externally_assigned_product_identifier     —
+           The draft has no UPC, EAN or ISBN. Amazon will not create a new
+           listing without a product identifier unless your account holds a
+           GTIN exemption for the brand. Find the real barcode or apply for
+           the exemption — a made-up one is an account suspension, not a
+           rejected listing.
+  [missing] merchant_suggested_asin                    —
+           The ASIN of an existing Amazon catalogue entry. Nothing in an eBay
+           draft is one, and a guessed ASIN attaches this offer to somebody
+           else's product.
+
+OPTIONAL ATTRIBUTES FILLED FROM THE DRAFT (2)
+------------------------------------------------------------------------------
+  [filled ] color                                      Black
+           from Item Specific "Color"
+  [filled ] item_package_weight                        3.5 pounds
+           from the draft's package weight
+  … and 3 optional attributes the draft says nothing about.
+
+PAYLOAD — the "attributes" object of a Listings Items submission (10 attributes)
+------------------------------------------------------------------------------
+{
+  "item_name": [
+    {
+      "value": "Bitaxe NerdQaxe++ 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    }
+  ],
+  "brand": [
+    {
+      "value": "NerdQaxe",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    }
+  ],
+  "bullet_point": [
+    {
+      "value": "ASIC Chips: 4x Bitmain BM1370",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    },
+    {
+      "value": "Hashrate: Up to 4.8 TH/s",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    },
+    {
+      "value": "Algorithm: SHA-256 (Bitcoin / BTC)",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    },
+    {
+      "value": "Power Draw: Approx 75-82W typical",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    },
+    {
+      "value": "Input Voltage: 12V DC barrel connector",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    }
+  ],
+  "product_description": [
+    {
+      "value": "NerdQaxe++ 4.8TH/s Bitcoin Solo Miner — Quad BM1370 ASIC | SHA-256\n\nThe NerdQaxe++ is a high-efficiency open-source Bitcoin solo miner powered by four Bitmain BM1370 ASIC chips delivering up to 4.8 TH/s on the SHA-256 algorithm. Built on the popular Bitaxe design, this desktop miner is ideal for solo lottery mining, home node hobbyists, and crypto enthusiasts who want a quiet, low-power alternative to industrial rigs. It features a color IPS status display, WiFi monitoring, and a large 92mm cooling fan with heatsink.\n\nKey Specifications\n\n• ASIC Chips: 4x Bitmain BM1370\n\n• Hashrate: Up to 4.8 TH/s\n\n• Algorithm: SHA-256 (Bitcoin / BTC)\n\n• Power Draw: Approx 75-82W typical\n\n• Input Voltage: 12V DC barrel connector\n\n• Display: Color IPS TFT status screen (LILYGO)\n\n• Connectivity: WiFi 2.4GHz, USB-C config\n\n• Cooling: 92mm fan with dual-tower heatsink\n\n•\n\n• Features & Benefits\n\n• Quad BM1370 layout on the NerdQaxe++ boosts hashrate to 4.8 TH/s while staying under 85W\n\n• Built-in color display shows live hashrate, temperature, voltage, RPM and pool data\n\nOpen-source AxeOS firmware with browser dashboard for pool setup and monitoring\n\n• Quiet desktop form factor perfect for solo lottery mining and learning ASIC hardware\n\n•\n\n• Condition & What's Included\n\nBrand new, fully assembled and tested NerdQaxe++ miner as shown in photos.\n\n1x NerdQaxe++ 4.8T miner with fan and heatsink\n\nNote: 12V DC power supply not included unless stated\nShips in protective packaging\n\nCompatibility\nMines Bitcoin (BTC) and any SHA-256 coin. Compatible with public pools and solo mining setups including CKPool solo, public-pool.io, and Braiins. Configured via any modern web browser over WiFi. Requires a 12V DC power supply rated 8A or higher.\nShips securely packaged with tracking. See all photos for exact item condition.",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    }
+  ],
+  "condition_type": [
+    {
+      "value": "new_new",
+      "marketplace_id": "ATVPDKIKX0DER"
+    }
+  ],
+  "country_of_origin": [
+    {
+      "value": "CN",
+      "marketplace_id": "ATVPDKIKX0DER"
+    }
+  ],
+  "list_price": [
+    {
+      "value": 549.99,
+      "currency": "USD",
+      "marketplace_id": "ATVPDKIKX0DER"
+    }
+  ],
+  "purchasable_offer": [
+    {
+      "currency": "USD",
+      "our_price": [
+        {
+          "schedule": [
+            {
+              "value_with_tax": 549.99
+            }
+          ]
+        }
+      ],
+      "marketplace_id": "ATVPDKIKX0DER"
+    }
+  ],
+  "color": [
+    {
+      "value": "Black",
+      "marketplace_id": "ATVPDKIKX0DER",
+      "language_tag": "en_US"
+    }
+  ],
+  "item_package_weight": [
+    {
+      "value": 3.5,
+      "unit": "pounds",
+      "marketplace_id": "ATVPDKIKX0DER"
+    }
+  ]
+}
+
+This listing cannot be submitted, and no value was invented to make it look as though it could.

@@ -115,6 +115,17 @@ public sealed class AmazonAttribute
     /// <summary>Which alternative satisfies the requirement instead, when it is conditional.</summary>
     public string RequirementNote { get; set; } = "";
 
+    /// <summary>
+    /// The sibling attributes that satisfy the same requirement instead of this one.
+    /// </summary>
+    /// <remarks>
+    /// The same fact <see cref="RequirementNote"/> states in a sentence, kept in a form that can be
+    /// reasoned about. A filler has to answer "is this requirement met?", and that question is about
+    /// the GROUP — supplying a UPC means the ASIN is not missing, it is not needed — which cannot be
+    /// recovered from prose without parsing English back out of it.
+    /// </remarks>
+    public List<string> Alternatives { get; set; } = [];
+
     /// <summary>The type of the value a seller supplies, envelope unwrapped: string, integer, number, boolean, object.</summary>
     public string Type { get; set; } = "";
 
@@ -126,6 +137,28 @@ public sealed class AmazonAttribute
 
     /// <summary>More than one value may be supplied (bullet points, keywords).</summary>
     public bool MultiSelect { get; set; }
+
+    /// <summary>
+    /// How many values Amazon accepts, or 0 when it did not cap it.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="MultiSelect"/>, which only says whether the cap is above one. A
+    /// payload builder needs the number: five bullet points is the documented limit and a sixth is
+    /// a rejection, not a bullet point Amazon quietly drops.
+    /// </remarks>
+    public int MaxCount { get; set; }
+
+    /// <summary>
+    /// The property names that choose WHICH value this is, rather than being part of it —
+    /// <c>marketplace_id</c>, <c>language_tag</c>.
+    /// </summary>
+    /// <remarks>
+    /// Stripped when presenting the attribute (a seller types a title, not a language tag) and put
+    /// back when building a payload, because Amazon's envelope is not optional. Kept per-attribute
+    /// rather than assumed globally: <c>condition_type</c> is not language-tagged and stamping one
+    /// on is an attribute Amazon did not ask for.
+    /// </remarks>
+    public List<string> Selectors { get; set; } = [];
 
     /// <summary>Longest string Amazon accepts, or 0 when it did not say.</summary>
     public int MaxLength { get; set; }

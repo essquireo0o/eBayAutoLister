@@ -476,6 +476,7 @@ public static class AmazonSchemaParser
                 if (!attribute.Required && conditional.TryGetValue(property.Name, out var alternatives))
                 {
                     attribute.ConditionallyRequired = true;
+                    attribute.Alternatives = [.. alternatives];
                     attribute.RequirementNote = alternatives.Count == 0
                         ? "Required by one of Amazon's alternative requirement sets."
                         : "Required unless you supply " + Join(alternatives) + " instead.";
@@ -522,7 +523,8 @@ public static class AmazonSchemaParser
         // hold a different value per marketplace and per language.
         if (attribute.RawType == "array" && node.TryGetProperty("items", out var items))
         {
-            attribute.MultiSelect = MultipleAllowed(node);
+            attribute.MaxCount = ValueCap(node);
+            attribute.MultiSelect = attribute.MaxCount != 1;
             value = Resolve(items, root, depth);
         }
 
@@ -532,6 +534,8 @@ public static class AmazonSchemaParser
             inner.ValueKind == JsonValueKind.Object)
         {
             var selectors = SelectorsOf(node, value);
+            attribute.Selectors = [.. selectors];
+
             var content = inner.EnumerateObject()
                 .Where(p => !selectors.Contains(p.Name, StringComparer.Ordinal))
                 .ToList();
@@ -766,20 +770,17 @@ public static class AmazonSchemaParser
         return DefaultSelectors;
     }
 
-    /// <summary>Whether more than one value may be supplied for an array attribute.</summary>
+    /// <summary>How many distinct values may be supplied for an array attribute; 0 when uncapped.</summary>
     /// <remarks>
     /// Amazon caps this two ways: <c>maxItems</c> counts entries, <c>maxUniqueItems</c> counts them
     /// after the selectors are taken into account — an attribute with <c>maxItems: 4</c> and
     /// <c>maxUniqueItems: 1</c> allows one value said four ways (per marketplace, per language),
     /// not four values. So the unique cap wins where Amazon set it.
     /// </remarks>
-    private static bool MultipleAllowed(JsonElement node)
+    private static int ValueCap(JsonElement node)
     {
         var unique = Int(node, "maxUniqueItems");
-        if (unique > 0) return unique > 1;
-
-        var max = Int(node, "maxItems");
-        return max == 0 || max > 1;
+        return unique > 0 ? unique : Int(node, "maxItems");
     }
 
     private static string TypeOf(JsonElement node)

@@ -397,6 +397,21 @@ public static class AmazonProductTypeFixtures
           "maxUniqueItems": 1,
           "selectors": ["marketplace_id"]
         },
+        "item_package_weight": {
+          "title": "Package Weight",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "unit"],
+            "properties": {
+              "value": { "title": "Weight", "type": "number", "minimum": 0 },
+              "unit":  { "title": "Unit", "type": "string", "enum": ["grams", "kilograms", "ounces", "pounds"] },
+              "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+            }
+          },
+          "maxUniqueItems": 1,
+          "selectors": ["marketplace_id"]
+        },
         "item_type_keyword": {
           "title": "Item Type Keyword",
           "description": "Amazon's own classification keyword. Set by Amazon, not by the seller.",

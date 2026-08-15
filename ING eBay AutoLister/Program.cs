@@ -9322,6 +9322,10 @@ AmazonStatusEndpoint.Map(app);
 // the Amazon answer to the question get_item_aspects_for_category answers for eBay.
 AmazonProductTypeEndpoints.Map(app);
 
+// And the same draft the AI filled for eBay, read onto those requirements — which of them it
+// already answers, which it cannot, and the payload that comes out. Submits nothing.
+AmazonListingFillEndpoints.Map(app);
+
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {
     store.ClearEbayTokens();
