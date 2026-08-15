@@ -78,10 +78,18 @@ public sealed class DraftValue
 /// </remarks>
 public sealed class DraftFacts
 {
-    public DraftFacts(ListingData listing)
+    public DraftFacts(ListingData listing, IReadOnlyDictionary<string, string>? sellerAnswers = null)
     {
         ArgumentNullException.ThrowIfNull(listing);
         Listing = listing;
+
+        // Ordinal, unlike Specifics above, and that difference is deliberate: an Item Specific is a
+        // name a person typed and "power consumption" ought to find "Power Consumption", whereas a
+        // key here is Amazon's own schema property name and there is exactly one spelling of it.
+        SellerAnswers = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in sellerAnswers ?? new Dictionary<string, string>())
+            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                SellerAnswers[key.Trim()] = value.Trim();
 
         PlainDescription = CrossListingExporter.HtmlToText(listing.Description);
 
@@ -105,6 +113,17 @@ public sealed class DraftFacts
 
     /// <summary>The draft's Item Specifics, trimmed, blanks dropped, matched case-insensitively.</summary>
     public Dictionary<string, string> Specifics { get; }
+
+    /// <summary>
+    /// What the seller answered themselves, keyed by Amazon's schema property name.
+    /// </summary>
+    /// <remarks>
+    /// Not read by <see cref="AmazonDraftReader"/> — nothing in here came off the draft, so reading
+    /// it as a draft fact would report a person's declaration as something the app found. It is
+    /// consumed one level up, in <see cref="AmazonListingMapper"/>, where the source can be recorded
+    /// as the human it is.
+    /// </remarks>
+    public Dictionary<string, string> SellerAnswers { get; }
 
     /// <summary>Feature lines for <c>bullet_point</c>, best first.</summary>
     public List<string> Bullets { get; }

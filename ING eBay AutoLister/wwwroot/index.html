@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=130" />
+  <link rel="stylesheet" href="style.css?v=131" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1246,6 +1246,23 @@
 
           <div class="new-listing-footer">
 
+            <!-- Which marketplace this draft is being checked against and sent to.
+                 One draft, two destinations: switching swaps the panel below and the send
+                 button beside it, and touches nothing in the form — the fields the AI filled
+                 are the same fields either way, which is the whole reason this is a switch
+                 and not a second screen. -->
+            <div class="nl-market" role="group" aria-label="Where to send this listing">
+              <span class="nl-market-label">Send to</span>
+              <button type="button" id="nl-market-ebay" class="nl-market-tab is-active" aria-pressed="true">
+                <span class="nl-market-name">eBay</span>
+                <span class="nl-market-env is-live">Live account</span>
+              </button>
+              <button type="button" id="nl-market-amazon" class="nl-market-tab" aria-pressed="false">
+                <span class="nl-market-name">Amazon</span>
+                <span class="nl-market-env is-sandbox">Sandbox</span>
+              </button>
+            </div>
+
             <!-- Listing readiness: what eBay requires and what costs sales, checked here
                  instead of by a failed publish. -->
             <div id="nl-readiness" class="rd-bar" hidden>
@@ -1273,13 +1290,69 @@
               <div id="nl-rd-list" class="rd-list" hidden></div>
             </div>
 
+            <!-- Amazon's half of the same question the bar above asks for eBay: what does this
+                 marketplace insist on, and how much of it does this draft already answer. Same
+                 classes, same collapsed-list shape, same "N things will stop this" count —
+                 because it is the same job, and a seller who has learned one should not have to
+                 learn the other. -->
+            <div id="nl-amz" class="rd-bar amz-bar" hidden>
+
+              <!-- Said here, and again on the button, and again on every result. Three times is
+                   not redundancy: this panel is where somebody decides to press send, and a
+                   sandbox submission that is mistaken for a real one is a seller waiting for
+                   orders on a listing that does not exist. -->
+              <p class="amz-env" id="nl-amz-env">
+                <span class="amz-env-tag" id="nl-amz-env-tag">SANDBOX</span>
+                <span class="amz-env-text" id="nl-amz-env-text">Everything on this panel goes to Amazon’s SP-API sandbox. Nothing sent from here reaches Amazon’s real store, appears on a seller account, or can be bought.</span>
+              </p>
+
+              <button type="button" id="nl-amz-toggle" class="rd-toggle" aria-expanded="false" aria-controls="nl-amz-list">
+                <span class="rd-score" id="nl-amz-score">–</span>
+                <span class="rd-text">
+                  <span class="rd-grade" id="nl-amz-grade">Checking…</span>
+                  <span class="rd-headline" id="nl-amz-headline"></span>
+                </span>
+                <span class="rd-counts" id="nl-amz-counts"></span>
+                <span class="rd-chevron" aria-hidden="true">▾</span>
+              </button>
+
+              <!-- Amazon's requirements are per product type, so this box decides what the whole
+                   answer above is measuring against. It is searched from the draft's own title
+                   and can be overruled by name — the seller picking from Amazon's candidates is
+                   not something this app should second-guess.
+
+                   The SKU sits beside it and is never generated. A submission replaces whatever
+                   is already at a SKU, so inventing one is inventing which listing to overwrite. -->
+              <div class="amz-type-row">
+                <div class="amz-type-field">
+                  <label class="amz-type-label" for="nl-amz-type">Amazon product type</label>
+                  <input id="nl-amz-type" type="text" class="amz-type-input"
+                         placeholder="Searched from the title — or name one" autocomplete="off" />
+                </div>
+                <div class="amz-type-field">
+                  <label class="amz-type-label" for="nl-amz-sku">Your SKU</label>
+                  <input id="nl-amz-sku" type="text" class="amz-type-input"
+                         placeholder="Your own identifier" autocomplete="off" />
+                </div>
+                <button type="button" id="nl-amz-check" class="btn btn-ghost small amz-check-btn">Re-check</button>
+              </div>
+
+              <div id="nl-amz-list" class="rd-list" hidden></div>
+            </div>
+
             <div class="nl-footer-row">
               <div id="nl-result-msg" class="nl-result-msg"></div>
               <div class="nl-footer-actions">
                 <span class="powered-by">Powered by ING Mining™</span>
+                <!-- The last place the word appears before anything is sent, and the last place
+                     it can still stop somebody. It is on the button, not next to it. -->
+                <span id="nl-amz-send-note" class="amz-send-note hidden">
+                  Sandbox only — a submission stays <strong>pending</strong> until Amazon confirms it.
+                </span>
                 <button id="nl-btn-cancel" class="btn btn-ghost" type="button">Cancel</button>
                 <button id="nl-btn-save-local" class="btn btn-secondary btn-large" type="button">Save Draft</button>
                 <button id="nl-btn-publish" class="btn btn-primary btn-large" type="button">Publish to eBay</button>
+                <button id="nl-btn-amz-submit" class="btn btn-primary btn-large amz-submit-btn hidden" type="button">Submit to Amazon Sandbox</button>
               </div>
             </div>
           </div>
@@ -5639,6 +5712,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=150"></script>
+  <script src="app.js?v=151"></script>
 </body>
 </html>

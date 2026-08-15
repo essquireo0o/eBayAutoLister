@@ -15018,3 +15018,135 @@ carries neither the seller ID, the access token, the client secret nor the refre
 - **The seller ID is redacted from the recorded URL; the host is not.** The host is what proves this
   went to the sandbox, and it is the single most important fact in the record.
 
+
+---
+
+# Amazon SP-API Phase 5 — the screen a seller actually uses
+
+Phases 1–4 built the pipeline: get a token, ask Amazon what a product type requires, read an eBay
+draft onto it, submit it and ask afterwards what became of it. All of it was reachable only by
+`curl`. This phase puts it on the AI Listing screen beside eBay, and it went in with one rule
+above the others: **every honest refusal the backend makes has to survive contact with the UI.**
+
+## What was added
+
+| Piece | Where |
+|---|---|
+| Marketplace switch (`eBay · LIVE ACCOUNT` / `Amazon · SANDBOX`) | `index.html` — listing footer, directly above Publish |
+| Amazon panel — score, headline, blocking count, attribute list | `index.html` `#nl-amz`, carrying the `.rd-bar` classes |
+| Panel logic, submission, state read-back | `app.js` — the `nlAmz*` block after the eBay readiness code |
+| Seller-answer control on a missing declaration | `app.js` `nlAmzAnswerControl` + `.amz-answer` in `style.css` |
+| Seller answers accepted, attributed and re-validated | `AmazonFillRequest.SellerAttributes`, `DraftFacts.SellerAnswers`, `AmazonListingMapper` |
+
+The panel deliberately **is** the eBay readiness bar — same `.rd-bar`, `.rd-toggle`, `.rd-fix`
+classes, same collapsed fix list, same "N things will stop this" count. A seller who has learned
+one has learned the other, and a divergent second implementation is where two panels start
+disagreeing about the same draft.
+
+## The three sentences it is not allowed to stop saying
+
+1. **SANDBOX**, in four places — the tab, the banner on the panel, the note beside the send
+   button, and on the button itself. The banner reads the environment from `/api/amazon/status`
+   rather than asserting the happy one: a UI that says "sandbox" out of habit says it on the one
+   day it is wrong. Pointed at production it turns red and says `PRODUCTION — WILL NOT SEND`,
+   which is a fact, not a warning — `AmazonSubmitGuard` refuses that case outright.
+2. **PENDING, not published.** Amazon takes a submission before it judges it. The result renders
+   with a `PENDING` tag and the server's own headline, in a `.nl-result-msg.pending` class that is
+   deliberately *not* the green `success` an eBay publish uses. `AmazonSubmissionWords.ForbiddenWords`
+   is asserted against the whole Amazon region of `app.js` with comments stripped.
+3. **What is missing is missing.** Nothing is filled to make a row go green, and the count of what
+   will stop the submission is the headline, on the panel and on the button.
+
+## The dead end this phase found, and closed
+
+`AmazonListingMapper.NeverInvent` refuses to derive a batteries declaration or a dangerous-goods
+declaration from a product description — correctly: they are the seller's legal statements. But
+both are *required* on this product type, so **no draft the AI writes could ever reach
+`CanSubmit`**. The refusal was right and the submit button was unreachable; each note ended by
+telling the seller to state it, with nowhere to state it.
+
+So `AmazonFillRequest.SellerAttributes` was added: a person can answer the attribute on the row
+itself — a `<select>` where Amazon publishes a closed list, because a free-text box over five
+published words is how a seller types a sixth and is rejected for it.
+
+This does not weaken the rule, it completes it. `NeverInvent` governs what the *app* may conclude;
+a value here is a person answering. Every answer still goes through the same schema check, so
+`"probably fine"` against a closed list is still `invalid_value` with an empty payload
+(`An_answer_outside_Amazons_closed_list_is_still_refused_when_a_person_typed_it`), and the source
+recorded against it is `"you answered it here"` — never a field it was supposedly read off. The
+headline now says how many were answered by hand rather than crediting the draft with them.
+Answers are cleared with the draft; carrying "batteries: no" onto the next item would be the app
+making the statement after all, in the seller's name.
+
+## A bug the screenshots caught
+
+`nlRunReadiness` unhid the eBay readiness bar on every run, including while Amazon was the chosen
+marketplace — so a keystroke put an empty eBay bar back on screen underneath the Amazon panel. The
+check still runs (switching back has to be instant); only the unhide is now conditional.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `dotnet build` (solution) | **succeeded**, 0 errors, warnings all pre-existing |
+| `dotnet test` (full suite) | **5526 passed, 0 failed** |
+| New tests | 22 in `AmazonListingUiAssetTests`, 5 in `AmazonUiFixtureTests` (5499 → 5526) |
+| eBay path | unchanged — asserted, not assumed (`Choosing_Amazon_swaps_the_panel_and_leaves_the_eBay_path_alone`) |
+| Asset stamps | `app.js?v=151`, `style.css?v=131` |
+
+### How the screenshots were taken, and what is stubbed
+
+`amazon-ui-capture.mjs` → `verification/amazon-ui/*.png`, at 1440px and 390px, in three states:
+a filled draft, the same draft missing what Amazon requires, and a sandbox submission result.
+
+Two things are stubbed, and both are stated on the screenshots' own script:
+
+- **The server.** The desktop build binds `http://localhost:9332` and nothing else — the eBay OAuth
+  relay redirects there. On this machine 9332 currently sits inside a Windows reserved port range
+  (`netsh interface ipv4 show excludedportrange` → 9248–9347), so the app cannot bind it at all.
+  The harness therefore serves the same `wwwroot` off disk on a free port. The HTML, CSS and
+  JavaScript in the screenshots are the shipped files, unmodified.
+- **Amazon's answers.** This deployment still cannot obtain an access token (the stored LWA client
+  secret is a placeholder note; LWA answers `invalid_client`). The `/api/amazon/*` bodies are **not**
+  hand-written: `AmazonUiFixtureTests` generates them from the real mapper reading the real captured
+  draft onto the schema fixture, serialized through the endpoints' own `Describe()`. What the
+  screenshots show is the shape the endpoint really returns.
+
+So the screenshots prove the panel renders the backend's real answers correctly. They do not prove
+Amazon's real requirements for this product — only production can say that, and `AmazonSandboxNotice`
+is what says so inside the answer itself.
+
+## Traps for whoever picks this up
+
+- **Do not recompute "ready" in the browser.** `canSubmit` is the server's verdict and is false
+  whenever a required attribute has no value, a value falls outside a closed list, or an either/or
+  requirement is unmet. Deriving it from the counts is how a blocked listing turns green.
+- **Do not give the Amazon submit a "send it anyway".** The eBay gate has one because the app's
+  opinion of a category can be wrong and the account is the seller's. `SubmitProductAsync` refuses a
+  fill it knows Amazon will reject, so the same button here would do nothing.
+- **Do not style a submission as `success`.** There is no field on the response to bind one to, on
+  purpose. `pending` is a separate class for exactly this reason.
+- **The seller-answer box must never bypass `Accept`.** It is the one path where a value reaches the
+  payload without having been read off a draft; skipping the schema check would make it a way to
+  post anything at all to Amazon under the seller's account.
+- **`quantity` must not be defaulted in the browser either.** `AmazonProductSubmitRequest.Quantity`
+  is `int?` because 0 is a real answer meaning out of stock; a `|| 1` on the way in publishes a
+  stock level nobody stated. `nlAmzQuantity()` sends `null` when the field is empty.
+- **The answer box is offered only for simple values.** `SellerAnswerable` is false for a genuine
+  composite — `fulfillment_availability` is a channel *and* a quantity, cannot be typed into one
+  box, and is supplied separately by the submit request.
+
+### Two more layout defects the screenshots caught
+
+- **The eBay readiness bar is unhidden in two places, not one.** Fixing only `nlRunReadiness` left
+  `nlRenderReadiness` still setting `hidden = false`, so an empty eBay bar sat above the Amazon
+  panel. Both are now conditional on the chosen marketplace.
+- **`.nl-result-msg` is a centred flex ROW.** An eBay publish result is one line and sits happily
+  beside the buttons; Amazon's is three paragraphs, because it has to say what was *not*
+  established. As a flex item in the leftover width it became a column six words wide, tall enough
+  to push the panel above it off the screen. `.amz-result` stacks its children and takes a row of
+  its own (`:has`-scoped, so the eBay row is untouched).
+- **At 390px, `.rd-counts` is `white-space: nowrap` by design** — at desktop width it is a short
+  tail like "2 will stop this". On a phone that one unbreakable string held the toggle row open and
+  squeezed the headline beside it to one word per line. The Amazon panel's summary row now stacks
+  below 520px.

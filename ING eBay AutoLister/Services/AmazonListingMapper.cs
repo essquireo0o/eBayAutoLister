@@ -55,6 +55,17 @@ public static class AmazonListingMapper
     public const string FallbackMarketplaceId = "ATVPDKIKX0DER";
 
     /// <summary>
+    /// What is recorded against a value the seller stated rather than one that was read off a draft.
+    /// </summary>
+    /// <remarks>
+    /// Every other source names a field — "draft title", "item specific: Color". This one names a
+    /// person, and that distinction has to survive into reports and screens: a dangerous-goods
+    /// declaration attributed to "the description" reads as something the app worked out, which is
+    /// the one thing it must never be taken for.
+    /// </remarks>
+    public const string SellerAnswerSource = "you answered it here";
+
+    /// <summary>
     /// The selectors this app is able to answer.
     /// </summary>
     /// <remarks>
@@ -137,7 +148,8 @@ public static class AmazonListingMapper
         ListingData listing,
         AmazonProductTypeDefinition definition,
         string marketplaceId = "",
-        string sandboxNotice = "")
+        string sandboxNotice = "",
+        IReadOnlyDictionary<string, string>? sellerAnswers = null)
     {
         ArgumentNullException.ThrowIfNull(listing);
         ArgumentNullException.ThrowIfNull(definition);
@@ -165,7 +177,7 @@ public static class AmazonListingMapper
             return fill;
         }
 
-        var context = new DraftFacts(listing);
+        var context = new DraftFacts(listing, sellerAnswers);
 
         foreach (var attribute in definition.Attributes)
             fill.Attributes.Add(FillOne(attribute, context, fill.MarketplaceId));
@@ -194,6 +206,10 @@ public static class AmazonListingMapper
             Required              = attribute.Required,
             ConditionallyRequired = attribute.ConditionallyRequired,
             RequirementNote       = attribute.RequirementNote,
+            Type                  = attribute.Type,
+            SelectionOnly         = attribute.SelectionOnly,
+            AcceptedValues        = [.. attribute.Values],
+            AcceptedLabels        = [.. attribute.ValueLabels],
         };
 
         // Amazon sets these itself and rejects a seller who sets them. Not a gap.
@@ -204,14 +220,34 @@ public static class AmazonListingMapper
             return filled;
         }
 
-        if (NeverInvent.TryGetValue(attribute.Name, out var refusal))
+        // A genuine composite cannot be typed into a box, so offering one would collect a string
+        // where Amazon wants a structure and find out at submission time.
+        filled.SellerAnswerable = attribute.Children.Count == 0;
+
+        // What the seller said themselves, before the draft is read and before NeverInvent.
+        //
+        // NeverInvent is a rule about what this APP may conclude — that a description mentioning a
+        // battery is not a batteries declaration. A value here is not a conclusion; it is a person
+        // answering the question that rule's own note ends by asking them. Refusing it would make a
+        // correct refusal into a dead end: on most product types two of these are required, so no
+        // draft could ever become submittable at all.
+        //
+        // It still goes through Accept below with everything else, so a word outside Amazon's closed
+        // list is still rejected. Being answered by a human makes a value the seller's to stand
+        // behind; it does not make it legal.
+        facts.SellerAnswers.TryGetValue(attribute.Name, out var stated);
+        var answered = filled.SellerAnswerable && !string.IsNullOrWhiteSpace(stated);
+
+        if (!answered && NeverInvent.TryGetValue(attribute.Name, out var refusal))
         {
             filled.State = Unfilled(attribute);
             filled.Note  = refusal;
             return filled;
         }
 
-        var found = AmazonDraftReader.Read(attribute, facts);
+        var found = answered
+            ? [new DraftValue { Text = stated!.Trim(), Source = SellerAnswerSource }]
+            : AmazonDraftReader.Read(attribute, facts);
         if (found.Count == 0)
         {
             filled.State = Unfilled(attribute);
@@ -468,9 +504,16 @@ public static class AmazonListingMapper
         var done = fill.RequiredFilledCount;
         var product = string.IsNullOrWhiteSpace(fill.DisplayName) ? fill.ProductType : fill.DisplayName;
 
+        // How many of them the seller stated rather than the draft supplied. Said out loud, because
+        // "filled from the draft" over a dangerous-goods declaration would credit this app with a
+        // legal statement a person made — the precise confusion NeverInvent exists to prevent.
+        var stated = fill.Attributes.Count(a => a.IsFilled && a.Source == SellerAnswerSource);
+        var byHand = stated == 0 ? ""
+            : $" ({stated} of them answered by you, not read off the draft)";
+
         if (fill.CanSubmit)
-            return $"Ready: all {required} of Amazon's required attributes for {product} are filled " +
-                   $"from the draft.";
+            return $"Ready: all {required} of Amazon's required attributes for {product} are filled" +
+                   $"{byHand}.";
 
         var open = fill.Blocking.Count();
         var unmet = fill.Choices.Count(c => !c.Satisfied);
@@ -480,7 +523,7 @@ public static class AmazonListingMapper
                                   $"{(open == 1 ? "has" : "have")} no value");
         if (unmet > 0) reasons.Add($"{unmet} either/or requirement{(unmet == 1 ? " is" : "s are")} unmet");
 
-        return $"Not ready: {done} of {required} required attributes for {product} filled from the draft — " +
+        return $"Not ready: {done} of {required} required attributes for {product} filled{byHand} — " +
                string.Join(", ", reasons) + ". Nothing was invented to close the gap.";
     }
 

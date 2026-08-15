@@ -1,0 +1,12 @@
+{
+  "configured": true,
+  "applicationConfigured": true,
+  "tokenObtainable": true,
+  "sandbox": true,
+  "environment": "Sandbox",
+  "region": "NorthAmerica",
+  "apiHost": "sandbox.sellingpartnerapi-na.amazon.com",
+  "code": "",
+  "message": "",
+  "nextAction": ""
+}

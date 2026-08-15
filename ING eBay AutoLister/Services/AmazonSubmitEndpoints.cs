@@ -66,8 +66,13 @@ public static class AmazonSubmitEndpoints
     /// <c>awaitingAmazon</c> is the field a UI binds to, and it is named for what is true rather than
     /// for what a caller wants to know. There is no <c>published</c> or <c>success</c> here to bind to
     /// by mistake — see <see cref="AmazonSubmissionWords"/>.
+    /// <para>
+    /// Public for the reason <see cref="AmazonListingFillEndpoints.Describe"/> is: no token can be
+    /// obtained here, so the screen that renders a submission is photographed against this method's
+    /// own output rather than against JSON somebody typed to look plausible.
+    /// </para>
     /// </remarks>
-    private static object Describe(AmazonSubmission submission) => new
+    public static object Describe(AmazonSubmission submission) => new
     {
         state          = submission.State,
         amazonStatus   = submission.AmazonStatus,

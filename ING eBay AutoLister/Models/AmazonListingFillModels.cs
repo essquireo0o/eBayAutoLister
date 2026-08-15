@@ -44,6 +44,28 @@ public class AmazonFillRequest : ListingData
 
     /// <summary>Words to search Amazon's product types with. Defaults to the draft's title.</summary>
     public string Query { get; set; } = "";
+
+    /// <summary>
+    /// Attributes the seller answered themselves, keyed by Amazon's schema property name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The way out of the deadlock <see cref="AmazonListingMapper.NeverInvent"/> creates on purpose.
+    /// That list refuses to derive a regulatory declaration from a product description — a batteries
+    /// declaration and a dangerous-goods declaration are the seller's legal statements, and every
+    /// note on that list ends by telling the seller to make it. Until this existed there was nowhere
+    /// to make it, so a correct refusal was also a dead end: no draft could ever reach
+    /// <see cref="AmazonListingFill.CanSubmit"/>.
+    /// </para>
+    /// <para>
+    /// <b>This does not weaken the rule, it completes it.</b> The rule is about what this app may
+    /// conclude, and a value in here is not a conclusion — it is a person answering. Every value is
+    /// still put through the schema exactly as a drafted one is, so a word outside Amazon's closed
+    /// list is still <see cref="AmazonFillState.InvalidValue"/>, and the source recorded against it
+    /// says a human typed it rather than naming a field it was read off.
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, string> SellerAttributes { get; set; } = [];
 }
 
 /// <summary>
@@ -93,6 +115,35 @@ public sealed class AmazonFilledAttribute
 
     /// <summary>The values as a person reads them. More than one only for repeatable attributes.</summary>
     public List<string> Values { get; set; } = [];
+
+    // ── What it would take to answer this one ─────────────────────────────────
+    //
+    // Carried so a screen can offer the right control instead of a text box for everything.
+    // "Missing" is only actionable if the thing that is missing says what shape an answer takes:
+    // a dangerous-goods declaration is a pick from five words Amazon publishes, and a free-text
+    // box invites the seller to type a sixth and be rejected for it.
+
+    /// <summary>Amazon's type for the value — <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c>.</summary>
+    public string Type { get; set; } = "";
+
+    /// <summary>True when Amazon publishes a closed list and nothing outside it is legal.</summary>
+    public bool SelectionOnly { get; set; }
+
+    /// <summary>Amazon's own tokens, when the list is closed. Empty otherwise.</summary>
+    public List<string> AcceptedValues { get; set; } = [];
+
+    /// <summary>Their display labels, in the same order, when Amazon supplied them.</summary>
+    public List<string> AcceptedLabels { get; set; } = [];
+
+    /// <summary>
+    /// True when the seller can answer this attribute themselves.
+    /// </summary>
+    /// <remarks>
+    /// False for the ones Amazon fills itself, and false for genuine composites — a nested object
+    /// cannot be typed into a box, and offering one would collect a string where Amazon wants a
+    /// structure and find out at submission time.
+    /// </remarks>
+    public bool SellerAnswerable { get; set; }
 
     /// <summary>
     /// Exactly what goes under <c>attributes["<see cref="Name"/>"]</c> in a Listings Items call,

@@ -1,0 +1,19 @@
+{
+  "state": "submitted",
+  "amazonStatus": "ACCEPTED",
+  "awaitingAmazon": true,
+  "headline": "Submitted, awaiting Amazon. Amazon has the submission and has not yet said what became of it \u2014 processing happens afterwards, and a listing can still fail then with the reason attached to the SKU.",
+  "nextAction": "Check what became of it: GET /api/amazon/listing-state?sku=ING-NERDQAXE-001. Until that reports Amazon\u0027s own status for the SKU, the only true statement is that Amazon has it.",
+  "sku": "ING-NERDQAXE-001",
+  "submissionId": "a1b2c3d4-0000-4f00-8000-2b7d1c9e5a10",
+  "environment": "Sandbox",
+  "productType": "BLUETOOTH_SPEAKER",
+  "marketplaceId": "ATVPDKIKX0DER",
+  "counts": {
+    "issues": 0,
+    "errors": 0,
+    "warnings": 0
+  },
+  "issues": [],
+  "call": null
+}

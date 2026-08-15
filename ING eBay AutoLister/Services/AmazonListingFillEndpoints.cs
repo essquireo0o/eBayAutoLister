@@ -73,7 +73,8 @@ public static class AmazonListingFillEndpoints
                 request.ProductType.Trim(), AmazonDefinitionsApi.RequirementsListing,
                 AmazonDefinitionsApi.DefaultLocale, cancellationToken);
 
-            return AmazonListingMapper.Map(request, named, marketplaceId);
+            return AmazonListingMapper.Map(
+                request, named, marketplaceId, sellerAnswers: request.SellerAttributes);
         }
 
         var query = string.IsNullOrWhiteSpace(request.Query) ? request.Title ?? "" : request.Query;
@@ -96,10 +97,21 @@ public static class AmazonListingFillEndpoints
                     : $"No Amazon product type was chosen for \"{query}\", so there is nothing to fill in yet.",
             };
 
-        return AmazonListingMapper.Map(request, answer.Definition, marketplaceId, answer.SandboxNotice);
+        return AmazonListingMapper.Map(
+            request, answer.Definition, marketplaceId, answer.SandboxNotice, request.SellerAttributes);
     }
 
-    private static object Describe(AmazonListingFill fill) => new
+    /// <summary>
+    /// One fill as the JSON a caller receives.
+    /// </summary>
+    /// <remarks>
+    /// Public so the screen that renders this can be photographed against it. This deployment
+    /// cannot obtain an Amazon access token, so a filled panel cannot be produced by running the
+    /// app end to end — and a screenshot of hand-written JSON would be a picture of a fiction. The
+    /// UI fixtures are generated from THIS method against the captured draft and the schema
+    /// fixture, so what the screenshots show is the shape the endpoint actually returns.
+    /// </remarks>
+    public static object Describe(AmazonListingFill fill) => new
     {
         status        = fill.Status,
         message       = fill.Message,
@@ -145,6 +157,14 @@ public static class AmazonListingFillEndpoints
         source                = attribute.Source,
         note                  = attribute.Note,
         values                = attribute.Values,
+        // The shape an answer would have to take. Without it a screen can say an attribute is
+        // missing but not offer the right way to supply it — and a free-text box on a closed list
+        // invites the seller to type a sixth word and be rejected for it.
+        type                  = attribute.Type,
+        selectionOnly         = attribute.SelectionOnly,
+        acceptedValues        = attribute.AcceptedValues,
+        acceptedLabels        = attribute.AcceptedLabels,
+        sellerAnswerable      = attribute.SellerAnswerable,
         payload               = attribute.Payload,
     };
 }

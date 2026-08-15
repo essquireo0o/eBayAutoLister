@@ -1,0 +1,609 @@
+{
+  "status": "ok",
+  "message": "",
+  "headline": "Ready: all 10 of Amazon\u0027s required attributes for Bluetooth Speaker are filled (2 of them answered by you, not read off the draft).",
+  "canSubmit": true,
+  "sandboxNotice": "",
+  "sourceTitle": "Bitaxe NerdQaxe\u002B\u002B 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan",
+  "productType": "BLUETOOTH_SPEAKER",
+  "displayName": "Bluetooth Speaker",
+  "marketplaceId": "ATVPDKIKX0DER",
+  "locale": "en_US",
+  "version": "U8L4z4Ud95N16tZlR7rsmbQ==",
+  "counts": {
+    "required": 10,
+    "requiredFilled": 10,
+    "blocking": 0,
+    "filled": 13,
+    "total": 17
+  },
+  "choices": [
+    {
+      "options": [
+        "externally_assigned_product_identifier",
+        "merchant_suggested_asin"
+      ],
+      "satisfied": true,
+      "satisfiedBy": "externally_assigned_product_identifier",
+      "note": "Satisfied by externally_assigned_product_identifier. The other option is not needed."
+    }
+  ],
+  "required": [
+    {
+      "name": "item_name",
+      "title": "Title",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft title",
+      "note": "",
+      "values": [
+        "Bitaxe NerdQaxe\u002B\u002B 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan"
+      ],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "Bitaxe NerdQaxe\u002B\u002B 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        }
+      ]
+    },
+    {
+      "name": "brand",
+      "title": "Brand Name",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s brand",
+      "note": "",
+      "values": [
+        "NerdQaxe"
+      ],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "NerdQaxe",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        }
+      ]
+    },
+    {
+      "name": "bullet_point",
+      "title": "Key Product Features",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s features and specifics",
+      "note": "Amazon takes 5; the remaining 21 values were left off.",
+      "values": [
+        "ASIC Chips: 4x Bitmain BM1370",
+        "Hashrate: Up to 4.8 TH/s",
+        "Algorithm: SHA-256 (Bitcoin / BTC)",
+        "Power Draw: Approx 75-82W typical",
+        "Input Voltage: 12V DC barrel connector"
+      ],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "ASIC Chips: 4x Bitmain BM1370",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        },
+        {
+          "value": "Hashrate: Up to 4.8 TH/s",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        },
+        {
+          "value": "Algorithm: SHA-256 (Bitcoin / BTC)",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        },
+        {
+          "value": "Power Draw: Approx 75-82W typical",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        },
+        {
+          "value": "Input Voltage: 12V DC barrel connector",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        }
+      ]
+    },
+    {
+      "name": "product_description",
+      "title": "Product Description",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft description",
+      "note": "",
+      "values": [
+        "NerdQaxe\u002B\u002B 4.8TH/s Bitcoin Solo Miner \u2014 Quad BM1370 ASIC | SHA-256\n\nThe NerdQaxe\u002B\u002B is a high-efficiency open-source Bitcoin solo miner powered by four Bitmain BM1370 ASIC chips delivering up to 4.8 TH/s on the SHA-256 algorithm. Built on the popular Bitaxe design, this desktop miner is ideal for solo lottery mining, home node hobbyists, and crypto enthusiasts who want a quiet, low-power alternative to industrial rigs. It features a color IPS status display, WiFi monitoring, and a large 92mm cooling fan with heatsink.\n\nKey Specifications\n\n\u2022 ASIC Chips: 4x Bitmain BM1370\n\n\u2022 Hashrate: Up to 4.8 TH/s\n\n\u2022 Algorithm: SHA-256 (Bitcoin / BTC)\n\n\u2022 Power Draw: Approx 75-82W typical\n\n\u2022 Input Voltage: 12V DC barrel connector\n\n\u2022 Display: Color IPS TFT status screen (LILYGO)\n\n\u2022 Connectivity: WiFi 2.4GHz, USB-C config\n\n\u2022 Cooling: 92mm fan with dual-tower heatsink\n\n\u2022\n\n\u2022 Features \u0026 Benefits\n\n\u2022 Quad BM1370 layout on the NerdQaxe\u002B\u002B boosts hashrate to 4.8 TH/s while staying under 85W\n\n\u2022 Built-in color display shows live hashrate, temperature, voltage, RPM and pool data\n\nOpen-source AxeOS firmware with browser dashboard for pool setup and monitoring\n\n\u2022 Quiet desktop form factor perfect for solo lottery mining and learning ASIC hardware\n\n\u2022\n\n\u2022 Condition \u0026 What\u0027s Included\n\nBrand new, fully assembled and tested NerdQaxe\u002B\u002B miner as shown in photos.\n\n1x NerdQaxe\u002B\u002B 4.8T miner with fan and heatsink\n\nNote: 12V DC power supply not included unless stated\nShips in protective packaging\n\nCompatibility\nMines Bitcoin (BTC) and any SHA-256 coin. Compatible with public pools and solo mining setups including CKPool solo, public-pool.io, and Braiins. Configured via any modern web browser over WiFi. Requires a 12V DC power supply rated 8A or higher.\nShips securely packaged with tracking. See all photos for exact item condition."
+      ],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "NerdQaxe\u002B\u002B 4.8TH/s Bitcoin Solo Miner \u2014 Quad BM1370 ASIC | SHA-256\n\nThe NerdQaxe\u002B\u002B is a high-efficiency open-source Bitcoin solo miner powered by four Bitmain BM1370 ASIC chips delivering up to 4.8 TH/s on the SHA-256 algorithm. Built on the popular Bitaxe design, this desktop miner is ideal for solo lottery mining, home node hobbyists, and crypto enthusiasts who want a quiet, low-power alternative to industrial rigs. It features a color IPS status display, WiFi monitoring, and a large 92mm cooling fan with heatsink.\n\nKey Specifications\n\n\u2022 ASIC Chips: 4x Bitmain BM1370\n\n\u2022 Hashrate: Up to 4.8 TH/s\n\n\u2022 Algorithm: SHA-256 (Bitcoin / BTC)\n\n\u2022 Power Draw: Approx 75-82W typical\n\n\u2022 Input Voltage: 12V DC barrel connector\n\n\u2022 Display: Color IPS TFT status screen (LILYGO)\n\n\u2022 Connectivity: WiFi 2.4GHz, USB-C config\n\n\u2022 Cooling: 92mm fan with dual-tower heatsink\n\n\u2022\n\n\u2022 Features \u0026 Benefits\n\n\u2022 Quad BM1370 layout on the NerdQaxe\u002B\u002B boosts hashrate to 4.8 TH/s while staying under 85W\n\n\u2022 Built-in color display shows live hashrate, temperature, voltage, RPM and pool data\n\nOpen-source AxeOS firmware with browser dashboard for pool setup and monitoring\n\n\u2022 Quiet desktop form factor perfect for solo lottery mining and learning ASIC hardware\n\n\u2022\n\n\u2022 Condition \u0026 What\u0027s Included\n\nBrand new, fully assembled and tested NerdQaxe\u002B\u002B miner as shown in photos.\n\n1x NerdQaxe\u002B\u002B 4.8T miner with fan and heatsink\n\nNote: 12V DC power supply not included unless stated\nShips in protective packaging\n\nCompatibility\nMines Bitcoin (BTC) and any SHA-256 coin. Compatible with public pools and solo mining setups including CKPool solo, public-pool.io, and Braiins. Configured via any modern web browser over WiFi. Requires a 12V DC power supply rated 8A or higher.\nShips securely packaged with tracking. See all photos for exact item condition.",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        }
+      ]
+    },
+    {
+      "name": "condition_type",
+      "title": "Condition",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s condition (NEW)",
+      "note": "",
+      "values": [
+        "new_new"
+      ],
+      "type": "string",
+      "selectionOnly": true,
+      "acceptedValues": [
+        "new_new",
+        "used_like_new",
+        "used_very_good",
+        "used_good",
+        "used_acceptable"
+      ],
+      "acceptedLabels": [
+        "New",
+        "Used - Like New",
+        "Used - Very Good",
+        "Used - Good",
+        "Used - Acceptable"
+      ],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "new_new",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "batteries_required",
+      "title": "Batteries Required",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "you answered it here",
+      "note": "",
+      "values": [
+        "false"
+      ],
+      "type": "boolean",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": false,
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "supplier_declared_dg_hz_regulation",
+      "title": "Dangerous Goods Regulations",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "you answered it here",
+      "note": "",
+      "values": [
+        "not_applicable"
+      ],
+      "type": "string",
+      "selectionOnly": true,
+      "acceptedValues": [
+        "not_applicable",
+        "ghs",
+        "storage",
+        "transportation",
+        "unknown"
+      ],
+      "acceptedLabels": [
+        "Not Applicable",
+        "GHS",
+        "Storage",
+        "Transportation",
+        "Unknown"
+      ],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "not_applicable",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "country_of_origin",
+      "title": "Country of Origin",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "Item Specific \u0022Country of Manufacture\u0022",
+      "note": "\u0022China\u0022 matched Amazon\u0027s \u0022CN\u0022.",
+      "values": [
+        "CN"
+      ],
+      "type": "string",
+      "selectionOnly": true,
+      "acceptedValues": [
+        "US",
+        "CN",
+        "VN",
+        "MX"
+      ],
+      "acceptedLabels": [
+        "United States",
+        "China",
+        "Vietnam",
+        "Mexico"
+      ],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "CN",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "list_price",
+      "title": "List Price",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s asking price",
+      "note": "Amazon reads list_price as the manufacturer\u0027s list price \u2014 the struck-through one. This is the draft\u0027s asking price, which is the same number only if the item is not discounted. Where it has an RRP, put that here; the price you charge is in purchasable_offer either way.",
+      "values": [
+        "549.99 USD"
+      ],
+      "type": "object",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": [
+        {
+          "value": 549.99,
+          "currency": "USD",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "purchasable_offer",
+      "title": "Purchasable Offer",
+      "state": "filled",
+      "required": true,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s price",
+      "note": "",
+      "values": [
+        "549.99 USD"
+      ],
+      "type": "object",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": [
+        {
+          "currency": "USD",
+          "our_price": [
+            {
+              "schedule": [
+                {
+                  "value_with_tax": 549.99
+                }
+              ]
+            }
+          ],
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    }
+  ],
+  "conditional": [
+    {
+      "name": "externally_assigned_product_identifier",
+      "title": "External Product ID",
+      "state": "filled",
+      "required": false,
+      "conditionallyRequired": true,
+      "requirementNote": "Required unless you supply merchant_suggested_asin instead.",
+      "source": "the draft\u0027s UPC",
+      "note": "",
+      "values": [
+        "195908484729 (UPC)"
+      ],
+      "type": "object",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": [
+        {
+          "value": "195908484729",
+          "type": "upc",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "merchant_suggested_asin",
+      "title": "Merchant Suggested ASIN",
+      "state": "satisfied_by_alternative",
+      "required": false,
+      "conditionallyRequired": true,
+      "requirementNote": "Required unless you supply externally_assigned_product_identifier instead.",
+      "source": "",
+      "note": "Not needed \u2014 externally_assigned_product_identifier answers this requirement.",
+      "values": [],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": null
+    }
+  ],
+  "optional": [
+    {
+      "name": "number_of_items",
+      "title": "Number of Items",
+      "state": "empty",
+      "required": false,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "",
+      "note": "How many units are in one package. The draft\u0027s quantity is how many are in stock, which is a different number \u2014 20 miners on a shelf are not a 20-pack. Say how many the buyer receives.",
+      "values": [],
+      "type": "integer",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": null
+    },
+    {
+      "name": "color",
+      "title": "Color",
+      "state": "filled",
+      "required": false,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "Item Specific \u0022Color\u0022",
+      "note": "",
+      "values": [
+        "Black"
+      ],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": true,
+      "payload": [
+        {
+          "value": "Black",
+          "marketplace_id": "ATVPDKIKX0DER",
+          "language_tag": "en_US"
+        }
+      ]
+    },
+    {
+      "name": "item_dimensions",
+      "title": "Item Dimensions",
+      "state": "empty",
+      "required": false,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "",
+      "note": "The product\u0027s own measurements. The draft has the shipping box, which is larger by however much padding went round it, so it cannot stand in for this.",
+      "values": [],
+      "type": "object",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": null
+    },
+    {
+      "name": "item_package_weight",
+      "title": "Package Weight",
+      "state": "filled",
+      "required": false,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "the draft\u0027s package weight",
+      "note": "",
+      "values": [
+        "3.5 pounds"
+      ],
+      "type": "object",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": [
+        {
+          "value": 3.5,
+          "unit": "pounds",
+          "marketplace_id": "ATVPDKIKX0DER"
+        }
+      ]
+    },
+    {
+      "name": "item_type_keyword",
+      "title": "Item Type Keyword",
+      "state": "empty",
+      "required": false,
+      "conditionallyRequired": false,
+      "requirementNote": "",
+      "source": "",
+      "note": "Amazon sets this itself; it is not a seller field.",
+      "values": [],
+      "type": "string",
+      "selectionOnly": false,
+      "acceptedValues": [],
+      "acceptedLabels": [],
+      "sellerAnswerable": false,
+      "payload": null
+    }
+  ],
+  "payload": {
+    "item_name": [
+      {
+        "value": "Bitaxe NerdQaxe\u002B\u002B 4.8TH/s BM1370 Bitcoin Solo Miner SHA-256 ASIC w/ Fan",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      }
+    ],
+    "brand": [
+      {
+        "value": "NerdQaxe",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      }
+    ],
+    "bullet_point": [
+      {
+        "value": "ASIC Chips: 4x Bitmain BM1370",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      },
+      {
+        "value": "Hashrate: Up to 4.8 TH/s",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      },
+      {
+        "value": "Algorithm: SHA-256 (Bitcoin / BTC)",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      },
+      {
+        "value": "Power Draw: Approx 75-82W typical",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      },
+      {
+        "value": "Input Voltage: 12V DC barrel connector",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      }
+    ],
+    "product_description": [
+      {
+        "value": "NerdQaxe\u002B\u002B 4.8TH/s Bitcoin Solo Miner \u2014 Quad BM1370 ASIC | SHA-256\n\nThe NerdQaxe\u002B\u002B is a high-efficiency open-source Bitcoin solo miner powered by four Bitmain BM1370 ASIC chips delivering up to 4.8 TH/s on the SHA-256 algorithm. Built on the popular Bitaxe design, this desktop miner is ideal for solo lottery mining, home node hobbyists, and crypto enthusiasts who want a quiet, low-power alternative to industrial rigs. It features a color IPS status display, WiFi monitoring, and a large 92mm cooling fan with heatsink.\n\nKey Specifications\n\n\u2022 ASIC Chips: 4x Bitmain BM1370\n\n\u2022 Hashrate: Up to 4.8 TH/s\n\n\u2022 Algorithm: SHA-256 (Bitcoin / BTC)\n\n\u2022 Power Draw: Approx 75-82W typical\n\n\u2022 Input Voltage: 12V DC barrel connector\n\n\u2022 Display: Color IPS TFT status screen (LILYGO)\n\n\u2022 Connectivity: WiFi 2.4GHz, USB-C config\n\n\u2022 Cooling: 92mm fan with dual-tower heatsink\n\n\u2022\n\n\u2022 Features \u0026 Benefits\n\n\u2022 Quad BM1370 layout on the NerdQaxe\u002B\u002B boosts hashrate to 4.8 TH/s while staying under 85W\n\n\u2022 Built-in color display shows live hashrate, temperature, voltage, RPM and pool data\n\nOpen-source AxeOS firmware with browser dashboard for pool setup and monitoring\n\n\u2022 Quiet desktop form factor perfect for solo lottery mining and learning ASIC hardware\n\n\u2022\n\n\u2022 Condition \u0026 What\u0027s Included\n\nBrand new, fully assembled and tested NerdQaxe\u002B\u002B miner as shown in photos.\n\n1x NerdQaxe\u002B\u002B 4.8T miner with fan and heatsink\n\nNote: 12V DC power supply not included unless stated\nShips in protective packaging\n\nCompatibility\nMines Bitcoin (BTC) and any SHA-256 coin. Compatible with public pools and solo mining setups including CKPool solo, public-pool.io, and Braiins. Configured via any modern web browser over WiFi. Requires a 12V DC power supply rated 8A or higher.\nShips securely packaged with tracking. See all photos for exact item condition.",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      }
+    ],
+    "condition_type": [
+      {
+        "value": "new_new",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "batteries_required": [
+      {
+        "value": false,
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "supplier_declared_dg_hz_regulation": [
+      {
+        "value": "not_applicable",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "country_of_origin": [
+      {
+        "value": "CN",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "list_price": [
+      {
+        "value": 549.99,
+        "currency": "USD",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "purchasable_offer": [
+      {
+        "currency": "USD",
+        "our_price": [
+          {
+            "schedule": [
+              {
+                "value_with_tax": 549.99
+              }
+            ]
+          }
+        ],
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "externally_assigned_product_identifier": [
+      {
+        "value": "195908484729",
+        "type": "upc",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ],
+    "color": [
+      {
+        "value": "Black",
+        "marketplace_id": "ATVPDKIKX0DER",
+        "language_tag": "en_US"
+      }
+    ],
+    "item_package_weight": [
+      {
+        "value": 3.5,
+        "unit": "pounds",
+        "marketplace_id": "ATVPDKIKX0DER"
+      }
+    ]
+  }
+}

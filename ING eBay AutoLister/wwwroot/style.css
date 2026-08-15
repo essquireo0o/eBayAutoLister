@@ -9097,6 +9097,255 @@ body.is-hosted #pg-facebook-disconnect { display: none !important; }
 .rd-block-list { margin: var(--s2) 0; padding-left: var(--s5); font-size: var(--fs-sm); }
 .rd-block-list li { margin-bottom: 2px; }
 
+/* ── Marketplace switch ────────────────────────────────────────────────────
+   Above the readiness bar, because it decides which readiness bar you are
+   looking at. Two tabs rather than a dropdown: the environment each one sends
+   to has to be readable without opening anything. ---------------------- */
+
+.nl-market {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s3);
+}
+.nl-market-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin-right: var(--s1);
+}
+.nl-market-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.nl-market-tab:hover { border-color: var(--line-strong); }
+.nl-market-tab.is-active {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+  color: var(--ink);
+}
+.nl-market-name { font-size: var(--fs-sm); font-weight: 700; }
+
+/* The destination, carried on the tab itself. A seller should never have to press
+   something to find out whether it reaches a real account. */
+.nl-market-env {
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+}
+.nl-market-env.is-live    { background: var(--danger-soft);  color: var(--danger); }
+.nl-market-env.is-sandbox { background: var(--info-soft);    color: var(--info); }
+
+/* ── Amazon panel ──────────────────────────────────────────────────────────
+   Deliberately the same object as .rd-bar — it carries that class and adds
+   only what Amazon needs that eBay does not: the environment banner, and the
+   product type the whole answer is measured against. ------------------- */
+
+.amz-bar .rd-toggle { padding-top: var(--s2); }
+
+/* The environment banner. Full-width, above the score, and it does not collapse
+   with the fix list: this is the one line on the panel that must be read. */
+.amz-env {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  background: var(--info-soft);
+  border-bottom: 1px solid var(--info-line);
+}
+.amz-env-tag {
+  flex-shrink: 0;
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: .1em;
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  background: var(--info);
+  color: #fff;
+}
+.amz-env-text { font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.5; }
+
+/* Production would be a real seller account and a real listing. This build refuses to
+   submit there at all (AmazonSubmitGuard), and the banner has to look like the refusal
+   rather than like the sandbox's calm blue. */
+.amz-env.is-production { background: var(--danger-soft); border-bottom-color: var(--danger-line); }
+.amz-env.is-production .amz-env-tag { background: var(--danger); }
+
+.amz-type-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: 0 var(--s4) var(--s3);
+}
+.amz-type-field { display: flex; flex-direction: column; gap: 3px; flex: 1 1 200px; min-width: 0; }
+.amz-type-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+.amz-type-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.amz-check-btn { flex-shrink: 0; }
+
+/* Where a value came from, on the row that shows it filled. Same promise the eBay
+   suggestion chip makes, and the same reason: the value goes on a listing under the
+   seller's account and they are the one answerable for it. */
+.amz-src {
+  display: block;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.amz-val {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-2xs);
+  background: var(--soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+  color: var(--ink-2);
+}
+.amz-fix-name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-weight: 500;
+}
+/* Amazon requires this one only because no sibling answered it. A different colour from a
+   flat blocker, because the fix is different: answer any one of them, not this one. */
+.rd-fix.is-choice .rd-dot { background: var(--warning); }
+
+/* Where the seller answers what the app refused to invent. Gold-dashed like the eBay suggestion
+   chip, because it is the opposite promise made in the same visual language: nothing is there
+   until a person puts it there. */
+.amz-answer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: center;
+  min-width: 150px;
+}
+.amz-answer-input {
+  border: 1px dashed var(--gold);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  max-width: 200px;
+}
+.amz-answer-note {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.amz-send-note {
+  font-size: var(--fs-2xs);
+  color: var(--ink-2);
+  max-width: 260px;
+  line-height: 1.45;
+}
+.amz-submit-btn { background: var(--info); border-color: var(--info); }
+
+/* The result of a submission. Never green — Amazon has not said anything yet. */
+.nl-result-msg.pending {
+  color: var(--ink);
+  border-left: 3px solid var(--info);
+  padding-left: var(--s3);
+}
+
+/* Amazon's answers are paragraphs, not a one-line status. .nl-result-msg is a centred flex ROW,
+   so every child of it — the tag, the sentence, each note, the button — becomes its own column
+   and a sentence turns into a stack of two-word lines. These stack downwards instead, and the
+   footer stops growing tall enough to push the panel above it off the screen. */
+.nl-result-msg.amz-result {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+  line-height: 1.5;
+}
+.nl-result-msg.amz-result .nl-result-note { margin-top: 0; }
+.amz-result-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+
+/* An eBay publish result is a line: "Published live! ID: …", which sits happily beside the
+   buttons. Amazon's is three paragraphs, because it has to say what was NOT established. Given
+   only the leftover width beside four buttons it becomes a column six words wide, so it takes a
+   row of its own. Scoped with :has so the eBay row is untouched; where :has is unsupported the
+   result is the old cramped-but-readable column rather than a broken layout. */
+.nl-footer-row:has(.amz-result) { flex-wrap: wrap; }
+.nl-footer-row:has(.amz-result) .amz-result { flex: 1 1 100%; }
+.amz-pending-tag {
+  display: inline-block;
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: .08em;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--info);
+  color: #fff;
+  margin-right: var(--s2);
+}
+
+/* On a phone the switch, the product type row and the send note all stop being rows.
+   The banner stacks last: it is the thing that must survive the narrowest screen. */
+@media (max-width: 520px) {
+  .nl-market { gap: 6px; }
+  .nl-market-tab { flex: 1 1 auto; justify-content: center; }
+  .amz-type-row { flex-direction: column; align-items: stretch; }
+  .amz-check-btn { align-self: flex-start; }
+  .amz-send-note { max-width: none; }
+  .amz-env { flex-direction: column; gap: var(--s2); }
+  /* The answer box drops under its own row rather than squeezing the reason beside it — the
+     reason is what tells the seller what they are declaring. */
+  .rd-fix { flex-wrap: wrap; }
+  .amz-answer { min-width: 0; width: 100%; margin-left: 20px; }
+  .amz-answer-input { max-width: none; }
+
+  /* The summary row stacks. .rd-counts is nowrap by design — at desktop width it is a short tail
+     like "2 will stop this" — and on a phone that one unbreakable string holds the row open and
+     squeezes the headline beside it down to one word per line. Score and chevron keep the top
+     row; the sentence and the counts each get their own. */
+  .amz-bar .rd-toggle { flex-wrap: wrap; row-gap: var(--s2); }
+  .amz-bar .rd-score  { order: 1; }
+  .amz-bar .rd-chevron { order: 2; margin-left: auto; }
+  .amz-bar .rd-text   { order: 3; flex: 1 1 100%; }
+  .amz-bar .rd-counts { order: 4; flex: 1 1 100%; white-space: normal; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .asp-just-filled { animation: none; background: var(--gold-soft); }
   .rd-chevron { transition: none; }

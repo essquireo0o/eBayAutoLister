@@ -22224,6 +22224,7 @@
     on('nl-ai-modify-input', 'keydown', e => { if (e.key === 'Enter') nlAiModify(); });
 
     initListingReadiness();
+    initAmazonPanel();
     initKeywordGap();
 
     on('nl-btn-publish', 'click', () => nlSubmit('publish'));
@@ -23511,6 +23512,8 @@
   function nlResetReadiness() {
     nlRdState = null;
     nlRdOverride = false;
+    // The Amazon panel is describing the same draft, so it goes stale at the same moment.
+    nlResetAmazon();
     if (nlRdTimer) { clearTimeout(nlRdTimer); nlRdTimer = null; }
     ['nl-aspects-required', 'nl-aspects-recommended', 'nl-aspects-optional']
       .forEach(id => { const el = $(id); if (el) el.innerHTML = ''; });
@@ -23537,8 +23540,11 @@
     if (!overlay || overlay.classList.contains('hidden')) return;
 
     const seq = ++nlRdSeq;
+    // Still checked while Amazon is the chosen marketplace — switching back has to be instant —
+    // but not shown. Unhiding here regardless put an empty eBay bar back on screen underneath the
+    // Amazon panel every time a keystroke re-triggered the check.
     const bar = $('nl-readiness');
-    if (bar) bar.hidden = false;
+    if (bar) bar.hidden = nlMarket === NL_MARKET_AMAZON;
 
     let payload;
     try { payload = buildNlPayload(); }
@@ -24128,7 +24134,9 @@
   function nlRenderReadiness(r) {
     const bar = $('nl-readiness');
     if (!bar) return;
-    bar.hidden = false;
+    // The second of the two places this bar is unhidden — see nlRunReadiness for why it is
+    // conditional. Missing this one left an empty eBay bar sitting above the Amazon panel.
+    bar.hidden = nlMarket === NL_MARKET_AMAZON;
 
     const blockers = r.blockerCount || 0;
     const tone = blockers > 0 ? 'is-blocker' : r.score >= 90 ? 'is-ok' : r.score >= 70 ? 'is-good' : 'is-warn';
@@ -24318,6 +24326,561 @@
       return;
     }
     nlRenderBlockerGate(blockers);
+  }
+
+  // ── Amazon (SP-API sandbox) ──────────────────────────────────────
+  //
+  // The same screen, pointed at a second marketplace. Everything below reads the draft the
+  // seller is already looking at — buildNlPayload(), unchanged — and asks the app's Amazon
+  // endpoints what Amazon would require of it. Nothing here edits the form, and choosing
+  // Amazon does not alter one field of the eBay path.
+  //
+  // Three things this must never do, each of which the backend already refuses to do and each
+  // of which would be easy to undo up here:
+  //
+  //   1. SAY THE LISTING IS PUBLISHED. Amazon answers a submission before it has judged it, so
+  //      an accepted submission is a queued one. The only honest word is pending, and it is on
+  //      the banner, the button, and the result — see nlAmzRenderSubmission.
+  //   2. LOOK LIKE PRODUCTION. This build submits to the sandbox only. The banner reads the
+  //      real environment from /api/amazon/status rather than asserting the happy one, because
+  //      a UI that says "sandbox" out of habit is a UI that will say it when it is wrong.
+  //   3. FILL A GAP TO MAKE A ROW GO GREEN. A fabricated GTIN is a suspended account. Missing
+  //      is rendered as missing, and the count of what is missing is the headline.
+
+  const NL_MARKET_EBAY   = 'ebay';
+  const NL_MARKET_AMAZON = 'amazon';
+
+  let nlMarket    = NL_MARKET_EBAY;
+  let nlAmzState  = null;   // last fill answer from the server
+  let nlAmzTimer  = null;   // debounce handle, same 600ms as the eBay check
+  let nlAmzSeq    = 0;      // race guard: only the newest answer may render
+  let nlAmzInFlight = false;
+
+  // What the seller answered themselves, per Amazon attribute name. Kept here rather than read
+  // back off the rows, because the rows are rebuilt from the server's answer on every re-check.
+  //
+  // Declared with the rest of the state rather than beside the control that writes it: nlResetAmazon
+  // clears it, and nlResetAmazon is reachable from the listing screen's own setup — a const declared
+  // further down would still be in its dead zone at that point and throw.
+  const nlAmzAnswers = {};
+
+  function initAmazonPanel() {
+    on('nl-market-ebay',   'click', () => nlSetMarket(NL_MARKET_EBAY));
+    on('nl-market-amazon', 'click', () => nlSetMarket(NL_MARKET_AMAZON));
+
+    on('nl-amz-toggle', 'click', () => {
+      const list = $('nl-amz-list');
+      const btn  = $('nl-amz-toggle');
+      if (!list || !btn) return;
+      const open = list.hidden;
+      list.hidden = !open;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.classList.toggle('is-open', open);
+    });
+
+    on('nl-amz-check', 'click', () => nlRunAmazonFill(true));
+    on('nl-amz-type', 'input', () => nlRunAmazonFill());
+    on('nl-btn-amz-submit', 'click', nlAmzSubmit);
+
+    // The same edits that re-run the eBay check re-run this one, because they are the same
+    // fields: Amazon's item_name is the draft's title and its brand is the draft's brand.
+    ['nl-title', 'nl-price', 'nl-brand', 'nl-mpn', 'nl-upc', 'nl-ean', 'nl-quantity']
+      .forEach(id => on(id, 'input', () => { if (nlMarket === NL_MARKET_AMAZON) nlRunAmazonFill(); }));
+    on('nl-condition', 'change', () => { if (nlMarket === NL_MARKET_AMAZON) nlRunAmazonFill(true); });
+  }
+
+  // Which marketplace the footer is talking about. Swaps the panel and the send button and
+  // nothing else — the form, the photos and the draft are one draft whichever way it goes.
+  function nlSetMarket(market) {
+    nlMarket = market === NL_MARKET_AMAZON ? NL_MARKET_AMAZON : NL_MARKET_EBAY;
+    const amazon = nlMarket === NL_MARKET_AMAZON;
+
+    [['nl-market-ebay', !amazon], ['nl-market-amazon', amazon]].forEach(([id, active]) => {
+      const tab = $(id);
+      if (!tab) return;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    const rd = $('nl-readiness');
+    if (rd) rd.hidden = amazon || !nlRdState;
+    const amz = $('nl-amz');
+    if (amz) amz.hidden = !amazon;
+
+    $('nl-btn-publish')?.classList.toggle('hidden', amazon);
+    $('nl-btn-amz-submit')?.classList.toggle('hidden', !amazon);
+    $('nl-amz-send-note')?.classList.toggle('hidden', !amazon);
+
+    // A result from the other marketplace is a result about something that is no longer on
+    // screen. Clearing it beats leaving "Published live!" above an Amazon submit button.
+    nlSetResult('', '');
+
+    if (amazon) {
+      nlLoadAmazonEnvironment();
+      nlRunAmazonFill(true);
+      addActivity('Marketplace switched to Amazon',
+        'Sandbox — this draft is now being checked against Amazon’s requirements, not eBay’s.');
+    }
+  }
+
+  // What this deployment's Amazon actually is. Read rather than assumed: the banner's whole
+  // value is that it is checkable, and a hardcoded "SANDBOX" would still read SANDBOX on the
+  // day somebody points the build at a real seller account.
+  async function nlLoadAmazonEnvironment() {
+    const { ok, data } = await callApi('/api/amazon/status');
+    if (!ok || !data) return;
+
+    const banner = $('nl-amz-env');
+    const tag    = $('nl-amz-env-tag');
+    const text   = $('nl-amz-env-text');
+    if (!banner || !tag || !text) return;
+
+    if (data.sandbox === false) {
+      banner.classList.add('is-production');
+      tag.textContent  = 'PRODUCTION — WILL NOT SEND';
+      text.textContent =
+        'This deployment is pointed at a real Amazon seller account, and this build refuses to submit '
+        + 'there: a listing on a live account is one the seller is answerable for, and nothing here asks '
+        + 'for that consent. Nothing will be sent.';
+      return;
+    }
+
+    banner.classList.remove('is-production');
+    tag.textContent  = 'SANDBOX';
+    text.textContent =
+      'Everything on this panel goes to Amazon’s SP-API sandbox. Nothing sent from here reaches Amazon’s '
+      + 'real store, appears on a seller account, or can be bought'
+      + (data.configured === false
+          ? ' — and this deployment cannot reach Amazon at all yet, so the check below will say so.'
+          : '.');
+  }
+
+  async function nlRunAmazonFill(immediate = false) {
+    if (nlAmzTimer) { clearTimeout(nlAmzTimer); nlAmzTimer = null; }
+    if (!immediate) {
+      nlAmzTimer = setTimeout(() => nlRunAmazonFill(true), 600);
+      return;
+    }
+    if (nlMarket !== NL_MARKET_AMAZON) return;
+
+    const overlay = $('new-listing-overlay');
+    if (!overlay || overlay.classList.contains('hidden')) return;
+
+    const bar = $('nl-amz');
+    if (bar) bar.hidden = false;
+
+    let draft;
+    try { draft = nlAmzDraft(); }
+    catch { return; }
+
+    const seq = ++nlAmzSeq;
+    const { ok, data } = await callApi('/api/amazon/listing-fill', { method: 'POST', body: draft });
+    if (seq !== nlAmzSeq) return;   // a newer edit already asked; this answer is stale
+
+    if (!ok || !data) {
+      // A check that cannot run must never be mistaken for a check that passed.
+      nlAmzState = null;
+      nlAmzRender({
+        status: 'error',
+        headline: 'The Amazon check could not be run — the app did not answer. Nothing has been sent.',
+        canSubmit: false,
+        counts: { required: 0, requiredFilled: 0, blocking: 0, filled: 0, total: 0 },
+        required: [], conditional: [], choices: [],
+      });
+      return;
+    }
+
+    nlAmzState = data;
+    nlAmzRender(data);
+  }
+
+  // The draft as Amazon's endpoints take it: the eBay payload verbatim, plus the product type
+  // if the seller named one. Verbatim matters — a re-typed copy is a copy that can disagree
+  // with the form the seller is looking at.
+  function nlAmzDraft() {
+    const draft = buildNlPayload();
+    draft.productType = ($('nl-amz-type')?.value || '').trim();
+    draft.query = '';
+    // The seller's own declarations, sent every time — the check and the submission have to be
+    // looking at the same answers, or the panel is describing a listing that is not the one sent.
+    draft.sellerAttributes = { ...nlAmzAnswers };
+    return draft;
+  }
+
+  function nlAmzRender(f) {
+    const bar = $('nl-amz');
+    if (!bar) return;
+    bar.hidden = false;
+
+    const counts   = f.counts || {};
+    const blocking = counts.blocking || 0;
+    const readable = f.status === 'ok' || f.status === 'stale';
+
+    // Green only when every required attribute is answered AND every either/or requirement is
+    // met — the server's own canSubmit, never recomputed here into something more generous.
+    const tone = !readable || blocking > 0 ? 'is-blocker' : f.canSubmit ? 'is-ok' : 'is-warn';
+    bar.className = 'rd-bar amz-bar ' + tone;
+
+    const score = $('nl-amz-score');
+    if (score) score.textContent = readable && counts.required ? `${counts.requiredFilled || 0}/${counts.required}` : '–';
+
+    const grade = $('nl-amz-grade');
+    if (grade) {
+      grade.textContent =
+        !readable         ? 'Amazon could not be asked' :
+        f.canSubmit       ? 'Ready to submit to the sandbox' :
+        blocking > 0      ? `${blocking} thing${blocking === 1 ? '' : 's'} will stop this` :
+                            'Not ready for Amazon yet';
+    }
+
+    const headline = $('nl-amz-headline');
+    if (headline) headline.textContent = f.headline || f.message || '';
+
+    const countsEl = $('nl-amz-counts');
+    if (countsEl) {
+      const parts = [];
+      if (blocking) parts.push(blocking + ' will stop this');
+      if (counts.filled) parts.push(counts.filled + ' filled');
+      if (f.displayName || f.productType) parts.push(f.displayName || f.productType);
+      countsEl.textContent = parts.join(' · ');
+    }
+
+    // The type box is filled in with what the search chose, so the seller can see what the
+    // answer was measured against — and overrule it. Never while they are typing in it.
+    const typeInput = $('nl-amz-type');
+    if (typeInput && f.productType && document.activeElement !== typeInput && !typeInput.value.trim()) {
+      typeInput.value = f.productType;
+    }
+
+    nlAmzSyncSubmitGate(f);
+    nlAmzRenderList(f);
+  }
+
+  function nlAmzRenderList(f) {
+    const list = $('nl-amz-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    // The sandbox answers a query about speakers with luggage. Where the server says so, that
+    // sentence goes at the top — above every row it makes untrustworthy.
+    if (f.sandboxNotice) {
+      list.appendChild(nlAmzRow('is-warning', 'What the sandbox is doing to this answer', f.sandboxNotice));
+    }
+
+    // Either/or requirements first, as one requirement each. Told separately that two
+    // attributes are missing, a seller reasonably concludes they need both.
+    (f.choices || []).filter(c => !c.satisfied).forEach(c => {
+      list.appendChild(nlAmzRow('is-choice',
+        'Amazon needs one of: ' + (c.options || []).join(' or '),
+        c.note || 'Any one of these satisfies the requirement. None of them is answered.'));
+    });
+
+    const required = [...(f.required || []), ...(f.conditional || [])];
+    const optional = f.optional || [];
+
+    const blocking    = required.filter(a => a.state === 'missing_required'
+                                          || a.state === 'invalid_value'
+                                          || a.state === 'too_long');
+    const conditional = required.filter(a => a.state === 'missing_conditional');
+
+    // Everything with a value, required or not. Optional filled ones belong here: they are going
+    // onto the listing, they are counted in the "N filled" badge above, and a list that showed 10
+    // under a badge reading 13 would leave the seller looking for three attributes they cannot see.
+    const filled = [...required, ...optional].filter(a => a.state === 'filled');
+
+    blocking.forEach(a => list.appendChild(nlAmzAttrRow(a, 'is-blocker')));
+    conditional.forEach(a => list.appendChild(nlAmzAttrRow(a, 'is-warning')));
+    filled.forEach(a => list.appendChild(nlAmzAttrRow(a, 'is-tip')));
+
+    if (!list.childElementCount) {
+      list.innerHTML = '<p class="rd-empty">Nothing to show yet — no Amazon product type has been read, '
+                     + 'so there is nothing for the draft to be missing from.</p>';
+      return;
+    }
+
+    // What is deliberately not on the list. An optional attribute nobody filled is the ordinary
+    // resting state and there are hundreds of them; saying how many beats a list that looks
+    // complete and is not.
+    const quiet = optional.filter(a => a.state !== 'filled').length;
+    if (quiet > 0) {
+      const note = document.createElement('p');
+      note.className = 'rd-empty';
+      note.textContent = `${quiet} optional attribute${quiet === 1 ? '' : 's'} Amazon does not require, `
+                       + 'and that the draft says nothing about, are not listed. Everything required '
+                       + 'and everything filled is above.';
+      list.appendChild(note);
+    }
+  }
+
+  function nlAmzAttrRow(a, severity) {
+    const label = a.title || a.name || '';
+    const why = a.note
+      || a.requirementNote
+      || (a.state === 'filled' ? '' : 'Amazon requires this and the draft says nothing that answers it.');
+
+    const row = nlAmzRow(severity, label, why, a.name);
+    if (a.state === 'filled' && (a.values || []).length) {
+      const text = row.querySelector('.rd-fix-text');
+      const val = document.createElement('span');
+      val.className = 'amz-src';
+      // Where it came from, on the row. A value going onto a listing under the seller's own
+      // account has to be traceable to what they typed without reading the mapper.
+      val.innerHTML = `<span class="amz-val">${esc(a.values.join(' · '))}</span>`
+                    + (a.source ? ` — from ${esc(a.source)}` : '');
+      text?.appendChild(val);
+    } else if (a.sellerAnswerable) {
+      row.appendChild(nlAmzAnswerControl(a));
+    }
+    return row;
+  }
+
+  // The control that lets a person answer what the app refused to invent.
+  //
+  // This is the other half of the mapper's refusal, and without it that refusal is a dead end: a
+  // batteries declaration and a dangerous-goods declaration are required on most product types and
+  // neither can be derived from a product description, so nothing the AI writes can ever be
+  // submittable on its own. The mapper's note ends by telling the seller to state it; this is where.
+  //
+  // A closed list gets a list. Typing into a free-text box what Amazon publishes as five words is
+  // how a seller invents a sixth and is rejected for it.
+  function nlAmzAnswerControl(a) {
+    const wrap = document.createElement('div');
+    wrap.className = 'amz-answer';
+
+    const values = a.acceptedValues || [];
+    const labels = a.acceptedLabels || [];
+    let input;
+
+    if (a.selectionOnly && values.length) {
+      input = document.createElement('select');
+      input.className = 'amz-answer-input';
+      input.innerHTML = '<option value="">— not answered —</option>'
+        + values.map((v, i) => `<option value="${esc(v)}">${esc(labels[i] || v)}</option>`).join('');
+    } else if (a.type === 'boolean') {
+      input = document.createElement('select');
+      input.className = 'amz-answer-input';
+      input.innerHTML = '<option value="">— not answered —</option>'
+                      + '<option value="true">Yes</option><option value="false">No</option>';
+    } else {
+      input = document.createElement('input');
+      input.type = a.type === 'integer' || a.type === 'number' ? 'number' : 'text';
+      input.className = 'amz-answer-input';
+      input.placeholder = 'Your answer';
+    }
+
+    input.id = 'nl-amz-answer-' + a.name;
+    input.value = nlAmzAnswers[a.name] || '';
+    input.setAttribute('aria-label', (a.title || a.name) + ' — your answer');
+
+    // Re-checked against Amazon's schema the moment it is answered, so an answer outside a closed
+    // list comes back as rejected here rather than as a rejection against the account later.
+    input.addEventListener('change', () => {
+      const v = (input.value || '').trim();
+      if (v) nlAmzAnswers[a.name] = v; else delete nlAmzAnswers[a.name];
+      addActivity('Amazon declaration answered', `${a.title || a.name}: ${v || '(cleared)'} — your statement, not the app’s.`);
+      nlRunAmazonFill(true);
+    });
+
+    const note = document.createElement('span');
+    note.className = 'amz-answer-note';
+    note.textContent = 'Your statement';
+
+    wrap.appendChild(input);
+    wrap.appendChild(note);
+    return wrap;
+  }
+
+  function nlAmzRow(severity, label, why, name) {
+    const row = document.createElement('div');
+    row.className = 'rd-fix ' + severity;
+    row.innerHTML = `
+      <span class="rd-dot" aria-hidden="true"></span>
+      <div class="rd-fix-text">
+        <span class="rd-fix-label">${esc(label)}${name ? ` <span class="amz-fix-name">${esc(name)}</span>` : ''}</span>
+        <span class="rd-fix-why">${esc(why)}</span>
+      </div>`;
+    return row;
+  }
+
+  // The send button reflects what the last check said. Disabling it is not enough on its own —
+  // pressing it has to explain, which nlAmzSubmit does — but a button that is plainly not
+  // available is the cheaper of the two answers.
+  function nlAmzSyncSubmitGate(f) {
+    const btn = $('nl-btn-amz-submit');
+    if (!btn) return;
+    const blocked = !f.canSubmit;
+    btn.disabled = false;   // it always answers; see nlAmzSubmit
+    btn.textContent = blocked && (f.counts?.blocking || 0) > 0
+      ? `Submit to Amazon Sandbox (${f.counts.blocking} will stop this)`
+      : 'Submit to Amazon Sandbox';
+  }
+
+  async function nlAmzSubmit() {
+    if (nlAmzInFlight) { nlSetResult('', 'Already submitting — waiting for Amazon to answer.'); return; }
+
+    const sku = ($('nl-amz-sku')?.value || '').trim();
+    if (!sku) {
+      // Never generated. A submission replaces whatever is already at a SKU, so inventing one
+      // is inventing which of the seller's listings to overwrite.
+      nlSetResult('error', 'Give this listing a SKU first. This app will not invent one — a submission '
+                         + 'replaces whatever is already at that SKU.');
+      $('nl-amz-sku')?.focus();
+      return;
+    }
+
+    // The same shape of stop the eBay path uses, with the same count in it — and no override,
+    // because the server refuses a fill it knows Amazon will reject and an "anyway" button
+    // here would be a button that does nothing.
+    const f = nlAmzState;
+    if (f && !f.canSubmit) {
+      nlAmzRenderSubmitGate(f);
+      const list = $('nl-amz-list');
+      if (list && list.hidden) $('nl-amz-toggle')?.click();
+      return;
+    }
+
+    nlAmzInFlight = true;
+    const btn = $('nl-btn-amz-submit');
+    if (btn) btn.disabled = true;
+    nlSetResult('', 'Submitting to the Amazon sandbox…');
+
+    try {
+      const { ok, data } = await callApi('/api/amazon/product', {
+        method: 'POST',
+        body: {
+          draft: nlAmzDraft(),
+          sku,
+          // `|| 1` would be wrong here and the server is built around why: Quantity is int? because
+          // 0 is a real answer meaning out of stock, and defaulting it to 1 publishes a stock level
+          // nobody stated. Unstated stays unstated.
+          quantity: nlAmzQuantity(),
+        },
+        timeoutMs: PUBLISH_TIMEOUT_MS,
+      });
+
+      if (!ok || !data) {
+        nlSetResult('error', 'The submission could not be sent — the app did not answer. Nothing reached Amazon.');
+        addActivity('Amazon submission failed', 'The app did not answer; nothing was sent.');
+        return;
+      }
+      nlAmzRenderSubmission(data, sku);
+    } finally {
+      nlAmzInFlight = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /// The stock level as a number, 0 included, or null when the field is empty or unreadable.
+  function nlAmzQuantity() {
+    const raw = ($('nl-quantity')?.value ?? '').trim();
+    if (!raw) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  function nlAmzRenderSubmitGate(f) {
+    const el = $('nl-result-msg');
+    if (!el) return;
+
+    const rows = [
+      ...(f.choices || []).filter(c => !c.satisfied)
+        .map(c => 'One of: ' + (c.options || []).join(' or ')),
+      ...[...(f.required || []), ...(f.conditional || [])]
+        .filter(a => a.state === 'missing_required' || a.state === 'invalid_value' || a.state === 'too_long')
+        .map(a => a.title || a.name),
+    ];
+
+    const n = rows.length;
+    el.className = 'nl-result-msg amz-result error';
+    el.innerHTML =
+      '<strong>Amazon would reject this submission, so it was not sent.</strong> '
+      + (n === 1 ? 'One thing will stop this' : (n || 'Something') + ' things will stop this')
+      + ':<ul class="rd-block-list">' + rows.map(r => `<li>${esc(r)}</li>`).join('') + '</ul>'
+      + '<span class="nl-result-note">Nothing was invented to close the gap and nothing reached Amazon — '
+      + 'not even the sandbox.</span>';
+  }
+
+  // What came back, said the only way it can honestly be said. There is no success class and no
+  // "published" here, and there is no field on the response to bind one to: Amazon takes a
+  // submission before it judges it, so an accepted one is a pending one until the SKU is read
+  // back. That read-back is the button this renders.
+  function nlAmzRenderSubmission(s, sku) {
+    const el = $('nl-result-msg');
+    if (!el) return;
+
+    const submitted = s.state === 'submitted';
+    const env = (s.environment || 'Sandbox');
+    el.className = 'nl-result-msg amz-result ' + (submitted ? 'pending' : 'error');
+    el.innerHTML =
+      '<span class="amz-result-head">'
+      + `<span class="amz-pending-tag">${esc(submitted ? env.toUpperCase() + ' · PENDING' : env.toUpperCase())}</span>`
+      + `<span>${esc(s.headline || '')}</span></span>`
+      + (s.nextAction ? `<span class="nl-result-note">${esc(s.nextAction)}</span>` : '');
+
+    (s.issues || []).slice(0, 6).forEach(i => {
+      el.innerHTML += `<span class="nl-result-note">${esc(i.severity || '')}: ${esc(i.message || '')}`
+                    + `${(i.attributeNames || []).length ? ' (' + esc(i.attributeNames.join(', ')) + ')' : ''}</span>`;
+    });
+
+    if (submitted) {
+      el.innerHTML += ' <button type="button" class="btn btn-secondary small" id="nl-amz-state-btn">'
+                    + 'Ask Amazon what became of it</button>';
+      $('nl-amz-state-btn')?.addEventListener('click', () => nlAmzCheckState(sku));
+    }
+
+    addActivity(submitted ? 'Submitted to the Amazon sandbox' : 'Amazon submission not sent',
+      `SKU ${sku} · ${env} · ${s.state}${submitted ? ' — pending until Amazon confirms' : ''}`);
+  }
+
+  // The half of the truth the submission response cannot carry. Amazon validates afterwards, so
+  // this is the only call that can turn "pending" into an answer either way.
+  async function nlAmzCheckState(sku) {
+    nlSetResult('', 'Asking Amazon what became of SKU ' + sku + '…');
+    const { ok, data } = await callApi('/api/amazon/listing-state?sku=' + encodeURIComponent(sku));
+
+    const el = $('nl-result-msg');
+    if (!el) return;
+    if (!ok || !data) {
+      nlSetResult('error', 'Amazon could not be asked about SKU ' + sku + '. The submission is still pending.');
+      return;
+    }
+
+    // Amazon's own words for the SKU, quoted. "Buyable" is Amazon's status, not this app's
+    // opinion, and it is reported as a quotation for exactly that reason.
+    const buyable = data.amazonSaysBuyable === true;
+    el.className = 'nl-result-msg amz-result ' + (data.hasErrors ? 'error' : buyable ? 'success' : 'pending');
+    el.innerHTML =
+      '<span class="amz-result-head"><span class="amz-pending-tag">SANDBOX</span>'
+      + `<span>${esc(data.headline || data.message || '')}</span></span>`
+      + ((data.amazonStatuses || []).length
+          ? `<span class="nl-result-note">Amazon’s own status for SKU ${esc(sku)}: `
+            + `${esc(data.amazonStatuses.join(', '))}</span>`
+          : '');
+
+    (data.issues || []).slice(0, 6).forEach(i => {
+      el.innerHTML += `<span class="nl-result-note">${esc(i.severity || '')}: ${esc(i.message || '')}</span>`;
+    });
+
+    addActivity('Amazon listing state read back', `SKU ${sku} · ${(data.amazonStatuses || []).join(', ') || data.status}`);
+  }
+
+  // A new draft is a new question for both marketplaces. Called from nlResetReadiness so the
+  // two panels can never disagree about which listing they are describing.
+  function nlResetAmazon() {
+    nlAmzState = null;
+    if (nlAmzTimer) { clearTimeout(nlAmzTimer); nlAmzTimer = null; }
+    nlAmzSeq++;
+    const bar = $('nl-amz');
+    if (bar) { bar.hidden = true; bar.className = 'rd-bar amz-bar'; }
+    const list = $('nl-amz-list');
+    if (list) { list.innerHTML = ''; list.hidden = true; }
+    $('nl-amz-toggle')?.setAttribute('aria-expanded', 'false');
+    $('nl-amz-toggle')?.classList.remove('is-open');
+    const type = $('nl-amz-type'); if (type) type.value = '';
+    // The declarations were about the last item. Carrying "batteries: no" onto the next draft
+    // would be this app making the statement after all, in the seller's name.
+    Object.keys(nlAmzAnswers).forEach(k => delete nlAmzAnswers[k]);
+    nlSetMarket(NL_MARKET_EBAY);
   }
 
   function nlAddSpecificRow(key, value) {
