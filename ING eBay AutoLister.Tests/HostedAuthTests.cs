@@ -95,8 +95,13 @@ public class HostedAuthTests
         var signUp = await server.SignUpAsync(Email, Password);
         Assert.Equal(HttpStatusCode.OK, signUp.StatusCode);
 
-        // Signing up signs you in — there is no second step and no confirmation screen to lose
-        // people on.
+        // Signing up deliberately does NOT sign you in. It used to, and the second step is the
+        // price of the sign-up endpoint answering a new address and an existing one identically —
+        // a session cookie on only one of those branches is the same leak restated in the headers.
+        // See An_address_that_is_already_registered_signs_up_exactly_like_a_new_one.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await server.Client.GetAsync(RepresentativeEndpoint)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await server.SignInAsync(Email, Password)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await server.Client.GetAsync(RepresentativeEndpoint)).StatusCode);
     }
 
@@ -104,7 +109,7 @@ public class HostedAuthTests
     public async Task Signing_in_after_signing_out_opens_it_again()
     {
         await using var server = await StartAsync(hosted: true);
-        await server.SignUpAsync(Email, Password);
+        await server.JoinAsync(Email, Password);
 
         Assert.Equal(HttpStatusCode.OK, (await server.Client.PostAsync(HostedAuth.SignOutApi, null)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await server.Client.GetAsync(RepresentativeEndpoint)).StatusCode);
@@ -356,10 +361,38 @@ public class HostedAuthTests
         await server.SignUpAsync(Email, Password);
 
         // Same address, different case and padding — the second person would otherwise get their
-        // own account and wonder why the first person's listings are not in it.
-        var again = await server.SignUpAsync("  Seller@Example.COM ", "a-different-password");
+        // own account and wonder why the first person's listings are not in it. The response says
+        // nothing about that (see the test below); the database is where it is proved.
+        await server.SignUpAsync("  Seller@Example.COM ", "a-different-password");
 
-        Assert.Equal(HttpStatusCode.BadRequest, again.StatusCode);
+        Assert.Equal(1, server.Users.Count());
+
+        // And the second sign-up did not quietly overwrite the first one's password.
+        Assert.Equal(HttpStatusCode.OK, (await server.SignInAsync(Email, Password)).StatusCode);
+    }
+
+    [Fact]
+    public async Task An_address_that_is_already_registered_signs_up_exactly_like_a_new_one()
+    {
+        // The sign-in form goes to great lengths not to say which addresses have accounts —
+        // one message for both failures, a decoy PBKDF2 for an address that does not exist, a
+        // lockout that counts invented addresses too. All of it was worth nothing while the
+        // sign-up form next to it answered "that email address already has an account".
+        await using var server = await StartAsync(hosted: true);
+        await server.SignUpAsync(Email, Password);
+
+        var registered = await server.SignUpAsync(Email, "a-different-password");
+        var brandNew   = await server.SignUpAsync("nobody@example.com", "a-different-password");
+
+        Assert.Equal(brandNew.StatusCode, registered.StatusCode);
+        Assert.Equal(await brandNew.Content.ReadAsStringAsync(),
+                     await registered.Content.ReadAsStringAsync());
+
+        // Not just the same words — the same headers. Signing up must not set a session cookie,
+        // because it can only set one on the branch where an account was really created, and
+        // "did a Set-Cookie come back" is the easiest tell of all to read from a script.
+        Assert.False(registered.Headers.Contains("Set-Cookie"));
+        Assert.False(brandNew.Headers.Contains("Set-Cookie"));
     }
 
     [Fact]
@@ -414,7 +447,7 @@ public class HostedAuthTests
     public async Task The_name_given_at_sign_up_is_what_the_app_calls_them()
     {
         await using var server = await StartAsync(hosted: true);
-        await server.SignUpAsync(Email, Password, name: "  Ada O'Neill-Vance  ");
+        await server.JoinAsync(Email, Password, name: "  Ada O'Neill-Vance  ");
 
         var me = await server.Client.GetFromJsonAsync<Me>(HostedAuth.MeApi);
 
@@ -428,7 +461,7 @@ public class HostedAuthTests
     {
         // It is on the row, not only in the cookie that happened to be minted at sign-up.
         await using var server = await StartAsync(hosted: true);
-        await server.SignUpAsync(Email, Password, name: "Ada O'Neill-Vance");
+        await server.JoinAsync(Email, Password, name: "Ada O'Neill-Vance");
         await server.Client.PostAsync(HostedAuth.SignOutApi, null);
 
         await server.Client.PostAsJsonAsync(HostedAuth.SignInApi, new { email = Email, password = Password });
@@ -466,7 +499,7 @@ public class HostedAuthTests
     public async Task Who_am_I_names_the_signed_in_seller_and_nobody_else()
     {
         await using var server = await StartAsync(hosted: true);
-        await server.SignUpAsync(Email, Password);
+        await server.JoinAsync(Email, Password);
 
         var me = await server.Client.GetFromJsonAsync<MeResponse>(HostedAuth.MeApi);
 
@@ -506,7 +539,7 @@ public class HostedAuthTests
         var refused = await server.Client.GetAsync("/photos/item.txt");
         Assert.Equal(HttpStatusCode.Found, refused.StatusCode);
 
-        await server.SignUpAsync(Email, Password);
+        await server.JoinAsync(Email, Password);
         var allowed = await server.Client.GetAsync("/photos/item.txt");
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
     }
@@ -649,6 +682,11 @@ public class HostedAuthTests
         var clock = new TestClock();
         builder.Services.AddSingleton(new SignInThrottle(Path.Combine(root, "users.db"), () => clock.Now));
 
+        // Same scratch file again. This one is on the real clock: the tests here are about a
+        // session being revoked or replaced, which happens the moment it is asked for and does not
+        // need time wound anywhere.
+        builder.Services.AddSingleton(new SessionStore(Path.Combine(root, "users.db")));
+
         // The cookie would otherwise be marked Secure and never come back over a loopback http
         // test. It is Secure in a real hosted deployment — see AddAccounts.
         HostedAuth.AddAccounts(builder, hosted, secureCookie: false, authRequestsPerWindow);
@@ -696,6 +734,29 @@ public class HostedAuthTests
 
         public HttpClient Client { get; }
 
+        /// <summary>
+        /// The client's cookie jar. Exposed so a test can read the session cookie and prove it
+        /// changed across a sign-in, or build a second client that shares — or pointedly does not
+        /// share — the same cookies.
+        /// </summary>
+        public CookieContainer Jar { get; }
+
+        /// <summary>The users table behind the server.</summary>
+        public UserStore Users { get; }
+
+        /// <summary>
+        /// The session list behind the server, for the tests about fixation and sign-out. Null in
+        /// the desktop build, which has no sessions because it has nobody to be.
+        /// </summary>
+        public SessionStore? Sessions { get; }
+
+        /// <summary>The session cookie's current value in the jar, or null when there is none.</summary>
+        public string? SessionCookie =>
+            Jar.GetCookies(BaseAddress)["ing_session"]?.Value;
+
+        /// <summary>The base address, for a test that needs to build a client of its own.</summary>
+        public Uri BaseAddress => Client.BaseAddress!;
+
         /// <summary>Winds the throttle's clock forward. Nothing else in the app reads it.</summary>
         public void Wait(TimeSpan howLong) => _clock.Advance(howLong);
 
@@ -705,14 +766,29 @@ public class HostedAuthTests
             _root  = root;
             _clock = clock;
 
+            // The stores the server is actually using, so a test can assert on what ended up in
+            // the database rather than only on what the endpoint said about it — which for sign-up
+            // is now deliberately the same sentence either way.
+            Users = app.Services.GetRequiredService<UserStore>();
+
+            // GetService, not GetRequiredService: AddAccounts registers this only in the hosted
+            // build, and the desktop half of these tests must still be able to start a server.
+            Sessions = app.Services.GetService<SessionStore>();
+
             // A real cookie jar, and no automatic redirect-following: whether the answer is a 302
             // to the sign-in page or a 401 is half of what these tests are checking.
-            Client = new HttpClient(new HttpClientHandler
+            //
+            // Wrapped in CsrfClientHandler so the jar's antiforgery cookie is echoed back on every
+            // POST, the way a browser that has loaded the sign-in page would. Without it these
+            // tests all fail 403 on something they are not about. Jar is a field so the handler
+            // and the inner handler share one.
+            Jar = new CookieContainer();
+            Client = new HttpClient(new CsrfClientHandler(Jar, new HttpClientHandler
             {
                 UseCookies       = true,
-                CookieContainer  = new CookieContainer(),
+                CookieContainer  = Jar,
                 AllowAutoRedirect = false,
-            })
+            }))
             {
                 BaseAddress = new Uri(app.Urls.First()),
             };
@@ -725,6 +801,20 @@ public class HostedAuthTests
         public Task<HttpResponseMessage> SignUpAsync(string email, string password, string? code = null,
                                                      string? name = "Dana Ellis") =>
             Client.PostAsJsonAsync(HostedAuth.SignUpApi, new { email, password, code, name });
+
+        public Task<HttpResponseMessage> SignInAsync(string email, string password) =>
+            Client.PostAsJsonAsync(HostedAuth.SignInApi, new { email, password });
+
+        /// <summary>
+        /// Sign up and then sign in, for the tests that just need a seller who is through the door
+        /// and are not about the door. Signing up on its own no longer produces a session — see the
+        /// sign-up endpoint in <see cref="HostedAuth"/> for why it must not.
+        /// </summary>
+        public async Task JoinAsync(string email, string password, string? name = "Dana Ellis")
+        {
+            (await SignUpAsync(email, password, name: name)).EnsureSuccessStatusCode();
+            (await SignInAsync(email, password)).EnsureSuccessStatusCode();
+        }
 
         public async ValueTask DisposeAsync()
         {

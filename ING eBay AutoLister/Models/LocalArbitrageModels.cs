@@ -337,3 +337,41 @@ public class LocalArbitrageResult
     // is an answer, and a silent empty column is not.
     public List<CouponStoreOutcome> CouponStores { get; set; } = [];
 }
+
+// One deals-board row, handed back so the server can reprice just that row after the browser has
+// run a live sold-comps lookup for it. It is the buy side of a LocalArbitrageOpportunity read back
+// off the board — enough to reconstruct the LocalSupplyListing it came from, so the same
+// analyzer.Build the scan used can re-cost it against the now-deepened comps database. The resale
+// half (fees, net, evidence) is deliberately NOT sent: it is exactly what this round-trip
+// recomputes. See Services/DealReprice.cs and POST /api/opportunities/reprice-row.
+public class RepriceRowRequest
+{
+    public string Source { get; set; } = "";
+    public string SourceLabel { get; set; } = "";
+    public string ItemId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string ImageUrl { get; set; } = "";
+    // The local ask, as the board shows it (LocalArbitrageOpportunity.LocalAsk). Null/zero on a
+    // free row, which IsFree marks so the cost basis stays a real zero rather than a missing price.
+    public decimal? Price { get; set; }
+    public bool IsFree { get; set; }
+    public decimal? OriginalPrice { get; set; }
+    public string Location { get; set; } = "";
+    public double? DistanceMiles { get; set; }
+    public string PostedAgo { get; set; } = "";
+    public DateTime? PostedUtc { get; set; }
+    public bool IsRetail { get; set; }
+    public string Retailer { get; set; } = "";
+    public bool FreeShipping { get; set; }
+    public string CouponCode { get; set; } = "";
+    // The category the scan already stamped on this row. Carried so the reprice classifies it the
+    // same way (a source that already knew wins), keeping valuation and fees identical to the scan.
+    public string CategoryId { get; set; } = "";
+    // The title the comp lookup should run against — the fullest wording the board had for this
+    // product (PricedAs, when it differs from the row's own title). Falls back to Title.
+    public string? PricedAs { get; set; }
+    // Set by the browser when it wants a specific query priced (the same string it sent to
+    // /api/comps/live/start). Preferred over PricedAs/Title when present.
+    public string? Query { get; set; }
+}

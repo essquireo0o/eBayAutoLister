@@ -1,0 +1,63 @@
+# eBay on the hosted app — currently missing entirely.
+#
+# Verified on the live server 2026-08-13: /etc/ing-listing-engine/.env has the Anthropic key, the
+# encryption key, the admin key and the comps API, and NO eBay values of any kind. So on
+# app.inglisting.com nobody can connect an eBay account, which means no publishing, no importing
+# sales, no earnings — the half of the product that talks to eBay is inert.
+#
+# TWO DIFFERENT THINGS, AND THEY MUST NOT BE CONFUSED:
+#
+#   1. The eBay APPLICATION credentials — EbayClientId, EbayClientSecret, EbayRuName. These
+#      identify the OWNER'S DEVELOPER APP, not a person. They are shared infrastructure: without
+#      them no user can even begin an OAuth flow. These DO belong on the server. (Note they are
+#      already shipped inside the desktop MSI to every downloader, so hosting them server-side is
+#      strictly safer than the status quo, not looser.)
+#
+#   2. The owner's PERSONAL eBay tokens — EbayUserToken, EbayRefreshToken. These are Nick's own
+#      seller account. They must NEVER go on the hosted server. If they did, every stranger who
+#      signed up would be listing into, and reading the earnings of, the owner's eBay account.
+#      Per-user tokens are already implemented (hosted-03) and encrypted at rest.
+#
+# The redirect URL is the other half of the problem: the desktop app's OAuth returns to
+# http://localhost:9332, which is meaningless on a server. eBay ties the redirect to an RuName
+# registered in the developer console, so the hosted deployment needs its own.
+
+tasks:
+  - prompt: |
+      Make eBay account connection work on https://app.inglisting.com.
+
+      STEP 1 — read before changing anything. Find how the app builds its eBay OAuth URL and
+      handles the callback (Services/EbayAuthFlow.cs and the endpoints in Program.cs). Establish
+      exactly which values are needed, and whether the redirect is currently hardcoded to
+      localhost:9332. Report what you found before you change it.
+
+      STEP 2 — make the app credentials configurable from the environment in the HOSTED build, the
+      same way ANTHROPIC_API_KEY already is: Credentials__EbayClientId, Credentials__EbayClientSecret,
+      Credentials__EbayRuName. Read the real values from web-credentials.json / the owner's local
+      credentials.json on this machine and write them into /etc/ing-listing-engine/.env on the
+      server (root-owned, chmod 600). NEVER echo them, never commit them, never put them in the
+      image.
+
+      STEP 3 — make the OAuth redirect configurable rather than hardcoded, defaulting to the
+      existing localhost behaviour for the desktop build so nothing there changes. The hosted
+      value is https://app.inglisting.com/api/ebay/callback (or whatever the existing callback
+      path actually is — use the real one you found in step 1).
+
+      STEP 4 — the eBay developer console side CANNOT be automated and needs the owner. Write
+      exactly what he has to do, in EBAY-SETUP.md, in plain steps: which console page, that he
+      must add the hosted redirect URL to the RuName, and what to paste back. Keep it under a
+      page. Do not guess at the console's UI if you are not certain — say what is needed and let
+      him find it.
+
+      STEP 5 — the owner's PERSONAL eBay tokens must be absent from the server. Verify this and
+      state it in your summary. Add a test that fails if EbayUserToken or EbayRefreshToken can be
+      read from configuration in the HOSTED build.
+
+      Acceptance: on the live site, signing in and starting "connect eBay" produces a real eBay
+      consent URL containing the hosted redirect (not localhost) — quote the URL with the client
+      id partially redacted. If the redirect is not yet registered on eBay's side, eBay will
+      refuse it, and that is the expected outcome until the owner completes EBAY-SETUP.md; say so
+      rather than reporting failure. dotnet build + dotnet test green; desktop OAuth unchanged.
+    session: "ebay-01-hosted-oauth"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 7

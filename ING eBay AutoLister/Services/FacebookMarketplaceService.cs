@@ -379,6 +379,13 @@ public class FacebookMarketplaceService : ILocalSupplySource
         log.Add("Info", "Facebook Marketplace search",
             $"\"{query}\" within {snappedRadius} mi of {zip} — {result.Count} local listing(s).");
 
+        // Every Facebook read (search, browse, picks) funnels through here, so this is the one place
+        // to make the listing photos load. Facebook's CDN URLs are signed, short-lived and reject a
+        // cross-origin referrer, so a browser on the hosted site renders them blank; FbPhotoProxy
+        // swaps each for a same-origin /api/fb-photo URL the server fetches and caches. No-op on
+        // desktop, where the app's own browser loads them directly. See FbPhotoProxy.
+        FbPhotoProxy.RewriteItems(result.Items);
+
         return result;
     }
 
@@ -541,6 +548,18 @@ public class FacebookMarketplaceService : ILocalSupplySource
 
     // The config JSON is substituted LAST in both scrapes below: it carries the seller's own search
     // text, and a query that happened to contain a placeholder would otherwise be substituted into.
+    // How the headless search/picks browser is launched. Desktop uses the seller's real installed
+    // Google Chrome (channel:'chrome') because it carries their fingerprint and cookies best. The
+    // hosted worker container has no system Chrome — only Playwright's bundled Chromium — and runs
+    // as a non-root user on a 2 GB box, so it needs --no-sandbox and --disable-dev-shm-usage or the
+    // browser will not start. The login script never runs on the server, so it is left untouched.
+    private const string SearchLaunchOptions =
+#if HOSTED
+        "{ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'] }";
+#else
+        "{ channel: 'chrome', headless: true }";
+#endif
+
     public static string BuildSearchScript(string playwrightDir, string sessionPath, string configJson) =>
         SearchScript
             .Replace("%%PW%%", NodeRuntime.JsPath(playwrightDir))
@@ -549,6 +568,7 @@ public class FacebookMarketplaceService : ILocalSupplySource
             .Replace("%%SIGNATURE%%", PageSignatureJs)
             .Replace("%%EMIT%%", EmitJs)
             .Replace("%%WATCHDOG%%", SearchWatchdogMs.ToString())
+            .Replace("%%LAUNCHOPTS%%", SearchLaunchOptions)
             .Replace("%%CFG%%", configJson);
 
     public static string BuildPicksScript(string playwrightDir, string sessionPath, string configJson, string url) =>
@@ -560,6 +580,7 @@ public class FacebookMarketplaceService : ILocalSupplySource
             .Replace("%%EMIT%%", EmitJs)
             .Replace("%%WATCHDOG%%", PicksWatchdogMs.ToString())
             .Replace("%%URL%%", url)
+            .Replace("%%LAUNCHOPTS%%", SearchLaunchOptions)
             .Replace("%%CFG%%", configJson);
 
     /// <summary>
@@ -757,7 +778,7 @@ public class FacebookMarketplaceService : ILocalSupplySource
           out.locationSet = true;
           try {
             const chromium = requirePlaywright('%%PW%%');
-            browser = await launchChrome(chromium, { channel: 'chrome', headless: true });
+            browser = await launchChrome(chromium, %%LAUNCHOPTS%%);
             const ctx = await browser.newContext({
               storageState: '%%SESSION%%',
               viewport: { width: 1400, height: 1200 },
@@ -899,7 +920,7 @@ public class FacebookMarketplaceService : ILocalSupplySource
         (async () => {
           try {
             const chromium = requirePlaywright('%%PW%%');
-            browser = await launchChrome(chromium, { channel: 'chrome', headless: true });
+            browser = await launchChrome(chromium, %%LAUNCHOPTS%%);
             const ctx = await browser.newContext({
               storageState: '%%SESSION%%',
               viewport: { width: 1400, height: 1200 },

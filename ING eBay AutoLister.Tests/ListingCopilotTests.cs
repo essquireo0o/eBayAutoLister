@@ -111,6 +111,20 @@ public class ListingCopilotTests
         Assert.Empty(ListingCopilot.AuditCategory("31388", "Cameras & Photo > Digital Cameras"));
     }
 
+    [Fact]
+    public void A_category_that_was_filled_in_stops_being_reported_as_unknown()
+    {
+        // Once the scan's per-item lookup fills a real category in, the audit must switch from the
+        // "not loaded" gap to judging the placement — the whole point of fetching the category is
+        // that this listing no longer counts toward categoryUnknown.
+        var blank = ListingCopilot.AuditCategory("", "");
+        Assert.Contains(blank, i => i.Code == "category_unknown");
+
+        var filled = ListingCopilot.AuditCategory("31388", "Cameras & Photo > Digital Cameras");
+        Assert.DoesNotContain(filled, i => i.Code == "category_unknown");
+        Assert.Empty(filled);
+    }
+
     // ── Policies ──────────────────────────────────────────────────────────────
 
     [Theory]

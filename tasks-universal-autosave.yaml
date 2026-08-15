@@ -1,0 +1,63 @@
+# "whatever the user puts in is autosaved - whatever they type - autosaves"
+# Owner, 2026-08-14.
+#
+# WHAT ALREADY EXISTS — and it is good, which is why this task extends it rather than replacing it:
+#   Services/WorkRecoveryStore.cs   server-side store, 256 KB cap per row, 40 rows kept
+#   wwwroot/app.js                  a debounced autosave (scheduleAutosave -> flushAutosave),
+#                                   an exponential retry, a sendBeacon flush on unload, and a
+#                                   LOCAL copy written first and cleared only once the server
+#                                   confirms the row landed — so work survives the app itself
+#                                   dying, not just the tab closing.
+#
+# WHAT IT COVERS — one form:
+#   autosaveBody() calls buildNlPayload(), which is the AI LISTING draft and nothing else.
+#   scheduleAutosave() is called from four places, all inside that flow.
+#
+#   So every other field in the app is unprotected: the Opportunity Finder's search terms and
+#   filters, Ship Smart's package dimensions, the Whatnot lot inputs, Settings, the Budget
+#   figures, Sold Price Research queries. Type for five minutes, navigate away or lose the tab,
+#   and it is gone.
+#
+# THE POINT IS NOT MORE STORAGE. It is that a seller should never be punished for a closed tab.
+
+tasks:
+  - prompt: |
+      Make everything the seller types survive, not just the AI Listing form.
+
+      1. Inventory first, and report it before changing anything: list every screen with inputs a
+         person types into, and mark which are covered by the existing autosave today. That list
+         is the scope, and it is almost certainly longer than expected — Opportunity Finder,
+         Ship Smart, Whatnot, Budget, Settings, Sold Price Research, Snap-style forms, the
+         listing editor drawer.
+
+      2. Extend the EXISTING machinery, do not build a second one. WorkRecoveryStore, the debounce,
+         the retry, the sendBeacon unload flush and the local pre-write are all correct and already
+         handle the hard cases. What they need is a way to register a form: an id, a way to read
+         its values, and a way to put them back. A second autosave path would drift from this one
+         and the two would fight over the same store.
+
+      3. Restore must be automatic where it is safe. Re-entering a screen with an empty form should
+         put the seller's last input back without them hunting for a Recover button. Where a form
+         drives something expensive or irreversible, restore the FIELDS but never re-run the
+         action — filling a search box is help, re-running a paid live lookup is not.
+
+      4. Respect the limits already chosen. 256 KB a row and 40 rows exist so a runaway client
+         cannot fill the disk one autosave at a time. Many more forms means many more rows: work
+         out whether 40 is still right, and say what you chose and why rather than quietly raising
+         it.
+
+      5. NEVER AUTOSAVE A SECRET. Settings holds API keys, the eBay client secret and the admin
+         key. Those fields must be excluded explicitly, by name, and there must be a test that
+         fails if a new secret-bearing field is added without being excluded. A recovery store
+         that quietly accumulates a seller's API keys in plain rows is a worse bug than the one
+         being fixed.
+
+      6. Per-user on the hosted build. WorkRecoveryStore rows must be scoped like everything else
+         (see the UserScope work), or one seller's recovered draft appears in another's browser.
+
+      Acceptance: pick three screens outside AI Listing, type into each, kill the tab, reopen, and
+      show the input restored — quote what you typed and what came back. Show a Settings API-key
+      field NOT being stored. Show a second user cannot see the first's drafts. dotnet test green.
+    session: "ux-01-universal-autosave"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20

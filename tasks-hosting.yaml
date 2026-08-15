@@ -1,0 +1,141 @@
+# ING Listing Engine — hosted-web-app work, queued for unattended runs.
+#
+# GOAL: turn the Windows desktop app into something that can run on a server and be used by
+# more than one person at a time. That is the whole gap. It is NOT a deployment problem — the
+# code is a WinForms desktop exe with one shared credentials file and no login — so these tasks
+# do the code work in dependency order, each one buildable and testable on its own.
+#
+# WHERE IT CAN ACTUALLY BE HOSTED: not on ingmining.com or inglisting.com. Verified 2026-08-13
+# on the IONOS box — Apache/PHP shared hosting, `which dotnet node` returns nothing, no way to
+# install a runtime and no persistent processes. A .NET host is required (Azure App Service,
+# Render, Fly.io or a VPS) and needs an account only the owner can open. The website then links
+# to it, which is what the new /ing-listing-engine page is for.
+#
+# GUARDRAILS FOR EVERY TASK BELOW:
+#   * Never commit, print or embed a real API key, eBay token or password. Not in code, not in
+#     a test fixture, not in a log line.
+#   * The desktop build must keep working exactly as it does today. It is the shipping product;
+#     the hosted build is additive. `dotnet build` and `dotnet test` must pass before finishing.
+#   * Never publish a live eBay listing from a test.
+#   * If the build goes red and cannot be fixed, revert your own changes and stop. Do not leave
+#     the tree broken.
+#   * Work on branch `feat/hosted` only. Never push.
+
+tasks:
+  - prompt: |
+      Make the app buildable for Linux hosting WITHOUT breaking the Windows desktop build.
+
+      Today the csproj is OutputType=WinExe, TargetFramework=net10.0-windows, UseWindowsForms=true,
+      and Program.cs ends with a WinForms tray icon and Application.Run(). All 189 endpoints and
+      every service are already platform-neutral — the Windows dependency is only the shell:
+      roughly lines 130-175 (single-instance check + MessageBox) and 10190-10325 (tray icon,
+      balloon tips, Application.Run) of Program.cs, plus Services/DesktopNotifier.cs.
+
+      Add a HOSTED build configuration that targets plain net10.0, sets UseWindowsForms=false and
+      OutputType=Exe, and guards every WinForms block behind `#if !HOSTED` so the hosted build
+      simply calls app.Run() and never opens a browser, tray icon or message box. DesktopNotifier
+      must become a no-op implementation under HOSTED rather than being deleted.
+
+      Acceptance: `dotnet build` of the normal configuration still produces the identical desktop
+      exe with its tray icon; `dotnet publish -c Release -r linux-x64 -p:DefineConstants=HOSTED`
+      succeeds. Run `dotnet test` — all tests must still pass.
+    session: "hosted-01-linux-build"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 12
+
+  - prompt: |
+      Add authentication to the hosted build. Right now there are 189 endpoints and NOT ONE of
+      them checks who is calling — there is no AddAuthentication, no session, no user concept
+      anywhere in the codebase. Hosting it as-is would let any visitor use the owner's eBay
+      account and API key.
+
+      Add ASP.NET Core cookie authentication plus a Users table (email, password hash via
+      ASP.NET Core Identity's hasher or PBKDF2 — never plaintext, never a homemade hash), a
+      sign-up page, a sign-in page and sign-out. Under HOSTED, every endpoint requires an
+      authenticated user by default via a fallback authorization policy, with an explicit
+      allow-list for exactly: the sign-in/sign-up/health endpoints and the static UI assets.
+      The desktop build must remain unauthenticated — it is a single-user app on localhost.
+
+      Acceptance: a test proves an unauthenticated request to a representative API endpoint gets
+      401/redirect under HOSTED, and that the same endpoint is reachable in the desktop build.
+      dotnet test passes.
+    session: "hosted-02-auth"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 11
+    depends_on: ["hosted-01-linux-build"]
+
+  - prompt: |
+      Make credentials per-user in the hosted build.
+
+      CredentialsStore is currently constructed from one credentials.json path and handed out as
+      a single process-wide instance, so every user of a hosted deployment would share one eBay
+      account and one API key. Introduce an per-user credential store keyed on the signed-in
+      user id, backed by the database rather than a file, and resolve it per-request under
+      HOSTED. The desktop build keeps the existing single-file behaviour untouched.
+
+      The owner's Anthropic key stays SERVER-SIDE and shared (that is deliberate — users are not
+      asked for their own AI key on the hosted trial), but every eBay credential and token must
+      be per-user. Encrypt stored tokens at rest using a key read from configuration, never
+      committed.
+
+      Acceptance: a test proves two different signed-in users get different eBay credentials and
+      cannot read each other's. dotnet test passes.
+    session: "hosted-03-per-user-credentials"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 10
+    depends_on: ["hosted-02-auth"]
+
+  - prompt: |
+      Isolate per-user data in the hosted build.
+
+      Listings, earnings/flips, cost basis, deals and every other table currently live in one
+      SQLite database shared by the whole process (ListingDatabase is a singleton). Under HOSTED,
+      every row that belongs to a person must carry a user id, and every query must filter on the
+      signed-in user. Start with the tables that hold money or listings: flips, listings,
+      cost basis, deal pipeline.
+
+      Add the column with a migration that matches the existing house style — see
+      EarningsStore.Initialize()'s AddColumnIfMissing pattern, which adds a column in place and
+      leaves existing rows valid.
+
+      Acceptance: a test proves user A cannot see user B's listings or earnings through any
+      repository method. dotnet test passes.
+    session: "hosted-04-data-isolation"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 9
+    depends_on: ["hosted-03-per-user-credentials"]
+
+  - prompt: |
+      Rate-limit and meter the shared AI key in the hosted build.
+
+      On the hosted trial the owner's own Anthropic key pays for every user's usage, so an
+      unmetered endpoint is an unbounded bill. Add a per-user quota (a configurable number of AI
+      generations per day, default 10), enforced server-side before any call to ClaudeService,
+      and record usage per user so it can be read back. When a user is over quota, return a clear
+      message telling them the daily limit reset time — never a raw 429 or a silent failure.
+
+      Acceptance: tests prove the 11th generation in a day is refused for that user while another
+      user is unaffected, and that the counter rolls over. dotnet test passes.
+    session: "hosted-05-ai-quota"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 8
+    depends_on: ["hosted-04-data-isolation"]
+
+  - prompt: |
+      Write the deployment for the hosted build: a Dockerfile that publishes the HOSTED
+      configuration for linux-x64 and runs it as a non-root user, a .dockerignore that excludes
+      credentials.json and every *.db file, and a HOSTING.md explaining exactly how to deploy it
+      and what environment variables it needs (AI key, token-encryption key, database path).
+
+      HOSTING.md must state plainly which values are secrets that belong in the host's environment
+      settings and must never be committed. Include the eBay OAuth redirect change: the desktop
+      app uses http://localhost:9332, and a hosted deployment needs its own public redirect URL
+      registered in the eBay developer console.
+
+      Do NOT deploy anything. Do not put real secrets in any file. Acceptance: `docker build`
+      succeeds locally if docker is available; if it is not, verify the Dockerfile by inspection
+      and say so. dotnet test passes.
+    session: "hosted-06-deployment"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 7
+    depends_on: ["hosted-05-ai-quota"]

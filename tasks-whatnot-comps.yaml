@@ -1,0 +1,52 @@
+# Whatnot: confirm it prices from the comps database, and give it live lookups.
+# Owner, 2026-08-14: "make sure the whatnot is using the database and can pull live calls".
+#
+# TRACED BEFORE QUEUEING — half of this is already true:
+#   USES THE DATABASE, yes. The lot-analysis endpoints in Program.cs (around lines 4541 and 7883)
+#   both take IMarketplaceRepository, so a lot is priced against stored sold comps like everything
+#   else. Nothing to fix there — VERIFY it rather than rebuilding it.
+#
+#   LIVE CALLS, no. wwwroot/app.js calls runLiveLookup() from exactly four places: the eBay
+#   scanner ('es'), the opportunity search ('opp'), market research ('mr') and the new-listing
+#   flow ('nl'). The Whatnot / lot path is not one of them. So a seller watching a live auction —
+#   the one moment where the price matters most and the clock is running — gets stored comps only,
+#   and if the model is thin in the corpus it gets a weak answer with no way to improve it.
+#
+# CONTEXT THAT CHANGES THE ECONOMICS: live lookups are moving off the browser scraper onto the
+# OpenWebNinja sold-items API (api-01-replace-scraper). That call takes about a second, not the
+# ~60s a scrape took. A one-second lookup is affordable during a live auction; a sixty-second one
+# never was, which is very likely why this path never had it.
+
+tasks:
+  - prompt: |
+      Give the Whatnot lot analysis a live comps lookup, and prove it already reads the database.
+
+      1. VERIFY FIRST, and report what you find before changing anything: confirm the lot-analysis
+         path genuinely prices from IMarketplaceRepository, and state which repository it resolves
+         to on each build (local SQLite on desktop, HostedMarketplaceRepository on the server).
+         If the hosted one behaves differently — it has no FTS path, unlike the desktop
+         repository — say so, because the same lot would then grade differently in the two builds.
+
+      2. Add a live lookup to the lot path, using the same runLiveLookup mechanism the other four
+         callers use, with its own panel prefix so its progress bar is independent. It must:
+            * run BEFORE the lot is priced, so the fresh rows are in the corpus when the maths
+              runs — the eBay scanner already does exactly this, follow that precedent;
+            * be cancellable, and never block the lot analysis if it fails or times out. A live
+              auction does not wait, so a lookup that cannot finish must degrade to stored comps
+              silently rather than stalling the panel;
+            * respect the same per-user quota and 24-hour cache as every other live lookup. An
+              auction watcher refreshing a lot repeatedly must not be able to spend the owner's
+              API budget.
+
+      3. Make the trigger deliberate rather than automatic on every lot. A show has many lots and
+         firing a call per lot would drain a finite budget fast. Price from stored comps by
+         default and offer the live lookup where the evidence is weak — the row already knows,
+         via evidenceTier and PricedCompCount, when its price rests on too little.
+
+      Acceptance: on a lot whose model is thin in the corpus, the live lookup runs, rows land in
+      the comps database, and the lot's evidence tier improves on re-price — quote the before and
+      after tier and comp count. Confirm a failed lookup still leaves the lot priced from stored
+      comps. dotnet test green; do not change the desktop app's existing behaviour elsewhere.
+    session: "whatnot-01-live-comps"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 12

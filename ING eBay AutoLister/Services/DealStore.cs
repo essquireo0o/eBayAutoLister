@@ -8,26 +8,38 @@ namespace ING_eBay_AutoLister.Services;
 /// SQLite database, alongside <see cref="CostBasisStore"/> and <see cref="EarningsStore"/>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The one hard requirement here is that pressing "Track" twice on the same local listing must not
 /// produce two deals: a duplicated card duplicates its capital and its projected profit in every
-/// roll-up on the board. Source-tracked deals are therefore keyed on (source, source_item_id) with
-/// a unique index, and a second track updates the existing row. Deals typed in by hand have no such
-/// key and are identified only by their row id.
+/// roll-up on the board. Source-tracked deals are therefore keyed on
+/// (user_id, source, source_item_id) with a unique index, and a second track updates the existing
+/// row. Deals typed in by hand have no such key and are identified only by their row id.
+/// </para>
+/// <para>
+/// The user is in that key, not merely on the row. Two sellers looking at the same city's
+/// Craigslist see the same posts, and a shared key would make the second one to press Track
+/// silently overwrite the first one's card — their purchase price, their frozen projection, their
+/// stage. Every read here filters on the seller asking; see <see cref="UserScope"/>.
+/// </para>
 /// </remarks>
 public sealed class DealStore
 {
     private readonly string _databasePath;
+    private readonly UserScope _scope;
 
-    public DealStore(ListingDatabase database) : this(database.DatabasePath) { }
+    public DealStore(ListingDatabase database, UserScope? scope = null) : this(database.DatabasePath, scope) { }
 
-    public DealStore(string databasePath)
+    public DealStore(string databasePath, UserScope? scope = null)
     {
         _databasePath = databasePath;
+        _scope        = scope ?? UserScope.Desktop;
         Initialize();
     }
 
     public List<DealRecord> GetAll()
     {
+        if (_scope.OwnerId is not { } owner) return [];
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -38,8 +50,10 @@ public sealed class DealStore
                    listing_id, sku, listed_price, listed_at,
                    sold_at, note, created_at, updated_at, stage_changed_at
             FROM deals
+            WHERE user_id = @user_id
             ORDER BY id DESC;
             """;
+        command.Parameters.AddWithValue("@user_id", owner);
 
         var rows = new List<DealRecord>();
         using var reader = command.ExecuteReader();
@@ -54,6 +68,9 @@ public sealed class DealStore
     public bool Upsert(DealRecord deal)
     {
         Validate(deal);
+        // Nobody signed in on a hosted deployment: the card is not written rather than written onto
+        // somebody's board. See UserScope.
+        if (_scope.OwnerId is not { } owner) return false;
 
         var now = DateTimeOffset.UtcNow;
         deal.UpdatedUtc = now;
@@ -61,21 +78,21 @@ public sealed class DealStore
         if (deal.StageChangedUtc == default) deal.StageChangedUtc = now;
 
         using var connection = OpenConnection();
-        var existingId = FindExistingId(connection, deal);
+        var existingId = FindExistingId(connection, deal, owner);
 
         if (existingId is null)
         {
             using var insert = connection.CreateCommand();
             insert.CommandText = """
                 INSERT INTO deals
-                    (stage, title, source, source_label, source_url, source_item_id, quantity,
+                    (user_id, stage, title, source, source_label, source_url, source_item_id, quantity,
                      ask_price, max_buy_price, projected_sale_price, projected_net_profit,
                      projected_roi_percent, projected_days_to_cash, projected_basis, projected_at,
                      purchase_price, purchase_extra_cost, bought_at,
                      listing_id, sku, listed_price, listed_at,
                      sold_at, note, created_at, updated_at, stage_changed_at)
                 VALUES
-                    (@stage, @title, @source, @source_label, @source_url, @source_item_id, @quantity,
+                    (@user_id, @stage, @title, @source, @source_label, @source_url, @source_item_id, @quantity,
                      @ask_price, @max_buy_price, @projected_sale_price, @projected_net_profit,
                      @projected_roi_percent, @projected_days_to_cash, @projected_basis, @projected_at,
                      @purchase_price, @purchase_extra_cost, @bought_at,
@@ -84,6 +101,7 @@ public sealed class DealStore
                 SELECT last_insert_rowid();
                 """;
             Bind(insert, deal);
+            insert.Parameters.AddWithValue("@user_id", owner);
             deal.Id = Convert.ToInt64(insert.ExecuteScalar());
             return true;
         }
@@ -103,10 +121,12 @@ public sealed class DealStore
                 listed_price = @listed_price, listed_at = @listed_at, sold_at = @sold_at,
                 note = @note, created_at = @created_at, updated_at = @updated_at,
                 stage_changed_at = @stage_changed_at
-            WHERE id = @id;
+            WHERE id = @id AND user_id = @user_id;
             """;
         Bind(update, deal);
         update.Parameters.AddWithValue("@id", deal.Id);
+        // On the UPDATE as well as on the lookup: a row id this seller does not own edits nothing.
+        update.Parameters.AddWithValue("@user_id", owner);
         update.ExecuteNonQuery();
         return false;
     }
@@ -162,10 +182,13 @@ public sealed class DealStore
 
     public bool Delete(long id)
     {
+        if (_scope.OwnerId is not { } owner) return false;
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM deals WHERE id = @id;";
+        command.CommandText = "DELETE FROM deals WHERE id = @id AND user_id = @user_id;";
         command.Parameters.AddWithValue("@id", id);
+        command.Parameters.AddWithValue("@user_id", owner);
         return command.ExecuteNonQuery() > 0;
     }
 
@@ -249,13 +272,20 @@ public sealed class DealStore
             throw new InvalidOperationException("That date is in the future.");
     }
 
-    private static long? FindExistingId(SqliteConnection connection, DealRecord deal)
+    private static long? FindExistingId(SqliteConnection connection, DealRecord deal, long owner)
     {
         if (deal.Id > 0) return deal.Id;
         if (string.IsNullOrWhiteSpace(deal.Source) || string.IsNullOrWhiteSpace(deal.SourceItemId)) return null;
 
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM deals WHERE source = @source AND source_item_id = @source_item_id LIMIT 1;";
+        // This seller's board only: the same post tracked by two of them is two deals, because it
+        // is two people deciding separately whether to buy it.
+        command.CommandText = """
+            SELECT id FROM deals
+            WHERE user_id = @user_id AND source = @source AND source_item_id = @source_item_id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("@user_id", owner);
         command.Parameters.AddWithValue("@source", deal.Source);
         command.Parameters.AddWithValue("@source_item_id", deal.SourceItemId);
         var found = command.ExecuteScalar();
@@ -338,6 +368,8 @@ public sealed class DealStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS deals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- Whose board this card is on. 0 on a desktop database, where there is one seller.
+                user_id INTEGER NOT NULL DEFAULT 0,
                 stage TEXT NOT NULL DEFAULT 'sourced',
                 title TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT 'manual',
@@ -367,15 +399,25 @@ public sealed class DealStore
                 stage_changed_at TEXT NOT NULL DEFAULT ''
             );
 
-            -- What makes pressing "Track" twice on the same Craigslist post an update rather than
-            -- a second copy of the same capital and the same projected profit.
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_deals_source_item
-                ON deals(source, source_item_id) WHERE source_item_id <> '';
-
             CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage);
             CREATE INDEX IF NOT EXISTS ix_deals_listing ON deals(listing_id);
             """;
         command.ExecuteNonQuery();
+
+        // The owner column, before the index that uses it — on an old database it does not exist yet.
+        UserOwnedTable.Migrate(connection, "deals");
+
+        using var indexes = connection.CreateCommand();
+        indexes.CommandText = """
+            -- What makes pressing "Track" twice on the same Craigslist post an update rather than
+            -- a second copy of the same capital and the same projected profit — for the seller who
+            -- pressed it. Another seller tracking that post gets their own card, not this one.
+            DROP INDEX IF EXISTS ux_deals_source_item;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_deals_user_source_item
+                ON deals(user_id, source, source_item_id) WHERE source_item_id <> '';
+            """;
+        indexes.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

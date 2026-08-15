@@ -6856,6 +6856,22 @@ body.drawer-open {
 .mr-live.done .mr-live-bar { background: var(--success); }
 .mr-live.blocked .mr-live-bar { background: var(--warning); }
 
+/* The search-and-price pass that runs AFTER the sold-price lookup is the long part now that the
+   lookup itself answers in a few seconds — and it has no percentage to report, because the server
+   cannot know how many listings a term returns until it has fetched them. So the bar SWEEPS instead
+   of filling: honest, unbroken motion for a wait whose length can't be known ahead of time, rather
+   than a full green bar sitting frozen under a static line (which reads as a hang). The track already
+   clips overflow, so the segment slides in from off the left and out off the right. */
+.mr-live.working .mr-live-bar {
+  width: 32%;
+  transition: none;
+  animation: mrLiveSweep 1.4s ease-in-out infinite;
+}
+@keyframes mrLiveSweep {
+  0%   { transform: translateX(-115%); }
+  100% { transform: translateX(320%); }
+}
+
 .mr-live-note { font-size: var(--fs-xs); color: var(--muted); }
 .mr-live-note:empty { display: none; }
 .mr-live.blocked .mr-live-note { color: var(--warning); }
@@ -8315,6 +8331,27 @@ td.skeleton-cell { padding: 0 !important; }
   animation: coach-in var(--dur-2) var(--ease);
 }
 .onboard-coach.hidden { display: none; }
+
+/* Facebook Marketplace RUNS on the hosted/web build now: a locked-down fb-worker container drives a
+   headless browser against one shared, owner-supplied Facebook session (see fbworker/, NodeRuntime
+   RunViaWorkerAsync, and the FacebookMarketplaceService launch options). So search, "Today's picks"
+   and the connection status all show and work here exactly as they do on desktop — none of it is
+   hidden any more. What IS hidden is session MANAGEMENT: every hosted user rides the same shared
+   login, so no one gets a Connect or Disconnect button to change it. body.is-hosted is set from
+   /api/auth/me (app.js). The old "desktop only" teaser bits are retired for the same reason — it is
+   no longer desktop-only. */
+body.is-hosted #setup-facebook-connect,
+body.is-hosted #setup-facebook-disconnect,
+body.is-hosted #fb-connect-btn,
+body.is-hosted #fb-disconnect-btn,
+body.is-hosted #pg-facebook-connect,
+body.is-hosted #pg-facebook-disconnect { display: none !important; }
+
+/* Retired: the "Desktop only" tag, note and download link added while Facebook was web-disabled.
+   Kept out of the DOM's way rather than deleted from the markup, so the copy is one revert away. */
+.fb-tag-desktop,
+.fb-desktop-note,
+.fb-desktop-link { display: none !important; }
 
 .onboard-coach-inner {
   position: relative;
@@ -13499,6 +13536,44 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
   transition: transform var(--dur-1) var(--ease);
 }
 .fb-arb-more.is-open .fb-arb-more-chev { transform: rotate(90deg); }
+
+/* ── Live sold-comps, per row ──────────────────────────────────────────
+   The button that turns a stored-comps estimate into a real number, and
+   the short note it leaves behind ("12 live sold comps", "no recent
+   sales"). The button is a small secondary; the note is a quiet aside. */
+.fb-arb-live-btn { white-space: nowrap; }
+.fb-arb-live-note {
+  font-size: var(--fs-3xs);
+  color: var(--muted);
+  letter-spacing: .01em;
+}
+.fb-arb-live-note:empty { display: none; }
+
+/* The AI reality-check on a thin estimate: the button, the little note, and the verdict it
+   produces. The rejected verdict is the one that has to read as a warning at a glance. */
+.fb-arb-ai-btn { white-space: nowrap; }
+.fb-arb-ai-note {
+  font-size: var(--fs-3xs);
+  color: var(--muted);
+  letter-spacing: .01em;
+}
+.fb-arb-ai-note:empty { display: none; }
+.fb-arb-ai-verdict {
+  display: inline-block;
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.fb-arb-ai-bad  { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.fb-arb-ai-ok   { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.fb-arb-ai-meh  { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.fb-arb-ai-what   { font-size: var(--fs-3xs); color: var(--text); font-weight: 600; }
+.fb-arb-ai-reason { font-size: var(--fs-3xs); color: var(--muted); }
+/* A row the AI rejected: tinted and rule-marked so the big number beside it can't read as a deal. */
+.fb-arb-row.fb-arb-ai-flagged > td { background: #fef2f2; }
+.fb-arb-row.fb-arb-ai-flagged > td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
 
 .fb-arb-detail-row { display: none; }
 .fb-arb-detail-row.is-open { display: table-row; }

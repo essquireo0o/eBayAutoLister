@@ -1,0 +1,109 @@
+# Finish the Opportunity Finder: how it calculates, where live comps come from, and how the two
+# databases relate. Owner's instruction 2026-08-14.
+#
+# STATE OF PLAY, MEASURED — do not re-derive, and do not assume:
+#
+#   TWO DATABASES, DIVERGED IN BOTH DIRECTIONS
+#     local   C:\INGListing\Data\Marketplace.db   918,018 rows, SQLite, read by the DESKTOP build
+#     hosted  MariaDB via https://inglisting.com/comps-api/comps.php  read by app.inglisting.com
+#     Sample: "antminer" local 3,627 / hosted 1,695 — but "airpods pro" local 2,132 / hosted
+#     64,508. Neither is a superset. NOTE the counts are not strictly comparable: comps.php
+#     matches boolean AND across words while the local probe used an exact phrase, so measure
+#     properly with the same matching before drawing conclusions about coverage.
+#
+#   LIVE COMPS ARE BEING REPLACED
+#     The browser scraper is retired (owner, 2026-08-14). api-01-replace-scraper switches live
+#     lookups to the OpenWebNinja sold-items API, which works on the server too. Budget is 50,000
+#     calls, ~174 spent, and it does NOT refill.
+#     A bulk collector is already running: source/repos/BitData/owninja_collect.py
+#
+#   THE CALCULATION HAS A KNOWN FAILURE MODE, and it is the reason this task exists
+#     On a real Marketplace feed every single row graded "low" and a $1,900 Saab was valued at
+#     $150 because the only "Saab" rows in the comps database are Saab ECU modules at $75. The
+#     arithmetic was right and the product was wrong. LocalArbitrageAnalyzer.GradeEvidence and
+#     IdentityVerified already exist to catch this; the picks panel was ignoring them until
+#     recently. Coverage alone will not fix mismatching — matching has to be honest about it.
+
+tasks:
+  - prompt: |
+      Make every live lookup land in BOTH comps stores, so the desktop and the hosted app stop
+      drifting apart.
+
+      Today a live lookup writes only to the local SQLite. app.inglisting.com reads MariaDB and
+      never sees it. comps-01-hosted-ingest adds the write path to comps.php; this task makes the
+      NEW api-based live lookup use it, on both builds:
+
+        * desktop  -> write to Marketplace.db AND push to the hosted API
+        * hosted   -> write to the hosted API (there is no local SQLite on the server)
+
+      The push is fire-and-forget with a caught exception: a failed push must never fail or slow
+      the lookup a seller is waiting on. Idempotent on ItemId, so the same sale arriving from both
+      directions is stored once.
+
+      Acceptance: run one live lookup on the desktop for a thin model, then query comps.php for
+      that keyword and show the hosted count going up. Quote both numbers.
+    session: "opp-01-live-to-both-stores"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 15
+    depends_on: []
+
+  - prompt: |
+      Prove — or fix — how the Opportunity Finder calculates, using real rows rather than unit
+      tests alone.
+
+      The board's job is to answer "is this worth buying", and it has been wrong in a specific,
+      documented way: a $1,900 Saab priced at $150 because the comps database holds Saab ECU
+      modules, not Saabs. The arithmetic was correct; the product was not the same product.
+
+      1. Read LocalArbitrageAnalyzer.GradeEvidence, ComparableMatcher and the IdentityVerified /
+         PricedCompCount fields before changing anything, and write down in your summary what
+         each one currently guarantees.
+
+      2. Build a small fixture of REAL cases from the live databases and assert the grading is
+         honest on each:
+            * a well-covered model (many close comps)      -> expect "confident"
+            * a model whose only comps are its PARTS       -> expect IdentityVerified false, and
+                                                              never "confident"
+            * a model with 1-2 comps                        -> expect "low", never "confident"
+            * an item with no comps at all                  -> expect no price, not a zero
+         Use real titles from Marketplace.db, including the Saab case, so the fixture reflects
+         what the corpus actually contains.
+
+      3. Where the grading is already right, say so and change nothing — this is a verification
+         task first. Where it is wrong, fix the matching rather than widening the tolerance: a
+         board that prices a car off a car part is worse than a board that says "no idea".
+
+      4. Check the same grading is applied identically on the hosted build, which reads a
+         different database through a different repository (HostedMarketplaceRepository). A rule
+         enforced on one and not the other is the bug that survives longest.
+
+      Acceptance: each fixture case listed with its expected and observed grade, from real data.
+      dotnet test green.
+    session: "opp-02-verify-the-maths"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 14
+    depends_on: ["opp-01-live-to-both-stores"]
+
+  - prompt: |
+      Reconcile the two comps databases and report honestly on coverage.
+
+      Measured 2026-08-14: local 918,018 rows; hosted unknown total. Per-keyword sampling shows
+      each holds rows the other lacks. Before any bulk copying, MEASURE properly — query both with
+      the SAME matching rule, because comps.php matches boolean AND across words and a naive local
+      LIKE does not, which makes the two look more different than they are.
+
+      Then:
+        1. Report: total rows each side, rows only in local, rows only in hosted, overlap by
+           ItemId. Facts first.
+        2. Propose ONE reconciliation, with its cost, and do not execute it in this task. Pushing
+           ~900k rows to a shared IONOS host is a real risk to a live site: it needs batching,
+           rate limiting and a way to stop. The owner decides whether it runs.
+        3. Implement whatever is needed so that from now on NEW rows reach both, which is
+           opp-01's job — this task must not duplicate it.
+
+      Acceptance: a written coverage report with real numbers from both stores, and a stated
+      recommendation. No bulk write is performed.
+    session: "opp-03-coverage-report"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 13
+    depends_on: ["opp-02-verify-the-maths"]

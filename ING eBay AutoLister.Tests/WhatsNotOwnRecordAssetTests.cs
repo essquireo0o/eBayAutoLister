@@ -256,15 +256,6 @@ public class WhatsNotOwnRecordAssetTests
     }
 
     [Fact]
-    public void The_restock_board_still_reads_the_seller_s_book_its_own_way()
-    {
-        // This session reused the Restock board's row shape. It did not take it over: /api/restock
-        // still assembles and analyses its own, including the one eBay read the live card refuses.
-        Assert.Contains("app.MapGet(\"/api/restock\"", Program, StringComparison.Ordinal);
-        Assert.Contains("RestockAnalyzer.Analyze(sales, active, DateTimeOffset.Now)", Program, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void The_live_price_reads_no_network_for_the_seller_s_own_record()
     {
         // The Restock board can afford one eBay call for "what have I got listed". A live auction

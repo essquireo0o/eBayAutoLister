@@ -383,11 +383,20 @@ public class PerUserCredentialsTests
 
         public HttpClient Anonymous() => NewClient();
 
+        /// <remarks>
+        /// Two calls, because signing up no longer signs you in — the endpoint answers a new
+        /// address and an already-registered one identically so that it cannot be used to find
+        /// out which addresses exist, and a session cookie on one branch would give that away.
+        /// These tests want a signed-in seller, so they sign in.
+        /// </remarks>
         public async Task<Seller> SignUpAsync(string email)
         {
             var client   = NewClient();
             var response = await client.PostAsJsonAsync(HostedAuth.SignUpApi, new { email, password = Password, name = "Dana Ellis" });
             response.EnsureSuccessStatusCode();
+
+            var signIn = await client.PostAsJsonAsync(HostedAuth.SignInApi, new { email, password = Password });
+            signIn.EnsureSuccessStatusCode();
             return new Seller(client, await UserIdAsync(client));
         }
 
@@ -405,12 +414,16 @@ public class PerUserCredentialsTests
         /// <summary>A separate cookie jar per client — which is what makes them different people.</summary>
         private HttpClient NewClient()
         {
-            var client = new HttpClient(new HttpClientHandler
+            // The jar is held onto so CsrfClientHandler can read the antiforgery cookie out of it
+            // and echo it back, which is the one browser behaviour a bare HttpClient lacks and the
+            // server now insists on. See CsrfClientHandler.
+            var jar = new CookieContainer();
+            var client = new HttpClient(new CsrfClientHandler(jar, new HttpClientHandler
             {
                 UseCookies        = true,
-                CookieContainer   = new CookieContainer(),
+                CookieContainer   = jar,
                 AllowAutoRedirect = false,
-            })
+            }))
             {
                 BaseAddress = new Uri(app.Urls.First()),
             };

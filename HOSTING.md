@@ -117,6 +117,9 @@ you.
 | `Credentials__AdminKey` | **YES** | The key for the owner dashboard at `/owner?k=…`. One is generated in memory at startup if unset, which means it changes on every restart. |
 | `Credentials__StripeSecretKey`<br>`Credentials__StripeWebhookSecret`<br>`Credentials__StripePublishableKey` | **YES** (first two) | Billing. Only needed if you are charging. |
 | `Credentials__MarketCompsApiUrl`<br>`Credentials__MarketCompsApiKey` | **YES** (the key) | The hosted sold-comps API. Without it, pricing falls back to whatever other sources are configured. |
+| `Credentials__OpenWebNinjaApiKey`<br>(or `OPENWEBNINJA_API_KEY`) | **YES** | **Live sold-price lookups.** Typing a model asks the OpenWebNinja real-time eBay API for that exact model's recent sales and files them in the comps database. Unset means live lookups report unavailable and every price comes from stored comps — which is what this deployment did before 2026-08-14, because the browser scraper it replaced needed a desktop with Chrome. **The calls are paid, finite and do not refill** (50,000, shared with the bulk collector), so read the two settings below before you set this one. |
+| `LiveComps__DailyLookupLimit` | no | Live lookups allowed **per account per UTC day**. Defaults to **10**. This is what stops a loop in one signed-up user's browser spending the whole budget in an afternoon. Zero or less means uncapped, which on a public sign-up form is a decision rather than a default. |
+| `LiveComps__Enabled` | no | The kill switch. `false` turns live lookups off for everybody and falls back to stored comps, without removing the key. Set it the moment spend looks wrong; the app keeps pricing. |
 | `OPENAI_API_KEY` | **YES** | Optional secondary AI provider. |
 
 ### eBay — the application, not the accounts
@@ -185,6 +188,8 @@ Everything the deployment cannot lose is under `/data`:
 * `Credentials__AdminKey`
 * every `Credentials__Stripe*` value
 * `Credentials__MarketCompsApiKey`
+* `Credentials__OpenWebNinjaApiKey` — and this one is also *quantity* of a thing you bought: a
+  leaked key is 50,000 calls somebody else can spend
 * `Credentials__EbayClientSecret` — your eBay application's, and the only eBay secret you handle
 * each user's eBay OAuth tokens — which you never handle: they arrive from the user's browser and
   are written to their row encrypted.

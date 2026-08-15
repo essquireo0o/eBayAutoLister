@@ -4,26 +4,45 @@ using System.Text.Json;
 
 namespace ING_eBay_AutoLister.Services;
 
+/// <summary>
+/// The app's own SQLite database, and the locally-edited listings in it.
+/// </summary>
+/// <remarks>
+/// Every other store in the app is handed this one's <see cref="DatabasePath"/> and keeps its own
+/// table in the same file. The listings here belong to a user like the rest of them do — a title, a
+/// price and a description are the seller's work, and on a shared deployment the second person to
+/// sign up must not open the editor onto the first person's drafts. See <see cref="UserScope"/>.
+/// </remarks>
 public sealed class ListingDatabase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    private readonly UserScope _scope;
+
     public string DatabasePath { get; }
 
-    public ListingDatabase(IWebHostEnvironment env)
+    public ListingDatabase(IWebHostEnvironment env, UserScope? scope = null)
     {
         var dataDir = Path.Combine(env.ContentRootPath, "App_Data");
         Directory.CreateDirectory(dataDir);
 
+        _scope = scope ?? UserScope.Desktop;
         DatabasePath = Path.Combine(dataDir, "ing_listing_engine.db");
         Initialize();
     }
 
     public LocalListingDatabaseStatus GetStatus()
     {
+        // The seller's own count, not the deployment's. "127 listings saved locally" is a claim
+        // about their work, and counting everybody's would be both wrong and a headcount of
+        // somebody else's inventory.
+        if (_scope.OwnerId is not { } owner)
+            return new LocalListingDatabaseStatus(DatabasePath, 0, DateTimeOffset.UtcNow);
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM local_listings;";
+        command.CommandText = "SELECT COUNT(*) FROM local_listings WHERE user_id = @user_id;";
+        command.Parameters.AddWithValue("@user_id", owner);
         var count = Convert.ToInt32(command.ExecuteScalar());
 
         return new LocalListingDatabaseStatus(DatabasePath, count, DateTimeOffset.UtcNow);
@@ -33,6 +52,10 @@ public sealed class ListingDatabase
     {
         if (string.IsNullOrWhiteSpace(req.Sku) && string.IsNullOrWhiteSpace(req.OfferId) && string.IsNullOrWhiteSpace(req.ListingId))
             throw new InvalidOperationException("A SKU, offer ID, or listing ID is required to save a local edit.");
+        // Nobody signed in on a hosted deployment: nothing is written, and the result says so with
+        // a local id of 0 rather than pointing at a row that belongs to somebody else.
+        if (_scope.OwnerId is not { } owner)
+            return new LocalListingSaveResult(0, req.ListingId, req.OfferId, req.Sku, DateTimeOffset.UtcNow);
 
         var savedAt = DateTimeOffset.UtcNow;
         var savedAtText = savedAt.ToString("O");
@@ -46,10 +69,12 @@ public sealed class ListingDatabase
             delete.Transaction = transaction;
             delete.CommandText = """
                 DELETE FROM local_listings
-                WHERE (@listing_id <> '' AND listing_id = @listing_id)
-                   OR (@offer_id <> '' AND offer_id = @offer_id)
-                   OR (@sku <> '' AND sku = @sku);
+                WHERE user_id = @user_id
+                  AND ((@listing_id <> '' AND listing_id = @listing_id)
+                    OR (@offer_id <> '' AND offer_id = @offer_id)
+                    OR (@sku <> '' AND sku = @sku));
                 """;
+            delete.Parameters.AddWithValue("@user_id", owner);
             delete.Parameters.AddWithValue("@listing_id", req.ListingId);
             delete.Parameters.AddWithValue("@offer_id", req.OfferId);
             delete.Parameters.AddWithValue("@sku", req.Sku);
@@ -60,6 +85,7 @@ public sealed class ListingDatabase
         insert.Transaction = transaction;
         insert.CommandText = """
             INSERT INTO local_listings (
+                user_id,
                 listing_id,
                 offer_id,
                 sku,
@@ -78,6 +104,7 @@ public sealed class ListingDatabase
                 last_updated,
                 saved_at
             ) VALUES (
+                @user_id,
                 @listing_id,
                 @offer_id,
                 @sku,
@@ -99,6 +126,7 @@ public sealed class ListingDatabase
 
             SELECT last_insert_rowid();
             """;
+        insert.Parameters.AddWithValue("@user_id", owner);
         insert.Parameters.AddWithValue("@listing_id", req.ListingId);
         insert.Parameters.AddWithValue("@offer_id", req.OfferId);
         insert.Parameters.AddWithValue("@sku", req.Sku);
@@ -130,6 +158,8 @@ public sealed class ListingDatabase
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS local_listings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- Whose listing this is. 0 on a desktop database, where there is one seller.
+                user_id INTEGER NOT NULL DEFAULT 0,
                 listing_id TEXT NOT NULL DEFAULT '',
                 offer_id TEXT NOT NULL DEFAULT '',
                 sku TEXT NOT NULL DEFAULT '',
@@ -156,6 +186,10 @@ public sealed class ListingDatabase
                 ON local_listings(sku);
             """;
         command.ExecuteNonQuery();
+
+        // Adds user_id to a database written before this change. Its rows default to the desktop
+        // owner, which is who saved every one of them.
+        UserOwnedTable.Migrate(connection, "local_listings");
     }
 
     private SqliteConnection OpenConnection()

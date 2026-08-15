@@ -276,8 +276,8 @@ public class WhatsNotSteadyAssetTests
     [Fact]
     public void The_changed_assets_are_versioned()
     {
-        Assert.Contains("app.js?v=145", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=128", Html, StringComparison.Ordinal);
+        AssetStamp.AtLeast(Html, "app.js?v=", 145);
+        AssetStamp.AtLeast(Html, "style.css?v=", 128);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

@@ -982,13 +982,36 @@ public sealed class LocalArbitrageAnalyzer(
     public const string SortByProfit = "profit";
     public const string SortByFastestCash = "fastest";        // shortest wait for the money
     public const string SortByProfitPerDay = "profit_per_day"; // most money earned per day tied up
+    public const string SortByBalanced = "balanced";           // net dollars weighed against ROI — the default
 
     public static string NormalizeSort(string? sort) => (sort ?? "").Trim().ToLowerInvariant() switch
     {
         SortByFastestCash or "days" or "speed" => SortByFastestCash,
         SortByProfitPerDay or "perday" or "velocity" => SortByProfitPerDay,
-        _ => SortByProfit,
+        SortByProfit => SortByProfit,
+        // Everything else, including an empty request, gets the balanced default: pure ROI floats a
+        // $4 flip over a deal that nets ten times the dollars, and pure profit floats a big, expensive,
+        // razor-margin row — the money is in the middle. See BalancedScore.
+        _ => SortByBalanced,
     };
+
+    // The default ranking's money key. Net dollars are the base — that is what a flip actually pays —
+    // and ROI is a log-damped multiplier on top: straight ROI floats a $4 item at 4,000% over a deal
+    // that nets far more real dollars, and straight profit floats a big, expensive row at a razor
+    // margin that ties the cash up for a thin return. Multiplying the two, with ROI logged so it lifts
+    // a row without dominating it, ranks the one that makes the most money for what it ties up. A
+    // thin-comp row is damped further, because a headline profit computed off two loose comps is not
+    // money yet — it is a guess wearing a dollar sign.
+    public static double BalancedScore(LocalArbitrageOpportunity r)
+    {
+        if (r.NetProfit is not decimal profit) return double.MinValue;
+        var roi = r.RoiPercent.HasValue ? (double)r.RoiPercent.Value
+                : profit > 0m && r.LocalAsk == 0m ? 10000.0   // a free item's ROI is unbounded, so cap it
+                : 0.0;
+        var roiFactor = Math.Max(0.3, Math.Log10(1 + Math.Max(0.0, roi)));
+        var evidenceFactor = string.Equals(r.EvidenceTier, "confident", StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.8;
+        return (double)profit * roiFactor * evidenceFactor;
+    }
 
     // Best money first. Rows that couldn't be priced sort last rather than being dropped —
     // "we couldn't price this one" is information, and silently hiding listings from a
@@ -1015,6 +1038,19 @@ public sealed class LocalArbitrageAnalyzer(
 
         return NormalizeSort(sort) switch
         {
+            // The default: net dollars weighed against ROI (and damped for thin comps), so the row
+            // that makes the most money for what it ties up leads — not the biggest headline % on the
+            // smallest buy, nor the biggest sticker at a razor margin. See BalancedScore.
+            SortByBalanced => ordered
+                .ThenByDescending(BalancedScore)
+                .ThenByDescending(r => r.NetProfit ?? 0m)
+                .ThenBy(r => DaysToCashEstimator.SortableDaysToCash(r.DaysToCash))
+                // Everything else equal, the closer drive wins — a non-issue for the nationwide eBay
+                // scanner (no distance), a real tiebreak on a local board.
+                .ThenBy(r => r.DistanceMiles ?? double.MaxValue)
+                .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+
             // Fastest cash back, then the bigger profit among rows that turn equally fast.
             SortByFastestCash => ordered
                 .ThenBy(r => DaysToCashEstimator.SortableDaysToCash(r.DaysToCash))

@@ -3,66 +3,303 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sign in | ING Listing Engine™</title>
+  <title>ING Listing Engine™ — AI writes your eBay listing, and prices it</title>
+
+  <!-- This is the page a direct visitor from a post, an ad or a backlink lands on, so it is a full
+       landing page that sells the product and drives sign-ups — with the sign-in kept in the hero
+       for returning users. It stays noindex: the marketing SEO lives on inglisting.com and this must
+       not compete with it in search. noindex does NOT stop link unfurls — crawlers for og: cards
+       ignore robots meta — so the social card below still renders. -->
+  <meta name="robots" content="noindex, follow" />
+  <meta name="description" content="ING Listing Engine — AI writes your eBay listing from a photo or a link, prices it against real eBay sold records, finds you underpriced items to flip, and tracks your profit. Free beta, no card." />
+  <link rel="canonical" href="https://app.inglisting.com/signin.html" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="ING Listing Engine" />
+  <meta property="og:url" content="https://app.inglisting.com/" />
+  <meta property="og:title" content="ING Listing Engine — AI that writes your eBay listing, and prices it" />
+  <meta property="og:description" content="Paste a product link or a photo. About ten seconds later the listing is filled in — title, 20+ item specifics, description, photos — and priced against real eBay sold records. Free beta, no card." />
+  <meta property="og:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="ING Listing Engine filling an eBay listing automatically from a product photo." />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="ING Listing Engine — AI that writes your eBay listing, and prices it" />
+  <meta name="twitter:description" content="Paste a link or a photo. AI fills the listing and prices it against real eBay sold records. Free beta." />
+  <meta name="twitter:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+
+  <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=130" />
-  <!-- Same pre-paint theme resolution as index.html, for the same reason: without it a seller
-       who chose dark gets a white flash on the way to every sign-in. -->
-  <script>
-    (function () {
-      var stored = null;
-      try { stored = localStorage.getItem('ingTheme'); } catch (e) { /* private mode */ }
-      var choice = (stored === 'light' || stored === 'dark') ? stored : 'system';
-      var dark = choice === 'dark' || (choice === 'system' && window.matchMedia
-        && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-      document.documentElement.setAttribute('data-theme-choice', choice);
-    })();
-  </script>
+
+  <!-- Self-contained landing page. Deliberately its OWN fixed brand look (teal + gold), not the app's
+       light/dark theme, because a marketing page should read the same to everyone. The sign-in form's
+       ids and the login script at the bottom are untouched from the working auth page. -->
   <style>
-    .auth-page { min-height:100vh; display:grid; place-items:center; padding:32px 20px; background:var(--bg); }
-    .auth-card { width:100%; max-width:400px; background:var(--surface); border:1px solid var(--border);
-                 border-radius:14px; padding:28px; box-shadow:0 12px 32px rgba(0,0,0,.08); }
-    .auth-card h1 { font-size:var(--fs-xl); margin:0 0 4px; color:var(--text); letter-spacing:var(--tracking-tight); }
-    .auth-sub { font-size:var(--fs-sm); color:var(--text-muted); margin:0 0 22px; }
-    .auth-field { display:block; margin-bottom:16px; }
-    .auth-field span { display:block; font-size:var(--fs-xs); font-weight:var(--fw-bold); color:var(--text);
-                       margin-bottom:6px; }
-    .auth-field input { width:100%; box-sizing:border-box; padding:10px 12px; font-size:var(--fs-base);
-                        color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:8px; }
-    .auth-submit { width:100%; padding:11px; font-size:var(--fs-base); font-weight:var(--fw-bold);
-                   border:0; border-radius:8px; background:var(--gold); color:var(--on-gold); cursor:pointer; }
-    .auth-submit[disabled] { opacity:.6; cursor:progress; }
-    .auth-msg { display:none; margin:0 0 16px; padding:10px 12px; border-radius:8px; font-size:var(--fs-sm);
-                background:var(--danger-tint, #fdecec); color:var(--danger, #a12626); }
-    .auth-msg.shown { display:block; }
-    .auth-alt { margin:18px 0 0; font-size:var(--fs-sm); color:var(--text-muted); text-align:center; }
-    .auth-alt a { color:var(--gold-dark); font-weight:var(--fw-semibold); }
+    :root{
+      --ink:#082529; --ink-2:#0c3438; --teal:#0e3d42;
+      --gold:#c79a36; --gold-2:#e0bb63; --gold-ink:#241703;
+      --paper:#eef2f2; --card:#ffffff; --line:#d6e0e0;
+      --muted:#5c6b68; --muted-2:#9db6b8;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      color:var(--ink-2);background:var(--paper);line-height:1.6;-webkit-font-smoothing:antialiased}
+    a{color:#946d1f;text-decoration:none}
+    .wrap{max-width:1120px;margin:0 auto;padding:0 22px}
+    .btn{display:inline-flex;align-items:center;gap:8px;font-weight:800;border-radius:11px;
+      padding:14px 22px;cursor:pointer;border:none;font-size:16px;text-decoration:none;transition:.15s}
+    .btn-gold{background:var(--gold);color:var(--gold-ink);box-shadow:0 10px 24px rgba(199,154,54,.32)}
+    .btn-gold:hover{background:var(--gold-2);transform:translateY(-1px)}
+    .btn-ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.28)}
+    .btn-ghost:hover{background:rgba(255,255,255,.08)}
+
+    /* ── Nav ────────────────────────────────────────────────────────────── */
+    .nav{position:sticky;top:0;z-index:20;background:rgba(8,37,41,.92);backdrop-filter:blur(8px)}
+    .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+    .brand{display:flex;align-items:center;gap:11px;color:#fff}
+    .brand svg{width:34px;height:34px;border-radius:8px}
+    .brand b{font-size:18px;font-weight:800;letter-spacing:.2px}
+    .brand b span{color:var(--gold-2)}
+    .nav-links{display:flex;align-items:center;gap:22px}
+    .nav-links a{color:#cfe0e2;font-weight:600;font-size:15px}
+    .nav-links a:hover{color:#fff}
+    .nav-links .btn{padding:10px 16px;font-size:14px}
+    @media(max-width:760px){.nav-links a.only-wide{display:none}}
+
+    /* ── Hero ───────────────────────────────────────────────────────────── */
+    .hero{background:linear-gradient(160deg,#0c3438 0%,#082529 58%,#04171a 100%);color:#fff;
+      position:relative;overflow:hidden}
+    .hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+      background:radial-gradient(680px 420px at 88% 6%,rgba(199,154,54,.22),transparent 68%)}
+    .hero .wrap{position:relative;z-index:1;display:grid;grid-template-columns:1.1fr .9fr;gap:44px;
+      align-items:center;padding:66px 22px 74px}
+    .eyebrow{display:inline-block;font-size:12.5px;font-weight:800;letter-spacing:.14em;
+      text-transform:uppercase;color:var(--gold-2);margin-bottom:16px}
+    .hero h1{font-family:Georgia,"Times New Roman",serif;font-size:44px;line-height:1.12;margin:0 0 18px;color:#fff}
+    .hero h1 em{font-style:normal;color:var(--gold-2)}
+    .hero .lede{font-size:18px;line-height:1.6;color:#d3e2e3;margin:0 0 26px;max-width:560px}
+    .hero-cta{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+    .hero-note{font-size:13px;color:var(--muted-2);margin-top:16px}
+    .hero-note b{color:#e7efee}
+
+    /* sign-in card in the hero */
+    .signin-card{background:var(--card);border-radius:16px;padding:30px 30px 26px;color:var(--ink-2);
+      box-shadow:0 30px 70px rgba(4,23,26,.45)}
+    .signin-card h2{font-size:20px;margin:0 0 3px;color:var(--ink)}
+    .signin-card .sub{font-size:13.5px;color:var(--muted);margin:0 0 20px}
+    .field{display:block;margin-bottom:15px}
+    .field span{display:block;font-size:12.5px;font-weight:700;color:var(--ink-2);margin-bottom:6px}
+    .field input{width:100%;padding:11px 12px;font-size:15px;color:var(--ink-2);background:#fbfdfd;
+      border:1px solid var(--line);border-radius:9px}
+    .field input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(199,154,54,.18)}
+    .signin-card .btn-gold{width:100%;justify-content:center;box-shadow:0 8px 20px rgba(199,154,54,.28)}
+    .signin-card .btn-gold[disabled]{opacity:.6;cursor:progress}
+    .signin-card .alt{margin:16px 0 0;font-size:13.5px;color:var(--muted);text-align:center}
+    .signin-card .alt a{font-weight:700}
+    .auth-msg{display:none;margin:0 0 15px;padding:10px 12px;border-radius:8px;font-size:13.5px;
+      background:#fdecec;color:#a12626}
+    .auth-msg.shown{display:block}
+    .auth-msg.auth-notice{background:#e8f5ec;color:#1e6b3a}
+
+    /* ── Sections ───────────────────────────────────────────────────────── */
+    section{padding:64px 0}
+    .sec-head{text-align:center;max-width:660px;margin:0 auto 42px}
+    .sec-head h2{font-family:Georgia,serif;font-size:32px;line-height:1.2;margin:0 0 12px;color:var(--ink)}
+    .sec-head p{font-size:17px;color:var(--muted);margin:0}
+    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+    .feat{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:28px 26px}
+    .feat .ico{width:46px;height:46px;border-radius:12px;background:rgba(199,154,54,.14);
+      display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:16px}
+    .feat h3{font-size:19px;margin:0 0 8px;color:var(--ink)}
+    .feat p{font-size:15px;color:var(--muted);margin:0}
+
+    .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+    .step{text-align:center;padding:6px}
+    .step .num{width:44px;height:44px;border-radius:50%;background:var(--ink);color:var(--gold-2);
+      font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+    .step h3{font-size:18px;margin:0 0 7px;color:var(--ink)}
+    .step p{font-size:14.5px;color:var(--muted);margin:0}
+
+    .trust{background:var(--ink);color:#cfe0e2}
+    .trust .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;justify-content:center;align-items:center;
+      padding:26px 22px;font-size:14.5px}
+    .trust b{color:#fff}
+    .trust .dot{color:var(--gold-2)}
+
+    .cta{background:linear-gradient(160deg,#0c3438,#04171a);color:#fff;text-align:center}
+    .cta .wrap{padding:70px 22px}
+    .cta h2{font-family:Georgia,serif;font-size:34px;margin:0 0 12px}
+    .cta p{font-size:17px;color:#d3e2e3;margin:0 0 26px}
+
+    footer{background:#04171a;color:var(--muted-2)}
+    footer .wrap{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;
+      padding:26px 22px;font-size:13.5px}
+    footer a{color:#cfe0e2}
+
+    @media(max-width:860px){
+      .hero .wrap{grid-template-columns:1fr;gap:32px;padding:44px 22px 52px}
+      .hero h1{font-size:34px}
+      .grid,.steps{grid-template-columns:1fr}
+      .sec-head h2,.cta h2{font-size:27px}
+    }
   </style>
+
+  <script>
+    // Pre-paint theme flag is not needed here (this page has a fixed brand look), but keep the app's
+    // stored choice harmless — a returning user who chose dark still lands on THE APP in dark after login.
+  </script>
 </head>
-<body class="auth-page">
-  <main class="auth-card">
-    <h1>Sign in</h1>
-    <p class="auth-sub">ING Listing Engine™</p>
+<body>
+  <!-- ── Nav ── -->
+  <nav class="nav">
+    <div class="wrap">
+      <a class="brand" href="/signin.html">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="6" fill="#082529"/>
+          <path d="M5 10 H19 L27 16 L19 22 H5 Z" fill="#c79a36"/>
+          <circle cx="8.5" cy="16" r="2" fill="#082529"/>
+        </svg>
+        <b>ING Listing Engine<span>™</span></b>
+      </a>
+      <div class="nav-links">
+        <a href="#features" class="only-wide">Features</a>
+        <a href="#how" class="only-wide">How it works</a>
+        <a href="#signin">Sign in</a>
+        <a href="/signup.html" class="btn btn-gold">Create free account</a>
+      </div>
+    </div>
+  </nav>
 
-    <p id="auth-error" class="auth-msg" role="alert"></p>
+  <!-- ── Hero ── -->
+  <header class="hero" id="signin">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Free public beta · runs in your browser</span>
+        <h1>The AI that writes your eBay listings — <em>and prices them.</em></h1>
+        <p class="lede">Snap a photo or paste a link. About ten seconds later the whole listing is done —
+          title, 20+ item specifics, description, even the photos — and priced against what things
+          <b>actually sold for</b>. Then it finds you more to flip.</p>
+        <div class="hero-cta">
+          <a href="/signup.html" class="btn btn-gold">Create your free account →</a>
+          <a href="#features" class="btn btn-ghost">See what it does</a>
+        </div>
+        <p class="hero-note"><b>No credit card.</b> Publishes through eBay's official API, on your own account.</p>
+      </div>
 
-    <form id="signin-form" novalidate>
-      <label class="auth-field">
-        <span>Email</span>
-        <input id="signin-email" type="email" name="email" autocomplete="username" required
-               autocapitalize="none" spellcheck="false" />
-      </label>
-      <label class="auth-field">
-        <span>Password</span>
-        <input id="signin-password" type="password" name="password" autocomplete="current-password" required />
-      </label>
-      <button id="signin-submit" class="auth-submit" type="submit">Sign in</button>
-    </form>
+      <!-- Working sign-in, kept for returning users. Ids + script unchanged. -->
+      <main class="signin-card">
+        <h2>Welcome back</h2>
+        <p class="sub">Sign in to ING Listing Engine™</p>
+        <p id="auth-error" class="auth-msg" role="alert"></p>
+        <form id="signin-form" novalidate>
+          <label class="field">
+            <span>Email</span>
+            <input id="signin-email" type="email" name="email" autocomplete="username" required
+                   autocapitalize="none" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="signin-password" type="password" name="password" autocomplete="current-password" required />
+          </label>
+          <button id="signin-submit" class="btn btn-gold" type="submit">Sign in</button>
+        </form>
+        <p class="alt">No account yet? <a href="/signup.html">Create one free →</a></p>
+      </main>
+    </div>
+  </header>
 
-    <p class="auth-alt">No account yet? <a href="/signup.html">Create one</a></p>
-  </main>
+  <!-- ── Features ── -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>Everything selling on eBay makes you do — done for you</h2>
+        <p>Writing listings, guessing prices, hunting for stock, adding up what you made. The engine takes all four off your plate.</p>
+      </div>
+      <div class="grid">
+        <div class="feat">
+          <div class="ico">🪄</div>
+          <h3>List in seconds</h3>
+          <p>A photo or a link becomes a complete, search-tuned eBay listing — title, subtitle, description and 20+ item specifics. You review, tweak and publish.</p>
+        </div>
+        <div class="feat">
+          <div class="ico">💰</div>
+          <h3>Price it right</h3>
+          <p>Every price is set from real eBay <b>sold</b> data — what buyers actually paid, minus eBay's fees and shipping — so the number on screen is what you keep.</p>
+        </div>
+        <div class="feat">
+          <div class="ico">🔎</div>
+          <h3>Find deals to flip</h3>
+          <p>The Opportunity Finder scans eBay for items selling below their real value, ranked by actual profit and return. Buy underpriced, resell higher.</p>
+        </div>
+        <div class="feat">
+          <div class="ico">📈</div>
+          <h3>See what you made</h3>
+          <p>Money Made pulls your eBay sales automatically and shows your true net profit, margin and fees — no spreadsheet, no guessing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
+  <!-- ── How it works ── -->
+  <section id="how" style="background:#e7eeee">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>From photo to published in three steps</h2>
+        <p>No templates, no copy-pasting, no research tabs. Just this.</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>Snap or paste</h3>
+          <p>A product photo, or a link from eBay, Amazon, Alibaba or a supplier.</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>AI fills &amp; prices</h3>
+          <p>Title, item specifics, description and photos — priced against real sold comps in seconds.</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>Publish to eBay</h3>
+          <p>Through eBay's official API, on your own account. You stay in control the whole way.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Trust strip ── -->
+  <div class="trust">
+    <div class="wrap">
+      <span><b>Official eBay API</b></span><span class="dot">·</span>
+      <span>Your own eBay account</span><span class="dot">·</span>
+      <span><b>Free public beta</b>, no card</span><span class="dot">·</span>
+      <span>Built by ING Mining LLC</span>
+    </div>
+  </div>
+
+  <!-- ── Final CTA ── -->
+  <section class="cta">
+    <div class="wrap">
+      <h2>Start selling smarter — free</h2>
+      <p>Create your account and list your first item in the next few minutes.</p>
+      <a href="/signup.html" class="btn btn-gold">Create your free account →</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span>© <span id="yr"></span> ING Mining LLC — ING Listing Engine™</span>
+      <span><a href="/signup.html">Create account</a> · <a href="#signin">Sign in</a> · <a href="https://inglisting.com">inglisting.com</a></span>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+  </script>
+
+  <!-- The login itself — unchanged from the working auth page. -->
   <script>
     (function () {
       var form = document.getElementById('signin-form');
@@ -81,6 +318,14 @@
       function show(message) {
         error.textContent = message;
         error.classList.add('shown');
+      }
+
+      // Sent here by the sign-up form. Shown identically whether an account was just created or the
+      // address already had one, because the server answered both the same way and this page is not
+      // told which happened either — see the sign-up endpoint in HostedAuth.
+      if (new URLSearchParams(location.search).get('created') === '1') {
+        show('Your account is ready. Sign in to continue.');
+        error.classList.add('auth-notice');
       }
 
       form.addEventListener('submit', async function (event) {

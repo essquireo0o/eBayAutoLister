@@ -1,0 +1,87 @@
+# Two things the owner asked for on 2026-08-14:
+#   1. "make sure the pop up is there"  — the live lookup must run in a VISIBLE browser window,
+#      so eBay's sign-in and its bot check are things a human can actually click through. This is
+#      already the subject of live-01-profile-on-signin; the task below makes it non-negotiable
+#      and testable rather than a nice-to-have.
+#   2. "any live searches automatically go to the database" — today they do NOT, and this is the
+#      real gap.
+#
+# TRACED 2026-08-14:
+#   * scrape_one_keyword.py writes every row it finds into SoldListings in
+#     C:\INGListing\Data\Marketplace.db  (APP_COMPS_DB). So live searches DO reach a database.
+#   * The hosted app reads a DIFFERENT database: MariaDB on IONOS through comps.php
+#     (verified live — "antminer" returns n=1695).
+#   * There is NO script anywhere in the BitData checkout that pushes local rows to the hosted
+#     database. No sync, no push, no upload. The two have been drifting apart since the hosted DB
+#     was created.
+#   * So every live lookup the owner runs enriches his own PC and does nothing for
+#     app.inglisting.com, which is the copy his customers use.
+
+tasks:
+  - prompt: |
+      Push newly-scraped sold comps to the HOSTED database, automatically, after every live lookup.
+
+      Today a live lookup writes only to the local SQLite at C:\INGListing\Data\Marketplace.db.
+      The hosted app at app.inglisting.com reads MariaDB through
+      https://inglisting.com/comps-api/comps.php, which never receives them. Close that gap so
+      the owner's searches improve the product for everyone, which is what he asked for.
+
+      1. comps.php is currently READ-ONLY (mode=rows|stats) and is a SERVER-ONLY file — it is not
+         in git, so read the live copy over SFTP before changing it and back it up first
+         (credentials in web-credentials.json under ionos_sftp; the file is at
+         clickandbuilds/INGeBayAutolister/comps-api/comps.php).
+
+         Add an INGEST path: POST with the existing api key, accepting a batch of sold rows as
+         JSON, inserting them into ing_sold_listings. It must be idempotent on ItemId — re-sending
+         the same row updates or is ignored, never duplicates, because the same model will be
+         looked up many times. Reject anything without the key. Cap the batch size so one request
+         cannot be used to flood the table.
+
+      2. In the app, after OnDemandCompsScraper finishes a lookup with outcome "ok", push the rows
+         it just found to that endpoint. Fire-and-forget with a caught exception and a log line —
+         a failed push must NEVER fail or slow the lookup the seller is waiting on.
+
+      3. Backfill is OUT OF SCOPE for this task. 915,000 local rows against a shared host is a
+         different job with different risks; do not attempt it here. Note in your summary that it
+         remains undone so it can be decided separately.
+
+      Acceptance: run a real live lookup for a model that is thin in the hosted DB, then query
+      comps.php for that keyword and show the row count going UP. Quote both numbers. Prove
+      idempotency by pushing the same batch twice and showing the count does not change the
+      second time.
+    session: "comps-01-hosted-ingest"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+
+  - prompt: |
+      The live lookup must happen in a VISIBLE browser window. The owner asked for this twice and
+      it is the difference between a feature that works and one that silently fails forever.
+
+      Why it is not cosmetic: eBay answers automated-looking traffic with a "verify yourself"
+      challenge. A headless browser cannot clear it, so the lookup dies with zero rows and the
+      seller is told eBay is blocking them, with no way to act. A headed window on a persistent
+      profile lets the person log in once and click through any challenge — the scraper's own
+      comments in scrape_one_keyword.py say exactly this and the flag (--chrome-profile) has been
+      there all along, unused.
+
+      Requirements:
+        * OnDemandCompsScraper passes --chrome-profile pointing at a persistent profile under
+          %LOCALAPPDATA%\ING AutoLister\comps-profile, so the window is headed and its cookies
+          stay current between runs.
+        * The window is genuinely visible, not minimised or off-screen. If a bot check or a login
+          appears in it, the seller can see and complete it.
+        * The app tells the seller what the window is for BEFORE it appears, in one sentence, so a
+          browser opening by itself does not read as malware.
+        * If the profile has never signed in to eBay, the first live lookup opens it AT eBay's
+          sign-in rather than at a search that is certain to be challenged.
+
+      Verify by running a real lookup and confirming a browser window actually appears — state in
+      your summary that you observed it, and if you cannot observe it in this environment, say so
+      plainly rather than assuming. Then run one with a signed-in profile and quote the outcome
+      and rowsFound from /api/comps/live/status.
+
+      This task supersedes nothing: live-01-profile-on-signin covers wiring it to the eBay sign-in.
+      This one is specifically about the window being there and being usable.
+    session: "comps-02-visible-window"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 17

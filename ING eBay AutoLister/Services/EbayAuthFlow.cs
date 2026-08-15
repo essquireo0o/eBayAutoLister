@@ -176,19 +176,50 @@ public static class EbayAuthUrlCheck
         "https://api.ebay.com/oauth/api_scope/sell.inventory",
         "https://api.ebay.com/oauth/api_scope/sell.account",
         "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-        // Send Offer to Interested Buyers. Sellers connected before this was added keep working
-        // everywhere else; the offers screen tells them to reconnect (EbayPermissionException).
-        "https://api.ebay.com/oauth/api_scope/sell.negotiation",
     ];
 
-    public static string ScopeParameter => string.Join(" ", Scopes);
+    /// <summary>
+    /// Send Offer to Interested Buyers. Asked for only when a deployment turns it on — see
+    /// <see cref="EbayScopeOptions"/> — and this is the expensive part: <b>eBay rejects the entire
+    /// authorization request with <c>invalid_scope</c> if a keyset is not enabled for this one.</b>
+    /// </summary>
+    /// <remarks>
+    /// Not "the offers screen stops working": every sign-in stops working. Measured against the
+    /// live production keyset on 2026-08-13 — the four scopes above reach eBay's real consent
+    /// screen, and adding this one turns the same URL into
+    /// <c>auth2.ebay.com/oauth2/errorOauth?errorId=invalid_scope</c> before the seller sees
+    /// anything at all. There is no way to detect that from here: whether a keyset has the
+    /// permission is a fact about the eBay developer account, so it has to be declared.
+    /// <para>
+    /// Off by default, therefore, because the cost of the two answers is not symmetric. Off when it
+    /// was available loses one feature, which already fails on purpose and says why
+    /// (<see cref="EbayPermissionException"/>). On when it was not available loses every sign-in,
+    /// with an error that names nothing a seller can act on.
+    /// </para>
+    /// </remarks>
+    public const string NegotiationScope = "https://api.ebay.com/oauth/api_scope/sell.negotiation";
+
+    /// <summary>The scopes a sign-in asks for, given whether the keyset has Send Offer enabled.</summary>
+    public static string[] ScopesFor(bool includeNegotiation) =>
+        includeNegotiation ? [.. Scopes, NegotiationScope] : Scopes;
+
+    public static string ScopeParameter => ScopeParameterFor(false);
+
+    public static string ScopeParameterFor(bool includeNegotiation) =>
+        string.Join(" ", ScopesFor(includeNegotiation));
 
     /// <param name="bindingProblem">
     /// <see cref="ServerBinding.Problem"/> — non-null when this app is not on the port the relay
     /// redirects to. Only fatal for the relay flow; a sandbox RuName points wherever its owner set it.
     /// </param>
+    /// <param name="redirectUri">
+    /// The URL this deployment needs registered against the RuName, named in the "no RuName" advice
+    /// so that a hosted deployment does not tell its seller to register the desktop's relay. Null
+    /// means the desktop default. See <see cref="EbayRedirect"/> for why the app has to be told.
+    /// </param>
     public static EbayAuthUrlProblem? Check(
-        string? clientId, string? clientSecret, string? ruName, bool sandbox, string? bindingProblem)
+        string? clientId, string? clientSecret, string? ruName, bool sandbox, string? bindingProblem,
+        string? redirectUri = null)
     {
         if (string.IsNullOrWhiteSpace(clientId))
             return new("no_client_id",
@@ -203,7 +234,8 @@ public static class EbayAuthUrlCheck
         if (string.IsNullOrWhiteSpace(ruName))
             return new("no_runame",
                 "No eBay RuName is configured. eBay sends the seller back to the redirect registered against the RuName, so without one the sign-in URL has nowhere to return to.",
-                "Open Settings → eBay → Advanced and paste the RuName whose accepted URL is https://inglisting.com/api/ebay/callback.");
+                "Open Settings → eBay → Advanced and paste the RuName whose accepted URL is " +
+                $"{(string.IsNullOrWhiteSpace(redirectUri) ? EbayRedirect.DesktopDefault : redirectUri)}.");
 
         // Sandbox never goes through the relay — its RuName points at whatever the developer
         // registered — so the local port is not part of that round trip.
@@ -215,11 +247,118 @@ public static class EbayAuthUrlCheck
     }
 
     /// <summary>Builds the consent URL. Callers must have cleared <see cref="Check"/> first.</summary>
-    public static string Build(string authBaseUrl, string clientId, string redirectUri, string state) =>
+    public static string Build(string authBaseUrl, string clientId, string redirectUri, string state,
+        bool includeNegotiationScope = false) =>
         $"{authBaseUrl}?client_id={Uri.EscapeDataString(clientId)}" +
         $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
-        $"&response_type=code&scope={Uri.EscapeDataString(ScopeParameter)}" +
+        $"&response_type=code&scope={Uri.EscapeDataString(ScopeParameterFor(includeNegotiationScope))}" +
         $"&state={Uri.EscapeDataString(state)}";
+}
+
+/// <summary>
+/// Which optional eBay permissions this deployment's keyset is actually allowed to ask for.
+/// </summary>
+/// <remarks>
+/// One setting, and it exists because eBay answers "you asked for a permission you do not have" by
+/// refusing the whole sign-in rather than that permission. See
+/// <see cref="EbayAuthUrlCheck.NegotiationScope"/> for the measurement.
+/// </remarks>
+public sealed class EbayScopeOptions
+{
+    /// <summary>Configuration key. As an environment variable: <c>Ebay__RequestNegotiationScope</c>.</summary>
+    public const string NegotiationSetting = "Ebay:RequestNegotiationScope";
+
+    /// <summary>What every build does unless told otherwise: ask only for what listing needs.</summary>
+    public static EbayScopeOptions Default { get; } = new();
+
+    /// <summary>True only where the eBay keyset has Send Offer to Interested Buyers enabled.</summary>
+    public bool IncludeNegotiation { get; init; }
+
+    public static EbayScopeOptions FromConfiguration(IConfiguration configuration) => new()
+    {
+        IncludeNegotiation =
+            bool.TryParse(configuration[NegotiationSetting], out var include) && include,
+    };
+}
+
+// ── Telling the relay which build started the sign-in ─────────────────────────
+
+/// <summary>
+/// Which deployment the relay hands the browser back to, said in the only field eBay preserves.
+/// </summary>
+/// <remarks>
+/// <para>
+/// eBay returns the seller to whatever URL is registered against the RuName, and that is the PHP
+/// relay on inglisting.com for every build of this app — the hosted one included, because the
+/// registration lives in the owner's eBay developer console and there is exactly one of it. The
+/// relay then has to send the browser on to the app that started the sign-in, and it has no way to
+/// tell them apart: the desktop build is <c>http://localhost:9332</c> on somebody's own PC and the
+/// hosted build is <c>https://app.inglisting.com</c>, and both arrive at the relay looking
+/// identical. Before this, the relay's last hop was hardcoded to localhost, so a sign-in started on
+/// the hosted site ended on a dead tab pointing at a port on the seller's own machine.
+/// </para>
+/// <para>
+/// <c>state</c> is the one thing eBay round-trips untouched, so it carries the answer: the 32 hex
+/// characters the app already generates, plus a single letter naming the destination. The relay
+/// matches <c>^([0-9a-f]{32})([a-z]?)$</c>, strips the letter, and looks the destination up in an
+/// allow-list — <c>d</c> (or nothing at all) for the desktop, <c>h</c> for the hosted site. An
+/// allow-list and not a return_url parameter, deliberately: a relay that redirects wherever it is
+/// told is an open redirect, and this one is carrying a freshly minted eBay session.
+/// </para>
+/// <para>
+/// <b>The suffix goes on the wire and nowhere else.</b> The session id this app issues, records in
+/// its <see cref="EbayOAuthSessionLedger"/> and later presents to the relay's pickup endpoint stays
+/// bare, because the relay stripped the letter before it stored anything under that key —
+/// <c>/api/ebay/pickup</c> refuses any session that is not exactly 32 hex characters. So the suffix
+/// is added at the moment the URL is built and removed from anything that comes back; see
+/// <see cref="SessionFrom"/>, which exists because eBay's <i>direct</i> callback echoes the state
+/// verbatim, suffix and all.
+/// </para>
+/// <para>
+/// A desktop build appends nothing and is byte-for-byte the state it has always sent, which is what
+/// keeps every already-installed copy working against the same relay.
+/// </para>
+/// </remarks>
+public sealed class EbayRelayReturn
+{
+    /// <summary>What the desktop build appends: nothing. The relay's default is localhost:9332.</summary>
+    public const string DesktopSuffix = "";
+
+    /// <summary>The relay's allow-list entry for <c>https://app.inglisting.com/api/ebay/finish</c>.</summary>
+    public const string HostedSuffix = "h";
+
+    public static EbayRelayReturn Desktop { get; } = new(DesktopSuffix);
+    public static EbayRelayReturn Hosted  { get; } = new(HostedSuffix);
+
+    /// <summary>Picks the pair. <c>hosted</c> is <see cref="HostedAuth.IsHostedBuild"/> in Program.cs.</summary>
+    public static EbayRelayReturn For(bool hosted) => hosted ? Hosted : Desktop;
+
+    private EbayRelayReturn(string suffix) => Suffix = suffix;
+
+    /// <summary>The letter appended to the state, or empty for the desktop build.</summary>
+    public string Suffix { get; }
+
+    /// <summary>The <c>state</c> to send eBay for a session this app issued.</summary>
+    public string StateFor(string session) => session + Suffix;
+
+    /// <summary>
+    /// The session id inside a state that came back — the bare 32 hex, whatever letter is on it.
+    /// </summary>
+    /// <remarks>
+    /// Applied to every inbound state rather than only the hosted one. The relay strips the suffix
+    /// itself, so the <c>?session=</c> on <c>/api/ebay/finish</c> is already bare; but eBay's direct
+    /// callback hands back what it was given, and a state that still has its letter would miss the
+    /// ledger entry it belongs to and retire nothing. Anything that is not this shape is returned
+    /// untouched, so a forged or stale value still fails the ledger check on its own merits.
+    /// </remarks>
+    public static string SessionFrom(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return state ?? "";
+
+        var trimmed = state.Trim();
+        var match = System.Text.RegularExpressions.Regex.Match(trimmed, "^([0-9a-fA-F]{32})[a-zA-Z]?$");
+        return match.Success ? match.Groups[1].Value : trimmed;
+    }
 }
 
 // ── Collecting the tokens from the relay ──────────────────────────────────────
@@ -265,6 +404,23 @@ public static class EbayRelayPickup
 
     /// <summary>Gap between attempts while the relay says "not yet".</summary>
     public static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
+
+    /// <summary>The relay's pickup endpoint. One relay for every build — see <see cref="EbayRelayReturn"/>.</summary>
+    public const string Endpoint = "https://inglisting.com/api/ebay/pickup/";
+
+    /// <summary>
+    /// Where the tokens for one sign-in are claimed from.
+    /// </summary>
+    /// <remarks>
+    /// The session is normalised through <see cref="EbayRelayReturn.SessionFrom"/> because the relay
+    /// stores the tokens under the <i>bare</i> 32 hex and its pickup endpoint rejects anything else
+    /// outright — a state that still carried its hosted <c>h</c> would be answered HTTP 400 "Invalid
+    /// session ID", reported as a relay that refused the pickup, and the sign-in would fail at the
+    /// last hop with nothing about it naming the letter that caused it.
+    /// </remarks>
+    public static string Url(string session, string pickup) =>
+        $"{Endpoint}?session={Uri.EscapeDataString(EbayRelayReturn.SessionFrom(session))}" +
+        $"&pickup={Uri.EscapeDataString(pickup)}";
 
     /// <param name="status">Null when nothing answered.</param>
     public static EbayPickupOutcome Classify(int? status, string? body)

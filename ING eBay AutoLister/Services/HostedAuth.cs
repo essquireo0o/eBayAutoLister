@@ -53,6 +53,18 @@ public sealed record SignInRequest(string? Email, string? Password, string? Code
 /// behaviours from one build instead of proving only whichever half they were compiled into.
 /// </para>
 /// </remarks>
+/// <summary>
+/// The one decision <see cref="HostedAuth.AddAccounts"/> takes that <see cref="HostedAuth.UseSignedInUser"/>
+/// has to take the same way, carried between them rather than passed twice.
+/// </summary>
+/// <param name="SecureCookie">
+/// Whether cookies this app sets carry <c>Secure</c>. Both the session cookie and the antiforgery
+/// cookie must agree: a test server on loopback http silently drops a Secure cookie, so a
+/// disagreement here does not fail loudly, it fails as every POST returning 403 for a reason
+/// nothing in the error mentions.
+/// </param>
+public sealed record HostedAuthOptions(bool SecureCookie);
+
 public static class HostedAuth
 {
     /// <summary>The sign-in page. Also the cookie handler's login path, so an expired session lands here.</summary>
@@ -139,6 +151,10 @@ public static class HostedAuth
     {
         if (!(hosted ?? IsHostedBuild)) return;
 
+        // Recorded rather than re-derived, so UseSignedInUser gives the antiforgery cookie the same
+        // Secure flag the session cookie gets without every caller having to say it twice.
+        builder.Services.AddSingleton(new HostedAuthOptions(secureCookie ?? true));
+
         // Only if the caller has not already supplied one. Lets a test point the table at a
         // scratch file without a content root, and leaves the app's own registration alone.
         builder.Services.TryAddSingleton<UserStore>();
@@ -146,6 +162,10 @@ public static class HostedAuth
         // The per-account half of the answer to brute force. See SignInThrottle for why the count
         // is in the database and keyed on addresses that do not exist as well as ones that do.
         builder.Services.TryAddSingleton<SignInThrottle>();
+
+        // The list of sessions the server will honour, which is what makes signing out a server-side
+        // act and a planted session id worthless. See SessionStore.
+        builder.Services.TryAddSingleton<SessionStore>();
 
         // Emails the owner when someone signs up. A no-op unless Notify:Smtp is configured, so it is
         // harmless everywhere it is not wanted. See SignupNotifier.
@@ -166,10 +186,10 @@ public static class HostedAuth
             {
                 options.Cookie.Name        = "ing_session";
                 options.Cookie.HttpOnly    = true;
-                // Lax, not None. The cookie is what authorizes a publish to eBay, and Lax is what
-                // stops another site's form post from carrying it — this app has no CSRF token of
-                // its own, and a cross-site POST that the browser refuses to attach the session to
-                // is one that arrives unauthenticated and gets the same 401 as any stranger.
+                // Lax, not None. It withholds the cookie from a cross-site form post, which is the
+                // usual shape of the attack. It is not the whole defence and is no longer relied on
+                // as one — Lax says nothing about a sibling subdomain or a state-changing GET, so
+                // the double-submit token in Csrf runs in front of every unsafe request as well.
                 options.Cookie.SameSite     = SameSiteMode.Lax;
                 options.Cookie.SecurePolicy = (secureCookie ?? true)
                     ? CookieSecurePolicy.Always
@@ -186,6 +206,12 @@ public static class HostedAuth
                 // which every caller in app.js would try to parse as its own JSON.
                 options.Events.OnRedirectToLogin        = context => Refuse(context, StatusCodes.Status401Unauthorized);
                 options.Events.OnRedirectToAccessDenied = context => Refuse(context, StatusCodes.Status403Forbidden);
+
+                // Every authenticated request asks the server whether the session in the ticket is
+                // one it still honours. Without this the cookie is self-authorising for its whole
+                // fourteen days: it decrypts, therefore it is true, and signing out can do nothing
+                // but ask the browser nicely to forget. See SessionStore.
+                options.Events.OnValidatePrincipal = ValidateSession;
             });
 
         // TLS is terminated by the reverse proxy, so every request reaches Kestrel over plain HTTP
@@ -260,6 +286,23 @@ public static class HostedAuth
     }
 
     /// <summary>
+    /// Puts the auth endpoints' per-IP budget on some other endpoint that guards a secret. For the
+    /// owner dashboard, which is a password prompt wearing a query string: without a budget it can
+    /// be tried as fast as the network allows, and the sign-in form next to it cannot.
+    /// </summary>
+    /// <remarks>
+    /// Conditional because <see cref="AuthRateLimitPolicy"/> is registered in
+    /// <see cref="AddAccounts"/>, which does nothing in the desktop build — asking for a policy that
+    /// was never added throws at the first request. The desktop build has no need for it either: the
+    /// dashboard is on a loopback port on the owner's own machine.
+    /// </remarks>
+    public static RouteHandlerBuilder RateLimitLikeAuth(this RouteHandlerBuilder builder, bool? hosted = null)
+    {
+        if (hosted ?? IsHostedBuild) builder.RequireRateLimiting(AuthRateLimitPolicy);
+        return builder;
+    }
+
+    /// <summary>
     /// Who to charge an auth attempt to. The socket peer, which behind the reverse proxy is the
     /// real client only because <c>UseForwardedHeaders</c> has already rewritten it — which is why
     /// <see cref="UseSignedInUser"/> adds the limiter after that call and not before. Reading
@@ -274,13 +317,20 @@ public static class HostedAuth
     /// seller's photographs. Call after <c>UseCors</c> and before any <c>UseStaticFiles</c>: the
     /// photo guard has to run before the middleware that would serve the file.
     /// </summary>
-    public static void UseSignedInUser(WebApplication app, bool? hosted = null)
+    public static void UseSignedInUser(WebApplication app, bool? hosted = null, bool? secureCookie = null)
     {
         if (!(hosted ?? IsHostedBuild)) return;
 
         // Before authentication and before the static mounts, because it rewrites the scheme every
         // one of them goes on to read. See the options in AddAccounts for why it trusts the caller.
         app.UseForwardedHeaders();
+
+        // Straight after the forwarded headers, because the origin check compares against
+        // Request.Scheme and that is http until the line above has run. Before authentication and
+        // before routing, so an unsafe request without a token is turned away without the cookie
+        // being decrypted or an endpoint being selected — a refusal that costs nothing.
+        Csrf.UseCsrf(app, hosted,
+            secureCookie ?? app.Services.GetService<HostedAuthOptions>()?.SecureCookie);
 
         // After the forwarded headers, because the limiter partitions on the client address and
         // before that call every request appears to come from the proxy — one bucket for the whole
@@ -348,24 +398,44 @@ public static class HostedAuth
                                     statusCode: StatusCodes.Status403Forbidden);
 
             var result = users.Create(body.Email, body.Password, body.Name);
-            if (!result.Succeeded)
+
+            // Everything the person got wrong about their own submission is told back to them
+            // plainly — the name they left blank, the password that is too short or too common.
+            // None of those answers depend on whether the address is registered, so none of them
+            // says anything about somebody else's account.
+            if (!result.Succeeded && result.Outcome != SignUpOutcome.EmailAlreadyRegistered)
                 return Results.Json(new { error = result.Message },
                                     statusCode: StatusCodes.Status400BadRequest);
 
-            await SignInAsync(context, result.User!);
+            if (result.Succeeded)
+            {
+                // Tell the owner, fire-and-forget: the notification must not delay the response or
+                // fail the sign-up (SignupNotifier swallows its own errors). Behind Caddy the socket
+                // peer is the proxy, so prefer the forwarded client IP when the proxy set one.
+                //
+                // Four things go out and no more — name, address, time, IP. Nothing that identifies
+                // the session and nothing that could be used to sign in as them: the password is not
+                // in scope here, and result.User carries no token. See SignupNotifier.
+                var ip = context.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+                if (string.IsNullOrWhiteSpace(ip)) ip = context.Connection.RemoteIpAddress?.ToString();
+                _ = notifier.NotifySignupAsync(result.User!.Email, ip, result.User!.Name);
+            }
 
-            // Tell the owner, fire-and-forget: the notification must not delay the response or fail
-            // the sign-up (SignupNotifier swallows its own errors). Behind Caddy the socket peer is
-            // the proxy, so prefer the forwarded client IP when the proxy set one.
+            // The same answer whether an account was just created or the address already had one.
             //
-            // Four things go out and no more — name, address, time, IP. Nothing that identifies the
-            // session and nothing that could be used to sign in as them: the password is not in
-            // scope here, and result.User carries no token. See SignupNotifier.
-            var ip = context.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
-            if (string.IsNullOrWhiteSpace(ip)) ip = context.Connection.RemoteIpAddress?.ToString();
-            _ = notifier.NotifySignupAsync(result.User!.Email, ip, result.User!.Name);
-
-            return Results.Ok(new { email = result.User!.Email, name = result.User!.Name });
+            // This is the only response that can be sent without saying which happened, and saying
+            // which happened turns the sign-up form into the same address-checking oracle that
+            // SignInThrottle and PasswordHash.VerifyNothing go to such lengths to deny the sign-in
+            // form. Both branches have already spent one PBKDF2 hash by the time they arrive here —
+            // Create hashes before it attempts the insert — so they cost the same to the millisecond
+            // as well as reading the same.
+            //
+            // It is also why signing up no longer signs you in: a session cookie on one branch and
+            // not the other is the difference restated in the headers, where a script would read it
+            // even more easily than in the body. Whoever really did just create the account has the
+            // password they typed a second ago, and the page sends them straight to the sign-in
+            // form; whoever was probing gets a sign-in form they cannot get through.
+            return Results.Ok(new { ok = true, next = SignInPath });
         }).AllowAnonymous().RequireRateLimiting(AuthRateLimitPolicy);
 
         app.MapPost(SignInApi, async (SignInRequest body, UserStore users, SignInThrottle throttle, HttpContext context) =>
@@ -400,11 +470,25 @@ public static class HostedAuth
 
         // Not on the allow-list, and that is deliberate: signing out is something only a signed-in
         // session can do, and a request with no session is already in the state it is asking for.
-        app.MapPost(SignOutApi, async (HttpContext context) =>
+        app.MapPost(SignOutApi, async (HttpContext context, SessionStore sessions) =>
         {
+            // The server side of signing out, and the half that used to be missing. Clearing the
+            // cookie only tells this browser to forget; revoking the row means every copy of that
+            // ticket — including one lifted off a shared machine before the button was pressed —
+            // stops being honoured on the next request it is used for. See SessionStore.
+            sessions.Revoke(context.User.FindFirstValue(SessionStore.SessionIdClaim));
+
             await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Results.Ok(new { signedOut = true });
         });
+
+        // Where a page that has no antiforgery token yet goes to get one. The token is put on the
+        // response by the Csrf middleware, which runs in front of this and every other endpoint;
+        // all this has to do is be a safe, anonymous request for that middleware to answer.
+        // Anonymous because the sign-in page needs a token before there is anybody to be.
+        app.MapGet(Csrf.TokenPath, (HttpContext context) =>
+            Results.Ok(new { token = Csrf.TokenFor(context) ?? string.Empty }))
+           .AllowAnonymous();
 
         app.MapGet(MeApi, (HttpContext context, UserStore users) =>
         {
@@ -480,8 +564,29 @@ public static class HostedAuth
         }, statusCode: StatusCodes.Status429TooManyRequests);
     }
 
-    private static Task SignInAsync(HttpContext context, UserAccount user)
+    /// <summary>
+    /// Puts a freshly issued session in the cookie. The only path to an authenticated ticket, and
+    /// the only caller of <see cref="SessionStore.Issue"/>.
+    /// </summary>
+    /// <remarks>
+    /// Two things happen here that make session fixation a non-event. The identifier is minted after
+    /// the password was checked and is never taken from the request, so a value an attacker planted
+    /// in the browser beforehand cannot be the one the authenticated session ends up known by. And
+    /// whatever session the caller arrived holding is revoked first — signing in while already
+    /// signed in retires the old ticket rather than leaving two live ones for the same account,
+    /// which is what an attacker who got their own session into the seller's browser would be
+    /// counting on.
+    /// </remarks>
+    private static async Task SignInAsync(HttpContext context, UserAccount user)
     {
+        var sessions = context.RequestServices.GetRequiredService<SessionStore>();
+
+        // Before the new one is issued, so a sign-in that fails halfway does not leave the old
+        // session live alongside a new one.
+        sessions.Revoke(context.User?.FindFirstValue(SessionStore.SessionIdClaim));
+
+        var sessionId = sessions.Issue(user.Id);
+
         // Name stays the email address: it is the identity's unique handle, and things that log or
         // key on User.Identity.Name need it to be the one that is unique. What the person is called
         // goes in GivenName, which is a label and is not required to be unique to anybody.
@@ -491,12 +596,53 @@ public static class HostedAuth
             new Claim(ClaimTypes.Name,  user.Email),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.GivenName, user.Name),
+            new Claim(SessionStore.SessionIdClaim, sessionId),
         ], CookieAuthenticationDefaults.AuthenticationScheme);
 
-        return context.SignInAsync(
+        await context.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
             new ClaimsPrincipal(identity),
             new AuthenticationProperties { IsPersistent = true });
+    }
+
+    /// <summary>
+    /// Asks <see cref="SessionStore"/> whether the session named in a decrypted ticket is one the
+    /// server still honours, and throws the principal away when it is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A ticket that fails here is not merely ignored for the one request:
+    /// <c>RejectPrincipal</c> plus <c>SignOutAsync</c> also clears the cookie, so a browser holding
+    /// a revoked session stops sending it rather than being refused on every request forever.
+    /// </para>
+    /// <para>
+    /// Tickets issued before this existed carry no <c>sid</c> claim, and are rejected — everyone
+    /// signed in at the moment this deploys signs in again. That is the correct way round: the
+    /// alternative is to honour a claimless ticket, which is exactly the ticket an attacker would
+    /// forge if they could, and it would keep the old unrevocable sessions alive for two more weeks.
+    /// </para>
+    /// </remarks>
+    private static async Task ValidateSession(CookieValidatePrincipalContext context)
+    {
+        // Both read off context.Principal and not off HttpContext.User. This event is what decides
+        // whether the ticket becomes the user, so at this point HttpContext.User is still the empty
+        // principal — reading it here rejects every session on every request, and does it quietly.
+        var raw       = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var sessionId = context.Principal?.FindFirstValue(SessionStore.SessionIdClaim);
+        var sessions  = context.HttpContext.RequestServices.GetRequiredService<SessionStore>();
+
+        var userId = long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+            ? id
+            : (long?)null;
+
+        if (userId is not null && sessions.IsLive(sessionId, userId.Value))
+        {
+            sessions.Touch(sessionId);
+            return;
+        }
+
+        context.RejectPrincipal();
+        await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     }
 
     /// <summary>

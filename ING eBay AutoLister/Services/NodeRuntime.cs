@@ -15,9 +15,18 @@ public sealed record NodeRunResult(string StdOut, string StdErr, bool TimedOut);
 /// </summary>
 public static class NodeRuntime
 {
-    public static string PlaywrightDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "npm", "node_modules", "playwright");
+    public static string PlaywrightDir =>
+#if HOSTED
+        // The fixed path Playwright is installed at inside the fb-worker container (see
+        // fbworker/Dockerfile). This value is substituted into the generated script's
+        // require('<abs>/playwright'), which is resolved INSIDE the worker — not in this process,
+        // which has no browser at all. RunAsync ships the script there over the private network.
+        "/pw/node_modules/playwright";
+#else
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "npm", "node_modules", "playwright");
+#endif
 
     // A GUI process (double-click, startup shortcut, tray auto-launch) inherits whatever PATH
     // its parent (usually explorer.exe) had cached at logon — installing Node.js later doesn't
@@ -110,6 +119,12 @@ public static class NodeRuntime
         string script, TimeSpan timeout, string filePrefix, Action? beforeStart = null,
         CancellationToken ct = default)
     {
+#if HOSTED
+        // No browser in this image. Hand the script to the fb-worker container, which has Chromium
+        // and runs it on the private Docker network. Same script, same output shape — only the place
+        // it executes changes. filePrefix is irrelevant here (the worker names its own temp file).
+        return await RunViaWorkerAsync(script, timeout, beforeStart, ct);
+#else
         var scriptFile = Path.Combine(Path.GetTempPath(), $"{filePrefix}_{Guid.NewGuid():N}.cjs");
         await File.WriteAllTextAsync(scriptFile, script);
 
@@ -155,5 +170,54 @@ public static class NodeRuntime
         {
             try { File.Delete(scriptFile); } catch { }
         }
+#endif
     }
+
+#if HOSTED
+    private static readonly HttpClient WorkerHttp = new();
+
+    /// <summary>
+    /// The hosted path for <see cref="RunAsync"/>: POST the generated script to the fb-worker
+    /// container (see fbworker/server.mjs) and translate its JSON reply back into a
+    /// <see cref="NodeRunResult"/>. The worker serialises every run (one browser at a time) and
+    /// enforces the timeout itself; a failure to reach it comes back as stderr, never an exception,
+    /// so a down worker degrades Facebook search rather than 500-ing the request.
+    /// </summary>
+    private static async Task<NodeRunResult> RunViaWorkerAsync(
+        string script, TimeSpan timeout, Action? beforeStart, CancellationToken ct)
+    {
+        var baseUrl = Environment.GetEnvironmentVariable("FB_WORKER_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return new NodeRunResult("", "fb-worker is not configured (FB_WORKER_URL unset).", TimedOut: false);
+
+        beforeStart?.Invoke();
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(
+            new { script, timeoutMs = (long)timeout.TotalMilliseconds });
+
+        // The worker enforces the real timeout and kills its own browser tree; this backstop only
+        // covers the worker itself hanging or the network dropping, so it is deliberately longer.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout + TimeSpan.FromSeconds(45));
+
+        try
+        {
+            using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+            using var resp = await WorkerHttp.PostAsync(baseUrl.TrimEnd('/') + "/run", content, cts.Token);
+            var body = await resp.Content.ReadAsStringAsync(cts.Token);
+            if (!resp.IsSuccessStatusCode)
+                return new NodeRunResult("", $"fb-worker returned {(int)resp.StatusCode}: {body}", TimedOut: false);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var stdout = root.TryGetProperty("stdout", out var so) ? so.GetString() ?? "" : "";
+            var stderr = root.TryGetProperty("stderr", out var se) ? se.GetString() ?? "" : "";
+            var timedOut = root.TryGetProperty("timedOut", out var to) && to.GetBoolean();
+            return new NodeRunResult(stdout.Trim(), stderr, timedOut);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { return new NodeRunResult("", "", TimedOut: true); }
+        catch (Exception ex) { return new NodeRunResult("", $"fb-worker unreachable: {ex.Message}", TimedOut: false); }
+    }
+#endif
 }

@@ -1,14 +1,46 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+  <!-- ── Which shell is this build wearing? ────────────────────────────────────
+       The 189 endpoints and every service are platform-neutral; the only Windows in this project
+       is the shell around them — tray icon, message boxes, single-instance mutex. Two builds share
+       that one body:
+
+         desktop (default)  dotnet build
+         hosted             dotnet publish -c Release -r linux-x64 -p:DefineConstants=HOSTED
+                            (or the friendlier -p:Hosted=true, which defines HOSTED for you)
+
+       Hosted is inferred from the HOSTED constant so the published binary and the csproj can never
+       disagree about which one is being built — a net10.0-windows assembly compiled with HOSTED, or
+       a plain net10.0 one still compiling the tray icon, are both builds that fail at a much less
+       obvious moment than here.
+       The '$(DefineConstants)' != '' guard is load-bearing: MSBuild conditions short-circuit, and
+       calling .Contains on an undefined property is an evaluation error, not false. -->
   <PropertyGroup>
+    <Hosted Condition="'$(Hosted)' == '' And '$(DefineConstants)' != '' And $(DefineConstants.Contains('HOSTED'))">true</Hosted>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Hosted)' == 'true'">
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <UseWindowsForms>false</UseWindowsForms>
+    <!-- No-op when HOSTED arrived as a global property (-p:DefineConstants=HOSTED), which is
+         already defined for the compiler; this is what makes -p:Hosted=true work on its own. -->
+    <DefineConstants>$(DefineConstants);HOSTED</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Hosted)' != 'true'">
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Windows PE resource. Meaningless to a linux-x64 apphost. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <RootNamespace>ING_eBay_AutoLister</RootNamespace>
     <AssemblyName>AutoListerB1</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- The number the running app compares against the latest GitHub release to decide whether to
          tell the seller an update exists. Without it the assembly reports 1.0.0, every release looks
@@ -25,13 +57,33 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- credentials.json is the live secrets of whichever machine is doing the build - the eBay app
+         client secret, the seller's OAuth refresh token, the Anthropic key, the Stripe secret key and
+         webhook secret - and it sits in the project folder, so the Web SDK's default Content glob
+         copies it into publish output. A publish is precisely how those secrets reach a server: the
+         hosted build is published onto a box the developer does not own, and anything left in that
+         folder goes with it. Excluded unconditionally rather than only under Hosted, because a
+         secret that leaks in one of two configurations is a leaked secret.
+         The desktop installer does not depend on this: build-installer.ps1 copies the publish output
+         into dist and then writes its own REDACTED credentials.json over the top - the API keys blank,
+         the tokens blank - so what ships has never been the published file.
+         Recursive, not just the one beside this file: the desktop build publishes into
+         "ING eBay AutoLister\dist" (see build-installer.ps1), which is gitignored but is still inside
+         the project folder, so a hosted publish was picking up dist\credentials.json - a full copy of
+         the unredacted file, secrets and all - even once the project-root one was excluded.
+         Excluded from Content, not deleted - the app still reads it at runtime from beside the exe. -->
+    <Content Remove="credentials.json" />
+    <Content Remove="**\credentials.json" />
+    <None Remove="credentials.json" />
+    <None Remove="**\credentials.json" />
+
     <!-- wwwroot is also where the app writes its working images at runtime - AI photo generation
          (url_*.png) and background removal (rembg_*.png) both land here, and generated-photos/ is
          gitignored for that reason. The SDK's default Content glob then copies every one of them
          into publish output, so an installer built on a machine that has been used carries the
          seller's own scratch images to everyone who downloads it: measured 2026-07-30, 300 untracked
-         files and 60MB of someone's listing photos in an 83MB installer. Only 7 files in wwwroot are
-         actually part of the product, and all 7 are embedded below.
+         files and 60MB of someone's listing photos in an 83MB installer. Only 9 files in wwwroot are
+         actually part of the product, and all 9 are embedded below.
          Excluded from Content, not deleted - the app still reads and writes them at runtime. -->
     <Content Remove="wwwroot\generated-photos\**" />
     <Content Remove="wwwroot\url_*.png" />
@@ -46,12 +98,28 @@
     <Content Remove="wwwroot\app.js" />
     <Content Remove="wwwroot\favicon.svg" />
     <Content Remove="wwwroot\editor.html" />
+    <!-- The hosted build's sign-in and sign-up pages. Embedded in both builds rather than only
+         under HOSTED: one list of UI files is one thing to get wrong, and the tests read these
+         two out of this assembly to prove the allow-list actually serves them. -->
+    <Content Remove="wwwroot\signin.html" />
+    <Content Remove="wwwroot\signup.html" />
+    <!-- The antiforgery client. Every one of the five pages above loads it, and a page that asks
+         for a file this list does not carry gets the sign-in page's HTML back with a JavaScript
+         content type — the embedded provider is the only thing serving /, so "not embedded" and
+         "does not exist" are the same sentence. It shipped missing once, on 2026-08-14, and the
+         symptom was that no POST in the hosted app worked at all: window.fetch was never wrapped,
+         no token was ever sent, and every sign-in came back "could not be verified". See
+         EmbeddedAssetTests, which now fails if any page references an asset that is not here. -->
+    <Content Remove="wwwroot\csrf.js" />
+    <EmbeddedResource Include="wwwroot\csrf.js" />
     <EmbeddedResource Include="wwwroot\index.html" />
     <EmbeddedResource Include="wwwroot\reauth.html" />
     <EmbeddedResource Include="wwwroot\style.css" />
     <EmbeddedResource Include="wwwroot\app.js" />
     <EmbeddedResource Include="wwwroot\favicon.svg" />
     <EmbeddedResource Include="wwwroot\editor.html" />
+    <EmbeddedResource Include="wwwroot\signin.html" />
+    <EmbeddedResource Include="wwwroot\signup.html" />
   </ItemGroup>
 
 </Project>

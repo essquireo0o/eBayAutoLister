@@ -1,0 +1,113 @@
+# Lock down sign-in, capture the person's name, and tell the owner when somebody signs up.
+#
+# AUDITED LIVE 2026-08-14 against https://app.inglisting.com — this is the real starting point:
+#   GOOD  the session cookie is already secure + httponly + samesite=lax and encrypted with
+#         ASP.NET Data Protection. Do not "improve" it into something weaker.
+#   DONE  security headers (HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy,
+#         Permissions-Policy, CSP in Report-Only) are set in /etc/caddy/Caddyfile on the server.
+#         Do NOT duplicate them in the app — two sources for one header is how they drift.
+#   BAD   EIGHT wrong passwords in a row all returned 401. No lockout, no rate limit, no delay.
+#         Anyone can brute-force any account at full speed, forever. That is the headline problem.
+#
+# The owner's words: "make sure the security to login is bad ass ... I dont want it hacked."
+
+tasks:
+  - prompt: |
+      Stop brute-force sign-in. This is the top priority and the reason this batch exists.
+
+      Verified live: 8 consecutive wrong passwords for one account all returned 401 with no
+      slowdown. Implement, in the HOSTED build:
+
+        1. Per-account lockout: after 5 consecutive failures, refuse further attempts for 15
+           minutes even if the password is then correct. Reset the counter on a successful
+           sign-in. Store the counter server-side, not in a cookie.
+        2. Per-IP rate limiting on the auth endpoints, so one attacker cannot spray many accounts
+           from one host. ASP.NET Core has built-in rate limiting (AddRateLimiter with a fixed or
+           sliding window) — use it rather than hand-rolling.
+        3. A constant-ish response time for "no such account" and "wrong password", and the SAME
+           message for both. Different timing or wording tells an attacker which emails are real.
+        4. When locked out, say so plainly and say when it lifts — a user who mistyped deserves to
+           know, and the information is useless to an attacker who already knows they are locked.
+
+      Do NOT lock the owner out of his own app while testing: verify with throwaway accounts.
+
+      Acceptance: a test proves the 6th consecutive bad password is refused with 429 (or a clear
+      locked response) while a DIFFERENT account still signs in normally, and that the lock lifts.
+      Then prove it against the LIVE site with a throwaway account and quote the status codes.
+    session: "sec-01-bruteforce"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20
+
+  - prompt: |
+      Capture the person's name at sign-up, and require a password worth having.
+
+      1. Add a required "Full name" field to the sign-up form and to POST /api/auth/sign-up.
+         Trim it, cap the length sensibly, and store it against the user. Show it in the app
+         wherever the signed-in user is identified. An empty or whitespace-only name is refused.
+      2. Password rules, enforced server-side (client-side alone is decoration): minimum 12
+         characters. Reject the obvious ones — the password equal to the email, or on a small
+         built-in list of the most common passwords. Do NOT impose character-class rules that
+         push people toward "Passw0rd!"; length plus a blocklist is stronger and kinder.
+      3. Confirm the password hash is a real one (ASP.NET Core Identity's PasswordHasher, or
+         PBKDF2 with >=100k iterations, or Argon2). If it is anything weaker — a bare SHA, no
+         salt — replace it and rehash on next successful sign-in. Say in your summary exactly
+         what you found, because this is the one that matters if the database ever leaks.
+
+      Acceptance: tests cover the name being required and persisted, an 11-character password
+      being refused, and the hash algorithm being what you claim. Verify sign-up still works on
+      the live site afterwards with a throwaway account.
+    session: "sec-02-signup-name-and-passwords"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 19
+    depends_on: ["sec-01-bruteforce"]
+
+  - prompt: |
+      Email the owner every time somebody signs up.
+
+      Send to ns@ingmining.com on each successful sign-up, containing: the person's name, their
+      email, the UTC timestamp, and the signing-up IP address. Nothing else — no password, no
+      token, no session id, ever.
+
+      Transport: SMTP through the owner's Gmail using the app password already recorded in
+      web-credentials.json under `gmail` (login knn3sales@gmail.com). Read it at deploy time into
+      /etc/ing-listing-engine/.env as SMTP__* settings, exactly as ANTHROPIC_API_KEY is handled —
+      root-owned, chmod 600, never in the image, never in the repo, never logged.
+
+      Two rules that matter more than the feature:
+        * Sending must never block or fail a sign-up. Queue it or fire-and-forget with a caught
+          exception; a bounced notification must not cost the owner a customer.
+        * Rate-limit the notifications themselves (say, at most 20 an hour, then a single summary)
+          so a sign-up flood cannot turn into a mail flood or get the Gmail account blocked.
+
+      Acceptance: sign up a throwaway account on the LIVE site and confirm the mail actually
+      arrives — check by SMTP/IMAP or ask the owner to confirm; do not claim success from the
+      code path alone. State plainly whether you verified delivery or only the send call.
+    session: "sec-03-signup-email"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 18
+    depends_on: ["sec-02-signup-name-and-passwords"]
+
+  - prompt: |
+      Close the remaining sign-in gaps, then re-audit the live site and report honestly.
+
+      1. CSRF: confirm the auth and state-changing endpoints are protected. SameSite=Lax on the
+         session cookie blocks the common cases but not all of them — check POSTs that change
+         data, and add antiforgery tokens where they are missing.
+      2. Session hygiene: issue a NEW session id on sign-in (prevents session fixation), and make
+         sign-out actually invalidate the session server-side rather than only clearing the cookie.
+      3. Enumeration: sign-up must not reveal whether an email already exists any more than
+         sign-in does.
+      4. The owner dashboard at /owner?k=<AdminKey> — confirm the key is compared in constant time
+         and that the endpoint is rate-limited like the auth ones. A guessable admin key is worse
+         than no admin key.
+      5. Re-run the live audit that started this batch and put the results in SECURITY.md: the
+         8-bad-passwords test, the header check, the cookie flags, and each item above with a
+         real observed result. Where something is still weak, write it down as still weak rather
+         than quietly omitting it.
+
+      Acceptance: SECURITY.md exists and every claim in it was produced by a command you actually
+      ran against https://app.inglisting.com, with the output quoted.
+    session: "sec-04-audit-and-close"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 17
+    depends_on: ["sec-03-signup-email"]

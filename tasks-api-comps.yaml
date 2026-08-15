@@ -1,0 +1,70 @@
+# Replace the browser scraper with the OpenWebNinja sold-items API. Owner's decision 2026-08-14:
+# "forget about the other ebay stuff scraper just use this".
+#
+# WHY THIS IS A BIG DEAL, not a swap:
+#   The browser scraper could only ever run on the owner's PC — it needs Chrome, a signed-in
+#   profile and a human to clear eBay's bot check. That is why app.inglisting.com has no live
+#   lookups at all and prices only from stored comps. An HTTP API has none of those needs, so the
+#   HOSTED app gets live sold data for the first time.
+#
+# VERIFIED 2026-08-14 before any of this was queued:
+#   * GET https://api.openwebninja.com/real-time-ebay-data/search
+#         ?query=<kw>&show_only=sold_items&page=<n>   header X-API-Key
+#     returns 25 sold rows per page with real sold dates. "antminer s19" -> total_results 512.
+#   * Fields: item_id, title, price, price_raw, shipping, caption ("Sold Aug 13, 2026"),
+#     condition, seller_name, seller_feedback_*, watchers, items_sold, buying_format, bid_count,
+#     epid, image, image_high_res, url, location, position.
+#   * A working collector already exists and is running:
+#     source/repos/BitData/owninja_collect.py — it normalises into the SAME SoldListings schema
+#     the app reads, dedupes on ItemId with a unique index, holds a single-instance lock, and
+#     counts every call against a persisted budget.
+#   * Budget: 50,000 calls, ~149 spent. It does NOT refill. Treat it as the scarce resource.
+#
+#   * The scraper's replacement is NOT optional cleanup: OnDemandCompsScraper currently returns
+#     "challenge" for every lookup because the Firefox session it borrows is signed out.
+
+tasks:
+  - prompt: |
+      Make live sold-comps lookups use the OpenWebNinja API instead of the browser scraper, in
+      BOTH builds — and make them work on the hosted app for the first time.
+
+      1. Add a service that queries the API (contract and verified field list are in the header of
+         this task file, and a working reference implementation is
+         source/repos/BitData/owninja_collect.py — read its normalising functions rather than
+         reinventing them, especially shipping_of and sold_date_of, which handle "Free shipping"
+         and the "Sold Aug 13, 2026" caption).
+
+         The key belongs in configuration, never in the repo: Credentials__OpenWebNinjaApiKey,
+         and on the server in /etc/ing-listing-engine/.env alongside the others. Read the value
+         from the owner's local credentials or web-credentials.json at deploy time.
+
+      2. Rewire OnDemandCompsScraper's callers to this service. Keep the SAME public shape the UI
+         already polls — the run/stage/percent/rowsFound/outcome protocol behind
+         /api/comps/live/start and /status — so the progress bar, the "blocked vs empty" wording
+         and every existing caller keep working untouched. The one thing that changes is where
+         the rows come from.
+
+         Outcomes map honestly: an API error is "error", an empty result is "empty" (the model
+         genuinely has no recent sales), and "challenge"/"blocked" disappear because there is no
+         bot check any more. Do not keep dead states alive.
+
+      3. Delete nothing yet. Leave scrape_one_keyword.py and OnDemandCompsScraper in place but
+         unused, and say in your summary that they are now dead code, so removing them is a
+         separate reviewed step rather than a surprise in this change.
+
+      4. BUDGET. This is a paid, finite, non-refilling 50,000 calls shared with the bulk
+         collector. Enforce server-side, before any call: a per-user daily cap on live lookups
+         (default 10) on the hosted build, and a global kill-switch setting that turns live
+         lookups off and falls back to stored comps. A runaway loop must not be able to spend the
+         owner's budget. Log every call so spend can be audited.
+
+      5. Cache. Never spend a call on a model already looked up within the last 24 hours — serve
+         the stored rows instead. This is the single biggest saving available and it costs one
+         query to check.
+
+      Acceptance: /api/comps/live/start for a real model returns outcome "ok" with rowsFound > 0
+      on BOTH the desktop build and https://app.inglisting.com — quote both. Show the same model
+      served from cache on a second call WITHOUT spending a call. dotnet test green.
+    session: "api-01-replace-scraper"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 18

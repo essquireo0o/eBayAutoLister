@@ -8,26 +8,37 @@ namespace ING_eBay_AutoLister.Services;
 /// the app's own SQLite database, alongside <see cref="CostBasisStore"/>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The only hard requirement on this table is that importing an overlapping date range twice must
 /// not double the seller's earnings. eBay order lines are therefore keyed on
-/// (order_id, line_item_id) with a unique index, and an import updates in place. Manual flips have
-/// no such key and are identified only by their row id, which is why they are never touched by an
-/// import.
+/// (user_id, order_id, line_item_id) with a unique index, and an import updates in place. Manual
+/// flips have no such key and are identified only by their row id, which is why they are never
+/// touched by an import.
+/// </para>
+/// <para>
+/// Every row belongs to a user and every statement here filters on the one making the request. See
+/// <see cref="UserScope"/>: on a shared deployment this table is the seller's revenue, their costs
+/// and their margins, and it is the first thing a second person signing up must not be shown.
+/// </para>
 /// </remarks>
 public sealed class EarningsStore
 {
     private readonly string _databasePath;
+    private readonly UserScope _scope;
 
-    public EarningsStore(ListingDatabase database) : this(database.DatabasePath) { }
+    public EarningsStore(ListingDatabase database, UserScope? scope = null) : this(database.DatabasePath, scope) { }
 
-    public EarningsStore(string databasePath)
+    public EarningsStore(string databasePath, UserScope? scope = null)
     {
         _databasePath = databasePath;
+        _scope        = scope ?? UserScope.Desktop;
         Initialize();
     }
 
     public List<FlipRecord> GetAll()
     {
+        if (_scope.OwnerId is not { } owner) return [];
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -35,8 +46,10 @@ public sealed class EarningsStore
                    sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
                    unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at
             FROM flips
+            WHERE user_id = @user_id
             ORDER BY sold_at DESC, id DESC;
             """;
+        command.Parameters.AddWithValue("@user_id", owner);
 
         var rows = new List<FlipRecord>();
         using var reader = command.ExecuteReader();
@@ -55,6 +68,7 @@ public sealed class EarningsStore
     public FlipRecord? FindByOrderLine(string? orderId, string? lineItemId)
     {
         if (string.IsNullOrWhiteSpace(orderId) || string.IsNullOrWhiteSpace(lineItemId)) return null;
+        if (_scope.OwnerId is not { } owner) return null;
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
@@ -63,9 +77,10 @@ public sealed class EarningsStore
                    sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
                    unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at
             FROM flips
-            WHERE order_id = @order_id AND line_item_id = @line_item_id
+            WHERE user_id = @user_id AND order_id = @order_id AND line_item_id = @line_item_id
             LIMIT 1;
             """;
+        command.Parameters.AddWithValue("@user_id", owner);
         command.Parameters.AddWithValue("@order_id", orderId);
         command.Parameters.AddWithValue("@line_item_id", lineItemId);
 
@@ -81,26 +96,31 @@ public sealed class EarningsStore
     public bool Upsert(FlipRecord flip)
     {
         Validate(flip);
+        // Nobody signed in on a hosted deployment: the sale is not written rather than written into
+        // whichever seller's earnings happened to be last. See UserScope.
+        if (_scope.OwnerId is not { } owner) return false;
+
         flip.UpdatedUtc = DateTimeOffset.UtcNow;
 
         using var connection = OpenConnection();
-        var existingId = FindExistingId(connection, flip);
+        var existingId = FindExistingId(connection, flip, owner);
 
         if (existingId is null)
         {
             using var insert = connection.CreateCommand();
             insert.CommandText = """
                 INSERT INTO flips
-                    (source, order_id, line_item_id, listing_id, sku, title, sold_at, quantity,
+                    (user_id, source, order_id, line_item_id, listing_id, sku, title, sold_at, quantity,
                      sale_price, shipping_charged, marketplace_fee, shipping_cost, other_costs,
                      unit_cost, refunded_amount, status, note, updated_at, cost_confirmed_at)
                 VALUES
-                    (@source, @order_id, @line_item_id, @listing_id, @sku, @title, @sold_at, @quantity,
+                    (@user_id, @source, @order_id, @line_item_id, @listing_id, @sku, @title, @sold_at, @quantity,
                      @sale_price, @shipping_charged, @marketplace_fee, @shipping_cost, @other_costs,
                      @unit_cost, @refunded_amount, @status, @note, @updated_at, @cost_confirmed_at);
                 SELECT last_insert_rowid();
                 """;
             Bind(insert, flip);
+            insert.Parameters.AddWithValue("@user_id", owner);
             flip.Id = Convert.ToInt64(insert.ExecuteScalar());
             return true;
         }
@@ -116,10 +136,14 @@ public sealed class EarningsStore
                 other_costs = @other_costs, unit_cost = @unit_cost, refunded_amount = @refunded_amount,
                 status = @status, note = @note, updated_at = @updated_at,
                 cost_confirmed_at = @cost_confirmed_at
-            WHERE id = @id;
+            WHERE id = @id AND user_id = @user_id;
             """;
         Bind(update, flip);
         update.Parameters.AddWithValue("@id", flip.Id);
+        // The owner is on the UPDATE as well as on the lookup that found the row. A caller that
+        // supplies a row id it does not own — a hand-made request, a stale page — changes nothing
+        // rather than editing somebody else's sale.
+        update.Parameters.AddWithValue("@user_id", owner);
         update.ExecuteNonQuery();
         return false;
     }
@@ -161,10 +185,13 @@ public sealed class EarningsStore
 
     public bool Delete(long id)
     {
+        if (_scope.OwnerId is not { } owner) return false;
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM flips WHERE id = @id;";
+        command.CommandText = "DELETE FROM flips WHERE id = @id AND user_id = @user_id;";
         command.Parameters.AddWithValue("@id", id);
+        command.Parameters.AddWithValue("@user_id", owner);
         return command.ExecuteNonQuery() > 0;
     }
 
@@ -221,13 +248,21 @@ public sealed class EarningsStore
             throw new InvalidOperationException("That sale date is in the future.");
     }
 
-    private static long? FindExistingId(SqliteConnection connection, FlipRecord flip)
+    private static long? FindExistingId(SqliteConnection connection, FlipRecord flip, long owner)
     {
         if (flip.Id > 0) return flip.Id;
         if (string.IsNullOrWhiteSpace(flip.OrderId) || string.IsNullOrWhiteSpace(flip.LineItemId)) return null;
 
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM flips WHERE order_id = @order_id AND line_item_id = @line_item_id LIMIT 1;";
+        // Within this user's rows only. Two sellers can hold the same eBay order id — one seller
+        // with two accounts is enough — and matching across users would make one person's import
+        // silently overwrite the other's sale.
+        command.CommandText = """
+            SELECT id FROM flips
+            WHERE user_id = @user_id AND order_id = @order_id AND line_item_id = @line_item_id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("@user_id", owner);
         command.Parameters.AddWithValue("@order_id", flip.OrderId);
         command.Parameters.AddWithValue("@line_item_id", flip.LineItemId);
         var found = command.ExecuteScalar();
@@ -295,6 +330,8 @@ public sealed class EarningsStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS flips (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- Whose sale this is. 0 on a desktop database, where there is only the one seller.
+                user_id INTEGER NOT NULL DEFAULT 0,
                 source TEXT NOT NULL DEFAULT 'manual',
                 order_id TEXT NOT NULL DEFAULT '',
                 line_item_id TEXT NOT NULL DEFAULT '',
@@ -319,11 +356,6 @@ public sealed class EarningsStore
                 cost_confirmed_at TEXT NULL
             );
 
-            -- The one index that matters: it is what makes a re-import an update instead of a
-            -- second copy of the same money.
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_flips_order_line
-                ON flips(order_id, line_item_id) WHERE order_id <> '' AND line_item_id <> '';
-
             CREATE INDEX IF NOT EXISTS ix_flips_sold_at ON flips(sold_at);
             """;
         command.ExecuteNonQuery();
@@ -331,19 +363,23 @@ public sealed class EarningsStore
         // Every database created before the confirmation existed still has the original schema and
         // will carry it for as long as it runs. Added in place rather than rebuilt: NULL is exactly
         // what those rows know — nobody has confirmed any of their costs yet.
-        AddColumnIfMissing(connection, "cost_confirmed_at", "TEXT NULL");
-    }
+        UserOwnedTable.AddColumnIfMissing(connection, "flips", "cost_confirmed_at", "TEXT NULL");
 
-    private static void AddColumnIfMissing(SqliteConnection connection, string column, string declaration)
-    {
-        using var probe = connection.CreateCommand();
-        probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('flips') WHERE name = @name;";
-        probe.Parameters.AddWithValue("@name", column);
-        if (Convert.ToInt32(probe.ExecuteScalar()) > 0) return;
+        // The owner column, before the index that uses it — on an old database it does not exist yet.
+        UserOwnedTable.Migrate(connection, "flips");
 
-        using var alter = connection.CreateCommand();
-        alter.CommandText = $"ALTER TABLE flips ADD COLUMN {column} {declaration};";
-        alter.ExecuteNonQuery();
+        using var indexes = connection.CreateCommand();
+        indexes.CommandText = """
+            -- The one index that matters: it is what makes a re-import an update instead of a
+            -- second copy of the same money. Per user, because the same eBay order id can legitimately
+            -- appear for two of them, and a shared index would refuse the second seller's import
+            -- outright — a unique-constraint failure on a screen that just says "importing".
+            DROP INDEX IF EXISTS ux_flips_order_line;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_flips_user_order_line
+                ON flips(user_id, order_id, line_item_id) WHERE order_id <> '' AND line_item_id <> '';
+            """;
+        indexes.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

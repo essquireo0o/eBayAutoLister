@@ -1,0 +1,63 @@
+# Finish eBay sign-in on the hosted app. The server side is already done.
+#
+# WHAT IS ALREADY TRUE (verified live 2026-08-14, do not redo it):
+#   * The owner ALREADY has a registered eBay redirect. It is the PHP relay at
+#     https://inglisting.com/api/ebay/callback/ , which is what the RuName points at. NOTHING has
+#     to be added in eBay's developer console. The earlier assumption that it did was wrong.
+#   * That relay exchanges the code for tokens server-side (the client secret never leaves the
+#     server), stores them in a temp file keyed by `state`, mints a one-time pickup token, and
+#     redirects the browser to <target>/api/ebay/finish?session=<state>&pickup=<token>.
+#   * The relay's final hop used to be hardcoded to http://localhost:9332. It has been patched to
+#     choose from an ALLOW-LIST based on a single trailing letter on the state:
+#         <32 hex>      -> http://localhost:9332/api/ebay/finish        (desktop, the default)
+#         <32 hex> + h  -> https://app.inglisting.com/api/ebay/finish   (hosted)
+#     Anything else is refused with "Unknown return target." It is an allow-list, not a
+#     return_url parameter, because a relay that redirects wherever it is told is an open
+#     redirect carrying a fresh eBay session.
+#     Backup of the original PHP: scratchpad/relay-callback-backup-*.php
+#
+# SO THE ONLY THING LEFT IS THE APP SIDE.
+
+tasks:
+  - prompt: |
+      Make eBay sign-in complete on https://app.inglisting.com.
+
+      1. STATE SUFFIX. Find where the app generates the OAuth `state` and builds the eBay consent
+         URL (Services/EbayAuthFlow.cs and /api/ebay/auth-url in Program.cs). In the HOSTED build
+         only, append the single letter 'h' to the state so the relay hands the browser back to
+         app.inglisting.com instead of localhost:9332. The desktop build must keep sending a bare
+         32-hex state and must behave exactly as it does today.
+
+         Note the relay strips the suffix before using the state as the session id, so the value
+         the app later presents to /api/ebay/pickup is still the bare 32 hex — check that the app
+         does not accidentally send the suffixed form when claiming the tokens.
+
+      2. PER-USER TOKENS AT PICKUP. /api/ebay/finish was written for a single-user desktop app: it
+         claims the tokens and writes them into the one global credentials store. On the hosted
+         build it MUST store them against the signed-in user, using the per-user credential store
+         from hosted-03, encrypted as that work established. A visitor who is not signed in must
+         be refused outright rather than having tokens written anywhere.
+
+         This is the single most dangerous line in the whole feature. If it writes to a shared
+         store, the first person to connect eBay grants every other user access to their seller
+         account. Add a test that proves two users who each connect eBay end up with two distinct
+         stored tokens, and that neither can read the other's.
+
+      3. NEW TAB. Confirm the popup behaviour asked for by the owner is actually in place after
+         ebay-01-hosted-oauth: clicking sign-in opens eBay in a new tab while the app page stays
+         put and updates to Connected when the grant lands. If ebay-01 did not deliver it, do it
+         now — and remember window.open() must be called synchronously in the click handler, not
+         after an await, or the browser blocks it.
+
+      4. VERIFY ON THE LIVE SITE, not locally. Sign up, click connect eBay, and confirm the URL
+         eBay is sent is correct: it must carry the hosted RuName and a state ending in 'h'. Quote
+         the URL with the client id partially redacted. Do NOT complete a real grant against the
+         owner's live eBay account in an automated test — stop at the consent screen and say so.
+
+      Acceptance: the consent URL is correct and quoted; the per-user storage test passes; desktop
+      OAuth unchanged; dotnet build + dotnet test green. If anything about the relay contract is
+      unclear, read the live PHP over SFTP rather than guessing — credentials are in
+      web-credentials.json under ionos_sftp.
+    session: "ebay-02-relay-hosted"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 7

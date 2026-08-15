@@ -1,0 +1,54 @@
+# "connect to facebook not working" — owner, 2026-08-14, on the HOSTED app.
+#
+# DIAGNOSED, confirmed on both sides:
+#   The error shown was: "Couldn't launch the login browser: An error occurred trying to start
+#   process 'node' with working directory 'npm/node_modules/playwright'. No such file or directory".
+#
+#   * On the OWNER'S PC everything is present: node v24 at Program Files\nodejs, Playwright at
+#     %APPDATA%\npm\node_modules\playwright. So the desktop path is fine.
+#   * The tell is the working directory 'npm/node_modules/playwright' with NO prefix — that is
+#     NodeRuntime.PlaywrightDir when Environment.GetFolderPath(ApplicationData) returns "", which
+#     is Linux/server behaviour. And FileName fell back to bare 'node'.
+#   * Verified on the server (docker exec): node NOT installed, playwright NOT installed, no
+#     chromium/chrome, APPDATA empty.
+#
+#   Facebook Marketplace has NO API. The feature drives a real Chrome window so a person can log
+#   in and clear challenges — see FacebookMarketplaceService and NodeRuntime. A headless server
+#   has no browser and no person, so this can NEVER work on the hosted build. It is the same
+#   architectural truth as the browser comps scraper, which the API replaced.
+#
+#   The bug is not that the browser failed to launch. The bug is that the hosted app OFFERS a
+#   button that cannot work, and then shows a raw process error that reads like a broken install.
+
+tasks:
+  - prompt: |
+      On the HOSTED build, stop offering Facebook Marketplace connection, and never show a raw
+      browser-process error for it.
+
+      1. Detect the build. There is already a HOSTED compile constant and per-build behaviour
+         (see the auth, quota and live-comps work). Use it — do not sniff the OS at runtime in ten
+         places.
+
+      2. HOSTED: the "Connect Facebook Marketplace" onboarding step and any Facebook Marketplace
+         source in the Opportunity Finder must either be hidden, or shown DISABLED with one plain
+         sentence: Facebook Marketplace needs a real browser to log in and is available in the
+         free Windows desktop app, not the web version. Link to the download. Do NOT attempt to
+         launch node/Playwright on the server at all — the endpoint should refuse cleanly with
+         that message, not surface a "No such file or directory" process error.
+
+      3. DESKTOP: unchanged. It works there and must keep working. Do not touch NodeRuntime's
+         resolution logic — it is correct for Windows.
+
+      4. While you are here: audit every feature that shells out to node/Playwright/a browser
+         (Facebook connect, Facebook search, Facebook picks — BuildLoginScript/BuildSearchScript/
+         BuildPicksScript, and anything else via NodeRuntime). ALL of them have the same problem
+         on the server. List them in your summary and give each the same honest hosted treatment,
+         so the web app never dangles a button that starts a process that cannot exist.
+
+      Acceptance: on https://app.inglisting.com the Facebook step is gone or clearly marked
+      desktop-only with the download link, and hitting its endpoint returns a clean message rather
+      than a node process error. The desktop build still launches the Facebook login browser
+      exactly as before. dotnet test green.
+    session: "fb-01-hosted-no-browser"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20

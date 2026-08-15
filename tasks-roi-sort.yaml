@@ -1,0 +1,58 @@
+# "HIGHEST ROI FIRST WHEN SEARCH OPPORTUNITY LISTER" — owner, 2026-08-14.
+#
+# DIAGNOSED, and it is a real client/server mismatch rather than a preference:
+#
+#   THE CLIENT ASKS FOR ROI.
+#     index.html:1365 and 1653   <option value="roi" selected>ROI %</option>
+#     app.js 3446 / 3577 / 3797  const sort = $('fb-arb-sort')?.value || 'roi';
+#     So every scan, opportunity search and local search sends sort=roi by default.
+#
+#   THE SERVER DOES NOT KNOW WHAT "roi" IS.
+#     LocalArbitrageAnalyzer.NormalizeSort (~line 986):
+#         SortByFastestCash  or "days" or "speed"      => SortByFastestCash
+#         SortByProfitPerDay or "perday" or "velocity" => SortByProfitPerDay
+#         _                                            => SortByProfit      <-- "roi" lands HERE
+#     There is no roi branch. "roi" falls through the catch-all and the board is ranked by
+#     ABSOLUTE NET PROFIT.
+#
+#   CONSEQUENCE: one $900 item with a big absolute margin outranks ten items returning 300% on
+#   small money. That is precisely the inversion the dropdown promises not to make, and it is the
+#   reason the owner is asking. The client re-sorts by ROI when it renders, which HIDES the bug on
+#   a full board — but the server decides which rows survive maxItems and in what order, so a
+#   high-ROI row can be truncated away before the client ever sees it.
+
+tasks:
+  - prompt: |
+      Make ROI a real sort on the server, so the board ranks the way the UI says it does.
+
+      1. Add an ROI branch to LocalArbitrageAnalyzer.NormalizeSort and Rank. Read the existing
+         branches first and follow their shape exactly — every mode there keeps two invariants and
+         yours must too: rows that could not be priced sort LAST rather than being dropped, and
+         losers stay below winners however good their percentage looks.
+
+      2. Handle the cases that make a naive ROI sort wrong:
+         * A FREE item has no cost to return on. The client already treats this as unbounded
+           rather than missing (see roiOf in app.js: netProfit > 0 && localAsk === 0 -> Infinity).
+           Match that, or state plainly why you chose differently.
+         * A tiny cost produces a huge percentage. $2 -> $8 is 300% and is not a business. The
+           $100 net-profit bar already filters most of these, but confirm the interaction and say
+           what it does rather than assuming.
+         * Two unbounded ROIs are equal, not NaN.
+
+      3. Check the OTHER callers of Rank before changing the default: the eBay scanner, the
+         opportunity search, the local search and anything else passing a sort string. Changing
+         what the catch-all does could silently reorder a board that was relying on it. Prefer
+         adding "roi" as an explicit branch over changing the fallback.
+
+      4. Keep the client and server honest with each other: every value the dropdown can emit
+         ("roi", "profit", "perday", "fastest", "margin", "distance", "ask") should either be a
+         real server branch or be documented as client-only re-sorting. A dropdown option that
+         silently means something else on the server is how this bug happened.
+
+      Acceptance: run a real scan for a broad term and show the returned order is descending by
+      ROI, quoting the first five rows with their ROI and net profit so the ordering is visible.
+      Show a free item and a loss-making row landing where the rules say they should. dotnet test
+      green, with a test covering the roi branch and the unbounded-ROI case.
+    session: "opp-04-roi-sort-server"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20

@@ -1,0 +1,42 @@
+# Blocking security fix, queued ahead of deployment.
+#
+# Found 2026-08-13 by publishing the HOSTED build and listing the output: credentials.json is
+# copied into the publish directory. The Web SDK's default Content glob picks up *.json in the
+# project folder, and nothing removes this one. On a desktop install that file IS the product's
+# config, so it belongs there. On a PUBLIC SERVER it is the owner's live Anthropic key, eBay
+# client secret and refresh token, Stripe keys and AdminKey — published to the internet.
+#
+# tasks-hosting.yaml's deployment task already specifies a .dockerignore that excludes it, which
+# covers the Docker path. This task closes the hole at the source instead, so that ANY publish —
+# Docker, dotnet publish, a zip someone makes by hand — cannot carry it.
+
+tasks:
+  - prompt: |
+      SECURITY: stop credentials.json being copied into publish output.
+
+      Reproduce first, so the fix is verified against the real behaviour:
+        dotnet publish "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Release -r linux-x64 \
+          -p:Hosted=true --self-contained false -o <tempdir>
+        ls <tempdir>/credentials.json     # currently PRESENT — that is the bug
+
+      Fix it in ING eBay AutoLister.csproj so the file is never copied to publish output, in any
+      configuration. Follow the existing house pattern in that file — it already does exactly this
+      for the wwwroot scratch images, with `<Content Remove=... />` plus `<None Remove=... />` and
+      a comment explaining why. Match that style and explain, in the comment, that this file holds
+      live secrets and that a publish is how they would reach a server.
+
+      The desktop build must be unaffected: the installer's own build script (build-installer.ps1)
+      writes a REDACTED credentials.json into the dist folder itself and does not rely on the
+      publish output carrying one, so removing it from publish is safe. Verify that by reading
+      build-installer.ps1 before you change anything, and say in your summary what you found.
+
+      Acceptance:
+        * the publish command above no longer produces credentials.json in the output directory
+        * `dotnet build` (desktop, Debug) still succeeds and still produces the WinExe
+        * `dotnet test` passes
+        * add a test in the existing test project asserting the csproj carries the exclusion, so a
+          future edit cannot silently reintroduce it — DealBoardLayoutTests is the precedent for
+          asserting against project/asset files rather than runtime behaviour.
+    session: "hosted-00-no-secrets-in-publish"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20

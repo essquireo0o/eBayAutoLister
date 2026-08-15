@@ -21,6 +21,43 @@ namespace ING_eBay_AutoLister.Services;
 /// ever pretends a notification was delivered.
 /// </para>
 /// </remarks>
+#if HOSTED
+/// <summary>
+/// The hosted build's version: same shape, does nothing, and says so.
+/// </summary>
+/// <remarks>
+/// There is no desktop. The seller is on a browser somewhere else entirely, and the one honest
+/// answer to "can this process put a balloon on your screen?" is no — which is exactly what
+/// <see cref="Channel"/> reporting <c>browser</c> already means, so the radar UI needs no hosted
+/// special case: it keeps telling the seller the tab has to stay open, and that is now the truth
+/// rather than a fallback.
+///
+/// Kept as a no-op rather than removed because the type is a constructor parameter of
+/// <c>DealRadarService</c> and five endpoints, all of which are platform-neutral and stay that way.
+/// It also drops the history queue: a list of notifications nothing could ever deliver is a log of
+/// non-events, and <c>Recent</c> is read by the UI to tick "sent to desktop".
+/// </remarks>
+public sealed class DesktopNotifier
+{
+    // Nothing raises this here — no tray, no balloon. Declared so the type keeps one shape across
+    // both builds; a hosted-only compile error on a subscriber would be a Windows/Linux drift bug.
+#pragma warning disable CS0067
+    public event Action<DesktopNotification>? Notified;
+#pragma warning restore CS0067
+
+    public void AttachDesktopChannel() { }
+
+    public void DetachDesktopChannel() { }
+
+    /// <summary>Always <c>browser</c>. Nothing in a container can reach the seller's screen.</summary>
+    public string Channel => RadarChannels.Browser;
+
+    public IReadOnlyList<DesktopNotification> Recent => [];
+
+    /// <summary>Always false — no channel took it, because there is no channel.</summary>
+    public bool Send(DesktopNotification notification) => false;
+}
+#else
 public sealed class DesktopNotifier
 {
     /// <summary>How many recent notifications to remember, for the "already told you" check.</summary>
@@ -85,3 +122,4 @@ public sealed class DesktopNotifier
         }
     }
 }
+#endif

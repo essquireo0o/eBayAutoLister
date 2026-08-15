@@ -1,0 +1,81 @@
+# "Automatically set up live lookups when you log into eBay" — the achievable version.
+#
+# WHAT WAS TESTED 2026-08-14, so nobody re-litigates it:
+#   * The app already REQUESTS buy.marketplace.insights and already has a working client for
+#     /buy/marketplace_insights/v1_beta/item_sales/search (EbayService.cs ~line 694).
+#   * Asking eBay for a token with that scope, using the owner's own production keys, returns:
+#         400 invalid_scope — "exceeds the scope granted to the client"
+#     So this app has NOT been granted Marketplace Insights. It is a limited-release API that
+#     eBay approves per-application. Until eBay grants it, there is NO API path to sold data and
+#     no amount of OAuth changes that.
+#
+#   * Therefore live sold comps come from the browser scraper (BitData/scrape_one_keyword.py),
+#     and that scraper is currently failing with eBay's "verify yourself" bot check because the
+#     Firefox cookie jar it borrows is SIGNED OUT — checked: dp1/nonsession/bm_sv present, but
+#     none of npii/ds1/ds2/s, which are the signed-in cookies.
+#
+# SO THE REAL FEATURE IS: make signing in to eBay ALSO establish the session the scraper uses,
+# so live lookups start working by themselves instead of needing a separate, invisible Firefox
+# login that nobody knows about. Desktop only — a server has no browser to sign in with.
+
+tasks:
+  - prompt: |
+      Make live comps lookups configure themselves when the seller signs in to eBay (DESKTOP build).
+
+      Today the two are unrelated: the app's eBay OAuth grants Sell API access, while the comps
+      scraper borrows cookies from whatever Firefox profile happens to exist. When that profile is
+      signed out — which it is — every live lookup dies on eBay's bot check, and the seller is
+      told "eBay wants you to verify yourself" with no way to act on it.
+
+      1. Give the scraper its own PERSISTENT browser profile instead of borrowed cookies.
+         scrape_one_keyword.py already supports --chrome-profile and its own comments explain why
+         it is better: "eBay rotates bm_sv/ak_bmsc every few minutes, so an injected cookie jar
+         reads as session expired within the hour; a real profile keeps its own cookies current.
+         Headed also means a bot check appears in a window the seller can actually click, which is
+         the only thing that clears one." OnDemandCompsScraper never passes that flag — make it,
+         with the profile living under %LOCALAPPDATA%\ING AutoLister\comps-profile.
+
+      2. After a successful eBay OAuth grant, if that profile has never been signed in, offer the
+         seller a single clearly-labelled step: "Turn on live sold-price lookups" which opens the
+         profile at eBay's sign-in once so they log in. Explain in one sentence why a second
+         sign-in is needed — the OAuth grant covers selling, not eBay's sold-search pages, which
+         only exist behind a normal browser login. Do NOT do it silently and do NOT block the
+         OAuth flow on it; a seller who skips it keeps working from stored comps exactly as today.
+
+      3. Detect and report the state honestly wherever live lookups are surfaced: never signed in
+         / signed in and working / signed in but eBay is challenging us. The existing
+         OnDemandCompsScraper outcomes (challenge, blocked, ok) already carry this — surface it
+         rather than inventing a new vocabulary.
+
+      4. HOSTED build: there is no browser, so live scraping cannot work there. Make that explicit
+         rather than silently degrading — IsAvailable must be false and the UI must say the hosted
+         trial prices from the stored sold-comps database, which is the truth.
+
+      Acceptance: with a signed-in profile, /api/comps/live/start returns outcome "ok" with
+      rowsFound > 0 for a real model; with a signed-out one it returns "challenge" and the UI says
+      what to do about it. Quote both. dotnet test green; do not break the desktop app.
+    session: "live-01-profile-on-signin"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+
+  - prompt: |
+      Write the owner a short APPLY-FOR-INSIGHTS.md explaining the one thing that would make live
+      sold data work everywhere, including the hosted app, with no browser and no scraping.
+
+      Facts, verified 2026-08-14: the app already implements the Marketplace Insights client and
+      already asks for the buy.marketplace.insights scope, but eBay returns
+      400 invalid_scope for the owner's production keys, which means the application has not been
+      granted that limited-release API.
+
+      The document should say, in under a page: what the API gives (recent sold prices by keyword,
+      straight from eBay, no scraping), that it is applied for through the eBay Developers Program
+      as a limited-release API against the existing AutoList production keyset, and what changes
+      the day it is granted — the scraper becomes a fallback rather than the only path, and the
+      hosted app at app.inglisting.com gets real sold comps for the first time.
+
+      Do not invent the application URL or the approval timeline if you are not certain of them —
+      say what to search for on developer.ebay.com instead of guessing a link that may 404.
+    session: "live-02-insights-doc"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 15
+    depends_on: ["live-01-profile-on-signin"]

@@ -20,6 +20,15 @@
     return response;
   };
 
+  // The antiforgery token, on the same wrapper and for the same reason: 155 fetch calls, and the
+  // server now refuses every POST and DELETE that cannot echo the token back. Attaching it here
+  // rather than at each call site is what makes that true of the ones written next year too.
+  // See Csrf.cs on the server for what the token is and why the cookie holding it is readable.
+  //
+  // Loaded from csrf.js, which every page includes — the editor and the sign-in and sign-up pages
+  // have their own fetch calls and are not this file. Absent on the desktop build, where the
+  // server never asks for a token and this is a wrapper that adds a header nobody reads.
+
   // ── Is this page the eBay tab, coming back? ─────────────────────────────────
   // The consent screen opens in a tab of its own (see startEbayConnect) and eBay redirects that
   // tab, not the seller's, to /?ebay_connected=1. So this same file gets loaded a second time in
@@ -67,6 +76,11 @@
     try {
       const who = await passThroughFetch('/api/auth/me');
       if (!who.ok) return;
+
+      // Hosted build confirmed. Mark the page so web-only CSS can apply — chiefly hiding Facebook
+      // Marketplace, which needs a login browser on the seller's own computer and so cannot work on
+      // a headless server. The desktop build never reaches here (/api/auth/me 404s there).
+      document.body.classList.add('is-hosted');
 
       const { email, displayName } = await who.json();
       const actions = document.querySelector('.topbar-actions');
@@ -560,6 +574,11 @@
     } catch { /* nothing to clear */ }
   }
 
+  // The one-shot replay above, as something later code can wait on. Auto-restore is the caller that
+  // needs it: it must not ask the app for the newest draft until whatever this device was still
+  // holding has been pushed up, or the copy it puts on screen is the older of the two.
+  let mirrorReplay = null;
+
   // Run once on load, before the seller touches anything: whatever the app never received is pushed
   // up now, so it shows up under Recover with every other unfinished listing rather than sitting in
   // a browser key nobody reads.
@@ -909,14 +928,22 @@
     $('nl-recover-btn')?.addEventListener('click', toggleRecoverPanel);
   }
 
-  function restoreWork(item) {
-    if (!item) return;
+  /**
+   * Puts a saved draft back on screen.
+   *
+   * `alreadyOpen` is the auto-restore path (see autoRestoreLatestDraft): the AI Listing screen has
+   * just opened itself and cleared itself, so re-opening it here would reset the draft tabs a
+   * second time on every single open. Every other caller — the dashboard banner, the Recover panel
+   * — is reached from somewhere else entirely and needs the screen brought up.
+   */
+  function restoreWork(item, opts) {
+    if (!item) return false;
     $('nl-recover-panel')?.classList.add('hidden');
     let payload;
     try { payload = JSON.parse(item.payload || '{}'); }
     catch {
       addActivity('Could not restore that draft', 'The saved copy could not be read.');
-      return;
+      return false;
     }
 
     // Adopt the recovered key so continuing to edit updates that same row rather than starting a
@@ -929,15 +956,81 @@
     clearTimeout(autosaveRetryTimer);
     setSaveState('saved');
 
-    openNewListingModal();
+    if (!opts?.alreadyOpen) openNewListingModal();
     fillNlForm(payload);
     // Photos are URLs into the app's own generated-photos folder, so a recovered draft keeps them.
     if (Array.isArray(payload.imageUrls) && payload.imageUrls.length) {
       nlClearAllPhotoSlots();
       payload.imageUrls.filter(Boolean).forEach(url => nlAddPhotoRow(url));
     }
-    addActivity('Draft restored', payload.title || item.label || 'Unfinished listing recovered');
+    addActivity(opts?.alreadyOpen ? 'Picked up where you left off' : 'Draft restored',
+      payload.title || item.label || 'Unfinished listing recovered');
     loadRecoverableWork();
+    return true;
+  }
+
+  // ── Auto-restore: the screen opens on the work, not on a blank form ───────
+  //
+  // Autosave has held every field since the moment it was typed. Getting it back did not: it took
+  // noticing a Recover button, opening it, and choosing a row. A safety net nobody knows to reach
+  // for catches nobody — the work was saved and lost anyway, which from the seller's side is
+  // indistinguishable from never having saved it.
+  //
+  // So opening the AI Listing screen onto an EMPTY form puts the most recent unfinished draft back
+  // by itself. Three rules, each of them about not making things worse than the blank form was:
+  //
+  //   1. Never over a form the seller has started. A restore that wipes out typing is a worse loss
+  //      than the one this exists to prevent — so the form is checked before the request AND again
+  //      after it, because a round trip is long enough to type a title into.
+  //   2. The draft keeps its own key, adopted by restoreWork. Continuing to edit updates that same
+  //      row, so opening the screen twice shows the same listing rather than a second copy of it,
+  //      two browser tabs converge on one draft instead of racing to make two, and next launch has
+  //      one draft to offer rather than the same work twice.
+  //   3. Ordinary drafts only — /api/work/resume never returns a publishing or failed row. Those
+  //      keep their urgent dashboard banner and their deliberate click, because silently opening a
+  //      listing that may already be live on eBay invites a second one for the same item.
+
+  let autoRestoreInFlight = false;
+
+  // Whether the form holds the seller's own work, as opposed to the defaults every control carries
+  // on an untouched tab. Same fields and the same reasoning as autosaveBody: sizing the payload
+  // cannot tell a blank form from a written one, naming the fields can.
+  function nlFormHasContent() {
+    try { return hasAutosaveContent(buildNlPayload()); }
+    // The form could not be read at all. Assume there is something in it: the cost of being wrong
+    // here is a blank form, and the cost of being wrong the other way is somebody's listing.
+    catch { return true; }
+  }
+
+  async function autoRestoreLatestDraft() {
+    // One at a time. Two opens in quick succession must not both fill the form.
+    if (autoRestoreInFlight) return false;
+    if (nlFormHasContent()) return false;
+
+    autoRestoreInFlight = true;
+    try {
+      // After the replay, never before it. Anything this device is still holding because the app
+      // never took it is newer than what the app can answer with, and restoring the older copy
+      // would put a stale listing on screen and then autosave it back over the newer one.
+      try { await mirrorReplay; } catch { /* the app's own copy is still worth asking for */ }
+
+      const { ok, data } = await callApi('/api/work/resume', { timeoutMs: 15000 });
+      const draft = (ok && data?.draft) || null;
+      if (!draft?.payload) return false;
+
+      // Re-checked after the round trip: a seller who started typing while this was in flight keeps
+      // every word of it, and one who has already navigated off the screen is not dragged back to it.
+      if (nlFormHasContent()) return false;
+      if ($('new-listing-overlay')?.classList.contains('hidden')) return false;
+
+      return restoreWork(draft, { alreadyOpen: true });
+    } catch {
+      // A blank form is exactly what the seller would have had before this existed, and the draft
+      // is still sitting under Recover. Nothing is worth an error banner on the way into a screen.
+      return false;
+    } finally {
+      autoRestoreInFlight = false;
+    }
   }
 
   async function checkRecoveredPublish(item) {
@@ -1029,7 +1122,6 @@
     bindEarnings();
     bindTax();
     bindStorePlan();
-    bindRestock();
     bindPricePosition();
     bindPipeline();
     bindHomeButtons();
@@ -1099,10 +1191,18 @@
     // The mirror first, and awaited by the recovery load rather than the page: anything this device
     // is still holding because the app never took it has to be pushed up before the app is asked
     // what there is to recover, or the one listing most at risk is the one missing from the list.
-    replayLocalMirror().finally(loadRecoverableWork);
+    // Kept as a promise for the same reason auto-restore waits on it — see mirrorReplay.
+    mirrorReplay = replayLocalMirror().finally(loadRecoverableWork);
 
-    // Navigate to whatever section the URL hash specifies (supports reload + deep links)
-    if (location.hash) handleNav(location.hash.slice(1));
+    // The app opens on the dashboard, always — the seller asked for that (2026-08). A hash left in
+    // the URL from last session (e.g. #opportunity) used to reopen straight into that overlay on
+    // load, which reads as the site "redirecting" you away from the home page every time. So on a
+    // fresh load we do NOT restore the section from the hash; we clear the stale hash and stay on
+    // the dashboard. In-session navigation still sets the hash and still works — this only governs
+    // where an open/reload lands. Crash-recovered drafts still surface via the dashboard's recovery
+    // banner (loadRecoverableWork above), so nothing at risk is lost by not auto-opening #ai.
+    if (location.hash && location.hash !== '#dashboard')
+      history.replaceState(null, '', location.pathname + location.search);
   }
 
   // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -1284,7 +1384,6 @@
     // screen's answer moves on a scale of months, not minutes. "Recount my listings" is the button
     // that goes back to eBay, and it is in the header where the seller can see it.
     storeplan:   { section: 'storeplan-section',     open: showStorePlanSection },
-    pipeline:    { section: 'pipeline-section',      open: showPipelineSection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
@@ -1292,17 +1391,13 @@
     photos:      { section: 'photo-library-section', open: showPhotoLibrarySection },
     // The one page that is doing something whether or not it is open. onShow/onHide only control
     // how often it re-reads itself — the scanning happens in the server either way.
-    snap:        { section: 'snap-section',          open: showSnapSection },
     // No refresh hook, unlike the Tax Pack: this one reads the seller's live eBay listings to work
     // out what they have none of, and that is a real API call. It loads once and reloads when the
     // seller asks — coming back to a tab is not asking.
-    restock:     { section: 'restock-section',       open: showRestockSection },
     // Same rule as the Restock List, and for a stronger reason: one load is the seller's live
     // listings plus one eBay search per product on them. Coming back to a tab is not asking for
     // a dozen searches — the Refresh button is.
     position:    { section: 'position-section',      open: showPricePositionSection },
-    radar:       { section: 'radar-section',         open: showRadarSection,
-                   onShow: startRadarWatchPolling, onHide: stopRadarWatchPolling },
     opportunity: { section: 'opportunity-section',   open: showOpportunitySection },
     // Off the sidebar at the seller's request, so it carries its own title and icon — a tab opened
     // by URL would otherwise be labelled "snipe" wearing the Dashboard glyph.
@@ -1662,8 +1757,15 @@
     renderWorkspaceTabs();
   }
 
+  // The AI Listing screen, opened the way the seller opens it — the sidebar, a tab, a deep link.
+  // The other routes into openNewListingModal are all "start a listing FROM this": a pasted
+  // screenshot, a bulk import, a won lot. Those arrive with content of their own and must open on
+  // a blank form, which is why the auto-restore hangs here and not inside the opener.
   function showAiSection() {
     openNewListingModal();
+    // Deliberately not awaited: the screen is already up and usable, and the draft lands on it a
+    // moment later rather than the seller waiting on a request to see anything at all.
+    autoRestoreLatestDraft();
   }
 
   // Every full-screen view in the app, including the AI Listing modal: hiding "the screens" has
@@ -1673,7 +1775,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'radar-section', 'snap-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'restock-section', 'position-section', 'pipeline-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -2919,6 +3021,24 @@
   // re-render from the same response instead of re-running a multi-minute scan.
   let arbitrageData = null;
 
+  // The board opens as a shortlist — the top 50 by rank — instead of a 120-row wall. "Show all" flips
+  // this to reveal the tail. Reset per scan (see renderArbitrage) so every new search opens short.
+  let arbShowAll = false;
+
+  // Bumped by every fresh scan render. The per-row live-comps reprices below capture it and bail if
+  // it moves under them, so a slow lookup for the last board can never write a row onto the next
+  // one — and the auto top-3 pass runs exactly once per scan and stops the moment a new scan starts.
+  let arbScanToken = 0;
+  // Keys currently being repriced, so a second click (or the auto pass overlapping a manual one)
+  // doesn't fire the same lookup twice.
+  const arbRepriceInFlight = new Set();
+  // The same guard for the AI reality-check, which is a separate per-row call.
+  const arbAiCheckInFlight = new Set();
+  // How many of the top estimate rows the board asks the AI to sanity-check on its own after a scan.
+  // Two, not the reprice pass's three: this spends the owner's AI allowance, so it is deliberately
+  // stingier than the free sold-comps deepen above it.
+  const ARB_AUTO_AI_ROWS = 2;
+
   const ARB_VERDICTS = {
     goldmine: { label: '💎 Goldmine', cls: 'goldmine' },
     solid:    { label: '✅ Worth it', cls: 'solid' },
@@ -3336,9 +3456,9 @@
     $('fb-arb-results')?.classList.add('hidden');
     if (btn) btn.disabled = true;
 
-    setLocalStatus(`Fetching fresh sold prices from eBay for "${query}" — up to three minutes — then searching eBay and pricing every result against them…`);
+    setLocalStatus(`Getting fresh sold prices for "${query}", then searching eBay and pricing every result against them…`);
 
-    const sort = $('fb-arb-sort')?.value || 'roi';
+    const sort = $('fb-arb-sort')?.value || 'balanced';
     const num = id => {
       const v = parseFloat($(id)?.value);
       return isFinite(v) && v > 0 ? v : null;
@@ -3378,9 +3498,14 @@
     // eBay Scanner is an opportunity search — one of the two places a live lookup is allowed to
     // run — and it is the one that most needs it: every row on the board below is a buy/pass call
     // made against these comps. One scrape for the term, never one per result.
-    await runLiveLookup(query, 'es');
+    // keepOpen so the lookup's bar isn't hidden a beat before the scan repurposes it as a sweep.
+    await runLiveLookup(query, 'es', { keepOpen: true });
 
+    // The real wait is here — searching eBay and pricing up to 120 listings. Sweep the same bar so
+    // there is honest motion for it, instead of a full green bar frozen under a static line.
+    scanWorking('es', `Searching eBay for "${query}" and pricing every result…`);
     const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
+    scanWorkingDone('es');
     if (btn) btn.disabled = false;
 
     if (!data) {
@@ -3469,7 +3594,7 @@
 
     // The scan comes back already ordered the way the seller last chose to look at it. Changing
     // the sort afterwards is still purely client-side — it must never re-run a multi-minute scan.
-    const sort = $('fb-arb-sort')?.value || 'roi';
+    const sort = $('fb-arb-sort')?.value || 'balanced';
     const { data, error } = await localFetchJson(
       `/api/local/arbitrage?${qs}&sort=${encodeURIComponent(sort)}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
     buttons.forEach(b => { b.disabled = false; });
@@ -3620,8 +3745,15 @@
     // A new scan is a new question, so the board is allowed to relax for it again. Without this,
     // one manual filter change early on would leave every later scan silently showing one row.
     arbFiltersTouched = false;
+    arbShowAll = false;   // every new scan opens as the top-50 shortlist
     renderArbitrageRows();
     wrap.classList.remove('hidden');
+
+    // Deepen the top three estimates automatically, once per scan, now that the board is on screen.
+    autoRepriceTopRows();
+    // Then ask the AI to sanity-check the top couple of estimates — the rows most likely to be a
+    // component priced as a whole unit, which is exactly where the biggest, wrongest numbers sit.
+    autoAiCheckTopRows();
   }
 
   // The category filter above the table, built from the scan's own tallies so an option that
@@ -3682,11 +3814,15 @@
   // Fewer than this on the board, out of a scan that priced plenty, is the "is this broken?" point.
   const ARB_MIN_BOARD = 5;
 
+  // The board opens showing at most this many rows, top-ranked — a shortlist to act on, not the whole
+  // 120-row scan dumped on screen. "Show all" reveals the rest. See arbShowAll / the cap below.
+  const ARB_DEFAULT_CAP = 50;
+
   function renderArbitrageRows() {
     const body = $('fb-arb-body');
     if (!body || !arbitrageData) return;
 
-    const sort = $('fb-arb-sort')?.value || 'roi';
+    const sort = $('fb-arb-sort')?.value || 'balanced';
     let hideLosers = !!$('fb-arb-hide-losers')?.checked;
     let provenOnly = !!$('fb-arb-proven-only')?.checked;
     let fastOnly = !!$('fb-arb-fast-only')?.checked;
@@ -3794,7 +3930,35 @@
     // A free item's ROI is unbounded, not missing — it belongs at the top of an ROI sort, not
     // below a listing that loses money.
     const roiOf = r => (r.roiPercent != null ? r.roiPercent : r.netProfit > 0 && r.localAsk === 0 ? Infinity : null);
+    // ── "Best of both" — the default (Balanced) money key ────────────────────────────────────────
+    // What a reseller wants at the top is neither the biggest % (a $4 flip at 4,000% ROI is nothing in
+    // the hand) nor the biggest $ (a $2,000 buy at a razor margin ties cash up for a thin return) — it
+    // is the deal that ranks high on BOTH. So each priced row is scored by its PERCENTILE in net profit
+    // and its percentile in ROI across this board, and the two are combined with a geometric mean: a
+    // row has to be strong on both axes to lead, and neither alone can carry it. Percentiles make it
+    // scale-free, so one runaway ROI can't distort the order. Confidence tiers (below) still come
+    // first, so this only ever ranks WITHIN the rows the board already trusts.
+    const priced = rows.filter(r => r.netProfit != null);
+    const percentileBy = (value) => {
+      const order = [...priced].sort((a, b) => value(a) - value(b));   // ascending: worst → best
+      const denom = Math.max(1, order.length - 1);
+      const m = new Map();
+      order.forEach((r, i) => m.set(r, i / denom));                    // 0 = worst on this axis, 1 = best
+      return m;
+    };
+    const netPct = percentileBy(r => r.netProfit);
+    const roiPct = percentileBy(r => { const v = roiOf(r); return v === Infinity ? Number.MAX_SAFE_INTEGER : (v == null ? -Infinity : v); });
+    const balancedScore = r => {
+      if (r.netProfit == null) return -Infinity;
+      // Geometric mean of the two percentiles: top on both → ~1; top on one, bottom on the other → ~0.
+      return Math.sqrt((netPct.get(r) ?? 0) * (roiPct.get(r) ?? 0));
+    };
     const cmp = {
+      // Net dollars weighed against ROI (and damped for thin comps) — the row that makes the most
+      // money for what it ties up leads. Losers and unpriced rows stay below, same as every mode.
+      balanced: (a, b) => ((b.netProfit > 0) - (a.netProfit > 0))
+        || (nullsLast(a, b, 'netProfit') ?? (balancedScore(b) - balancedScore(a)))
+        || 0,
       profit: (a, b) => nullsLast(a, b, 'netProfit') ?? (b.netProfit - a.netProfit),
       // Two unbounded ROIs are equal, not NaN — Infinity - Infinity would corrupt the sort.
       roi: (a, b) => { const x = roiOf(a), y = roiOf(b); return (x == null) - (y == null) || (x === y ? 0 : y - x); },
@@ -3811,14 +3975,51 @@
       perday: (a, b) => ((b.netProfit > 0) - (a.netProfit > 0))
         || (nullsLast(a, b, 'profitPerDay') ?? (b.profitPerDay - a.profitPerDay))
         || 0,
-    }[sort];
-    rows.sort(cmp);
+    };
+    // Balanced is the default, so an unknown or missing sort key falls back to it rather than to
+    // JavaScript's lexicographic sort (which would order rows by their stringified selves).
+    // A row the AI rejected sinks to the bottom whatever the chosen sort: a deal the AI said isn't
+    // one must not sit at #1. Stable pre-sort predicate, so within each group the chosen order holds.
+    const aiRejects = r => {
+      const c = r.__aiCheck;
+      if (!c) return false;
+      if (c.verdict === 'false_positive' || c.compsMatchItem === false) return true;
+      // The AI's realistic resale landing far under the board's own estimate is the same verdict by
+      // another name: the profit was priced off comps the AI says are worth much less (the B101 case
+      // — $400 estimate, ~$90 real). Drop it even if the AI hedged the verdict itself.
+      const est = Number(r.ebayExpectedSale ?? r.estimatedResale ?? 0);
+      const hi = Number(c.realisticResaleHigh ?? 0);
+      return est > 0 && hi > 0 && hi < est * 0.6;
+    };
+    // Confidence first — the top of the board must be deals we can stand behind, not the biggest
+    // number on the thinnest data. Tiers, best first; the chosen sort orders WITHIN each tier:
+    //   0 confident   — priced off enough matched sold comps to trust
+    //   1 estimate    — thin comps, but nothing screams mismatch
+    //   2 suspicious  — an estimate whose ROI is so high on so few comps that it is almost certainly
+    //                   the pricer matching the wrong product (a hashboard against whole miners, a
+    //                   single bottle against a case). Pushed down even before the AI check answers,
+    //                   so a fantasy profit never opens the board at #1.
+    //   3 ai-rejected — the AI read the item and said the comps describe something else.
+    const confidenceTier = r => {
+      if (aiRejects(r)) return 3;
+      const thin = r.evidenceTier !== 'confident';
+      if (thin && (r.roiPercent ?? 0) >= 200 && (r.soldCompCount ?? 0) < 4) return 2;
+      return thin ? 1 : 0;
+    };
+    const chosenSort = cmp[sort] || cmp.balanced;
+    rows.sort((a, b) => (confidenceTier(a) - confidenceTier(b)) || chosenSort(a, b));
+
+    // Open as a shortlist — the top ARB_DEFAULT_CAP by rank. The filters and the confidence-first sort
+    // above run on the FULL set first, so the cap only ever trims the already-ranked tail; the rows
+    // most worth seeing are already on top. overCap drives the "Show all" reveal below.
+    const overCap = !arbShowAll && rows.length > ARB_DEFAULT_CAP;
+    const visible = overCap ? rows.slice(0, ARB_DEFAULT_CAP) : rows;
 
     const shown = $('fb-arb-shown');
     if (shown) {
-      shown.textContent = rows.length === arbitrageData.items.length
-        ? `${rows.length} shown`
-        : `${rows.length} of ${arbitrageData.items.length} shown`;
+      shown.textContent = visible.length === arbitrageData.items.length
+        ? `${visible.length} shown`
+        : `${visible.length} of ${arbitrageData.items.length} shown`;
     }
 
     // What each bar is holding back, on its own: how many MORE rows would appear if this one
@@ -3838,7 +4039,7 @@
     if (cut) {
       // Only while there is still a board to read. With nothing showing, the empty state below is
       // already the whole message and says the same thing at more length.
-      const show = rows.length && (held.length || relaxed.length);
+      const show = rows.length && (held.length || relaxed.length || overCap);
       cut.classList.toggle('hidden', !show);
       // Said first and said plainly when it happened: a board that quietly loosened its own
       // filters would be worse than the empty one it replaced. The estimate rows it lets back in
@@ -3849,8 +4050,14 @@
           + `${rows.length} ${rows.length === 1 ? 'deal' : 'deals'}. `
           + `Rows priced off thin comps are dimmed and marked ESTIMATE ONLY — tick the boxes back on to hide them.</span>`
         : '';
+      // The cap the seller can lift, said first because it is what the default view is holding back.
+      const capNote = overCap
+        ? `<span class="fb-arb-cut-count">Showing the top <strong>${visible.length}</strong> of ${rows.length} deals. `
+          + `<button type="button" class="btn btn-secondary small fb-arb-showall-btn">Show all ${rows.length}</button></span>`
+        : '';
       cut.innerHTML = !show ? '' :
-        relaxNote
+        capNote
+        + relaxNote
         + (held.length
             ? `<span class="fb-arb-cut-count">Showing ${rows.length} of the ${shopping.length} ${
                 shopping.length === 1 ? 'deal' : 'deals'} this scan priced — the filters are holding the rest.</span>`
@@ -3860,7 +4067,7 @@
     }
 
     body.innerHTML = rows.length
-      ? rows.map(arbitrageRowHtml).join('')
+      ? visible.map(arbitrageRowHtml).join('')
       : `<tr><td colspan="9" class="fb-arb-empty">${
           category && arbitrageData.items.length
             ? 'Nothing in that category once the other filters were applied. Set the category back to all to see the rest of what this scan found.'
@@ -3874,6 +4081,9 @@
               : (hideLosers || provenOnly) && arbitrageData.items.length
                 ? emptyUnderTheBarMessage()
                 : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
+
+    // The shortlist-cap reveal: lift the top-50 cap and show the ranked tail this scan is holding.
+    cut?.querySelector('.fb-arb-showall-btn')?.addEventListener('click', () => { arbShowAll = true; renderArbitrageRows(); });
 
     // Unticks the one bar the button names and re-renders — the same thing the checkbox does, so
     // the checkbox and the board can't end up disagreeing about what is filtered.
@@ -3893,6 +4103,10 @@
       btn.addEventListener('click', () => trackArbitrageRow(btn.dataset.key, btn)));
     body.querySelectorAll('.fb-arb-more').forEach(btn =>
       btn.addEventListener('click', () => toggleArbitrageDetail(btn)));
+    body.querySelectorAll('.fb-arb-live-btn').forEach(btn =>
+      btn.addEventListener('click', () => repriceArbitrageRow(btn.dataset.key)));
+    body.querySelectorAll('.fb-arb-ai-btn').forEach(btn =>
+      btn.addEventListener('click', () => analyzeDealRow(btn.dataset.key)));
   }
 
   // Opens the supporting figures under one row. Closed by default and closed again on the next
@@ -3967,6 +4181,304 @@
   // own listing id, with the title as a last resort.
   function arbRowKey(row) {
     return `${row.source}::${row.itemId || row.url || row.title}`;
+  }
+
+  // ── Live sold-comps, per row ──────────────────────────────────────────────
+  // The board prices every row against whatever sold comps were already in the database when the
+  // scan ran, so an obscure item comes back an estimate. These fetch that one item's recent eBay
+  // sold prices on demand (the same live lookup the listing/research panel uses) and reprice just
+  // that row from them — a stored-comps guess becomes a real number without re-running the scan.
+
+  // Which rows a title-based sold-comps lookup can honestly reprice. A liquidation lot and a freebie
+  // are priced by their own arithmetic, not a title query, and a category the app refuses to value
+  // (cars, etc.) would only be refused again — so none of them get the button.
+  function canReprice(row) {
+    return !!row && !row.liquidation && !row.freebie
+      && !(row.valuation && row.valuation.status === 'manual');
+  }
+
+  // The button (and its little note) that sit in the row's badges. The button is offered on any row
+  // the app could only estimate; the note is shown whenever a lookup has run, even once the row has
+  // gone confident and the button is gone with it.
+  function arbLiveControls(row) {
+    const showBtn = canReprice(row) && row.evidenceTier !== 'confident';
+    const note = row.__liveNote || '';
+    if (!showBtn && !note) return '';
+
+    const key = esc(arbRowKey(row));
+    const btn = showBtn
+      ? `<button class="btn btn-secondary small fb-arb-live-btn" type="button" data-key="${key}" ` +
+        `title="Fetch this item's recent eBay sold prices and reprice this row from them.">` +
+        `Get real sold price</button>`
+      : '';
+    return `${btn}<span class="fb-arb-live-note" data-key="${key}">${note ? esc(note) : ''}</span>`;
+  }
+
+  // What the finished live run says, in the few words the note has room for. "no recent sales" and
+  // "eBay lookup unavailable" are the same zero rows and opposite conclusions — a seller who reads
+  // the second as the first thinks the item is worthless — so they never share a phrase.
+  function liveOutcomeNote(run) {
+    if (!run) return '';
+    const n = Number(run.rowsFound) || 0;
+    const comps = () => n > 0 ? `${n} live sold comp${n === 1 ? '' : 's'}` : 'no recent sales';
+    switch (run.outcome) {
+      case 'ok':
+      case 'fresh':        return comps();
+      case 'empty':        return 'no recent sales';
+      case 'rate_limited': return 'daily live-lookup limit reached — priced from stored comps';
+      case 'busy':         return 'another live lookup is running — try again in a moment';
+      case 'unavailable':  return 'live lookups are off — priced from stored comps';
+      case 'error':        return 'eBay lookup unavailable — priced from stored comps';
+      default:             return n > 0 ? comps() : '';
+    }
+  }
+
+  // The buy side of a row, handed back to the server so it can rebuild the LocalSupplyListing and
+  // reprice it. The resale half is left off on purpose — that is exactly what the round-trip
+  // recomputes against the now-deepened comps.
+  function dealForReprice(row, query) {
+    return {
+      source: row.source, sourceLabel: row.sourceLabel, itemId: row.itemId,
+      title: row.title, url: row.url, imageUrl: row.imageUrl,
+      price: row.localAsk, isFree: row.localAsk === 0 && !!row.freebie,
+      originalPrice: row.originalPrice, location: row.location, distanceMiles: row.distanceMiles,
+      postedAgo: row.postedAgo, postedUtc: row.postedUtc,
+      isRetail: row.isRetail, retailer: row.retailer, freeShipping: row.freeShipping,
+      couponCode: row.couponCode, categoryId: row.categoryId, pricedAs: row.pricedAs, query,
+    };
+  }
+
+  // The row's button and note, found by key rather than held: the table body is rebuilt wholesale on
+  // every render, so a reference captured before the render is stale the moment the row is repriced.
+  function arbLiveEls(key) {
+    const body = $('fb-arb-body');
+    let btn = null, note = null;
+    body?.querySelectorAll('.fb-arb-live-btn').forEach(b => { if (b.dataset.key === key) btn = b; });
+    body?.querySelectorAll('.fb-arb-live-note').forEach(n => { if (n.dataset.key === key) note = n; });
+    return { btn, note };
+  }
+
+  // Fetch this row's real sold prices, then reprice the row from them. Never throws and never hard-
+  // fails the row: every live outcome — a page of comps, no recent sales, the daily cap, a lookup
+  // already in flight, the switch off, an API error — ends as a short note, and the reprice re-reads
+  // stored comps regardless (harmless when nothing new landed).
+  async function repriceArbitrageRow(key) {
+    if (arbRepriceInFlight.has(key)) return;
+    arbRepriceInFlight.add(key);
+    const token = arbScanToken;
+
+    try {
+      const row = (arbitrageData?.items || []).find(r => arbRowKey(r) === key);
+      if (!row) return;
+
+      const { btn } = arbLiveEls(key);
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking eBay…'; }
+
+      // The fullest wording the board had for this product — the same string the row was priced as.
+      const query = row.pricedAs && row.pricedAs !== row.title ? row.pricedAs : row.title;
+
+      // The live lookup writes fresh sold rows into the comps database. Reused from the research
+      // panel; the throwaway prefix has no progress bar in the DOM, so it drives no visible ticker —
+      // the per-row note is the progress here.
+      const run = await runLiveLookup(query, 'arbrow');
+      const note = liveOutcomeNote(run);
+
+      // A newer scan replaced the board while eBay was answering — drop this on the floor rather
+      // than write a stale row onto a board it doesn't belong to.
+      if (token !== arbScanToken) return;
+
+      const { data } = await localFetchJson('/api/opportunities/reprice-row', 30000, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dealForReprice(row, query)),
+      });
+      if (token !== arbScanToken) return;
+
+      // A rebuilt row carries a source; the never-fail error body ({ repriced:false }) does not.
+      if (data && data.source != null && data.repriced !== false) {
+        const idx = (arbitrageData.items || []).findIndex(r => arbRowKey(r) === key);
+        if (idx >= 0) {
+          data.__liveNote = note;   // survives the re-render, even if the row is now confident
+          arbitrageData.items[idx] = data;
+          renderArbitrageRows();
+          return;
+        }
+      }
+
+      // Nothing to swap in — leave the row as it was and just say what happened.
+      const after = arbLiveEls(key);
+      if (after.note) after.note.textContent = note;
+      if (after.btn) { after.btn.disabled = false; after.btn.textContent = 'Get real sold price'; }
+    } finally {
+      arbRepriceInFlight.delete(key);
+    }
+  }
+
+  // After a fresh scan, do the same for the top three ranked rows automatically — the ones a seller
+  // is most likely to act on, deepened before they even click. Sequential (one live lookup runs at
+  // a time server-side), estimate-only (a confident row already has the comps), and guarded by the
+  // scan token so it runs once per scan and never chases its own re-renders.
+  function autoRepriceTopRows() {
+    const token = ++arbScanToken;
+    const targets = (arbitrageData?.items || [])
+      .slice(0, 3)
+      .filter(r => canReprice(r) && r.evidenceTier === 'low')
+      .map(arbRowKey);
+    if (!targets.length) return;
+
+    (async () => {
+      for (const key of targets) {
+        if (token !== arbScanToken) return;   // a newer scan superseded this pass
+        await repriceArbitrageRow(key);
+      }
+    })();
+  }
+
+  // ── AI reality-check, per row ─────────────────────────────────────────────
+  // The board's comp-matcher can't tell a component from a whole unit: a "S19 XP hashboard" gets
+  // priced off whole-miner sold comps and shows a fantasy ROI, always as an estimate, always near
+  // the top. These ask Claude to read the listing the way a reseller does — is a hashboard, a
+  // 10-pack, a "for Antminer" strap — and, when the AI says the comps don't match, flag the row and
+  // drop it down the board so a deal the AI rejected can't sit at #1.
+
+  // The short note next to whichever AI outcome the row got — a failed check never breaks the row,
+  // it just says so in a few words.
+  function arbAiControls(row) {
+    const key = esc(arbRowKey(row));
+    const check = row.__aiCheck;
+    const parts = [];
+
+    // The button: only on an estimate the AI hasn't judged yet. A confident row already has real
+    // comps, and a row the AI has answered shows its verdict instead.
+    const showBtn = row.evidenceTier === 'low' && !check && !row.__aiChecking;
+    if (showBtn) {
+      parts.push(`<button class="btn btn-secondary small fb-arb-ai-btn" type="button" data-key="${key}" ` +
+        `title="Ask Claude whether the sold comps behind this estimate actually match this item.">` +
+        `Ask AI to check this</button>`);
+    }
+
+    if (row.__aiChecking) {
+      parts.push(`<span class="fb-arb-ai-note" data-key="${key}">Asking AI…</span>`);
+    } else if (row.__aiNote) {
+      parts.push(`<span class="fb-arb-ai-note" data-key="${key}">${esc(row.__aiNote)}</span>`);
+    }
+
+    if (check) {
+      const rejected = check.verdict === 'false_positive' || check.compsMatchItem === false;
+      const range = (check.realisticResaleLow != null && check.realisticResaleHigh != null)
+        ? `${money(check.realisticResaleLow)}–${money(check.realisticResaleHigh)}`
+        : '';
+      if (rejected) {
+        // The one line that has to read as a warning: the comps describe a different thing, and here
+        // is what this item really resells for.
+        parts.push(`<span class="fb-arb-ai-verdict fb-arb-ai-bad" title="${esc(check.reason || '')}">` +
+          `⚠ AI: comps don't match${range ? ` — realistic resale ${range}` : ''}</span>`);
+      } else {
+        const label = check.verdict === 'real_deal' ? 'AI: comps look right' : 'AI: uncertain';
+        const cls = check.verdict === 'real_deal' ? 'fb-arb-ai-ok' : 'fb-arb-ai-meh';
+        parts.push(`<span class="fb-arb-ai-verdict ${cls}" title="${esc(check.reason || '')}">` +
+          `${esc(label)}${range ? ` · resale ${range}` : ''}</span>`);
+      }
+      // What the AI actually thinks it is, and its one-sentence reason — the words a seller reads to
+      // decide whether to believe the row or the AI.
+      if (check.whatItIs) parts.push(`<span class="fb-arb-ai-what">${esc(check.whatItIs)}</span>`);
+      if (check.reason)   parts.push(`<span class="fb-arb-ai-reason">${esc(check.reason)}</span>`);
+    }
+
+    return parts.join(' ');
+  }
+
+  // Ask the server (which asks Claude) whether this estimate's comps match the item, then store the
+  // verdict on the row and re-render. Never throws and never hard-fails the row: over-quota and the
+  // { checked:false } failure body both end as a short note. Returns false when the AI allowance is
+  // gone, so the auto pass below can stop asking.
+  async function analyzeDealRow(key) {
+    if (arbAiCheckInFlight.has(key)) return true;
+    arbAiCheckInFlight.add(key);
+    const token = arbScanToken;
+
+    try {
+      const row = (arbitrageData?.items || []).find(r => arbRowKey(r) === key);
+      if (!row) return true;
+
+      row.__aiChecking = true;
+      row.__aiNote = '';
+      renderArbitrageRows();
+
+      const query = row.pricedAs && row.pricedAs !== row.title ? row.pricedAs : row.title;
+      const { data } = await localFetchJson('/api/opportunities/analyze-deal', 60000, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: query,
+          category: row.categoryLabel || row.categoryId || '',
+          buyPrice: row.localAsk,
+          estimatedResale: row.ebayExpectedSale,
+          compCount: row.soldCompCount || 0,
+          imageUrl: row.imageUrl,
+        }),
+      });
+
+      // A newer scan replaced the board while the AI was answering — drop it rather than write onto
+      // a board it doesn't belong to.
+      if (token !== arbScanToken) return true;
+
+      const cur = (arbitrageData?.items || []).find(r => arbRowKey(r) === key);
+      if (!cur) return true;
+      cur.__aiChecking = false;
+
+      // The daily allowance is gone: a 429 with the quota envelope /api/analyze uses. Say so, and
+      // signal the auto pass to stop.
+      const quotaHit = !!(data && (data.quota != null ||
+        (data.failure && data.failure.kind === 'AiQuotaExhausted')));
+      if (quotaHit) {
+        cur.__aiNote = data.error || 'Daily AI limit reached — try again tomorrow.';
+        renderArbitrageRows();
+        return false;
+      }
+
+      if (data && data.itemType && data.verdict && data.checked !== false && data.ok !== false) {
+        cur.__aiCheck = data;
+        cur.__aiNote = '';
+      } else if (data && data.ok === false) {
+        cur.__aiNote = data.error || 'AI check unavailable right now.';
+      } else {
+        cur.__aiNote = data && data.error ? `AI check unavailable — ${data.error}` : 'AI check could not run.';
+      }
+      renderArbitrageRows();
+      return true;
+    } finally {
+      arbAiCheckInFlight.delete(key);
+    }
+  }
+
+  // After a fresh scan, sanity-check the top couple of estimate rows automatically — the ones most
+  // likely to be a component priced as a whole unit. Sequential, estimate-only, once per scan
+  // (guarded by the scan token), and it stops the moment the AI allowance runs out.
+  function autoAiCheckTopRows() {
+    const token = arbScanToken;
+    // Vet the top rows the AI is most needed on. Two shapes both belong here:
+    //   • thin-comp estimates — few sold comps, so the number is a guess; and
+    //   • "too good to be true" deals — a goldmine or a very high ROI, EVEN backed by many comps,
+    //     because that is the exact fingerprint of a mispriced board: a B101 mini-miner (~$90) valued
+    //     off $2,000 stickminers and $8,000 rigs that its 12 "comps" wrongly swept in. Comp COUNT
+    //     alone can't catch that — twelve wrong comps still read as confident — but Claude knows what
+    //     a B101 actually sells for, so one look flags the fake $400 resale and drops it.
+    const worthAiLook = r =>
+      r.evidenceTier === 'low' || r.verdict === 'goldmine' || (r.roiPercent ?? 0) >= 150;
+    const targets = (arbitrageData?.items || [])
+      .slice(0, ARB_AUTO_AI_ROWS)
+      .filter(r => worthAiLook(r) && !r.__aiCheck && canReprice(r))
+      .map(arbRowKey);
+    if (!targets.length) return;
+
+    (async () => {
+      for (const key of targets) {
+        if (token !== arbScanToken) return;      // a newer scan superseded this pass
+        const proceed = await analyzeDealRow(key);
+        if (proceed === false) return;           // AI allowance gone — stop silently
+      }
+    })();
   }
 
   // The photo is the decision on this board: nobody can judge a free pool table from the words
@@ -4055,11 +4567,16 @@
     // every second element would be a detail panel. Parity and the top-three rank colour are set
     // here instead, on the row that is actually a deal (see .fb-arb-row.is-alt in style.css).
     const detailId = `fb-arb-detail-${index}`;
+    const aiRejected = !!(row.__aiCheck &&
+      (row.__aiCheck.verdict === 'false_positive' || row.__aiCheck.compsMatchItem === false));
     const state = [
       'fb-arb-row',
       `fb-arb-row-${verdict.cls}`,
       index % 2 ? 'is-alt' : '',
       index < 3 ? 'is-top3' : '',
+      // The AI said the comps describe a different thing — draw the whole row as a warning so the
+      // number beside it can't be read as a real deal.
+      aiRejected ? 'fb-arb-ai-flagged' : '',
     ].filter(Boolean).join(' ');
 
     return `
@@ -4082,6 +4599,13 @@
               <button class="fb-arb-more" type="button" aria-expanded="false" aria-controls="${detailId}">
                 <span class="fb-arb-more-chev" aria-hidden="true">›</span>Resale, fees, ROI &amp; evidence
               </button>
+              ${/* The one-click way to turn a stored-comps estimate into a real number: fetch this
+                    exact item's recent eBay sold prices and reprice the row from them. Lives in the
+                    badges rather than as a column so the board stays nine columns wide. */
+                arbLiveControls(row)}
+              ${/* And the other read on a thin estimate: ask Claude whether the comps behind it
+                    actually match this item — the check the mechanical matcher can't make. */
+                arbAiControls(row)}
             </span>
             <span class="fb-arb-note">${esc(row.verdictNote)}</span>
           </span>
@@ -7563,6 +8087,11 @@
     // this tab was last looked at, and "updated 3 hours ago" is only true if it is re-checked.
     loadEarningsAutoStatus();
     startEarningsAutoPolling();
+    // Pull sold orders now, in THIS request's context. On the hosted build every seller's eBay
+    // token is per-user and resolved from the request — the background importer has no request and
+    // so imports for nobody, which is why the screen used to sit on "Reading your eBay sales…"
+    // forever. Running it here signs the import with whoever is looking at the screen.
+    maybeAutoImportEarnings();
   }
 
   function closeEarningsSection() {
@@ -7694,12 +8223,78 @@
   }
 
   // ── The automatic import ───────────────────────────────────────────────────
-  // There is no import button any more. EarningsAutoImport pulls sold orders as soon as eBay is
-  // connected and refreshes every few hours, so the screen's job is not to offer the action — it is
-  // to say whether the figures below are current, which is the one thing a button could never tell
-  // you. Read-only: this polls a status the server already keeps, and starts nothing.
+  // There is no import button any more. On the DESKTOP build EarningsAutoImport pulls sold orders in
+  // the background as soon as eBay is connected. On the HOSTED build it can't: every seller's eBay
+  // token is per-user and only resolvable from their request, and a background service has no
+  // request — so on hosted the sales are read from the request context instead, when this screen
+  // opens (see maybeAutoImportEarnings). Either way the screen's job is to say whether the figures
+  // below are current.
   let earningsAutoTimer = null;
   const EARNINGS_AUTO_POLL_MS = 30000;
+  // A refresh older than this reads as stale enough to pull again on open. Wide, because sold orders
+  // don't arrive fast enough to justify importing on every glance.
+  const EARNINGS_STALE_MS = 6 * 60 * 60 * 1000;
+
+  // A request-context import is in flight, and the result of the last one this page-session did.
+  // These, not the singleton background service's fields, are the honest per-user signal on hosted —
+  // there the server's lastSuccessUtc is always null because no background import ever ran for this
+  // user. Kept on the client so the status reflects what actually happened under this seller's token.
+  let earningsImportInFlight = false;
+  let earningsRequestImport = null;   // { ok, atIso, linesImported } | { ok:false, message }
+
+  // Reads sold orders as the signed-in user, from the request context. Runs at most once per
+  // page-session on success — reopening the screen won't re-hit eBay once it has worked — but a
+  // failure leaves the door open to try again on the next open. Guarded so it never overlaps itself;
+  // the server also serialises against the background importer via EarningsAutoImport.ImportGate.
+  async function maybeAutoImportEarnings() {
+    if (earningsImportInFlight) return;
+    if (earningsRequestImport?.ok) return;   // already imported successfully this page-session
+
+    // The figures tell us whether the screen is empty; the status tells us whether eBay is even
+    // connected for THIS user — that flag is resolved per-user in the request the status call makes,
+    // which is exactly the thing the background importer cannot see.
+    if (!earnings) await loadEarnings(true);
+    const status = await loadEarningsAutoStatus();
+    if (!status || !status.ebayConnected) return;
+
+    const noData = (earnings?.summary?.salesAllTime ?? 0) === 0;
+    const stale  = !status.lastSuccessUtc ||
+      (Date.now() - Date.parse(status.lastSuccessUtc)) > EARNINGS_STALE_MS;
+    if (!noData && !stale) return;
+
+    await runEarningsRequestImport();
+  }
+
+  async function runEarningsRequestImport() {
+    if (earningsImportInFlight) return;
+    earningsImportInFlight = true;
+    // Say what's happening straight away — the POST below can take minutes on a first import.
+    renderEarningsAutoStatus({ ebayConnected: true });
+
+    try {
+      const res  = await fetch('/api/earnings/import', { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      const imp  = data?.import;
+
+      if (imp && String(imp.status || '').toLowerCase() !== 'ok') {
+        // eBay answered, but with "reconnect" / "not_connected" / "error" — show its own words.
+        earningsRequestImport = { ok: false, message: imp.message || 'eBay could not be reached — try again.' };
+      } else if (!res.ok && !imp) {
+        earningsRequestImport = { ok: false, message: `eBay import failed (HTTP ${res.status}).` };
+      } else {
+        earningsRequestImport = { ok: true, atIso: new Date().toISOString(), linesImported: imp?.linesImported ?? 0 };
+        // New rows underneath — reload them so the totals match the "just updated" the status shows.
+        await loadEarnings(true);
+      }
+    } catch (err) {
+      earningsRequestImport = { ok: false, message: errorText(err, 'Could not read your eBay sales.') };
+    } finally {
+      earningsImportInFlight = false;
+      // Re-read the status (ebayConnected etc.) and re-render — renderEarningsAutoStatus now has the
+      // request-import result to show instead of the perpetual "Reading…".
+      await loadEarningsAutoStatus();
+    }
+  }
 
   async function loadEarningsAutoStatus() {
     const el = $('er-auto-status');
@@ -7724,6 +8319,30 @@
       return;
     }
 
+    // A request-context import running right now. On hosted this is the only importer there is, so
+    // this — not the singleton background service — is what "Reading your eBay sales…" must reflect.
+    if (earningsImportInFlight) {
+      el.textContent = 'Reading your eBay sales…';
+      el.className = 'er-auto-status is-waiting';
+      return;
+    }
+
+    // What the request-context import this page-session actually did, signed with this user's token.
+    // Preferred over the server's fields because on hosted those are always null (no background
+    // import ran for this user), which is exactly what left the screen stuck on "Reading…" before.
+    if (earningsRequestImport) {
+      if (earningsRequestImport.ok) {
+        const n = earningsRequestImport.linesImported;
+        el.textContent = `✓ Sales updated ${radarAgo(earningsRequestImport.atIso)} — ${n} sale${n === 1 ? '' : 's'} imported`;
+        el.className = 'er-auto-status is-ok';
+      } else {
+        el.textContent = earningsRequestImport.message || 'eBay could not be reached — try again';
+        el.className = 'er-auto-status is-problem';
+      }
+      return;
+    }
+
+    // Below here is the DESKTOP build's background importer, whose fields ARE correct there.
     // A failure that has already been retried is not worth alarming anyone about; a failure with
     // nothing behind it is, because then the totals below are empty for a reason.
     if (s.lastStatus && s.lastStatus !== 'ok' && !s.lastSuccessUtc) {
@@ -8870,219 +9489,6 @@
         <span class="sp-rate-cell">${moneyExact(t.insertionFeeAfter)} each after that</span>
       </div>`).join('')
       + `<p class="sp-rates-note">${esc(storePlanRates.note || '')}</p>`;
-  }
-
-  // ── The Restock List ──────────────────────────────────────────────────────
-  // Money Made says what the seller earned. This says what to go and buy with it, out of the same
-  // completed sales — so a row here can always be traced back to sales on that screen.
-  //
-  // Three rules the screen has to keep, all of them from RestockAnalyzer:
-  //   * The hero is money NOT being made. Proven lines with nothing listed is the one figure here
-  //     that is an instruction, and it is the reason a seller opens this on a Saturday morning.
-  //   * A caution is never netted off a headline. "$180 a month" and "one of the four came back"
-  //     are both true and they go on the same card, because the seller is about to spend money.
-  //   * Nothing here is a market forecast, and the screen says so rather than looking like one.
-  //     Every figure is a sale that already happened, and prices move.
-  let restock = null;
-  let restockSort = 'month';
-
-  function showRestockSection() {
-    hideOverlaySections();
-    $('restock-section')?.classList.remove('hidden');
-    setActiveNavItem('restock');
-    markWorkspaceTabOpen('restock');
-    if (!restock) loadRestock(); else renderRestock();
-  }
-
-  function closeRestockSection() { closeWorkspacePage('restock'); }
-
-  function bindRestock() {
-    on('rs-close', 'click', closeRestockSection);
-    on('rs-home', 'click', goHome);
-    on('rs-refresh', 'click', () => loadRestock());
-
-    // Delegated: every row on this board is re-rendered on load and on every change of order.
-    $('restock-section')?.addEventListener('click', e => {
-      const sort = e.target.closest?.('.rs-sort-btn');
-      if (sort) {
-        restockSort = sort.dataset.sort || 'month';
-        renderRestock();
-        return;
-      }
-
-      const hunt = e.target.closest?.('.rs-hunt');
-      if (hunt) { huntForRestockLine(hunt.dataset.query || ''); return; }
-
-      const copy = e.target.closest?.('.rs-copy');
-      if (copy) {
-        navigator.clipboard?.writeText(copy.dataset.query || '');
-        copy.textContent = 'Copied';
-        setTimeout(() => { copy.textContent = 'Copy search'; }, 1500);
-      }
-    });
-  }
-
-  // The whole point of the board in one click: a line the seller has proved they can sell, handed
-  // to the screen that finds one to buy. The search waits a tick because navigateTo() opens the
-  // Opportunity Finder on the next hashchange — searching now would run against a hidden page.
-  function huntForRestockLine(query) {
-    if (!query) return;
-    navigateTo('opportunity');
-    setTimeout(() => {
-      const input = $('opp-search-input');
-      if (!input) return;
-      input.value = query;
-      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      findOpportunities();
-    }, 80);
-  }
-
-  async function loadRestock() {
-    const btn = $('rs-refresh');
-    if (btn) { btn.disabled = true; btn.textContent = 'Reading your sales…'; }
-    try {
-      const res = await fetch('/api/restock');
-      if (!res.ok) throw new Error('Could not build your restock list.');
-      restock = await res.json();
-      renderRestock();
-    } catch (err) {
-      setRestockNotice(errorText(err, 'Could not build your restock list.'), true);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
-    }
-  }
-
-  function setRestockNotice(text, isError) {
-    const el = $('rs-notice');
-    if (!el) return;
-    el.textContent = text || '';
-    el.classList.toggle('hidden', !text);
-    el.classList.toggle('rs-notice-error', !!isError);
-  }
-
-  function renderRestock() {
-    if (!restock) return;
-    const r = restock;
-    const s = r.summary || {};
-    const ranked = r.restock || [];
-    const has = (r.status !== 'no_sales') && (ranked.length || (r.stop || []).length || (r.needsCost || []).length || (r.watch || []).length);
-
-    $('rs-results')?.classList.toggle('hidden', !!has);
-    $('rs-board')?.classList.toggle('hidden', !ranked.length);
-    $('rs-stop-card')?.classList.toggle('hidden', !(r.stop || []).length);
-    $('rs-cost-card')?.classList.toggle('hidden', !(r.needsCost || []).length);
-    $('rs-watch-card')?.classList.toggle('hidden', !(r.watch || []).length);
-    $('rs-honesty')?.classList.toggle('hidden', !(r.honesty || []).length);
-
-    renderRestockHero(r, s, ranked);
-    setRestockNotice(r.stockNote || '', false);
-
-    const list = $('rs-list');
-    if (list) list.innerHTML = sortedRestockLines(ranked).map(restockCard).join('');
-
-    const stop = $('rs-stop');
-    if (stop) stop.innerHTML = (r.stop || []).map(restockCard).join('');
-
-    const cost = $('rs-cost');
-    if (cost) cost.innerHTML = (r.needsCost || []).map(restockCard).join('');
-    setText('rs-cost-title', (r.needsCost || []).length === 1
-      ? 'One product sold with no record of what it cost'
-      : `${(r.needsCost || []).length} products sold with no record of what they cost`);
-
-    const watch = $('rs-watch');
-    if (watch) watch.innerHTML = (r.watch || []).map(restockCard).join('');
-
-    const honesty = $('rs-honesty');
-    if (honesty) honesty.innerHTML = (r.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
-
-    document.querySelectorAll('.rs-sort-btn').forEach(btn =>
-      btn.classList.toggle('active', btn.dataset.sort === restockSort));
-  }
-
-  function renderRestockHero(r, s, ranked) {
-    const idle = s.monthlyProfitOffTheShelf || 0;
-    const soldOut = s.soldOutLines || 0;
-
-    // The hero only claims idle money when the live listings were actually read. With eBay down
-    // the honest headline is what the proven lines earn, not a zero that reads like "nothing to do".
-    const stockKnown = r.stockStatus === 'read';
-    setText('rs-hero-figure', money(stockKnown ? idle : (s.provenMonthlyProfit || 0)));
-    setText('rs-hero-proven', money(s.provenMonthlyProfit || 0));
-    setText('rs-hero-lines', String(s.rankedLines || 0));
-    setText('rs-hero-cash', s.cashToRestockSoldOut ? money(s.cashToRestockSoldOut) : '—');
-
-    setText('rs-hero-label', stockKnown ? 'Sitting idle — proven lines with nothing listed' : 'Your proven lines earn, a month');
-
-    let sub;
-    if (!ranked.length && r.status === 'no_sales') sub = 'your sales appear here on their own once eBay is connected';
-    else if (!ranked.length) sub = 'nothing has sold twice yet, so nothing is ranked — the lists below say what is there';
-    else if (!stockKnown) sub = 'your live listings could not be read, so this board can\'t say which of these you have none of';
-    else if (soldOut) sub = `${soldOut} product${soldOut === 1 ? '' : 's'} you have sold before, and have none of right now`;
-    else sub = 'everything you have proved sells is listed — nothing is sitting idle';
-    setText('rs-hero-sub', sub);
-
-    if (s.topLineTitle && s.topLineShareOfProfitPercent >= 50 && ranked.length > 1)
-      setText('rs-board-title', `${Math.round(s.topLineShareOfProfitPercent)}% of this comes from one product — ${s.topLineTitle}`);
-    else
-      setText('rs-board-title', 'Ranked by what each one earns you a month');
-  }
-
-  // Sorting is a display choice, so it happens here rather than costing a round trip. The server's
-  // own order is money per month; the other two re-order the same ranked lines and never add one.
-  function sortedRestockLines(lines) {
-    const copy = lines.slice();
-    if (restockSort === 'cash') return copy.sort((a, b) => (b.annualReturnOnCashPercent ?? -1) - (a.annualReturnOnCashPercent ?? -1));
-    if (restockSort === 'unit') return copy.sort((a, b) => (b.averageProfitPerUnit ?? 0) - (a.averageProfitPerUnit ?? 0));
-    return copy.sort((a, b) => (b.profitPerMonth ?? 0) - (a.profitPerMonth ?? 0));
-  }
-
-  function restockCard(line) {
-    const badges = [];
-    if (line.soldOut && line.verdict === 'restock') badges.push('<span class="rs-badge rs-badge-out">None listed</span>');
-    else if (line.activeListings > 0) badges.push(`<span class="rs-badge rs-badge-live">${line.activeListings} listed</span>`);
-    if (line.verdict === 'stop') badges.push('<span class="rs-badge rs-badge-stop">Stop buying</span>');
-    if (line.verdict === 'needs_cost') badges.push('<span class="rs-badge rs-badge-cost">Needs a cost</span>');
-
-    const stats = [];
-    if (line.profitPerMonth != null) stats.push(['A month', moneyExact(line.profitPerMonth)]);
-    if (line.averageProfitPerUnit != null) stats.push(['Profit each', moneyExact(line.averageProfitPerUnit)]);
-    // Zero means "no rate can be measured", not "sells nothing" — one sale has no rate, and
-    // printing 1.0 a month beside "one sale is not a pattern" would contradict the card.
-    if (line.salesPerMonth > 0) stats.push(['Sells', `${line.salesPerMonth.toFixed(1)} a month`]);
-    if (line.averageUnitCost != null) stats.push(['You paid', moneyExact(line.averageUnitCost)]);
-    if (line.roiPercent != null) stats.push(['Return', `${Math.round(line.roiPercent)}%`]);
-    // Only ever shown when the seller recorded when they bought it — see RestockAnalyzer.
-    if (line.annualReturnOnCashPercent != null) stats.push(['Cash back', `${Math.round(line.annualReturnOnCashPercent).toLocaleString()}% a year`]);
-    if (line.medianDaysHeld != null) stats.push(['Held', `${line.medianDaysHeld} days`]);
-    stats.push(['Sold', `${line.unitsSold} in total`]);
-    stats.push(['Last one', line.daysSinceLastSale === 0 ? 'today' : `${line.daysSinceLastSale} days ago`]);
-    if (line.proceedsAwaitingCost > 0 && line.verdict === 'needs_cost') stats.push(['Proceeds', moneyExact(line.proceedsAwaitingCost)]);
-
-    const cautions = (line.cautions || []).map(c => `<li>${esc(c)}</li>`).join('');
-
-    // "Find one to buy" belongs only on a line the board is recommending. On the stop list it would
-    // offer to go and buy more of the thing the card is telling the seller to stop buying, and on a
-    // line with no cost recorded nothing here knows yet whether buying another is a good idea.
-    const hunt = line.verdict === 'restock' || line.verdict === 'watch';
-
-    return `
-      <article class="rs-card rs-card-${esc(line.verdict)}">
-        <div class="rs-card-head">
-          <div class="rs-card-title">
-            <h4>${esc(line.title)}</h4>
-            <div class="rs-badges">${badges.join('')}</div>
-          </div>
-          <div class="rs-card-actions">
-            ${hunt ? `<button class="btn btn-primary small rs-hunt" type="button" data-query="${esc(line.searchQuery)}">Find one to buy</button>` : ''}
-            <button class="btn btn-ghost small rs-copy" type="button" data-query="${esc(line.searchQuery)}">Copy search</button>
-          </div>
-        </div>
-        <p class="rs-headline">${esc(line.headline)}</p>
-        <div class="rs-stats">
-          ${stats.map(([label, value]) => `<div class="rs-stat"><span class="rs-stat-label">${esc(label)}</span><span class="rs-stat-value">${esc(value)}</span></div>`).join('')}
-        </div>
-        ${cautions ? `<ul class="rs-cautions">${cautions}</ul>` : ''}
-      </article>`;
   }
 
   // ── Price Position ────────────────────────────────────────────────────────
@@ -10901,6 +11307,35 @@
   let wnVideoBusy = false;
   let wnVideoLastSeen = '';   // the last item AI named, so the same lot isn't re-priced every frame
   let wnVideoFilled = '';     // exactly what this loop last put in the item box, so typing over it shows
+  let wnVideoCap = WN_WATCH_MAX_READS;   // reads this run may spend — the allowance, when there is one
+  let wnVideoSig = null;      // signature of the frame last SENT, so an unchanged picture isn't re-read
+  let wnVideoSkips = 0;       // consecutive frames skipped as unchanged, so a miss can't last forever
+
+  // ── The allowance this loop is spending out of ───────────────────────────────
+  // On the hosted build the owner's Anthropic key pays for everybody, so each account
+  // gets a handful of AI generations a day (AiQuota) — and this loop is the only
+  // control in the app that spends one every twenty seconds, unattended, until it is
+  // stopped. Left alone against a five-a-day allowance it burns the lot in a hundred
+  // seconds — including the generations the seller needed to WRITE the listing — and
+  // then asks for a sixth every twenty seconds for the next half hour, getting the
+  // same 429 each time. So the loop asks what is left before it opens the share
+  // picker, spends no more than that, and says the number out loud first.
+  //
+  // The desktop build answers `enforced: false` — the seller is spending their own key
+  // and there is nothing to ration — and the loop keeps its own WN_WATCH_MAX_READS cap.
+  async function wnVideoAllowance() {
+    try {
+      const res = await fetch('/api/ai-quota');
+      if (!res.ok) return null;              // an unreadable meter must not block the feature
+      const q = await res.json();
+      return q && q.enforced ? q : null;
+    } catch { return null; }
+  }
+
+  /// True when a refusal is the daily AI allowance rather than something the seller can retry.
+  function wnIsQuotaRefusal(body) {
+    return body?.failure?.kind === 'AiQuotaExhausted';
+  }
 
   function wnVideoStatus(text, kind) {
     const box = $('wn-video-status');
@@ -10917,6 +11352,19 @@
       wnVideoStatus("This browser can't share a tab — use Chrome or Edge, or press 📡 Read the show instead.", 'bad');
       return;
     }
+
+    // Asked BEFORE the share picker, not after: a seller who has nothing left today should be
+    // told so, not walked through choosing a tab for a loop that cannot read it.
+    const quota = await wnVideoAllowance();
+    const left  = quota ? Math.max(0, (quota.limit || 0) - (quota.used || 0)) : null;
+    if (quota && left === 0) {
+      wnVideoStatus(`No AI reads left today — this account gets ${quota.limit} a day and has used them all. ` +
+                    'They come back at 00:00 UTC. 📡 Read the show still works: it reads the page, ' +
+                    'which costs nothing.', 'bad');
+      return;
+    }
+    wnVideoCap = left === null ? WN_WATCH_MAX_READS : Math.min(left, WN_WATCH_MAX_READS);
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false });
@@ -10928,6 +11376,8 @@
     wnVideoReads = 0;
     wnVideoLastSeen = '';
     wnVideoFilled = '';
+    wnVideoSig = null;
+    wnVideoSkips = 0;
     const vid = $('wn-video-el');
     if (vid) { vid.srcObject = stream; try { await vid.play(); } catch { /* muted autoplay is fine */ } }
     // The seller can end the share from the browser's own bar; when they do, this stops.
@@ -10935,7 +11385,11 @@
       t.addEventListener('ended', () => wnStopVideoWatch('The tab share ended, so the video read stopped.')));
     const btn = $('wn-video-btn');
     if (btn) { btn.classList.add('active'); btn.textContent = '⏹ Stop reading the video'; }
-    wnVideoStatus(`Reading the video every ${Math.round(WN_WATCH_MS / 1000)}s — point the shared tab at the show.`, 'busy');
+    // The count is said up front because it is small and it is spent automatically: a seller who
+    // is told "reading every 20s" and not "you have four of these" finds out by running out.
+    wnVideoStatus(`Reading the video every ${Math.round(WN_WATCH_MS / 1000)}s — point the shared tab at the show.` +
+                  (left === null ? '' : ` ${wnVideoCap} AI read${wnVideoCap === 1 ? '' : 's'} left today, ` +
+                                         'and this spends one on each new thing it sees.'), 'busy');
     wnVideoTimer = setInterval(wnVideoTick, WN_WATCH_MS);
     wnVideoTick();   // now, not in twenty seconds — a toggle that does nothing for that long reads as broken
   }
@@ -10966,21 +11420,93 @@
     try { return canvas.toDataURL('image/jpeg', 0.7); } catch { return null; }
   }
 
+  // A coarse fingerprint of the frame: 16x16, grey, one byte a cell. Small enough that a host
+  // talking over a lot they are still holding reads as the same picture, coarse enough that the
+  // next thing held up in the same spot does not. Used only to decide whether a frame is worth
+  // spending a vision read on — nothing is ever priced off it.
+  function wnFrameSignature() {
+    const canvas = $('wn-video-canvas');
+    if (!canvas || !canvas.width) return null;
+    const n = 16;
+    const small = document.createElement('canvas');
+    small.width = small.height = n;
+    const sctx = small.getContext('2d', { willReadFrequently: true });
+    sctx.drawImage(canvas, 0, 0, n, n);
+    let data;
+    try { data = sctx.getImageData(0, 0, n, n).data; }
+    catch { return null; }   // a tainted canvas cannot be measured; read every frame instead
+    const sig = new Uint8Array(n * n);
+    for (let i = 0; i < sig.length; i++) {
+      const p = i * 4;
+      sig[i] = (data[p] * 77 + data[p + 1] * 151 + data[p + 2] * 28) >> 8;   // luma, integer
+    }
+    return sig;
+  }
+
+  /// Mean absolute difference between two fingerprints, 0–255. Zero is the same picture.
+  function wnFrameChange(a, b) {
+    if (!a || !b || a.length !== b.length) return 255;
+    let total = 0;
+    for (let i = 0; i < a.length; i++) total += Math.abs(a[i] - b[i]);
+    return total / a.length;
+  }
+
+  // Below this, the picture is the one already read and the AI would name the same lot twice.
+  // Deliberately low: the cost of reading an unchanged frame is one generation, and the cost of
+  // skipping a changed one is a lot going unpriced — so the doubt goes to reading.
+  const WN_FRAME_SAME = 6;
+
+  // …but never more than this many skips in a row. If the threshold is wrong for a particular
+  // show — a static camera on a table, a locked-off overhead — a read still lands within a minute
+  // rather than never.
+  const WN_FRAME_MAX_SKIPS = 2;
+
   async function wnVideoTick() {
     if (!wnVideoOn() || wnVideoBusy) return;
-    if (++wnVideoReads > WN_WATCH_MAX_READS) {
-      wnStopVideoWatch(`Stopped after ${WN_WATCH_MAX_READS} reads — it is not something to leave running ` +
-                       'all night. Press 🎥 to start again for the next lot.');
-      return;
-    }
     const dataUrl = wnCaptureFrame();
     if (!dataUrl) { wnVideoStatus('Waiting for the shared video to start…', 'busy'); return; }
+
+    // Has anything happened since the frame that was last read? On the hosted build the allowance
+    // is a handful a day, and spending one of them on the same lot the card is already answering
+    // is the difference between covering a show and covering ninety seconds of one.
+    const sig = wnFrameSignature();
+    if (sig && wnVideoSig && wnVideoSkips < WN_FRAME_MAX_SKIPS
+        && wnFrameChange(sig, wnVideoSig) < WN_FRAME_SAME) {
+      wnVideoSkips++;
+      return;   // nothing new on screen, so nothing to say and nothing to spend
+    }
+    wnVideoSkips = 0;
+
+    if (++wnVideoReads > wnVideoCap) {
+      wnStopVideoWatch(wnVideoCap < WN_WATCH_MAX_READS
+        ? `Stopped — that was the last of today's ${wnVideoCap} AI read` +
+          `${wnVideoCap === 1 ? '' : 's'}. They come back at 00:00 UTC, and 📡 Read the show ` +
+          'still works in the meantime.'
+        : `Stopped after ${wnVideoCap} reads — it is not something to leave running ` +
+          'all night. Press 🎥 to start again for the next lot.');
+      return;
+    }
 
     wnVideoBusy = true;
     try {
       const { res, body } = await safePost('/api/whatsnot/watch', { imageBase64: dataUrl, mediaType: 'image/jpeg' });
       if (!wnVideoOn()) return;   // stopped while the read was out
-      if (!res.ok) { wnVideoStatus(body.error || "That video read didn't happen.", 'bad'); return; }
+      if (!res.ok) {
+        // Out of allowance is not a read that failed — it is a loop with nothing left to spend,
+        // and one that keeps its timer would ask again every twenty seconds for the rest of the
+        // hour and be refused every time. Stop, and hand over the server's own sentence.
+        if (wnIsQuotaRefusal(body)) {
+          wnStopVideoWatch(`${body.error}. ${body.failure?.whatToDo || ''} ` +
+                           '📡 Read the show reads the page instead, and costs nothing.');
+          return;
+        }
+        wnVideoStatus(body.error || "That video read didn't happen.", 'bad');
+        return;
+      }
+
+      // Only a frame that actually reached the model becomes the one to compare against — a read
+      // that failed must not make the next identical frame look like old news.
+      wnVideoSig = sig;
 
       const seen = (body.seen || '').trim();
       if (!seen) { wnVideoStatus('Nothing nameable on screen right now — still watching.', 'busy'); return; }
@@ -16269,15 +16795,22 @@
 
     // Categories and titles are split apart so neither action claims credit for the other's
     // findings — the counts on the two cards have to mean what they say.
-    // "Not loaded" is a gap in what eBay's bulk call returns, not a fault in the account. Saying
-    // so plainly beats reporting every listing as broken, which is what confident-and-wrong looks
-    // like from the seller's side.
+    // The scan now fetches each listing's category per-item, so this card runs on real data. A
+    // handful can still come back unread when the fetch hits its overall timeout or the per-scan
+    // cap — those are counted honestly ("still to read"), not dressed up as a fault in the account.
     const cat = (data.listings || []).filter(l =>
       (l.issues || []).some(i => i.code.indexOf('category_') === 0 && i.code !== 'category_unknown'));
     const unknown = data.categoryUnknown || 0;
 
     setText('copilot-categories-count',
-      cat.length ? cat.length + ' listings' : (unknown ? 'needs a deeper scan' : 'all placed well'));
+      cat.length ? cat.length + ' listings' : (unknown ? unknown + ' still to read' : 'all placed well'));
+
+    // Shown under the list when a few categories timed out or fell past the cap this pass, so the
+    // number of flagged listings above is understood as "of what could be read", not the whole store.
+    const unknownNote = unknown
+      ? '<p class="copilot-more">' + unknown + ' listing' + (unknown === 1 ? '' : 's') +
+        ' still couldn\'t be read this pass — re-scan to finish.</p>'
+      : '';
 
     $('copilot-categories-result').innerHTML = cat.length
       ? '<ul class="copilot-list">' + cat.slice(0, 25).map(l =>
@@ -16285,11 +16818,12 @@
           '<span class="copilot-issue">' + esc(
             (l.issues.find(i => i.code.indexOf('category_') === 0) || {}).summary || '') + '</span></li>')
           .join('') + '</ul>' +
-        (cat.length > 25 ? '<p class="copilot-more">…and ' + (cat.length - 25) + ' more</p>' : '')
+        (cat.length > 25 ? '<p class="copilot-more">…and ' + (cat.length - 25) + ' more</p>' : '') +
+        unknownNote
       : unknown
-        ? '<p class="copilot-clean">eBay\'s bulk listing call does not return the category, so ' +
-          unknown + ' listings could not be judged from this scan. Checking them needs a per-item ' +
-          'lookup — not run automatically, because it is one eBay call per listing.</p>'
+        ? '<p class="copilot-clean">Categories are loaded during the scan now, and ' + unknown +
+          ' listing' + (unknown === 1 ? '' : 's') + ' still couldn\'t be read this pass — re-scan ' +
+          'to finish. What did read sits in a real category.</p>'
         : '<p class="copilot-clean">Every listing sits in a real category.</p>';
 
     const seo = (data.listings || []).filter(l =>
@@ -17220,8 +17754,8 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
     results?.classList.remove('hidden');
     if (summary) summary.innerHTML = seller
-      ? 'Fetching fresh sold prices from eBay, then pulling this seller\'s listings and pricing each against them. The live lookup is the slow part — up to three minutes.'
-      : 'Fetching fresh sold prices from eBay, then searching live listings and pricing each against them. The live lookup is the slow part — up to three minutes.';
+      ? 'Getting fresh sold prices from eBay, then pulling this seller\'s listings and pricing each against them…'
+      : 'Getting fresh sold prices from eBay, then searching live listings and pricing each against them…';
     if (list) list.innerHTML = '';
     if (stats) stats.innerHTML = '';
     OPP_FILTERS.forEach(([id]) => { const el = $(id); if (el) el.checked = false; });
@@ -17232,7 +17766,10 @@
     // exactly the volume that got this machine tarpitted. That one scrape lands in the comps
     // database before the server prices anything, so every result below is judged against it.
     // Seller-only searches have no product term to scrape, so they skip straight to the search.
-    if (q) await runLiveLookup(q, 'opp');
+    if (q) await runLiveLookup(q, 'opp', { keepOpen: true });
+
+    // The wait is the search-and-price pass, not the few-second lookup above — sweep the bar for it.
+    if (q) scanWorking('opp', 'Searching eBay and pricing every result…');
 
     try {
       const params = new URLSearchParams({ listingType });
@@ -17247,8 +17784,10 @@
       const res = await guardedFetch(`/api/opportunities/search?${params.toString()}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Search failed');
+      scanWorkingDone('opp');
       renderOpportunityResults(data);
     } catch (err) {
+      scanWorkingDone('opp');
       if (summary) summary.textContent = `Search failed: ${errorText(err)}`;
       if (list) list.innerHTML = '';
     } finally {
@@ -19807,20 +20346,21 @@
   }
 
   // ── Live eBay lookup ───────────────────────────────────────────────────────
-  // Scrapes eBay for one exact model before pricing it, and files what comes back into the comps
-  // database — so the corpus deepens on the models actually being worked on, and the next lookup
-  // of the same one is instant. The daily background crawl this replaced was retired on
-  // 2026-08-07 because its volume, not its speed, was what drew eBay's blocks.
+  // Asks the OpenWebNinja API for one exact model's recent eBay sold prices before pricing it, and
+  // files what comes back into the comps database — so the corpus deepens on the models actually
+  // being worked on, and the next lookup of the same one is instant. Since 2026-08-14 this is a
+  // real-time API, not the browser scraper it replaced: it answers in a few SECONDS, not the minute
+  // or three the scraper took, and there is no bot check for it to fail.
   //
-  // It runs in exactly TWO places, by the seller's instruction (2026-08-11): an opportunity
-  // search, and pricing something they are about to list. Both spend real money on the answer.
-  // Nothing else may trigger it — a scrape nobody asked for is the volume that gets us blocked.
+  // It runs in exactly TWO places, by the seller's instruction: an opportunity search, and pricing
+  // something they are about to list. Both spend a paid API call on the answer, so neither is
+  // triggered by typing or navigating.
   //
-  // It can take up to three minutes, which the seller has accepted ON THE CONDITION that the app
-  // says so plainly while they wait. That is what the bar and its captions below are for; they
-  // are not decoration, they are the terms of the deal.
+  // The bar below therefore covers a few-second wait, not a multi-minute one. The long wait on those
+  // screens is the SCAN that runs after — searching eBay and pricing every result — which has no
+  // percentage to report and is shown by sweeping this same bar (see scanWorking).
 
-  const LIVE_BUDGET_MS = 195000;   // just past the server's own 180s kill
+  const LIVE_BUDGET_MS = 65000;   // just past the server's own 60s kill for a live lookup
 
   // The same bar is drawn in the Market Research panel, the New Listing comps strip and the
   // Opportunity Finder. They differ only by id prefix, so the driver takes the prefix rather than
@@ -19845,9 +20385,9 @@
     const box = liveEl(prefix, '');
     if (!box) return;
     const st = liveState(prefix);
-    box.classList.remove('hidden', 'done', 'blocked');
+    box.classList.remove('hidden', 'done', 'blocked', 'working');
     st.target = st.shown = 0;
-    setLiveText(prefix, '-note', 'This is a live lookup on eBay, not a cached number — it usually takes about a minute and can take up to three.');
+    setLiveText(prefix, '-note', 'Live sold prices straight from eBay, not a cached number — usually only a few seconds.');
     setLiveText(prefix, '-stage', 'Asking eBay for recent sold prices…');
     const started = Date.now();
 
@@ -19871,15 +20411,14 @@
       const bar = liveEl(prefix, '-bar');
       if (bar) bar.style.width = `${Math.max(st.shown, st.target).toFixed(1)}%`;
 
-      // Past this the seller deserves an actual sentence, not just a moving bar. A long wait with
-      // no explanation is where people conclude the app is broken and reach for the close button —
-      // and the scrape is genuinely still running at this point. Spread across the full three
-      // minutes so the last stretch, which is the one that feels broken, is the best explained.
-      if (secs === 30 || secs === 75 || secs === 130) {
+      // A live lookup is usually a few seconds, so any wait past that is unusual and deserves a
+      // sentence rather than a silent bar — a wait people did not expect is where they conclude the
+      // app is stuck. The server gives up at a minute, so the notes are pitched to that, not to the
+      // scraper's old three.
+      if (secs === 8 || secs === 25) {
         setLiveText(prefix, '-note',
-          secs >= 130 ? 'Still going. It will give up at three minutes and price this from stored comps instead — you will not be left waiting past that.'
-          : secs >= 75 ? 'eBay is slower than usual today. Still worth waiting: this writes fresh sold prices into your database for next time.'
-          : 'Still waiting on eBay. A fresh lookup is usually about a minute, and up to three when eBay is slow.');
+          secs >= 25 ? 'Almost done. If eBay does not answer shortly this prices from stored comps instead — you will not be left waiting.'
+          : 'eBay is a little slower than usual today — still only a few more seconds.');
       }
     }, 250);
   }
@@ -19900,7 +20439,7 @@
     if (Number(run.rowsFound) > 0) setLiveText(prefix, '-note', `${run.rowsFound} sold listings so far…`);
   }
 
-  function finishLiveBar(prefix, run) {
+  function finishLiveBar(prefix, run, opts) {
     stopLiveBar(prefix);
     const box = liveEl(prefix, '');
     const bar = liveEl(prefix, '-bar');
@@ -19917,14 +20456,41 @@
     setLiveText(prefix, '-note', run.message ||
       (run.outcome === 'ok' ? `${run.rowsFound} sold listings fetched, ${run.rowsNew} new to your database.` : ''));
 
-    // Cleared after a beat on the happy path so the panel isn't permanently half progress bar.
-    if (run.outcome === 'ok') setTimeout(() => box.classList.add('hidden'), 2500);
+    // Cleared after a beat on the happy path so the panel isn't permanently half progress bar —
+    // UNLESS the caller is about to repurpose this same bar for the scan that follows (keepOpen),
+    // in which case hiding it here would blank the sweep a moment after it starts.
+    if (run.outcome === 'ok' && !opts?.keepOpen) setTimeout(() => box.classList.add('hidden'), 2500);
+  }
+
+  // The eBay scan that follows a live lookup — searching and pricing up to 120 listings, minutes on
+  // a broad term — has no percentage to report, so it sweeps this same bar rather than sitting under
+  // a motionless status line. A repurpose of the lookup's own bar, not a second widget to keep in
+  // sync. Safe to call for a prefix whose bar isn't on the page (returns quietly).
+  function scanWorking(prefix, stage, note) {
+    const box = liveEl(prefix, '');
+    if (!box) return;
+    stopLiveBar(prefix);
+    box.classList.remove('hidden', 'done', 'blocked');
+    box.classList.add('working');
+    const bar = liveEl(prefix, '-bar');
+    if (bar) bar.style.width = '';          // hand width back to the sweep animation
+    setLiveText(prefix, '-stage', stage || 'Searching eBay and pricing every result…');
+    setLiveText(prefix, '-elapsed', '');
+    setLiveText(prefix, '-note', note != null ? note
+      : 'Every result is priced against real sold data — the more results, the longer this takes.');
+  }
+
+  function scanWorkingDone(prefix) {
+    const box = liveEl(prefix, '');
+    if (!box) return;
+    box.classList.remove('working', 'done', 'blocked');
+    box.classList.add('hidden');
   }
 
   // Runs the live lookup to completion and hands back the finished run. Never throws: every
   // failure mode ends as a run with an outcome, because the caller's next step — read the comps —
   // is identical whether eBay answered, blocked, or was never reachable.
-  async function runLiveLookup(q, prefix) {
+  async function runLiveLookup(q, prefix, opts) {
     const panel = prefix || 'mr';
     const deadlineAt = Date.now() + LIVE_BUDGET_MS;
     try {
@@ -19938,12 +20504,12 @@
         run = await fetch('/api/comps/live/status?id=' + encodeURIComponent(run.id)).then(r => r.json());
         paintLive(panel, run);
       }
-      finishLiveBar(panel, run);
+      finishLiveBar(panel, run, opts);
       return run;
     } catch (err) {
       const run = { finished: true, outcome: 'error', blockedByEbay: false, rowsFound: 0, rowsNew: 0,
                     stage: 'Using stored comps', message: 'Live eBay lookup unavailable — pricing from stored comps.' };
-      finishLiveBar(panel, run);
+      finishLiveBar(panel, run, opts);
       return run;
     }
   }
@@ -21224,10 +21790,12 @@
     const next = Array.isArray(plan?.steps) ? plan.steps.find(s => s.id === plan.nextStepId) : null;
     const page = activeWorkspacePage();
 
-    // Never on the Dashboard — the checklist itself is on that page, and a second copy of the same
-    // five steps pinned over the top of it is noise. Never after the panel was dismissed, and never
-    // once the five are done: this is scaffolding, and scaffolding that stays is a defect.
-    const show = !!plan && !plan.dismissed && !plan.firstFlipComplete && !coachHiddenForSession
+    // The persistent coach rail was REMOVED at the seller's request (2026-08): pinned to the bottom
+    // of every screen, it covered the publish button on the listing editor. The getting-started
+    // checklist on the Dashboard still handles onboarding. The original visibility conditions are
+    // kept below as live code (nothing that reads them changes); the leading `false &&` is the one
+    // thing that now turns the rail off, everywhere.
+    const show = false && !!plan && !plan.dismissed && !plan.firstFlipComplete && !coachHiddenForSession
       && page !== 'dashboard' && !!(coachWin || next);
 
     rail.classList.toggle('hidden', !show);

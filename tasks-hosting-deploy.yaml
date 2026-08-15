@@ -1,0 +1,128 @@
+# Deploy the hosted build to the live server, then test it end to end.
+#
+# THE SERVER EXISTS AND IS READY (provisioned 2026-08-13):
+#   host      app.inglisting.com  ->  178.156.154.41   (DNS A record already live)
+#   box       Hetzner cpx11, 2 vCPU x86, 2 GB RAM, 40 GB, Ubuntu 24.04, Ashburn VA
+#   access    ssh -i ~/.ssh/ing_hetzner root@178.156.154.41     (key auth only, no password)
+#   installed Docker 29.7.2 + compose 5.4.0, Caddy 2.11.4, ufw allowing only 22/80/443
+#   api       Hetzner token + all other credentials are in web-credentials.json (never commit it)
+#
+# THE AI KEY, BY THE OWNER'S INSTRUCTION (2026-08-13): the hosted trial runs on the OWNER'S OWN
+# Anthropic key, server-side, capped at 5 generations per user. Users are NOT asked for a key.
+# That cap is the only thing standing between a public URL and an unbounded bill, so it is not
+# optional and it is not a client-side check.
+#
+# GUARDRAILS:
+#   * The key lives ONLY in the server's environment (a root-owned .env file, mode 600, or a
+#     systemd/compose env var). Never in the image, never in the repo, never in a log line.
+#   * Nothing is exposed publicly until authentication is confirmed working — all 189 endpoints
+#     were open by default before hosted-02-auth.
+#   * The desktop build must keep working. dotnet build + dotnet test green before finishing.
+#   * Never publish a real eBay listing from a test.
+#   * Branch feat/hosted. Never push.
+
+tasks:
+  - prompt: |
+      Deploy the HOSTED build to app.inglisting.com and get it serving over HTTPS.
+
+      Build the image for linux-x64 from the Dockerfile produced by hosted-06-deployment, copy it
+      to the server (docker save | ssh docker load, or build on the box — 2 GB RAM, so prefer
+      building locally and shipping the image), and run it with docker compose bound to
+      127.0.0.1:8080 ONLY — never 0.0.0.0, because ufw is not the last line of defence and the
+      app must be reachable only through the proxy.
+
+      Configure Caddy as the public front door: a Caddyfile for app.inglisting.com reverse-proxying
+      to 127.0.0.1:8080. Caddy obtains and renews the Let's Encrypt certificate by itself; do not
+      install certbot and do not write a cron job.
+
+      Secrets go in /etc/ing-listing-engine/.env, root-owned, chmod 600, referenced by compose:
+      the Anthropic key, the token-encryption key, and the database path. Read the actual values
+      from web-credentials.json on the local machine — do not invent placeholders and do not echo
+      them to stdout.
+
+      Acceptance, all verified with real requests and quoted in your summary:
+        * https://app.inglisting.com serves the app with a valid certificate (curl -I shows 200
+          and no TLS warning)
+        * http:// redirects to https://
+        * an unauthenticated request to an API endpoint is refused (401 or a redirect to login)
+        * `docker compose ps` shows the container healthy after a reboot of the server
+    session: "deploy-01-live"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 6
+    # No depends_on: the batch resolver only links tasks inside its own file, and this
+    # one follows a task queued earlier. Priority does the sequencing instead — the
+    # Dockerfile task is priority 7, this is 6 — and the prompt above tells the runner
+    # to build FROM that Dockerfile, so it cannot silently start without it.
+
+  - prompt: |
+      Test the live deployment end to end at https://app.inglisting.com, as a real user would.
+
+      Use Playwright (installed globally — import it by file:/// path, see
+      project_autolister_verification_gotchas). Drive a real browser against the LIVE site, not
+      localhost. Take screenshots of each step into a folder and reference them in your summary.
+
+      Cover, and report the actual observed result for each:
+        1. Sign-up: a new account can be created, and lands signed in.
+        2. Session: signing out then back in works; a wrong password is refused.
+        3. Isolation: create a second account, confirm it cannot see the first account's data.
+           This is the single most important test — the app was single-user until last week.
+        4. AI quota: generate a listing 5 times on one account, confirm the 6th is refused with a
+           message a human can understand, and confirm a DIFFERENT account still has its own 5.
+        5. Unauthenticated access: hit several API endpoints with no session and confirm each is
+           refused. Include at least one that returns money or settings data.
+        6. Secrets: confirm no page, script bundle or API response contains the Anthropic key,
+           the eBay client secret, or anything that looks like a token. Grep the served HTML/JS.
+
+      If any of these fail, FIX the cause and re-test rather than reporting it as a known issue —
+      except #6, where you must stop immediately, take the site down (docker compose down), and
+      report, because a leaked key is worse than an offline site.
+
+      Acceptance: every one of the six has a stated pass/fail with evidence. dotnet test still green.
+    session: "deploy-02-e2e-test"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 5
+    depends_on: ["deploy-01-live"]
+
+  - prompt: |
+      Harden and make the deployment survivable, then write the runbook.
+
+      1. Automatic restart: the compose service must come back after a reboot and after a crash
+         (restart: unless-stopped, and verify by actually rebooting the server).
+      2. Backups: a nightly cron on the server that dumps the app database to /var/backups and
+         keeps 7 days. Verify by running it once and listing the output.
+      3. Log rotation: container logs capped so 40 GB of disk cannot be filled by log spam
+         (compose logging options, max-size and max-file).
+      4. A /health endpoint that returns 200 without authentication and without touching secrets,
+         so uptime monitoring works.
+      5. HOSTING.md updated with: how to deploy a new version, how to read logs, how to restore
+         the database, where the .env lives, and what to do if the certificate fails to renew.
+
+      Acceptance: reboot the server and show that https://app.inglisting.com answers 200 again
+      without any manual step. Quote the commands and their real output.
+    session: "deploy-03-harden"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 4
+    depends_on: ["deploy-02-e2e-test"]
+
+  - prompt: |
+      Put the hosted app in front of visitors on both websites.
+
+      1. On ingmining.com/ing-listing-engine (page id 4848, deploy with
+         ingmining-com-website/deploy-page.py — it finds the page by slug and updates in place),
+         add a primary "Try it free in your browser" button to https://app.inglisting.com,
+         alongside the existing Windows download. Say plainly what the web version is: free trial,
+         5 AI listings per account, no install, no card. Do not claim feature parity with the
+         desktop app unless you have verified it.
+      2. On inglisting.com, add the same call to action to the homepage. That homepage is a STATIC
+         index.html served before WordPress — edit
+         ingmining-com-website/docs/inglisting-com-index.html and deploy it by SFTP, and remember
+         the deploy-whatsapp-to-inglisting.py precedent: the local copy in docs/ is the source of
+         truth, because re-uploading it is what silently reverted a previous edit.
+      3. Purge the IONOS page cache afterwards or the change is invisible.
+
+      Acceptance: both live URLs fetched with curl show the new link; screenshots at 1440px and
+      390px show it does not break either layout.
+    session: "deploy-04-website-links"
+    working_dir: "C:/Users/nsquires/source/repos/ingmining-com-website"
+    priority: 3
+    depends_on: ["deploy-02-e2e-test"]

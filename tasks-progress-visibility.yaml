@@ -1,0 +1,54 @@
+# Make progress visible. Owner, 2026-08-14, pointing at the AI Listing screen:
+# "This needs to be way larger so people can see the progress".
+#
+# MEASURED, so the fix is not guesswork:
+#
+#   1. WHAT HE CIRCLED IS NOT A PROGRESS BAR AT ALL.
+#      index.html:826  <span id="nl-ai-msg">Analyzing with AI...</span>
+#      app.js  ~22766  sets it to "Researching the product and finding photos online…"
+#      It is a bare line of text next to a small spinner, in the NARROW left column under the
+#      photo drop zone. There is no bar, no percentage, no elapsed time — nothing that changes.
+#      During a long AI analysis it is indistinguishable from a hang.
+#
+#   2. THE REAL BAR EXISTS AND IS TINY, AND IS ON A DIFFERENT JOB.
+#      index.html:757  <div id="nl-live" class="mr-live hidden">  with -stage, -elapsed, -bar
+#      style.css:6839  .mr-live-track { height: 6px; }
+#      Six pixels, in the same narrow column, and it is driven only by the live COMPS lookup —
+#      not by the AI analysis the seller is actually waiting on here.
+#
+#   Related and already queued: ui-01-scan-progress covers the eBay Scanner, where the same bar
+#   is attached to a phase that now finishes in a second while the 8-minute phase has none. Do
+#   not duplicate that work; this task is about the AI Listing screen and the bar's SIZE.
+
+tasks:
+  - prompt: |
+      Make the AI Listing progress obvious at a glance.
+
+      1. SIZE. The bar track is 6px tall (style.css ~6839, .mr-live-track). That is a hairline on
+         a 1440px screen and invisible on a laptop at arm's length. Make the whole component
+         substantially bigger — a track around 12-14px, larger stage text, more padding — and let
+         it span the full width available rather than being trapped in the narrow photo column.
+         Judge it by looking: take a screenshot at 1440px and one at 390px and say whether a
+         person glancing at the screen can tell how far along it is.
+
+      2. USE IT FOR THE AI ANALYSIS. Right now the AI phase writes to #nl-ai-msg, a bare span with
+         a spinner, while the proper bar (#nl-live) sits unused unless a comps lookup runs. Drive
+         the real component from the AI analysis too, with the stages that actually happen —
+         reading the photo, researching the product, finding photos, filling fields — so the text
+         CHANGES as it goes. A stage line that never changes is the same as no stage line.
+
+      3. HONESTY, same rule as the scanner task: no timer-driven creep to 90% and park. If a phase
+         cannot report real progress, show the elapsed seconds and a stage name and let the bar
+         sit where it is — a truthful stalled bar with a ticking counter reads as working; a
+         dishonest one that fills and waits reads as broken the moment it stops.
+
+      4. While you are there, check the other three panels using .mr-live ('es', 'opp', 'mr') look
+         right at the new size, since they share the class. If one of them needs the small variant,
+         make that a modifier rather than reverting the size.
+
+      Acceptance: screenshots at 1440px and 390px showing the bar mid-analysis, with the stage
+      text at two different stages to prove it advances. State the observed height in pixels.
+      dotnet test green.
+    session: "ui-02-progress-visibility"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 19

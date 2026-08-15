@@ -4,6 +4,32 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Create an account | ING Listing Engine™</title>
+
+  <!-- See signin.html for why these exist and why the image is a JPG rather than WebP.
+       This page differs in one deliberate way: it is INDEXABLE. Sign-in is a dead end for a
+       stranger and duplicates the marketing site, but "create a free account" is a legitimate
+       entry point worth being findable, and it is where the download links and the two websites
+       are pointing people. -->
+  <meta name="robots" content="index, follow" />
+  <meta name="description" content="Create a free ING Listing Engine account. AI writes your eBay listing from a photo or a link and prices it against real eBay sold records. Free beta — email and password, no card." />
+  <link rel="canonical" href="https://app.inglisting.com/signup.html" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="ING Listing Engine" />
+  <meta property="og:url" content="https://app.inglisting.com/signup.html" />
+  <meta property="og:title" content="Try ING Listing Engine free — AI writes and prices your eBay listing" />
+  <meta property="og:description" content="Paste a product link or a photo. About ten seconds later the listing is filled in — title, 20+ item specifics, description, photos — and priced against real eBay sold records. Free beta, no card." />
+  <meta property="og:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="ING Listing Engine filling an eBay listing automatically from a product photo." />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Try ING Listing Engine free — AI writes and prices your eBay listing" />
+  <meta name="twitter:description" content="Paste a link or a photo. AI fills the listing and prices it against real eBay sold records. Free beta, no card." />
+  <meta name="twitter:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+
+  <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css?v=130" />
   <script>
@@ -38,11 +64,80 @@
     .auth-alt { margin:18px 0 0; font-size:var(--fs-sm); color:var(--text-muted); text-align:center; }
     .auth-alt a { color:var(--gold-dark); font-weight:var(--fw-semibold); }
   </style>
+  <!-- Branded auth layout. The stock .auth-card was a naked white box with no logo, no colour
+       and no explanation of what someone was signing into. This scopes a two-panel design over
+       it: a teal brand rail that says what the product is, beside the form. Inline so it ships
+       with the page and needs no second file; the form ids and the script below are untouched. -->
+  <style>
+    .auth-page{min-height:100vh;margin:0;display:flex;align-items:stretch;
+      background:#eef2f2;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+    .auth-shell{display:grid;grid-template-columns:1.05fr .95fr;max-width:1000px;width:100%;
+      margin:auto;background:#fff;border-radius:20px;overflow:hidden;
+      box-shadow:0 30px 80px rgba(8,37,41,.18)}
+    /* left: the brand rail */
+    .auth-brand{background:linear-gradient(155deg,#0c3438 0%,#082529 60%,#04171a 100%);
+      color:#fff;padding:48px 44px;display:flex;flex-direction:column;justify-content:center;position:relative}
+    .auth-brand::after{content:"";position:absolute;inset:0;pointer-events:none;
+      background:radial-gradient(520px 300px at 90% 12%,rgba(199,154,54,.20),transparent 70%)}
+    .auth-logo{display:flex;align-items:center;gap:12px;margin-bottom:28px;position:relative;z-index:1}
+    .auth-logo svg{width:40px;height:40px;border-radius:9px}
+    .auth-logo b{font-size:20px;font-weight:800;letter-spacing:.2px}
+    .auth-logo b span{color:#e0bb63}
+    .auth-brand h2{font-family:Georgia,serif;font-size:29px;line-height:1.2;margin:0 0 14px;color:#fff;position:relative;z-index:1}
+    .auth-brand h2 em{font-style:normal;color:#e0bb63}
+    .auth-brand p.tag{color:#cfe0e2;font-size:16px;line-height:1.6;margin:0 0 26px;position:relative;z-index:1}
+    .auth-points{list-style:none;padding:0;margin:0;position:relative;z-index:1}
+    .auth-points li{display:flex;gap:12px;align-items:flex-start;color:#e7efee;font-size:14.5px;
+      line-height:1.5;margin-bottom:14px}
+    .auth-points li b{color:#fff;font-weight:700}
+    .auth-points .ck{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:rgba(199,154,54,.18);
+      color:#e0bb63;display:flex;align-items:center;justify-content:center;font-size:13px;margin-top:1px}
+    .auth-free{margin-top:28px;font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+      color:#9db6b8;position:relative;z-index:1}
+    /* right: the form card — override the stock bare box */
+    .auth-page .auth-card{max-width:none;margin:0;box-shadow:none;border-radius:0;
+      background:#fff;padding:52px 48px;display:flex;flex-direction:column;justify-content:center}
+    .auth-card h1{font-size:27px;margin:0 0 4px;color:#0c3438}
+    .auth-card .auth-sub{color:#5c6b68;font-size:14px;margin:0 0 26px}
+    .auth-field span{color:#0c3438;font-weight:600;font-size:13px}
+    .auth-field input{border:1px solid #cfdcde !important;background:#fbfdfd !important}
+    .auth-field input:focus{border-color:#c79a36 !important;box-shadow:0 0 0 3px rgba(199,154,54,.18) !important}
+    .auth-submit{background:#c79a36 !important;color:#241703 !important;font-weight:800 !important;
+      border:none !important;border-radius:9px !important;box-shadow:0 8px 20px rgba(199,154,54,.28)}
+    .auth-submit:hover{background:#b7892d !important}
+    .auth-alt a{color:#946d1f;font-weight:700}
+    @media(max-width:760px){
+      .auth-shell{grid-template-columns:1fr;border-radius:0;min-height:100vh}
+      .auth-brand{padding:40px 30px 34px}
+      .auth-brand h2{font-size:24px}.auth-points{display:none}
+      .auth-page .auth-card{padding:34px 28px}
+    }
+  </style>
 </head>
 <body class="auth-page">
+  <div class="auth-shell">
+    <aside class="auth-brand">
+      <div class="auth-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="6" fill="#082529"/>
+          <path d="M5 10 H19 L27 16 L19 22 H5 Z" fill="#c79a36"/>
+          <circle cx="8.5" cy="16" r="2" fill="#082529"/>
+        </svg>
+        <b>ING Listing Engine<span>™</span></b>
+      </div>
+      <h2>AI writes your eBay listing &mdash; <em>and prices it.</em></h2>
+      <p class="tag">Paste a product link or a photo. About ten seconds later the listing is filled in &mdash; title, 20+ item specifics, description, photos &mdash; then priced against real eBay sold records.</p>
+      <ul class="auth-points">
+        <li><span class="ck">&#10003;</span><span><b>AI fills the whole listing</b> from a photo or a link</span></li>
+        <li><span class="ck">&#10003;</span><span><b>Real sold-comp pricing</b> &mdash; what buyers actually paid, not asking prices</span></li>
+        <li><span class="ck">&#10003;</span><span><b>Publishes through eBay's official API</b>, with your own account</span></li>
+      </ul>
+      <p class="auth-free">Free public beta &middot; no card &middot; by ING Mining LLC</p>
+    </aside>
+
   <main class="auth-card">
     <h1>Create an account</h1>
-    <p class="auth-sub">ING Listing Engine™</p>
+    <p class="auth-sub">Start free &mdash; email and password, no card.</p>
 
     <p id="auth-error" class="auth-msg" role="alert"></p>
 
@@ -81,6 +176,7 @@
 
     <p class="auth-alt">Already have an account? <a href="/signin.html">Sign in</a></p>
   </main>
+  </div>
 
   <script>
     (function () {
@@ -129,8 +225,16 @@
           });
           var body = await response.json().catch(function () { return {}; });
 
-          // Signing up signs you in, so there is nothing to do afterwards but start using it.
-          if (response.ok) { location.replace('/'); return; }
+          // Signing up no longer signs you in, and the extra step is the whole point: the server
+          // answers a brand-new address and an address that already has an account with exactly
+          // the same 200, so that this form cannot be used to find out which addresses are
+          // registered. Landing on the dashboard in one case and here in the other would give
+          // that away again from the client side. Whoever really just signed up types the
+          // password they chose ten seconds ago; whoever was fishing gets a sign-in form.
+          if (response.ok) {
+            location.replace((body.next || '/signin.html') + '?created=1');
+            return;
+          }
           show(body.error || 'Could not create the account. Please try again.');
         } catch (e) {
           show('Could not reach the server: ' + e.message);

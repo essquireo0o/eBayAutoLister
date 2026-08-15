@@ -10,7 +10,12 @@ using Message = Anthropic.SDK.Messaging.Message;
 
 namespace ING_eBay_AutoLister.Services;
 
-public class ClaudeService(CredentialsStore creds, ActionLog log)
+/// <param name="quota">
+/// What every call here has to get past first. On the hosted trial the owner's own Anthropic key
+/// pays for everybody, so an unmetered path to this class is an unbounded bill; the gate is a no-op
+/// in the desktop build, where the seller is spending their own key. See <see cref="AiQuotaGate"/>.
+/// </param>
+public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate quota)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -206,6 +211,12 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         if (string.IsNullOrWhiteSpace(key))
             return AiKeyCheck.Describe(AiKeyCheck.Missing, DateTimeOffset.UtcNow);
 
+        // A real request to Anthropic, so it cannot be the one unmetered road to the owner's key.
+        // It does not take a generation — one Haiku token is orders of magnitude cheaper than a
+        // listing, and a diagnostic that costs a tenth of somebody's day is one they stop pressing
+        // — but an account with nothing left gets no calls at all. See AiQuotaGate.
+        quota.EnsureNotExhausted("Claude key check");
+
         try
         {
             var client = new AnthropicClient(key);
@@ -241,6 +252,15 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
     /// for, and told them only <c>529</c>.
     /// </para>
     /// <para>
+    /// Being the one road out to Anthropic is also what makes it the place the hosted build's
+    /// quota is enforced. <paramref name="metered"/> defaults to true, so an AI call added here
+    /// next year costs its user a generation by virtue of having been written rather than by
+    /// somebody remembering to say so. The exception is the incidental Haiku work the app starts
+    /// on its own — the spelling check after an empty search — which nobody asked for and which
+    /// costs a fraction of a cent: those are refused to an account with nothing left, but they do
+    /// not take a generation from one that has some. See <see cref="AiQuotaGate"/>.
+    /// </para>
+    /// <para>
     /// The parse runs inside the retried block deliberately. A truncated or prose-wrapped reply is a
     /// transient fault of the same kind as a network blip: the request was fine, this particular
     /// sample was not, and a fresh sample almost always parses. Leaving the parse outside would mean
@@ -251,8 +271,16 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         Func<MessageParameters> buildRequest,
         Func<MessageResponse, T> parse,
         string operation,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool metered = true)
     {
+        // Before anything else, and outside the retry block on purpose. Outside, because the
+        // retries are the app's own decision to spend rather than another generation the user
+        // asked for — one reservation covers all three attempts. Before, because the reservation
+        // has to happen ahead of the request that costs the money, not after it has been paid for.
+        if (metered) quota.Reserve(operation);
+        else quota.EnsureNotExhausted(operation);
+
         return ResilientCall.RunAsync(async () =>
         {
             var client = BuildClient();
@@ -1006,7 +1034,12 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
             },
             response => TextOf(response, "").Trim(),
             "search spelling check",
-            ct);
+            ct,
+            // Not a generation. The seller did not ask for this — it fires by itself when a search
+            // comes back empty — and charging a day's allowance for a typo would be the app fining
+            // people for typing. Still refused once an account is out, so it is never a way round
+            // the limit. See AiQuotaGate.EnsureNotExhausted.
+            metered: false);
 
         if (string.IsNullOrWhiteSpace(answer)) return null;
         if (answer.Equals("OK", StringComparison.OrdinalIgnoreCase)) return null;
@@ -1067,6 +1100,156 @@ public class ClaudeService(CredentialsStore creds, ActionLog log)
         modified.ImageUrls = req.ImageUrls?.Count > 0 ? req.ImageUrls : modified.ImageUrls;
 
         return modified;
+    }
+
+    // ── Reality-check on an estimate deal ────────────────────────────────────
+
+    /// <summary>
+    /// Reads a deal the board could only estimate and says whether its price is credible for THIS
+    /// exact item.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The eBay-scanner board prices rows with a mechanical comp-matcher that cannot tell a component
+    /// from a whole unit. A "Bitmain Antminer S19 XP Hashboard" carries every token the matcher keys
+    /// on, so it gets valued off whole-S19-XP-miner sold comps and lands at the TOP of the board on a
+    /// fantasy ROI — and always as an ESTIMATE row, because so few comps actually matched. A language
+    /// model reads the title the way a reseller does: "hashboard" is a part, "10-pack" is a lot, "for
+    /// Antminer" is an accessory. That is the whole job here — not a new price, a sanity check on the
+    /// old one.
+    /// </para>
+    /// <para>
+    /// The image is optional on purpose. Title-only is the core, because the words usually name the
+    /// kind of thing on their own; a photo, when one is handed in, only sharpens the call. Low effort
+    /// and a small ceiling, like <see cref="IdentifyItemAsync"/> — this runs on the top rows after a
+    /// scan and per row on demand, so it has to come back before the seller has moved on.
+    /// </para>
+    /// </remarks>
+    public Task<DealRealityCheck> CheckDealAsync(DealCheckInput input, CancellationToken ct = default)
+    {
+        var contentBlocks = new List<ContentBase>();
+
+        if (!string.IsNullOrWhiteSpace(input.ImageBase64))
+        {
+            contentBlocks.Add(new ImageContent
+            {
+                Source = new ImageSource
+                {
+                    MediaType = input.ImageMimeType ?? "image/jpeg",
+                    Data      = input.ImageBase64
+                }
+            });
+        }
+
+        var estimate = input.EstimatedResale is { } resale
+            ? $"${resale:0.##}"
+            : "none (the scanner could not settle on one)";
+
+        contentBlocks.Add(new TextContent
+        {
+            Text = $$"""
+                You are a veteran eBay reseller and hardware/product analyst. An automated deal-scanner
+                found a listing and priced it by matching it against recent SOLD listings — but its
+                matcher is mechanical and cannot tell a COMPONENT from a whole unit, a SINGLE item from
+                a multi-pack, or an ACCESSORY from the product it fits. It flagged this row as an
+                ESTIMATE because very few sold comps matched, and those thin estimates are exactly where
+                it goes wrong: a "Bitmain Antminer S19 XP Hashboard" gets priced off whole-S19-XP-miner
+                sales and shows a fantasy profit, when a hashboard alone resells for a small fraction of
+                a whole miner. A single vitamin bottle matched to a 12-pack is the same failure.
+
+                Judge whether the automated estimate is credible for THIS EXACT item.
+
+                LISTING TITLE: "{{input.Title}}"
+                CATEGORY: {{(string.IsNullOrWhiteSpace(input.Category) ? "unspecified" : input.Category)}}
+                BUY PRICE (delivered): ${{input.BuyPrice:0.##}}
+                AUTOMATED RESALE ESTIMATE: {{estimate}}
+                SOLD COMPS BEHIND THAT ESTIMATE: {{input.CompCount}} (few — treat the estimate as thin evidence)
+
+                {{(!string.IsNullOrWhiteSpace(input.ImageBase64)
+                    ? "A photo of the item is attached above — use it to confirm what this actually is."
+                    : "No photo is attached — judge from the title and category, which usually name the kind of thing on their own.")}}
+
+                Use your own knowledge of what this item is and what it actually resells for on eBay.
+                Decide whether whole-unit sold comps plausibly describe THIS listing, and give a
+                realistic resale range for THIS exact item.
+
+                Return ONLY a valid JSON object — no markdown, no code fences, no commentary:
+
+                {
+                  "whatItIs": "short phrase naming the item and, if it is not a whole unit, saying so — e.g. 'a single S19 XP hashboard (a mining component, not a whole miner)'",
+                  "itemType": "one of exactly: whole_unit, component_or_part, lot_or_bundle, accessory, consumable, other",
+                  "compsMatchItem": true or false — do whole-unit sold comps plausibly match THIS listing?,
+                  "realisticResaleLow": number — realistic eBay resale for THIS exact item in USD (low end),
+                  "realisticResaleHigh": number — realistic eBay resale for THIS exact item in USD (high end),
+                  "verdict": "one of exactly: real_deal, false_positive, uncertain",
+                  "reason": "one sentence, e.g. 'The estimate used whole-miner comps; a hashboard alone resells for ~$150-300.'"
+                }
+
+                Be decisive but honest: 'false_positive' when the comps clearly describe a different
+                thing than this listing, 'real_deal' when they plausibly match and the estimate looks
+                sound, 'uncertain' only when you genuinely cannot tell.
+                """
+        });
+
+        var messages = new List<Message>
+        {
+            new() { Role = RoleType.User, Content = contentBlocks }
+        };
+
+        return CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-fable-5",
+                MaxTokens = 1024,
+                Messages  = messages,
+                // A sanity check on a name, not a listing to write — the seller is looking at the row
+                // it belongs to, so it has to answer before they scroll past.
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
+            },
+            response => ParseDealRealityCheck(TextOf(response, "{}")),
+            "AI deal reality check",
+            ct);
+    }
+
+    private static readonly HashSet<string> DealItemTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "whole_unit", "component_or_part", "lot_or_bundle", "accessory", "consumable", "other"
+    };
+
+    private static readonly HashSet<string> DealVerdicts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "real_deal", "false_positive", "uncertain"
+    };
+
+    /// <summary>
+    /// Turns one Claude reply into a <see cref="DealRealityCheck"/>, pinning the two fields the UI
+    /// gates on — <c>itemType</c> and <c>verdict</c> — to values it recognises. Throws on anything it
+    /// cannot read as a JSON object, so a garbled reply is a caught failure rather than a blank badge.
+    /// </summary>
+    public static DealRealityCheck ParseDealRealityCheck(string text)
+    {
+        var json  = ExtractJsonObject(text);
+        var check = JsonSerializer.Deserialize<DealRealityCheck>(json, JsonOptions)
+                    ?? throw new JsonException("AI deal-check response could not be parsed.");
+
+        check.WhatItIs = (check.WhatItIs ?? "").Trim();
+        check.Reason   = (check.Reason ?? "").Trim();
+
+        // An unrecognised type or verdict is read the cautious way rather than trusted: "other" says
+        // nothing false, and "uncertain" never flags a row the model didn't mean to reject.
+        var itemType   = (check.ItemType ?? "").Trim();
+        check.ItemType = DealItemTypes.Contains(itemType) ? itemType.ToLowerInvariant() : "other";
+
+        var verdict   = (check.Verdict ?? "").Trim();
+        check.Verdict = DealVerdicts.Contains(verdict) ? verdict.ToLowerInvariant() : "uncertain";
+
+        // A resale range that is negative or inverted is a model slip, not a price — square it up so
+        // the row never draws "$300–$150" or a negative floor.
+        if (check.RealisticResaleLow < 0) check.RealisticResaleLow = 0;
+        if (check.RealisticResaleHigh < check.RealisticResaleLow)
+            check.RealisticResaleHigh = check.RealisticResaleLow;
+
+        return check;
     }
 
     // ── Deserialization helpers ──────────────────────────────────────────────

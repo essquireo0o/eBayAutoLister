@@ -31,31 +31,45 @@ public sealed class CostBasisEntry
 /// SKU as a secondary key.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Both keys are carried because neither alone is reliable: listings created on the eBay website
 /// often have no SKU, and a listing that is ended and relisted gets a new listing ID while keeping
 /// its SKU. Writing one row and being able to find it either way means a relist doesn't silently
 /// lose the cost the seller already entered.
+/// </para>
+/// <para>
+/// Both keys are also a seller's own. Two people can hold the same SKU — anyone selling the same
+/// model uses the same manufacturer's part number — so every row carries its owner and every query
+/// filters on the user asking. See <see cref="UserScope"/>. Without it, one seller's break-even
+/// floor would be computed from what a stranger paid.
+/// </para>
 /// </remarks>
 public sealed class CostBasisStore
 {
     private readonly string _databasePath;
+    private readonly UserScope _scope;
 
-    public CostBasisStore(ListingDatabase database) : this(database.DatabasePath) { }
+    public CostBasisStore(ListingDatabase database, UserScope? scope = null) : this(database.DatabasePath, scope) { }
 
-    public CostBasisStore(string databasePath)
+    public CostBasisStore(string databasePath, UserScope? scope = null)
     {
         _databasePath = databasePath;
+        _scope        = scope ?? UserScope.Desktop;
         Initialize();
     }
 
     public List<CostBasisEntry> GetAll()
     {
+        if (_scope.OwnerId is not { } owner) return [];
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at
-            FROM listing_cost_basis;
+            FROM listing_cost_basis
+            WHERE user_id = @user_id;
             """;
+        command.Parameters.AddWithValue("@user_id", owner);
 
         var entries = new List<CostBasisEntry>();
         using var reader = command.ExecuteReader();
@@ -98,6 +112,8 @@ public sealed class CostBasisStore
             throw new InvalidOperationException("A listing ID or SKU is required to record a cost basis.");
         if (entry.UnitCost < 0 || entry.InboundShipping < 0)
             throw new InvalidOperationException("Cost basis cannot be negative.");
+        // Nobody signed in on a hosted deployment: nothing is written. See UserScope.
+        if (_scope.OwnerId is not { } owner) return entry;
 
         entry.UpdatedUtc = DateTimeOffset.UtcNow;
 
@@ -112,9 +128,11 @@ public sealed class CostBasisStore
             delete.Transaction = transaction;
             delete.CommandText = """
                 DELETE FROM listing_cost_basis
-                WHERE (@listing_id <> '' AND listing_id = @listing_id)
-                   OR (@sku <> '' AND sku = @sku);
+                WHERE user_id = @user_id
+                  AND ((@listing_id <> '' AND listing_id = @listing_id)
+                    OR (@sku <> '' AND sku = @sku));
                 """;
+            delete.Parameters.AddWithValue("@user_id", owner);
             delete.Parameters.AddWithValue("@listing_id", entry.ListingId ?? "");
             delete.Parameters.AddWithValue("@sku", entry.Sku ?? "");
             delete.ExecuteNonQuery();
@@ -125,10 +143,11 @@ public sealed class CostBasisStore
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO listing_cost_basis
-                    (listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at)
+                    (user_id, listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at)
                 VALUES
-                    (@listing_id, @sku, @unit_cost, @inbound_shipping, @note, @acquired_at, @updated_at);
+                    (@user_id, @listing_id, @sku, @unit_cost, @inbound_shipping, @note, @acquired_at, @updated_at);
                 """;
+            insert.Parameters.AddWithValue("@user_id", owner);
             insert.Parameters.AddWithValue("@listing_id", entry.ListingId ?? "");
             insert.Parameters.AddWithValue("@sku", entry.Sku ?? "");
             insert.Parameters.AddWithValue("@unit_cost", entry.UnitCost);
@@ -145,6 +164,8 @@ public sealed class CostBasisStore
 
     public int SaveMany(IEnumerable<CostBasisEntry> entries)
     {
+        if (_scope.OwnerId is null) return 0;
+
         var saved = 0;
         foreach (var entry in entries) { Save(entry); saved++; }
         return saved;
@@ -153,14 +174,17 @@ public sealed class CostBasisStore
     public bool Delete(string? listingId, string? sku)
     {
         if (string.IsNullOrWhiteSpace(listingId) && string.IsNullOrWhiteSpace(sku)) return false;
+        if (_scope.OwnerId is not { } owner) return false;
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
             DELETE FROM listing_cost_basis
-            WHERE (@listing_id <> '' AND listing_id = @listing_id)
-               OR (@sku <> '' AND sku = @sku);
+            WHERE user_id = @user_id
+              AND ((@listing_id <> '' AND listing_id = @listing_id)
+                OR (@sku <> '' AND sku = @sku));
             """;
+        command.Parameters.AddWithValue("@user_id", owner);
         command.Parameters.AddWithValue("@listing_id", listingId ?? "");
         command.Parameters.AddWithValue("@sku", sku ?? "");
         return command.ExecuteNonQuery() > 0;
@@ -188,6 +212,8 @@ public sealed class CostBasisStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS listing_cost_basis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- Whose cost this is. 0 on a desktop database, where there is only the one seller.
+                user_id INTEGER NOT NULL DEFAULT 0,
                 listing_id TEXT NOT NULL DEFAULT '',
                 sku TEXT NOT NULL DEFAULT '',
                 unit_cost NUMERIC NOT NULL DEFAULT 0,
@@ -196,14 +222,27 @@ public sealed class CostBasisStore
                 acquired_at TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT ''
             );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_cost_basis_listing_id
-                ON listing_cost_basis(listing_id) WHERE listing_id <> '';
-
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_cost_basis_sku
-                ON listing_cost_basis(sku) WHERE sku <> '';
             """;
         command.ExecuteNonQuery();
+
+        // The owner column, before the indexes that use it — on an old database it does not exist yet.
+        UserOwnedTable.Migrate(connection, "listing_cost_basis");
+
+        using var indexes = connection.CreateCommand();
+        indexes.CommandText = """
+            -- One cost per listing and per SKU, PER SELLER. A shared unique index would let the
+            -- first seller to record a cost for a part number take that key for everybody, and the
+            -- second would get a constraint failure instead of their own number.
+            DROP INDEX IF EXISTS ux_cost_basis_listing_id;
+            DROP INDEX IF EXISTS ux_cost_basis_sku;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_cost_basis_user_listing_id
+                ON listing_cost_basis(user_id, listing_id) WHERE listing_id <> '';
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_cost_basis_user_sku
+                ON listing_cost_basis(user_id, sku) WHERE sku <> '';
+            """;
+        indexes.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

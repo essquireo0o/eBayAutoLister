@@ -1,0 +1,70 @@
+# What may be copied into the build context, and — more to the point — what may not.
+#
+# A .dockerignore is a secrets boundary, not a size optimisation. The build stage does
+# `COPY ["ING eBay AutoLister/", ...]`, so anything the context carries is written into an image
+# layer; a file deleted in a later layer is still sitting in the one before it, readable by
+# anybody who pulls the image. The publish itself already drops credentials.json (see the Content
+# Remove rules in the csproj) — that is the second lock on the same door, not this one's excuse.
+#
+# So: exclude everything, allow the one project back in, and then take the dangerous things out
+# again explicitly. The re-exclusions below come after the allow on purpose — last match wins, so
+# nothing under the project directory can arrive by way of the "!" line above it.
+
+*
+
+!ING eBay AutoLister/
+
+
+# ── Secrets. Never in the context, never in a layer, never in the repository ─────────────────
+# credentials.json is the live secrets of whichever machine is building: the eBay Client Secret,
+# the seller's OAuth refresh token, the Anthropic key, the Stripe secret and webhook secret. It
+# sits in the project folder and in dist/ after an installer build. The hosted build never reads
+# it — every user's credentials are an encrypted row in the database — so there is nothing to
+# lose by refusing it and a whole set of keys to lose by shipping it.
+**/credentials.json
+**/secrets.json
+**/*.env
+**/.env*
+web-credentials.json
+
+# Saved browser sessions: real login cookies for the seller's own eBay and Facebook accounts.
+# A copy of one of these is the account.
+**/facebook-session.json*
+**/terapeak-session.json*
+**/terapeak-profile/
+
+# ── Databases ─────────────────────────────────────────────────────────────────────────────────
+# Every *.db, as asked, plus the two sidecar files SQLite writes beside one — a -wal holds
+# committed transactions that are not in the .db yet, so shipping it is shipping the data.
+# A hosted deployment's database is a volume (HOSTING.md), never a thing baked into the image:
+# an image with a database in it starts every deployment holding whoever's data was on the
+# build machine, and overwrites the real one at the mount point.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+
+# ── Build output and runtime data ─────────────────────────────────────────────────────────────
+# obj/ especially: a stale project.assets.json from a Windows desktop restore is exactly the file
+# the Dockerfile's own restore is trying to produce, and letting one in makes the build fail in a
+# way that reads as a dependency problem. dist/ is the desktop installer staging folder, which is
+# how a full unredacted credentials.json used to reach a publish.
+**/bin/
+**/obj/
+**/dist/
+**/App_Data/
+**/photos/
+**/generated-photos/
+**/wwwroot/url_*.png
+**/wwwroot/rembg_*.png
+**/*.log
+
+# ── Noise ─────────────────────────────────────────────────────────────────────────────────────
+**/.git/
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.suo
+**/.DS_Store
+**/Thumbs.db

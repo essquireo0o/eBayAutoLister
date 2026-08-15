@@ -22,6 +22,18 @@ if ([string]::IsNullOrWhiteSpace($anthropic)) { throw "No AnthropicApiKey in $ap
 $compsUrl = [string]$web.hosted_comps_api.endpoint
 $compsKey = [string]$web.hosted_comps_api.api_key
 
+# The live sold-comps API. This is the key that makes live lookups work on the hosted app at all —
+# the browser scraper it replaced needed Chrome and a person to clear eBay's bot check, so a server
+# could never run one. It is PAID, FINITE and does not refill (50,000 calls, shared with
+# BitData/owninja_collect.py), which is why LiveComps__DailyLookupLimit below is not optional.
+# web-credentials.json is the source of truth; the desktop credentials.json is the fallback so a
+# machine that only has it there still deploys.
+$owninjaKey = [string]$web.openwebninja.api_key
+if ([string]::IsNullOrWhiteSpace($owninjaKey)) { $owninjaKey = [string]$app.OpenWebNinjaApiKey }
+if ([string]::IsNullOrWhiteSpace($owninjaKey)) {
+    throw "No openwebninja.api_key in $webCredPath and no OpenWebNinjaApiKey in $appCredPath — the hosted app would have no live sold-comps lookups."
+}
+
 # Sign-up notifications go to the owner. Sent over Gmail SMTP with the app password already stored
 # for this account. Gmail requires From to be the authenticated user, so the notice comes FROM the
 # gmail login and goes TO the owner's real address; the new user's address rides in Reply-To.
@@ -114,6 +126,18 @@ $lines = @(
     "Credentials__MarketCompsApiUrl=$compsUrl",
     "Credentials__MarketCompsApiKey=$compsKey",
     "",
+    "# Live sold-comps lookups. 50,000 PAID calls that do not refill, shared with the bulk",
+    "# collector, so the per-account daily cap is the thing standing between a loop in somebody's",
+    "# browser and the whole budget. Set LiveComps__Enabled=false to turn live lookups off",
+    "# entirely and fall back to stored comps.",
+    "Credentials__OpenWebNinjaApiKey=$owninjaKey",
+    "LiveComps__Enabled=true",
+    # Raised from 10 to 100 (2026-08-14): the Opportunity board now auto-verifies its top 3 rows
+    # with live comps on every scan and offers a per-row 'get real sold price' button, so 10/day was
+    # ~3 searches before the cap. 100/account still leaves the 50,000 pool years of headroom at
+    # today's user count; revisit if signups climb. See the reprice-row endpoint + board auto-verify.
+    "LiveComps__DailyLookupLimit=100",
+    "",
     "# The eBay APPLICATION this deployment signs sellers in as. Shared, because a seller signing",
     "# up has no eBay developer account. Their OAuth tokens are NOT here and never will be — those",
     "# go in each user's encrypted row. See EBAY-SETUP.md.",
@@ -144,6 +168,7 @@ $tmp = Join-Path $env:TEMP "ing-listing-engine.env"
 "keys reused from web-credentials.json: $reused"
 "anthropic key length: $($anthropic.Length)"
 "comps url set: $(-not [string]::IsNullOrWhiteSpace($compsUrl)); comps key set: $(-not [string]::IsNullOrWhiteSpace($compsKey))"
+"live comps key length: $($owninjaKey.Length); per-account daily cap: 10"
 "encryption key length: $($encKey.Length); admin key length: $($adminKey.Length)"
 "ebay client id length: $($ebayClientId.Length); secret length: $($ebayClientSecret.Length); dev id length: $($ebayDevId.Length)"
 "ebay runame length: $($ebayRuName.Length) - $ebayRuNameOwner"

@@ -298,8 +298,8 @@ public class WhatsNotStockAssetTests
     [Fact]
     public void The_asset_versions_were_bumped()
     {
-        Assert.Contains("app.js?v=145", Html, StringComparison.Ordinal);
-        Assert.Contains("style.css?v=128", Html, StringComparison.Ordinal);
+        AssetStamp.AtLeast(Html, "app.js?v=", 145);
+        AssetStamp.AtLeast(Html, "style.css?v=", 128);
     }
 
     private static int CountOf(string haystack, string needle)

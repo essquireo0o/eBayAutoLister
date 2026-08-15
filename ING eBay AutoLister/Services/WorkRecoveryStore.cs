@@ -75,6 +75,14 @@ public sealed class WorkSnapshot
 /// repeated saves of one draft overwrite rather than accumulate, and <see cref="Prune"/> drops
 /// published records once they are past any use.
 /// </para>
+/// <para>
+/// Owned per seller, like every other table that holds somebody's work — see <see cref="UserScope"/>.
+/// This one was the last without an owner column, and it was the one that mattered most once
+/// <see cref="LatestResumable"/> existed: the recovery list needed a click before it put anything on
+/// screen, but auto-restore does not, so an unscoped table would have opened the AI Listing screen on
+/// a stranger's half-written listing — their title, their price, their photos — with nobody asking
+/// for it.
+/// </para>
 /// </remarks>
 public sealed class WorkRecoveryStore
 {
@@ -98,13 +106,15 @@ public sealed class WorkRecoveryStore
     public static readonly TimeSpan DraftRetention = TimeSpan.FromDays(14);
 
     private readonly string _databasePath;
+    private readonly UserScope _scope;
     private readonly object _writeLock = new();
 
-    public WorkRecoveryStore(ListingDatabase database) : this(database.DatabasePath) { }
+    public WorkRecoveryStore(ListingDatabase database, UserScope? scope = null) : this(database.DatabasePath, scope) { }
 
-    public WorkRecoveryStore(string databasePath)
+    public WorkRecoveryStore(string databasePath, UserScope? scope = null)
     {
         _databasePath = databasePath;
+        _scope        = scope ?? UserScope.Desktop;
         Initialize();
     }
 
@@ -263,6 +273,8 @@ public sealed class WorkRecoveryStore
         if (string.IsNullOrWhiteSpace(snapshot.Key)) return WorkSaveOutcome.Empty;
         if (System.Text.Encoding.UTF8.GetByteCount(snapshot.Payload ?? "") > MaxPayloadBytes) return WorkSaveOutcome.TooLarge;
         if (!IsWorthRecovering(snapshot)) return WorkSaveOutcome.Empty;
+        // Nobody signed in on a hosted deployment: nothing is written. See UserScope.
+        if (_scope.OwnerId is not { } owner) return WorkSaveOutcome.Empty;
 
         var now = DateTimeOffset.UtcNow;
         snapshot.UpdatedUtc = now;
@@ -274,17 +286,19 @@ public sealed class WorkRecoveryStore
             using var command = connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO work_in_progress
-                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                    (user_id, key, label, stage, payload, fingerprint, listing_id, last_error,
                      attempt_count, created_at, updated_at)
                 VALUES
-                    (@key, @label, @stage, @payload, @fingerprint, @listing_id, @last_error,
+                    (@user_id, @key, @label, @stage, @payload, @fingerprint, @listing_id, @last_error,
                      @attempt_count, @created_at, @updated_at)
                 ON CONFLICT(key) DO UPDATE SET
                     label = @label,
                     payload = @payload,
                     updated_at = @updated_at
-                WHERE work_in_progress.stage <> 'published';
+                WHERE work_in_progress.stage <> 'published'
+                  AND work_in_progress.user_id = @user_id;
                 """;
+            command.Parameters.AddWithValue("@user_id", owner);
             command.Parameters.AddWithValue("@key", snapshot.Key);
             command.Parameters.AddWithValue("@label", Clip(snapshot.Label, 200));
             command.Parameters.AddWithValue("@stage", string.IsNullOrWhiteSpace(snapshot.Stage) ? WorkStage.Editing : snapshot.Stage);
@@ -299,8 +313,9 @@ public sealed class WorkRecoveryStore
         }
 
         // Nothing changed means the conflict update was filtered out: the key belongs to the publish
-        // journal now. Reported rather than swallowed, so the client can start a fresh draft instead
-        // of autosaving into a row that will refuse it for the rest of the session.
+        // journal now, or — impossible in practice, since keys are random per browser — to somebody
+        // else. Reported rather than swallowed, so the client can start a fresh draft instead of
+        // autosaving into a row that will refuse it for the rest of the session.
         if (written == 0) return WorkSaveOutcome.PublishJournal;
 
         Prune();
@@ -310,10 +325,13 @@ public sealed class WorkRecoveryStore
     public WorkSnapshot? Get(string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
+        if (_scope.OwnerId is not { } owner) return null;
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = Select + " WHERE key = @key;";
+        command.CommandText = Select + " WHERE key = @key AND user_id = @user_id;";
         command.Parameters.AddWithValue("@key", key);
+        command.Parameters.AddWithValue("@user_id", owner);
         using var reader = command.ExecuteReader();
         return reader.Read() ? Read(reader) : null;
     }
@@ -337,17 +355,19 @@ public sealed class WorkRecoveryStore
     public List<WorkSnapshot> Recoverable(int limit = 10)
     {
         var wanted = Math.Clamp(limit, 1, MaxRecoverableRows);
+        if (_scope.OwnerId is not { } owner) return [];
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         // Fetched up to the table's own cap rather than to `wanted`, so drafts dropped by the
         // worth-recovering filter do not leave the banner short of rows it could have shown.
         command.CommandText = Select + """
-             WHERE stage <> 'published'
+             WHERE stage <> 'published' AND user_id = @user_id
              ORDER BY updated_at DESC
              LIMIT @limit;
             """;
         command.Parameters.AddWithValue("@limit", MaxRecoverableRows);
+        command.Parameters.AddWithValue("@user_id", owner);
 
         var rows = new List<WorkSnapshot>();
         using var reader = command.ExecuteReader();
@@ -361,15 +381,100 @@ public sealed class WorkRecoveryStore
         return rows;
     }
 
+    /// <summary>
+    /// The one draft the AI Listing screen puts back on screen when it opens onto an empty form, or
+    /// null when there is nothing to resume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Autosave already kept every field of an unfinished listing. Getting it back was the half that
+    /// was missing: the seller had to notice a <em>Recover</em> button, open it, and pick a row. A
+    /// safety net nobody knows to reach for catches nobody — the work was saved and lost anyway.
+    /// </para>
+    /// <para>
+    /// Deliberately narrower than <see cref="Recoverable"/> on three counts, and each one is the
+    /// difference between a helpful restore and a harmful one:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>Editing only.</b> A <c>publishing</c> or <c>failed</c> row is a listing that may be
+    /// live on eBay right now, and it has its own urgent dashboard banner saying so. Quietly opening
+    /// one in the editor invites the seller to press Publish on an item that already sold — the exact
+    /// double-listing this app's publish guard exists to prevent. Those keep the banner and the
+    /// deliberate click.</item>
+    /// <item><b>Something to show.</b> A publish is journalled even when its draft never reached the
+    /// store, so some rows carry an outcome and no listing. Restoring one of those means clearing the
+    /// screen and putting nothing back.</item>
+    /// <item><b>The newest one.</b> Not a list. The screen holds one listing, and "carry on where I
+    /// left off" has exactly one answer.</item>
+    /// </list>
+    /// <para>
+    /// The row keeps its key, and the caller adopts it — that is what makes opening the screen twice
+    /// show the same draft rather than a second copy of it, and what stops a restored draft being
+    /// offered back again next launch as a row of its own.
+    /// </para>
+    /// </remarks>
+    public WorkSnapshot? LatestResumable()
+    {
+        if (_scope.OwnerId is not { } owner) return null;
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = Select + """
+             WHERE stage = 'editing' AND user_id = @user_id
+             ORDER BY updated_at DESC
+             LIMIT @limit;
+            """;
+        command.Parameters.AddWithValue("@limit", MaxRecoverableRows);
+        command.Parameters.AddWithValue("@user_id", owner);
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var row = Read(reader);
+            if (!IsWorthRecovering(row)) continue;
+            if (!HasRestorableForm(row.Payload)) continue;
+            return row;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Whether this payload is a listing the form can actually be filled in from.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <c>hasRestorableContent</c> in app.js. Stricter than
+    /// <see cref="IsWorthRecovering(WorkSnapshot)"/>, which lets a bare label through: a row named
+    /// but never filled in is worth offering in a list the seller chose to open, and is not worth
+    /// clearing the screen for on its own.
+    /// </remarks>
+    private static bool HasRestorableForm(string? payload)
+    {
+        var text = (payload ?? "").Trim();
+        if (text.Length < 2) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.EnumerateObject().Any();
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     public bool Discard(string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return false;
+        if (_scope.OwnerId is not { } owner) return false;
+
         lock (_writeLock)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM work_in_progress WHERE key = @key;";
+            command.CommandText = "DELETE FROM work_in_progress WHERE key = @key AND user_id = @user_id;";
             command.Parameters.AddWithValue("@key", key);
+            command.Parameters.AddWithValue("@user_id", owner);
             return command.ExecuteNonQuery() > 0;
         }
     }
@@ -392,11 +497,14 @@ public sealed class WorkRecoveryStore
     /// </remarks>
     public int DiscardAll()
     {
+        if (_scope.OwnerId is not { } owner) return 0;
+
         lock (_writeLock)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM work_in_progress WHERE stage <> 'published';";
+            command.CommandText = "DELETE FROM work_in_progress WHERE stage <> 'published' AND user_id = @user_id;";
+            command.Parameters.AddWithValue("@user_id", owner);
             return command.ExecuteNonQuery();
         }
     }
@@ -425,6 +533,7 @@ public sealed class WorkRecoveryStore
     public void MarkPublishing(string key, string fingerprint, string? label = null)
     {
         if (string.IsNullOrWhiteSpace(key)) return;
+        if (_scope.OwnerId is not { } owner) return;
 
         lock (_writeLock)
         {
@@ -432,10 +541,10 @@ public sealed class WorkRecoveryStore
             using var command = connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO work_in_progress
-                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                    (user_id, key, label, stage, payload, fingerprint, listing_id, last_error,
                      attempt_count, created_at, updated_at)
                 VALUES
-                    (@key, @label, 'publishing', '', @fingerprint, '', '', 1, @updated_at, @updated_at)
+                    (@user_id, @key, @label, 'publishing', '', @fingerprint, '', '', 1, @updated_at, @updated_at)
                 ON CONFLICT(key) DO UPDATE SET
                     stage = 'publishing',
                     fingerprint = @fingerprint,
@@ -444,8 +553,10 @@ public sealed class WorkRecoveryStore
                     label = CASE WHEN work_in_progress.label = '' THEN @label ELSE work_in_progress.label END,
                     attempt_count = work_in_progress.attempt_count + 1,
                     last_error = '',
-                    updated_at = @updated_at;
+                    updated_at = @updated_at
+                WHERE work_in_progress.user_id = @user_id;
                 """;
+            command.Parameters.AddWithValue("@user_id", owner);
             command.Parameters.AddWithValue("@key", key);
             command.Parameters.AddWithValue("@label", Clip(label, 200));
             command.Parameters.AddWithValue("@fingerprint", fingerprint ?? "");
@@ -462,6 +573,7 @@ public sealed class WorkRecoveryStore
     public void MarkFailed(string key, string error, string? label = null)
     {
         if (string.IsNullOrWhiteSpace(key)) return;
+        if (_scope.OwnerId is not { } owner) return;
 
         lock (_writeLock)
         {
@@ -469,16 +581,18 @@ public sealed class WorkRecoveryStore
             using var command = connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO work_in_progress
-                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                    (user_id, key, label, stage, payload, fingerprint, listing_id, last_error,
                      attempt_count, created_at, updated_at)
                 VALUES
-                    (@key, @label, 'failed', '', '', '', @error, 1, @updated_at, @updated_at)
+                    (@user_id, @key, @label, 'failed', '', '', '', @error, 1, @updated_at, @updated_at)
                 ON CONFLICT(key) DO UPDATE SET
                     stage = 'failed',
                     label = CASE WHEN work_in_progress.label = '' THEN @label ELSE work_in_progress.label END,
                     last_error = @error,
-                    updated_at = @updated_at;
+                    updated_at = @updated_at
+                WHERE work_in_progress.user_id = @user_id;
                 """;
+            command.Parameters.AddWithValue("@user_id", owner);
             command.Parameters.AddWithValue("@key", key);
             command.Parameters.AddWithValue("@label", Clip(label, 200));
             command.Parameters.AddWithValue("@error", Clip(error, 600));
@@ -499,6 +613,7 @@ public sealed class WorkRecoveryStore
     public void RecordPublished(string? key, string fingerprint, string listingId)
     {
         if (string.IsNullOrWhiteSpace(fingerprint)) return;
+        if (_scope.OwnerId is not { } owner) return;
 
         lock (_writeLock)
         {
@@ -511,26 +626,34 @@ public sealed class WorkRecoveryStore
                     UPDATE work_in_progress
                     SET stage = 'published', listing_id = @listing_id, fingerprint = @fingerprint,
                         last_error = '', updated_at = @updated_at
-                    WHERE key = @key;
+                    WHERE key = @key AND user_id = @user_id;
                     """;
                 update.Parameters.AddWithValue("@key", key!);
+                update.Parameters.AddWithValue("@user_id", owner);
                 update.Parameters.AddWithValue("@listing_id", listingId ?? "");
                 update.Parameters.AddWithValue("@fingerprint", fingerprint);
                 update.Parameters.AddWithValue("@updated_at", DateTimeOffset.UtcNow.ToString("O"));
                 if (update.ExecuteNonQuery() > 0) return;
             }
 
+            // The owner is in the fallback key, not just the column. Two sellers publishing the same
+            // item — same title, category, price — produce the same fingerprint, and a key without
+            // the owner in it would make the second publish collide with the first seller's journal
+            // row instead of writing its own. The DO UPDATE would then be filtered out by the owner
+            // check and the second seller would silently have no duplicate brake at all.
             using var insert = connection.CreateCommand();
             insert.CommandText = """
                 INSERT INTO work_in_progress
-                    (key, label, stage, payload, fingerprint, listing_id, last_error,
+                    (user_id, key, label, stage, payload, fingerprint, listing_id, last_error,
                      attempt_count, created_at, updated_at)
                 VALUES
-                    (@key, '', 'published', '', @fingerprint, @listing_id, '', 1, @now, @now)
+                    (@user_id, @key, '', 'published', '', @fingerprint, @listing_id, '', 1, @now, @now)
                 ON CONFLICT(key) DO UPDATE SET
-                    stage = 'published', listing_id = @listing_id, updated_at = @now;
+                    stage = 'published', listing_id = @listing_id, updated_at = @now
+                WHERE work_in_progress.user_id = @user_id;
                 """;
-            insert.Parameters.AddWithValue("@key", string.IsNullOrWhiteSpace(key) ? $"published-{fingerprint}" : key!);
+            insert.Parameters.AddWithValue("@user_id", owner);
+            insert.Parameters.AddWithValue("@key", string.IsNullOrWhiteSpace(key) ? $"published-{owner}-{fingerprint}" : key!);
             insert.Parameters.AddWithValue("@fingerprint", fingerprint);
             insert.Parameters.AddWithValue("@listing_id", listingId ?? "");
             insert.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToString("O"));
@@ -545,14 +668,18 @@ public sealed class WorkRecoveryStore
     public WorkSnapshot? FindPublished(string fingerprint, TimeSpan window)
     {
         if (string.IsNullOrWhiteSpace(fingerprint)) return null;
+        // Per seller, and both directions matter: one seller's publish must not brake another's, and
+        // it must not be the row the app points them at either — that listing ID is not theirs.
+        if (_scope.OwnerId is not { } owner) return null;
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = Select + """
-             WHERE fingerprint = @fingerprint AND stage = 'published'
+             WHERE fingerprint = @fingerprint AND stage = 'published' AND user_id = @user_id
              ORDER BY updated_at DESC LIMIT 1;
             """;
         command.Parameters.AddWithValue("@fingerprint", fingerprint);
+        command.Parameters.AddWithValue("@user_id", owner);
 
         using var reader = command.ExecuteReader();
         if (!reader.Read()) return null;
@@ -566,9 +693,12 @@ public sealed class WorkRecoveryStore
     /// <summary>Rows still marked publishing — an unresolved publish the app did not see finish.</summary>
     public List<WorkSnapshot> Unresolved()
     {
+        if (_scope.OwnerId is not { } owner) return [];
+
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = Select + " WHERE stage = 'publishing' ORDER BY updated_at DESC LIMIT 20;";
+        command.CommandText = Select + " WHERE stage = 'publishing' AND user_id = @user_id ORDER BY updated_at DESC LIMIT 20;";
+        command.Parameters.AddWithValue("@user_id", owner);
         var rows = new List<WorkSnapshot>();
         using var reader = command.ExecuteReader();
         while (reader.Read()) rows.Add(Read(reader));
@@ -585,15 +715,22 @@ public sealed class WorkRecoveryStore
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
+            // Retention is time-based and applies to everyone: a fortnight-old draft is stale whoever
+            // wrote it. The row cap is not — counted per seller, because a global "newest 40" lets a
+            // busy account push a quiet one's only unfinished listing out of the table.
             command.CommandText = """
                 DELETE FROM work_in_progress
                 WHERE (stage = 'published' AND updated_at < @published_before)
                    OR (stage <> 'published' AND updated_at < @draft_before)
                    OR key IN (
-                        SELECT key FROM work_in_progress
-                        WHERE stage <> 'published'
-                        ORDER BY updated_at DESC
-                        LIMIT -1 OFFSET @keep
+                        SELECT key FROM (
+                            SELECT key, ROW_NUMBER() OVER (
+                                PARTITION BY user_id ORDER BY updated_at DESC
+                            ) AS rank_for_user
+                            FROM work_in_progress
+                            WHERE stage <> 'published'
+                        )
+                        WHERE rank_for_user > @keep
                    );
                 """;
             var now = DateTimeOffset.UtcNow;
@@ -682,6 +819,8 @@ public sealed class WorkRecoveryStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS work_in_progress (
                 key TEXT PRIMARY KEY,
+                -- Whose listing this is. 0 on a desktop database, where there is only the one seller.
+                user_id INTEGER NOT NULL DEFAULT 0,
                 label TEXT NOT NULL DEFAULT '',
                 stage TEXT NOT NULL DEFAULT 'editing',
                 payload TEXT NOT NULL DEFAULT '',
@@ -692,14 +831,25 @@ public sealed class WorkRecoveryStore
                 created_at TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT ''
             );
-
-            CREATE INDEX IF NOT EXISTS ix_work_stage_updated
-                ON work_in_progress(stage, updated_at);
-
-            CREATE INDEX IF NOT EXISTS ix_work_fingerprint
-                ON work_in_progress(fingerprint) WHERE fingerprint <> '';
             """;
         command.ExecuteNonQuery();
+
+        // The owner column before the indexes that use it — on an old database it is not there yet.
+        UserOwnedTable.Migrate(connection, "work_in_progress");
+
+        using var indexes = connection.CreateCommand();
+        indexes.CommandText = """
+            -- Superseded by the owner-first pairs below; every query now filters on the owner first.
+            DROP INDEX IF EXISTS ix_work_stage_updated;
+            DROP INDEX IF EXISTS ix_work_fingerprint;
+
+            CREATE INDEX IF NOT EXISTS ix_work_user_stage_updated
+                ON work_in_progress(user_id, stage, updated_at);
+
+            CREATE INDEX IF NOT EXISTS ix_work_user_fingerprint
+                ON work_in_progress(user_id, fingerprint) WHERE fingerprint <> '';
+            """;
+        indexes.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

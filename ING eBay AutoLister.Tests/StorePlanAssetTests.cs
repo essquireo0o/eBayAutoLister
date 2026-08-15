@@ -79,7 +79,7 @@ public class StorePlanAssetTests
         Assert.Contains("Nothing here changes anything on eBay.", Js, StringComparison.Ordinal);
 
         // And there is no write anywhere on the screen except the seller's own three answers.
-        var section = Section(Js, "// ── The Store Plan ─", "// ── The Restock List ─");
+        var section = Section(Js, "// ── The Store Plan ─", "// ── Price Position ─");
         var posts = Regex.Matches(section, @"method: 'POST'").Count;
         Assert.Equal(1, posts);
         Assert.Contains("/api/store-plan/settings", section, StringComparison.Ordinal);

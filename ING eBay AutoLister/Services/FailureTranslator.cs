@@ -34,6 +34,12 @@ public static class FailureTranslator
         if (ex is AppFailureException already)
             return already.Failure with { Attempts = Math.Max(already.Failure.Attempts, attempts) };
 
+        // The quota gate refuses before anything is attempted, and it has already written the
+        // sentence the seller reads — the limit, that they have reached it, and when it resets.
+        // Classifying it again from the exception message would throw all three away.
+        if (ex is AiQuotaExceededException quota)
+            return quota.Failure with { Attempts = Math.Max(quota.Failure.Attempts, attempts) };
+
         var inner = Unwrap(ex);
         var message = (inner?.Message ?? "").Trim();
         var technical = Truncate(message, 600);

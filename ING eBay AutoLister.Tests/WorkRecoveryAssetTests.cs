@@ -42,7 +42,7 @@ public class WorkRecoveryAssetTests
     [Fact]
     public void TheCachedAssetsAreBumpedSoSellersActuallyGetThis()
     {
-        Assert.True(Version(@"app\.js\?v=(\d+)") >= 103, "app.js ?v= was not bumped for the recovery work");
+        Assert.True(Version(@"app\.js\?v=(\d+)") >= 148, "app.js ?v= was not bumped for the recovery work");
         Assert.True(Version(@"style\.css\?v=(\d+)") >= 91, "style.css ?v= was not bumped for the recovery work");
     }
 
@@ -213,6 +213,108 @@ public class WorkRecoveryAssetTests
         // And the indicator opens on the truth: what is on screen is what the app is holding.
         Assert.Contains("lastAutosavePayload = item.payload", restore);
     }
+
+    // ── Getting it back without being asked ─────────────────────────────────
+    //
+    // Autosave held every field from the moment it was typed, and recovering it took noticing a
+    // Recover button, opening it, and choosing a row. A safety net nobody knows to reach for catches
+    // nobody. These pin the rules that make restoring by itself safer than the blank form it
+    // replaced — every one of them fails silently, and each failure costs a listing.
+
+    [Fact]
+    public void OpeningTheScreenPutsTheLastUnfinishedListingBack()
+    {
+        // On showAiSection, not inside openNewListingModal: the other routes in — a pasted
+        // screenshot, a bulk import — arrive carrying their own content and must open on a blank
+        // form, and hanging it on the opener would restore a draft over every one of them.
+        Assert.Contains("autoRestoreLatestDraft()", Function("showAiSection"));
+        Assert.DoesNotContain("autoRestoreLatestDraft", Function("openNewListingModal"));
+    }
+
+    /// <summary>
+    /// The rule that decides whether this feature is worth having. A restore that lands on a form
+    /// the seller has already typed into destroys work that was never at risk — a strictly worse
+    /// loss than the one auto-restore exists to prevent.
+    /// </summary>
+    [Fact]
+    public void ARestoreNeverLandsOnAFormTheSellerHasStarted()
+    {
+        var restore = Function("autoRestoreLatestDraft");
+        var checks = Regex.Matches(restore, @"if\s*\(\s*nlFormHasContent\(\)\s*\)\s*return false;");
+
+        Assert.True(checks.Count >= 2,
+            "the form is checked once, not twice — a fetch takes long enough to type a title into, "
+            + "and a draft arriving on top of it wipes out what was typed while it was in flight");
+
+        var fetched = restore.IndexOf("/api/work/resume", StringComparison.Ordinal);
+        Assert.True(fetched > 0, "autoRestoreLatestDraft no longer asks the app what to resume");
+        Assert.True(checks[0].Index < fetched, "nothing is checked before the request goes out");
+        Assert.True(checks[^1].Index > fetched, "nothing is re-checked after the answer comes back");
+    }
+
+    /// <summary>
+    /// Content, not size. Every control on an untouched form already holds a default, so a blank tab
+    /// weighs the same as a written listing — which is why the payload can never be judged by length.
+    /// </summary>
+    [Fact]
+    public void WhetherTheFormIsEmptyIsJudgedByTheFieldsThatHoldTheSellersWork()
+        => Assert.Contains("hasAutosaveContent(buildNlPayload())", Function("nlFormHasContent"));
+
+    /// <summary>
+    /// A form that cannot be read is assumed to have something in it. Being wrong that way costs a
+    /// blank form; being wrong the other way costs somebody's listing.
+    /// </summary>
+    [Fact]
+    public void AFormThatCannotBeReadIsLeftAlone()
+        => Assert.Matches(@"catch\s*\{[^}]*return true;", Function("nlFormHasContent"));
+
+    [Fact]
+    public void TwoOpensInQuickSuccessionDoNotBothFillTheForm()
+    {
+        var restore = Function("autoRestoreLatestDraft");
+        Assert.Contains("if (autoRestoreInFlight) return false;", restore);
+        Assert.Contains("autoRestoreInFlight = false", restore);
+    }
+
+    /// <summary>
+    /// The draft keeps the row it came from. Without that, every open of the screen forks the draft:
+    /// the seller sees the same listing back but types into a new key, and the next launch offers the
+    /// same work twice — once as what was restored, once as what was typed after restoring it.
+    /// </summary>
+    [Fact]
+    public void AnAutoRestoredDraftKeepsItsOwnRowLikeAManualOneDoes()
+    {
+        var restore = Function("autoRestoreLatestDraft");
+        Assert.Contains("restoreWork(draft, { alreadyOpen: true })", restore);
+        // restoreWork is what adopts the key; the auto path deliberately goes through it rather
+        // than filling the form itself. See ARecoveredDraftKeepsItsOwnRowRatherThanBecomingASecondOne.
+        Assert.Contains("workKey = item.key", Function("restoreWork"));
+    }
+
+    /// <summary>
+    /// The copy this device is still holding is newer than anything the app can answer with — that
+    /// is the whole reason it is held. Asking first would put the older listing on screen and then
+    /// autosave it back over the newer one.
+    /// </summary>
+    [Fact]
+    public void TheRestoreWaitsForWhatThisDeviceWasStillHolding()
+    {
+        var restore = Function("autoRestoreLatestDraft");
+        var waited = restore.IndexOf("await mirrorReplay", StringComparison.Ordinal);
+
+        Assert.True(waited > 0, "auto-restore no longer waits for the local mirror to be pushed up");
+        Assert.True(waited < restore.IndexOf("/api/work/resume", StringComparison.Ordinal),
+            "the app is asked for the newest draft before this device has handed over the newer copy");
+    }
+
+    /// <summary>
+    /// A seller who navigated off the AI Listing screen while the request was in flight is not
+    /// dragged back onto it by an answer arriving late.
+    /// </summary>
+    [Fact]
+    public void ADraftArrivingLateDoesNotReopenAScreenThatWasLeft()
+        => Assert.Contains("$('new-listing-overlay')?.classList.contains('hidden')",
+            Function("autoRestoreLatestDraft"));
 
     [Fact]
     public void EveryStateTheSaveLineCanBeAskedForIsOneItCanShow()

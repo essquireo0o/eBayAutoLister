@@ -1,0 +1,66 @@
+# Connecting eBay on the hosted app must import THAT user's sales into THEIR Money Made.
+# Owner, 2026-08-14: "If I log into ebay it automaticly takes imports everything".
+#
+# He is right that this is how it should work, and it is the correct architecture — eBay is the
+# source of truth, so a connect-and-import beats copying a local database around and leaves
+# nothing to drift.
+#
+# WHY IT DOES NOT WORK TODAY, traced before queueing:
+#
+#   EarningsAutoImport (Services/EarningsAutoImport.cs) is a BackgroundService registered
+#   unconditionally as a SINGLETON:
+#       builder.Services.AddSingleton<EarningsAutoImport>();
+#       builder.Services.AddHostedService(...);
+#   It greps clean for UserScope, user_id and OwnerId — it has NO concept of which user it is
+#   importing for. It was written for the desktop app, where there is exactly one seller and one
+#   credentials.json, and that assumption is baked in.
+#
+#   Meanwhile EarningsStore is now per-user and refuses to write without an owner:
+#       if (_scope.OwnerId is not { } owner) return false;   // drops the row, silently
+#
+#   So on the hosted build the importer can run, read eBay, and write NOTHING, with no error
+#   surfaced. The seller sees $0.00 and an empty state that looks identical to "you have no
+#   sales". That silent-drop is the worst part of this: it is indistinguishable from working.
+#
+#   Observed live: the owner has 69 real sales worth $16,935.38 in his DESKTOP database, and
+#   app.inglisting.com/#earnings shows $0.00.
+
+tasks:
+  - prompt: |
+      Make eBay connection import that user's sales into that user's Money Made, on the hosted build.
+
+      1. Per-user import. EarningsAutoImport must iterate the users who have a connected eBay
+         account and import each one against their own UserScope, rather than assuming a single
+         global credentials.json. On the DESKTOP build it must behave exactly as it does today —
+         one seller, no scoping, no change.
+
+      2. Import on connect, not just on the six-hour timer. The moment a user completes the eBay
+         OAuth grant, kick off their first import so Money Made fills while they are still looking
+         at it. That is what the owner expects and it is the difference between the feature
+         existing and the feature being believed.
+
+      3. NEVER FAIL SILENTLY — this is the actual defect. EarningsStore.Upsert returns false when
+         there is no owner and the row is dropped with nothing reported. Any import that writes
+         zero rows because of a scoping problem must log it and surface it, and the Money Made
+         empty state must distinguish:
+             * "you have no eBay sales in this window"   (a real answer)
+             * "your eBay account is not connected"       (an action)
+             * "the import ran but could not attribute the sales to you" (a bug — say so)
+         An empty screen that means three different things is how this went unnoticed.
+
+      4. Concurrency: ImportGate is a single process-wide semaphore. With several users importing
+         it will serialise them, which is acceptable, but make sure one user's slow or failing
+         import cannot block everyone else's indefinitely.
+
+      5. Do not migrate the owner's desktop database into the hosted one as part of this. Once
+         connect-and-import works, his sales arrive from eBay, which is the source of truth and
+         leaves no second copy to drift.
+
+      Acceptance: on https://app.inglisting.com, sign in as a fresh account, connect an eBay
+      account, and show Money Made populating with that account's sales — quote the row count and
+      total before and after. Then show a SECOND account cannot see the first's sales. Confirm the
+      desktop build still imports exactly as before. dotnet test green, with a test proving an
+      unattributable import reports rather than silently dropping.
+    session: "earn-01-per-user-import"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 22

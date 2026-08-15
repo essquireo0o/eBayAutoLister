@@ -1,0 +1,65 @@
+# The sign-in and sign-up pages sell nothing and say nothing. Owner, 2026-08-14:
+# "the login page has no seo or picture or shit abount what they are logging into".
+#
+# AUDITED LIVE at https://app.inglisting.com/signin.html — 6,220 bytes total:
+#   <title>              present, the only tag there is
+#   meta description     MISSING
+#   og:title/description/image, twitter:card, canonical, robots   ALL MISSING
+#   <img> tags           0
+#   <svg>                0
+#   entire visible copy: "Sign in | ING Listing Engine  Email  Password  Sign in
+#                         No account yet? Create one"
+#
+# So: a stranger who lands there cannot tell what the product is, and anyone who shares the URL
+# gets a blank unfurl in Slack, iMessage, WhatsApp or a tweet. This is the FIRST page a new user
+# sees — every download link, every "Try it free in your browser" button on ingmining.com and
+# inglisting.com sends people here.
+#
+# FACTS AVAILABLE, all already published by the owner (do not invent new ones):
+#   * Paste a product link or a photo; about ten seconds later the listing is filled in — title,
+#     20+ item specifics, description, photos.
+#   * It then prices the item against real eBay SOLD records, not asking prices.
+#   * Free public beta. Sign-up is an email address and a password; no card.
+#   * The hosted trial gives 5 AI generations per day per account, on the owner's AI key.
+#   * Publishes through eBay's official API; each user connects their own eBay account.
+#   * Corpus is ~920,000 sold records and growing.
+#   Anything NOT on that list needs checking before it goes on the page.
+
+tasks:
+  - prompt: |
+      Make signin.html and signup.html pages that explain the product and share properly.
+
+      1. HEAD / SEO. Add to both: meta description, canonical, Open Graph (og:title,
+         og:description, og:image, og:url, og:type) and twitter:card summary_large_image, so a
+         pasted link unfurls with a real title, sentence and picture instead of nothing.
+
+         Set robots deliberately and say which you chose and why: a sign-IN page is usually
+         noindex (it is not a landing page and duplicates the marketing site), while the sign-UP
+         page may be worth indexing. Do not just copy one to the other.
+
+      2. A PICTURE. There is not a single <img> or <svg> on the page. Use the product's own
+         screenshots — inglisting-content/tools/capture-screenshots.js exists for exactly this and
+         drives Playwright against the running app. NEVER capture the settings, license or logs
+         screens; they render API keys. If capturing is not possible in your environment, use the
+         ING logo and say plainly that a product screenshot is still to be added rather than
+         shipping a stock image.
+
+      3. SAY WHAT THIS IS. Beside the form, in a few lines: paste a link or a photo, AI fills the
+         listing, it prices against real eBay sold records, publish through eBay's official API.
+         Free beta, email and password, no card, 5 AI generations a day. Use the facts listed in
+         the header of this task file and nothing else — if you want to claim something not on
+         that list, verify it first and say how you verified it.
+
+      4. It must still WORK. This page is the app's front door and it was locked for over an hour
+         today by a CSRF change. csrf.js must still load and the form must still submit. Prove it
+         with a real browser sign-in after your change, not with curl — curl cannot execute
+         csrf.js and will report a false failure.
+
+      5. Responsive: the marketing column must collapse ABOVE or BELOW the form on a phone, never
+         squeeze it. Verify at 1440px and 390px with screenshots.
+
+      Acceptance: screenshots at both widths; the head tags quoted; a successful browser sign-in
+      after the change; and a statement of what robots directive each page got and why.
+    session: "ui-04-signin-page"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 18

@@ -123,6 +123,12 @@ public sealed class UserStore
 
             // The unique index decides, not a SELECT before the INSERT — two sign-ups for one
             // address arriving together would both pass that check and one would win by accident.
+            //
+            // The message is what the caller may show if it decides to; the hosted sign-up endpoint
+            // deliberately does not, because showing it is a way to ask which addresses are
+            // registered. See MapAccountEndpoints. The outcome stays distinct so the caller can
+            // tell — the desktop build and the tests both need to — but this is the one refusal
+            // whose text must never reach a stranger.
             if (Convert.ToInt32(insert.ExecuteScalar()) == 0)
                 return new SignUpResult(SignUpOutcome.EmailAlreadyRegistered, null,
                     "That email address already has an account. Sign in instead.");

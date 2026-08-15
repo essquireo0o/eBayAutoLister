@@ -67,7 +67,16 @@ public class Credentials
     public string MarketCompsApiUrl { get; set; } = "";
     public string MarketCompsApiKey { get; set; } = "";
 
-    // On-demand comps scraping (see OnDemandCompsScraper). The scraper is the collector's own
+    // Live sold-comps lookups (see OpenWebNinjaClient). One key, the owner's, against a paid and
+    // finite 50,000 calls shared with the bulk collector — so it belongs in configuration and never
+    // in the repository, and on a server it arrives as Credentials__OpenWebNinjaApiKey. Blank means
+    // live lookups are unavailable and every price comes from stored comps, which is what the app
+    // did before them.
+    public string OpenWebNinjaApiKey { get; set; } = "";
+
+    // On-demand comps scraping (see OnDemandCompsScraper). DEAD as of 2026-08-14: the scraper was
+    // replaced by the API above and nothing reads these two any more. Left in place so removing the
+    // scraper is one reviewed change rather than a surprise inside this one. The scraper is the collector's own
     // toolchain — a separate checkout with its own venv and Playwright install — so it is pointed
     // at rather than shipped. Blank means "use the default location"; a machine without it there
     // simply prices from stored comps, which is what the app did before live lookups existed.
@@ -127,43 +136,73 @@ public class CredentialsPatch
     public string? StripeWebhookSecret { get; set; }
     public string? MarketCompsApiUrl { get; set; }
     public string? MarketCompsApiKey { get; set; }
+    public string? OpenWebNinjaApiKey { get; set; }
     public string? CompsScraperDir { get; set; }
     public string? CompsScraperPython { get; set; }
 }
 
+/// <summary>
+/// Where one caller's credentials are read from and written to. Two implementations:
+/// <see cref="FileCredentialsSource"/>, which is the desktop app's single credentials.json, and
+/// <see cref="PerUserCredentialsSource"/>, which is one encrypted row per signed-in user.
+/// </summary>
+/// <remarks>
+/// This interface exists so that the ~60 endpoints and ten services which take a
+/// <see cref="CredentialsStore"/> never learn which build they are running in. Every one of them
+/// asks the same store the same question; what changed under HOSTED is only where the answer comes
+/// from, and that it is a different answer for each person asking.
+/// </remarks>
+public interface ICredentialsSource
+{
+    /// <summary>The credentials this call is about.</summary>
+    Credentials Read();
+
+    /// <summary>Persists a record that came from <see cref="Read"/>.</summary>
+    void Write(Credentials data);
+
+    /// <summary>
+    /// True when there is stored data that could not be read and is being protected from being
+    /// overwritten with empty defaults. See <see cref="FileCredentialsSource.Load"/>.
+    /// </summary>
+    bool IsProtectingUnreadableData { get; }
+}
+
 public class CredentialsStore
 {
-    private readonly string _filePath;
-    private Credentials _data;
-    private static readonly JsonSerializerOptions _opts = new() { WriteIndented = true };
+    private readonly ICredentialsSource _source;
 
     public CredentialsStore(IWebHostEnvironment env)
         : this(Path.Combine(env.ContentRootPath, "credentials.json")) { }
 
-    public CredentialsStore(string filePath)
-    {
-        _filePath = filePath;
-        _data = Load();
-    }
+    public CredentialsStore(string filePath) : this(new FileCredentialsSource(filePath)) { }
 
-    public Credentials Get() => _data;
+    /// <summary>
+    /// The hosted build's entry point: the same store over per-user storage. See
+    /// <see cref="PerUserCredentials.AddCredentials"/> for which of the two Program.cs picks.
+    /// </summary>
+    public CredentialsStore(ICredentialsSource source) => _source = source;
+
+    public Credentials Get() => _source.Read();
 
     public void Save(CredentialsPatch patch)
     {
+        var data = _source.Read();
+
         // Secrets: present but blank means "keep what's stored". These fields are never rendered
         // back into the page — they show a "(saved)" placeholder — so an untouched one posts empty.
-        SetSecret(patch.AnthropicApiKey,      v => _data.AnthropicApiKey      = v);
-        SetSecret(patch.OpenAiApiKey,         v => _data.OpenAiApiKey         = v);
-        SetSecret(patch.EbayClientSecret,     v => _data.EbayClientSecret     = v);
-        SetSecret(patch.EbayRefreshToken,     v => _data.EbayRefreshToken     = v);
-        SetSecret(patch.LicenseKey,           v => _data.LicenseKey           = v);
-        SetSecret(patch.StripeSecretKey,      v => _data.StripeSecretKey      = v);
-        SetSecret(patch.StripePublishableKey, v => _data.StripePublishableKey = v);
-        SetSecret(patch.StripeWebhookSecret,  v => _data.StripeWebhookSecret  = v);
-        SetSecret(patch.MarketCompsApiUrl,    v => _data.MarketCompsApiUrl    = v);
-        SetSecret(patch.MarketCompsApiKey,    v => _data.MarketCompsApiKey    = v);
-        SetSecret(patch.CompsScraperDir,      v => _data.CompsScraperDir      = v);
-        SetSecret(patch.CompsScraperPython,   v => _data.CompsScraperPython   = v);
+        SetSecret(patch.AnthropicApiKey,      v => data.AnthropicApiKey      = v);
+        SetSecret(patch.OpenAiApiKey,         v => data.OpenAiApiKey         = v);
+        SetSecret(patch.EbayClientSecret,     v => data.EbayClientSecret     = v);
+        SetSecret(patch.EbayRefreshToken,     v => data.EbayRefreshToken     = v);
+        SetSecret(patch.LicenseKey,           v => data.LicenseKey           = v);
+        SetSecret(patch.StripeSecretKey,      v => data.StripeSecretKey      = v);
+        SetSecret(patch.StripePublishableKey, v => data.StripePublishableKey = v);
+        SetSecret(patch.StripeWebhookSecret,  v => data.StripeWebhookSecret  = v);
+        SetSecret(patch.MarketCompsApiUrl,    v => data.MarketCompsApiUrl    = v);
+        SetSecret(patch.MarketCompsApiKey,    v => data.MarketCompsApiKey    = v);
+        SetSecret(patch.OpenWebNinjaApiKey,   v => data.OpenWebNinjaApiKey   = v);
+        SetSecret(patch.CompsScraperDir,      v => data.CompsScraperDir      = v);
+        SetSecret(patch.CompsScraperPython,   v => data.CompsScraperPython   = v);
 
         if (!string.IsNullOrWhiteSpace(patch.EbayUserToken))
         {
@@ -172,42 +211,42 @@ public class CredentialsStore
                 throw new InvalidOperationException(
                     "The pasted value is an OAuth redirect URL, not a bearer token. " +
                     "Use the 'Paste eBay Token' button and paste the full URL — it will be exchanged automatically.");
-            _data.EbayUserToken = patch.EbayUserToken.Trim();
+            data.EbayUserToken = patch.EbayUserToken.Trim();
         }
 
         // eBay app identifiers: also keep-if-blank. They sit behind "Advanced" and are usually
         // pre-configured, so an empty box there means "I didn't touch this", never "delete it".
-        SetSecret(patch.EbayClientId, v => _data.EbayClientId = v);
-        SetSecret(patch.EbayDevId,    v => _data.EbayDevId    = v);
-        SetSecret(patch.EbayRuName,   v => _data.EbayRuName   = v);
-        if (patch.EbaySandbox is { } sandbox) _data.EbaySandbox = sandbox;
+        SetSecret(patch.EbayClientId, v => data.EbayClientId = v);
+        SetSecret(patch.EbayDevId,    v => data.EbayDevId    = v);
+        SetSecret(patch.EbayRuName,   v => data.EbayRuName   = v);
+        if (patch.EbaySandbox is { } sandbox) data.EbaySandbox = sandbox;
 
         // Business policies: clearable, so an empty string that was actually sent does clear them.
-        if (patch.EbayFulfillmentPolicyId is not null) _data.EbayFulfillmentPolicyId = patch.EbayFulfillmentPolicyId.Trim();
-        if (patch.EbayPaymentPolicyId     is not null) _data.EbayPaymentPolicyId     = patch.EbayPaymentPolicyId.Trim();
-        if (patch.EbayReturnPolicyId      is not null) _data.EbayReturnPolicyId      = patch.EbayReturnPolicyId.Trim();
+        if (patch.EbayFulfillmentPolicyId is not null) data.EbayFulfillmentPolicyId = patch.EbayFulfillmentPolicyId.Trim();
+        if (patch.EbayPaymentPolicyId     is not null) data.EbayPaymentPolicyId     = patch.EbayPaymentPolicyId.Trim();
+        if (patch.EbayReturnPolicyId      is not null) data.EbayReturnPolicyId      = patch.EbayReturnPolicyId.Trim();
 
         // Image generation — optional, and saved from its own strip on the Settings page.
-        if (patch.ImageGenMode        is not null) _data.ImageGenMode     = Fallback(patch.ImageGenMode, "disabled");
-        if (patch.LocalSdBackend      is not null) _data.LocalSdBackend   = Fallback(patch.LocalSdBackend, "automatic1111");
-        if (patch.LocalSdModelName    is not null) _data.LocalSdModelName = patch.LocalSdModelName.Trim();
-        if (patch.LocalSdEndpoint     is not null) _data.LocalSdEndpoint  = Fallback(patch.LocalSdEndpoint, "http://127.0.0.1:7860");
-        if (patch.ImagePromptTemplate is not null) _data.ImagePromptTemplate = patch.ImagePromptTemplate.Trim();
+        if (patch.ImageGenMode        is not null) data.ImageGenMode     = Fallback(patch.ImageGenMode, "disabled");
+        if (patch.LocalSdBackend      is not null) data.LocalSdBackend   = Fallback(patch.LocalSdBackend, "automatic1111");
+        if (patch.LocalSdModelName    is not null) data.LocalSdModelName = patch.LocalSdModelName.Trim();
+        if (patch.LocalSdEndpoint     is not null) data.LocalSdEndpoint  = Fallback(patch.LocalSdEndpoint, "http://127.0.0.1:7860");
+        if (patch.ImagePromptTemplate is not null) data.ImagePromptTemplate = patch.ImagePromptTemplate.Trim();
 
         // Listing defaults: clearable too — a seller who empties the ZIP means it.
-        if (patch.DefaultPostalCode       is not null) _data.DefaultPostalCode  = patch.DefaultPostalCode.Trim();
-        if (patch.DefaultCountry          is not null) _data.DefaultCountry     = Fallback(patch.DefaultCountry, "US");
-        if (patch.DefaultPackageType      is not null) _data.DefaultPackageType = Fallback(patch.DefaultPackageType, "PACKAGE_THICK_ENVELOPE");
-        if (patch.DefaultHandlingTimeDays is { } days) _data.DefaultHandlingTimeDays = days > 0 ? days : 1;
-        if (patch.DefaultWeightLbs is { } lbs)    _data.DefaultWeightLbs = lbs;
-        if (patch.DefaultWeightOz  is { } oz)     _data.DefaultWeightOz  = oz;
-        if (patch.DefaultLengthIn  is { } length) _data.DefaultLengthIn  = length;
-        if (patch.DefaultWidthIn   is { } width)  _data.DefaultWidthIn   = width;
-        if (patch.DefaultHeightIn  is { } height) _data.DefaultHeightIn  = height;
-        if (patch.DefaultFulfillmentPolicyId is not null) _data.DefaultFulfillmentPolicyId = patch.DefaultFulfillmentPolicyId.Trim();
-        if (patch.DefaultBestOffer is { } bestOffer)      _data.DefaultBestOffer           = bestOffer;
+        if (patch.DefaultPostalCode       is not null) data.DefaultPostalCode  = patch.DefaultPostalCode.Trim();
+        if (patch.DefaultCountry          is not null) data.DefaultCountry     = Fallback(patch.DefaultCountry, "US");
+        if (patch.DefaultPackageType      is not null) data.DefaultPackageType = Fallback(patch.DefaultPackageType, "PACKAGE_THICK_ENVELOPE");
+        if (patch.DefaultHandlingTimeDays is { } days) data.DefaultHandlingTimeDays = days > 0 ? days : 1;
+        if (patch.DefaultWeightLbs is { } lbs)    data.DefaultWeightLbs = lbs;
+        if (patch.DefaultWeightOz  is { } oz)     data.DefaultWeightOz  = oz;
+        if (patch.DefaultLengthIn  is { } length) data.DefaultLengthIn  = length;
+        if (patch.DefaultWidthIn   is { } width)  data.DefaultWidthIn   = width;
+        if (patch.DefaultHeightIn  is { } height) data.DefaultHeightIn  = height;
+        if (patch.DefaultFulfillmentPolicyId is not null) data.DefaultFulfillmentPolicyId = patch.DefaultFulfillmentPolicyId.Trim();
+        if (patch.DefaultBestOffer is { } bestOffer)      data.DefaultBestOffer           = bestOffer;
 
-        Persist();
+        _source.Write(data);
     }
 
     private static void SetSecret(string? value, Action<string> assign)
@@ -218,20 +257,24 @@ public class CredentialsStore
     private static string Fallback(string value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
-    public SetupStatus GetStatus() => new()
+    public SetupStatus GetStatus()
     {
-        HasAnthropicKey     = !string.IsNullOrWhiteSpace(_data.AnthropicApiKey),
-        HasEbayClientId     = !string.IsNullOrWhiteSpace(_data.EbayClientId),
-        HasEbayClientSecret = !string.IsNullOrWhiteSpace(_data.EbayClientSecret),
-        HasEbayRuName       = !string.IsNullOrWhiteSpace(_data.EbayRuName),
-        HasEbayUserToken    = !string.IsNullOrWhiteSpace(_data.EbayUserToken),
-        HasEbayRefreshToken = !string.IsNullOrWhiteSpace(_data.EbayRefreshToken),
-        HasBusinessPolicies = !string.IsNullOrWhiteSpace(_data.EbayFulfillmentPolicyId)
-                           && !string.IsNullOrWhiteSpace(_data.EbayPaymentPolicyId)
-                           && !string.IsNullOrWhiteSpace(_data.EbayReturnPolicyId),
-        HasOpenAiKey        = !string.IsNullOrWhiteSpace(_data.OpenAiApiKey),
-        EbaySandbox         = _data.EbaySandbox
-    };
+        var data = _source.Read();
+        return new()
+        {
+            HasAnthropicKey     = !string.IsNullOrWhiteSpace(data.AnthropicApiKey),
+            HasEbayClientId     = !string.IsNullOrWhiteSpace(data.EbayClientId),
+            HasEbayClientSecret = !string.IsNullOrWhiteSpace(data.EbayClientSecret),
+            HasEbayRuName       = !string.IsNullOrWhiteSpace(data.EbayRuName),
+            HasEbayUserToken    = !string.IsNullOrWhiteSpace(data.EbayUserToken),
+            HasEbayRefreshToken = !string.IsNullOrWhiteSpace(data.EbayRefreshToken),
+            HasBusinessPolicies = !string.IsNullOrWhiteSpace(data.EbayFulfillmentPolicyId)
+                               && !string.IsNullOrWhiteSpace(data.EbayPaymentPolicyId)
+                               && !string.IsNullOrWhiteSpace(data.EbayReturnPolicyId),
+            HasOpenAiKey        = !string.IsNullOrWhiteSpace(data.OpenAiApiKey),
+            EbaySandbox         = data.EbaySandbox
+        };
+    }
 
     public void SaveOAuthTokens(string accessToken, string refreshToken) =>
         SaveOAuthTokensFull(accessToken, refreshToken, 0, 0, "");
@@ -242,45 +285,48 @@ public class CredentialsStore
     /// </summary>
     public void SaveOAuthTokensFull(string accessToken, string refreshToken, int accessExpiresIn, int refreshExpiresIn, string tokenType)
     {
-        var now = DateTimeOffset.UtcNow;
+        var data = _source.Read();
+        var now  = DateTimeOffset.UtcNow;
 
         if (!string.IsNullOrWhiteSpace(accessToken))
         {
-            _data.EbayUserToken = accessToken.Trim();
-            _data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(accessExpiresIn, now);
+            data.EbayUserToken = accessToken.Trim();
+            data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(accessExpiresIn, now);
         }
         if (!string.IsNullOrWhiteSpace(refreshToken))
         {
-            _data.EbayRefreshToken = refreshToken.Trim();
-            _data.EbayRefreshTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(refreshExpiresIn, now);
-            _data.EbayReauthRequiredAt = null;
-            _data.EbayReauthReason = "";
+            data.EbayRefreshToken = refreshToken.Trim();
+            data.EbayRefreshTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(refreshExpiresIn, now);
+            data.EbayReauthRequiredAt = null;
+            data.EbayReauthReason = "";
         }
         if (!string.IsNullOrWhiteSpace(tokenType))
-            _data.EbayTokenType = tokenType;
-        Persist();
+            data.EbayTokenType = tokenType;
+        _source.Write(data);
     }
 
     public void SaveRefreshedAccessToken(string accessToken, int expiresIn)
     {
-        _data.EbayUserToken = accessToken.Trim();
-        _data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(expiresIn, DateTimeOffset.UtcNow);
+        var data = _source.Read();
+        data.EbayUserToken = accessToken.Trim();
+        data.EbayTokenExpiresAt = EbayTokenExpiry.FromExpiresIn(expiresIn, DateTimeOffset.UtcNow);
         // A refresh that worked is proof the grant is alive, whatever an earlier failure recorded.
-        _data.EbayReauthRequiredAt = null;
-        _data.EbayReauthReason = "";
-        Persist();
+        data.EbayReauthRequiredAt = null;
+        data.EbayReauthReason = "";
+        _source.Write(data);
     }
 
     public void ClearEbayTokens()
     {
-        _data.EbayUserToken = "";
-        _data.EbayRefreshToken = "";
-        _data.EbayTokenExpiresAt = null;
-        _data.EbayRefreshTokenExpiresAt = null;
-        _data.EbayTokenType = "";
-        _data.EbayReauthRequiredAt = null;
-        _data.EbayReauthReason = "";
-        Persist();
+        var data = _source.Read();
+        data.EbayUserToken = "";
+        data.EbayRefreshToken = "";
+        data.EbayTokenExpiresAt = null;
+        data.EbayRefreshTokenExpiresAt = null;
+        data.EbayTokenType = "";
+        data.EbayReauthRequiredAt = null;
+        data.EbayReauthReason = "";
+        _source.Write(data);
     }
 
     /// <summary>
@@ -295,48 +341,78 @@ public class CredentialsStore
     /// </remarks>
     public void MarkEbayReauthRequired(string reason)
     {
-        _data.EbayUserToken = "";
-        _data.EbayRefreshToken = "";
-        _data.EbayTokenExpiresAt = null;
-        _data.EbayRefreshTokenExpiresAt = null;
-        _data.EbayTokenType = "";
-        _data.EbayReauthRequiredAt = DateTimeOffset.UtcNow;
-        _data.EbayReauthReason = reason;
-        Persist();
+        var data = _source.Read();
+        data.EbayUserToken = "";
+        data.EbayRefreshToken = "";
+        data.EbayTokenExpiresAt = null;
+        data.EbayRefreshTokenExpiresAt = null;
+        data.EbayTokenType = "";
+        data.EbayReauthRequiredAt = DateTimeOffset.UtcNow;
+        data.EbayReauthReason = reason;
+        _source.Write(data);
     }
 
-    public bool IsEbayReauthRequired => _data.EbayReauthRequiredAt is not null;
+    public bool IsEbayReauthRequired => _source.Read().EbayReauthRequiredAt is not null;
 
-    public string GetUserToken()    => _data.EbayUserToken;
-    public string GetRefreshToken() => _data.EbayRefreshToken;
+    public string GetUserToken()    => _source.Read().EbayUserToken;
+    public string GetRefreshToken() => _source.Read().EbayRefreshToken;
 
-    public bool IsAccessTokenExpired() => EbayTokenExpiry.IsAccessTokenExpired(
-        _data.EbayUserToken, _data.EbayTokenExpiresAt,
-        !string.IsNullOrWhiteSpace(_data.EbayRefreshToken), DateTimeOffset.UtcNow);
+    public bool IsAccessTokenExpired()
+    {
+        var data = _source.Read();
+        return EbayTokenExpiry.IsAccessTokenExpired(
+            data.EbayUserToken, data.EbayTokenExpiresAt,
+            !string.IsNullOrWhiteSpace(data.EbayRefreshToken), DateTimeOffset.UtcNow);
+    }
 
     public void EnsureInstallDate()
     {
-        if (_data.InstallDate == null)
+        var data = _source.Read();
+        if (data.InstallDate == null)
         {
-            _data.InstallDate = DateTimeOffset.UtcNow;
-            Persist();
+            data.InstallDate = DateTimeOffset.UtcNow;
+            _source.Write(data);
         }
     }
 
     public string EnsureAdminKey()
     {
-        if (string.IsNullOrWhiteSpace(_data.AdminKey))
+        var data = _source.Read();
+        if (string.IsNullOrWhiteSpace(data.AdminKey))
         {
-            _data.AdminKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
-            Persist();
+            data.AdminKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
+            _source.Write(data);
         }
-        return _data.AdminKey;
+        return data.AdminKey;
     }
+
+    /// <summary>
+    /// Whether <paramref name="offered"/> is the admin key, compared without leaking how much of it
+    /// was right. The one way the owner dashboard is allowed to check the key in its URL.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The key is 128 bits from the CSPRNG (see <see cref="EnsureAdminKey"/>), so it is not going to
+    /// be guessed outright. What a plain <c>!=</c> gives away is different and worse: string
+    /// comparison returns at the first byte that differs, so a wrong key that shares a prefix with
+    /// the real one takes measurably longer to refuse than one that does not. That turns 2^128 into
+    /// thirty-two rounds of sixteen guesses, one hex digit at a time, and the dashboard hands over
+    /// every seller's usage and the whole recent action log.
+    /// </para>
+    /// <para>
+    /// Timing signal over a network is noisy and this attack is not easy. It is also free to
+    /// remove, and "hard to exploit" is a description of the attacker's afternoon rather than a
+    /// property of the code.
+    /// </para>
+    /// </remarks>
+    public bool AdminKeyMatches(string? offered) =>
+        !string.IsNullOrWhiteSpace(offered) && Csrf.FixedTimeEquals(offered, EnsureAdminKey());
 
     public int TrialDaysRemaining()
     {
-        if (_data.InstallDate == null) return 30;
-        var elapsed = (DateTimeOffset.UtcNow - _data.InstallDate.Value).TotalDays;
+        var installDate = _source.Read().InstallDate;
+        if (installDate == null) return 30;
+        var elapsed = (DateTimeOffset.UtcNow - installDate.Value).TotalDays;
         return Math.Max(0, 30 - (int)elapsed);
     }
 
@@ -347,66 +423,107 @@ public class CredentialsStore
     /// <see cref="EbayTokenExpiry.ShouldRefreshNow"/> — in particular for why a missing access
     /// token or a missing expiry counts as "yes" rather than "nothing to do".
     /// </summary>
-    public bool ShouldRefreshAccessToken(int minutes = 20) => EbayTokenExpiry.ShouldRefreshNow(
-        _data.EbayUserToken, _data.EbayTokenExpiresAt,
-        _data.EbayRefreshToken, _data.EbayRefreshTokenExpiresAt,
-        DateTimeOffset.UtcNow, TimeSpan.FromMinutes(minutes));
-
-    public bool HasValidRefreshToken() => EbayTokenExpiry.IsRefreshTokenUsable(
-        _data.EbayRefreshToken, _data.EbayRefreshTokenExpiresAt, DateTimeOffset.UtcNow);
-
-    public PublicFields GetPublicFields() => new()
+    public bool ShouldRefreshAccessToken(int minutes = 20)
     {
-        EbayClientId            = _data.EbayClientId,
-        EbayDevId               = _data.EbayDevId,
-        EbayRuName              = _data.EbayRuName,
-        EbaySandbox             = _data.EbaySandbox,
-        EbayFulfillmentPolicyId = _data.EbayFulfillmentPolicyId,
-        EbayPaymentPolicyId     = _data.EbayPaymentPolicyId,
-        EbayReturnPolicyId      = _data.EbayReturnPolicyId,
-        HasBusinessPolicies     = !string.IsNullOrWhiteSpace(_data.EbayFulfillmentPolicyId)
-                               && !string.IsNullOrWhiteSpace(_data.EbayPaymentPolicyId)
-                               && !string.IsNullOrWhiteSpace(_data.EbayReturnPolicyId),
-        HasAnthropicKey         = !string.IsNullOrWhiteSpace(_data.AnthropicApiKey),
-        HasOpenAiKey            = !string.IsNullOrWhiteSpace(_data.OpenAiApiKey),
-        ImageGenMode            = _data.ImageGenMode ?? "disabled",
-        LocalSdEndpoint         = _data.LocalSdEndpoint ?? "http://127.0.0.1:7860",
-        LocalSdBackend          = _data.LocalSdBackend ?? "automatic1111",
-        LocalSdModelName        = _data.LocalSdModelName ?? "",
-        ImagePromptTemplate     = _data.ImagePromptTemplate ?? "",
-        HasEbayClientSecret     = !string.IsNullOrWhiteSpace(_data.EbayClientSecret),
-        HasEbayUserToken        = !string.IsNullOrWhiteSpace(_data.EbayUserToken),
-        HasEbayRefreshToken     = !string.IsNullOrWhiteSpace(_data.EbayRefreshToken),
-        EbayTokenExpiresAt      = _data.EbayTokenExpiresAt?.ToString("u"),
-        DefaultPostalCode       = _data.DefaultPostalCode,
-        DefaultCountry          = _data.DefaultCountry.Length > 0 ? _data.DefaultCountry : "US",
-        DefaultPackageType      = _data.DefaultPackageType.Length > 0 ? _data.DefaultPackageType : "PACKAGE_THICK_ENVELOPE",
-        DefaultHandlingTimeDays = _data.DefaultHandlingTimeDays > 0 ? _data.DefaultHandlingTimeDays : 1,
-        DefaultWeightLbs             = _data.DefaultWeightLbs,
-        DefaultWeightOz              = _data.DefaultWeightOz,
-        DefaultLengthIn              = _data.DefaultLengthIn,
-        DefaultWidthIn               = _data.DefaultWidthIn,
-        DefaultHeightIn              = _data.DefaultHeightIn,
-        DefaultFulfillmentPolicyId   = _data.DefaultFulfillmentPolicyId,
-        DefaultBestOffer             = _data.DefaultBestOffer,
-        HasLicenseKey                = !string.IsNullOrWhiteSpace(_data.LicenseKey),
-        LicenseKeyPreview            = PreviewLicenseKey(_data.LicenseKey),
-    };
+        var data = _source.Read();
+        return EbayTokenExpiry.ShouldRefreshNow(
+            data.EbayUserToken, data.EbayTokenExpiresAt,
+            data.EbayRefreshToken, data.EbayRefreshTokenExpiresAt,
+            DateTimeOffset.UtcNow, TimeSpan.FromMinutes(minutes));
+    }
+
+    public bool HasValidRefreshToken()
+    {
+        var data = _source.Read();
+        return EbayTokenExpiry.IsRefreshTokenUsable(
+            data.EbayRefreshToken, data.EbayRefreshTokenExpiresAt, DateTimeOffset.UtcNow);
+    }
+
+    public PublicFields GetPublicFields()
+    {
+        var data = _source.Read();
+        return new()
+        {
+            EbayClientId            = data.EbayClientId,
+            EbayDevId               = data.EbayDevId,
+            EbayRuName              = data.EbayRuName,
+            EbaySandbox             = data.EbaySandbox,
+            EbayFulfillmentPolicyId = data.EbayFulfillmentPolicyId,
+            EbayPaymentPolicyId     = data.EbayPaymentPolicyId,
+            EbayReturnPolicyId      = data.EbayReturnPolicyId,
+            HasBusinessPolicies     = !string.IsNullOrWhiteSpace(data.EbayFulfillmentPolicyId)
+                                   && !string.IsNullOrWhiteSpace(data.EbayPaymentPolicyId)
+                                   && !string.IsNullOrWhiteSpace(data.EbayReturnPolicyId),
+            HasAnthropicKey         = !string.IsNullOrWhiteSpace(data.AnthropicApiKey),
+            HasOpenAiKey            = !string.IsNullOrWhiteSpace(data.OpenAiApiKey),
+            ImageGenMode            = data.ImageGenMode ?? "disabled",
+            LocalSdEndpoint         = data.LocalSdEndpoint ?? "http://127.0.0.1:7860",
+            LocalSdBackend          = data.LocalSdBackend ?? "automatic1111",
+            LocalSdModelName        = data.LocalSdModelName ?? "",
+            ImagePromptTemplate     = data.ImagePromptTemplate ?? "",
+            HasEbayClientSecret     = !string.IsNullOrWhiteSpace(data.EbayClientSecret),
+            HasEbayUserToken        = !string.IsNullOrWhiteSpace(data.EbayUserToken),
+            HasEbayRefreshToken     = !string.IsNullOrWhiteSpace(data.EbayRefreshToken),
+            EbayTokenExpiresAt      = data.EbayTokenExpiresAt?.ToString("u"),
+            DefaultPostalCode       = data.DefaultPostalCode,
+            DefaultCountry          = data.DefaultCountry.Length > 0 ? data.DefaultCountry : "US",
+            DefaultPackageType      = data.DefaultPackageType.Length > 0 ? data.DefaultPackageType : "PACKAGE_THICK_ENVELOPE",
+            DefaultHandlingTimeDays = data.DefaultHandlingTimeDays > 0 ? data.DefaultHandlingTimeDays : 1,
+            DefaultWeightLbs             = data.DefaultWeightLbs,
+            DefaultWeightOz              = data.DefaultWeightOz,
+            DefaultLengthIn              = data.DefaultLengthIn,
+            DefaultWidthIn               = data.DefaultWidthIn,
+            DefaultHeightIn              = data.DefaultHeightIn,
+            DefaultFulfillmentPolicyId   = data.DefaultFulfillmentPolicyId,
+            DefaultBestOffer             = data.DefaultBestOffer,
+            HasLicenseKey                = !string.IsNullOrWhiteSpace(data.LicenseKey),
+            LicenseKeyPreview            = PreviewLicenseKey(data.LicenseKey),
+        };
+    }
 
     private static string PreviewLicenseKey(string key) =>
         string.IsNullOrWhiteSpace(key) ? "" : key[..Math.Min(8, key.Length)] + "****";
 
+    /// <summary>True when this store refused to load existing data and is protecting it from being overwritten.</summary>
+    public bool IsProtectingUnreadableFile => _source.IsProtectingUnreadableData;
+}
+
+/// <summary>
+/// The desktop app's credentials: one credentials.json, held in memory, rewritten on every save.
+/// Unchanged behaviour — this is the code that has always been inside
+/// <see cref="CredentialsStore"/>, moved behind <see cref="ICredentialsSource"/> so that the hosted
+/// build can put a per-user store in its place without a single call site knowing.
+/// </summary>
+/// <remarks>
+/// <see cref="Read"/> deliberately returns the same live instance every time. Callers have always
+/// been able to hold onto what <c>Get()</c> gave them, and a copy per call would turn that into a
+/// stale read on the desktop build for no benefit — there is only ever one seller here.
+/// </remarks>
+public sealed class FileCredentialsSource : ICredentialsSource
+{
+    private static readonly JsonSerializerOptions _opts = new() { WriteIndented = true };
+
+    private readonly string _filePath;
+    private readonly Credentials _data;
+
     /// <summary>
     /// Set when the file on disk existed but could not be read. While true, nothing is written
-    /// back — see <see cref="Persist"/>. This is the difference between "a bad read cost you one
+    /// back — see <see cref="Write"/>. This is the difference between "a bad read cost you one
     /// session" and "a bad read cost you every account you have ever connected".
     /// </summary>
     private bool _loadFailedWithFilePresent;
 
-    /// <summary>True when this store refused to load an existing file and is protecting it from being overwritten.</summary>
-    public bool IsProtectingUnreadableFile => _loadFailedWithFilePresent;
+    public FileCredentialsSource(string filePath)
+    {
+        _filePath = filePath;
+        _data     = Load();
+    }
 
-    private void Persist()
+    public bool IsProtectingUnreadableData => _loadFailedWithFilePresent;
+
+    public Credentials Read() => _data;
+
+    public void Write(Credentials data)
     {
         // The one case where saving is the wrong thing to do. If a file exists that we could not
         // parse, the in-memory state is empty defaults — and writing those over the file would
@@ -415,7 +532,7 @@ public class CredentialsStore
 
         // Atomic: the path never contains a partially-written file, and the previous contents are
         // kept as .bak. See AtomicFile for why WriteAllText was not safe enough for this file.
-        AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(_data, _opts));
+        AtomicFile.WriteAllText(_filePath, JsonSerializer.Serialize(data, _opts));
     }
 
     private Credentials Load()

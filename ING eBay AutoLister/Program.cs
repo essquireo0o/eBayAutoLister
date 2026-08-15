@@ -1,4 +1,4 @@
-﻿using ING_eBay_AutoLister.Models;
+using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
@@ -236,6 +236,12 @@ PerUserData.AddUserScope(builder);
 // the eleven endpoints that reach it, and a person who runs out is told when the next ones arrive.
 // A no-op in the desktop build, where the seller is spending their own key. See AiQuota.
 AiQuota.AddAiQuota(builder);
+// What every live sold-comps lookup has to get past first. The lookups run on a paid, finite,
+// non-refilling 50,000 API calls shared with the bulk collector, so an unmetered endpoint spends
+// the owner's stock of them on a stranger's say-so — and unlike the AI key, it is the owner's
+// budget on the desktop build too. A per-account daily cap, a global kill switch, and a 24-hour
+// cache in front of both. See LiveCompsBudget.
+LiveComps.AddLiveComps(builder);
 // Filled in once the server has started and been asked what it actually bound. See ServerBinding:
 // the eBay relay redirects to one fixed address and nothing tells it otherwise.
 builder.Services.AddSingleton<ServerBinding>();
@@ -272,6 +278,11 @@ builder.Services.AddSingleton<FacebookSoldStore>();
 // Singleton because the run outlives the request that started it: a whole-account rewrite takes
 // minutes, and the browser polls it rather than holding the connection open.
 builder.Services.AddSingleton<CopilotSeoJob>();
+
+// Singleton so a re-scan of the same account does not re-spend an eBay GetItem call on a category
+// it already read this session. eBay's bulk listing call omits the category; this remembers what
+// the per-item lookup found, for 24 hours. See ListingCategoryCache.
+builder.Services.AddSingleton<ListingCategoryCache>();
 
 // Singleton so the six-hour cache is shared: one install asks GitHub four times a day, not once
 // per page load. See UpdateChecker for why that limit matters.
@@ -343,11 +354,16 @@ builder.Services.AddSingleton<MarketplaceRepository>();
 // MarketCompsApiUrl is configured; otherwise the local Marketplace.db repository is used.
 builder.Services.AddSingleton<HostedMarketplaceClient>();
 builder.Services.AddSingleton<HostedMarketplaceRepository>();
-// Live sold-comps lookups, one model at a time, while the seller waits. The daily background
-// crawl this replaces was retired on 2026-08-07 — see OnDemandCompsScraper for why volume, not
-// throughput, was the binding constraint. Registered unconditionally: when the scraper isn't
-// installed on this machine it reports unavailable and every lookup serves stored comps.
-builder.Services.AddSingleton<OnDemandCompsScraper>();
+// Live sold-comps lookups, one model at a time, while the seller waits — over the OpenWebNinja
+// real-time eBay API since 2026-08-14. This is what makes live sold prices work on the HOSTED
+// build for the first time: the browser scraper it replaces needed Chrome, a signed-in eBay
+// profile and a person to clear a bot check, none of which exist on a server. See LiveCompsLookup.
+//
+// OnDemandCompsScraper and BitData/scrape_one_keyword.py are still in the tree and are now DEAD —
+// nothing constructs or calls them. Removing them is a separate reviewed change.
+builder.Services.AddSingleton<OpenWebNinjaClient>();
+builder.Services.AddSingleton<LiveCompsStore>();
+builder.Services.AddSingleton<LiveCompsLookup>();
 // Both databases, merged — NOT one or the other. The live scraper writes into the LOCAL
 // SoldListings table, so selecting the hosted repository alone (the shipped configuration) meant
 // every freshly scraped comp landed somewhere the pricing path never read: three minutes of
@@ -379,7 +395,20 @@ builder.Services.AddSingleton<LiquidityScoringService>();
 builder.Services.AddSingleton<ProductNormalizer>();
 builder.Services.AddSingleton<ComparableMatcher>();
 builder.Services.AddSingleton<TerapeakMarketService>();
-builder.Services.AddSingleton<MarketPriceEstimator>();
+// The latest arb-bot calibration for this deployment (App_Data/calibration.json). Read by the
+// estimator to correct a measured pricing bias; written by the admin /api/calibration/update
+// endpoint. Empty until the bot posts one, in which case pricing is untouched.
+builder.Services.AddSingleton<CalibrationStore>();
+// The estimator applies the calibration as a bounded, sample-gated correction. The whole behaviour
+// is gated behind Calibration:Enabled (default true) so it can be switched off instantly without a
+// redeploy if it ever misbehaves; a blank/absent setting reads as on, only the literal "false" is off.
+var calibrationEnabled = !string.Equals(
+    builder.Configuration["Calibration:Enabled"], "false", StringComparison.OrdinalIgnoreCase);
+builder.Services.AddSingleton<MarketPriceEstimator>(sp => new MarketPriceEstimator(
+    sp.GetRequiredService<TerapeakMarketService>(),
+    sp.GetRequiredService<CalibrationStore>(),
+    calibrationEnabled,
+    sp.GetRequiredService<ActionLog>()));
 builder.Services.AddSingleton<SellThroughCalculator>();
 builder.Services.AddSingleton<FeeProfile>();
 builder.Services.AddSingleton<ProfitCalculator>();
@@ -591,8 +620,18 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DealRadarService>(
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
 // key, so opening it to any origin only exposes what an admin-key holder can
 // already read. This is a loopback desktop app, not a public server.
+//
+// None of that reasoning survives being put on a public address, so the hosted build does not get
+// it. There is no standalone admin panel on a hosted deployment — the owner dashboard is served by
+// the box itself, same-origin — and "any origin" on a server holding other people's eBay tokens is
+// a permission granted to nobody in exchange for a wildcard in every response. The hosted policy
+// allows no origin at all, which for a same-origin app costs nothing: CORS governs cross-origin
+// reads, and this app makes none.
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+{
+    if (HostedAuth.IsHostedBuild) p.WithOrigins();
+    else                          p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+}));
 
 // Sign-in for the hosted build, and nothing at all for the desktop build. Everything mapped below
 // this line — every one of the 189 endpoints — is closed to anyone who is not signed in once
@@ -2035,28 +2074,33 @@ app.MapGet("/api/sold-comps", async (string q, decimal? cost, decimal? ask, deci
 });
 
 // ── Live comps lookup ────────────────────────────────────────────────────────────────────────
-// Typing a model scrapes eBay for that exact model and files the result in the comps database.
-// A scrape takes about a minute, which no browser will wait through inside one request, so it is
-// started here and polled below — that is also what lets the panel draw a real progress bar
-// instead of a spinner that reads as a hang. See OnDemandCompsScraper.
+// Typing a model asks the OpenWebNinja API for that exact model's recent eBay sales and files the
+// result in the comps database. It is started here and polled below rather than answered inline —
+// the same protocol the browser scraper used, kept deliberately identical so the progress bar and
+// every caller are untouched by the change of source. See LiveCompsLookup.
 //
-// Starting is never an error. Every refusal — no scraper installed, hourly cap reached, this
-// model already fetched within the hour, another lookup in flight — comes back as an already
-// finished run, because the caller's next move is the same in all of them: read stored comps.
-static object CompsRunView(CompsScrapeRun r) => new
+// Starting is never an error. Every refusal — live lookups switched off, no key configured,
+// today's allowance spent, this model already fetched within the day, another lookup in flight —
+// comes back as an already finished run, because the caller's next move is the same in all of
+// them: read stored comps.
+//
+// blockedByEbay keeps its name because the UI reads it, and keeps its meaning: "the zero rows are
+// our fault, not the item's". What no longer sets it is a bot check, because there is no browser
+// left for eBay to challenge.
+static object CompsRunView(LiveCompsRun r) => new
 {
     id = r.Id, query = r.Query, stage = r.Stage, percent = r.Percent,
     rowsFound = r.RowsFound, rowsNew = r.RowsNew, finished = r.Finished,
     outcome = r.Outcome, message = r.Message,
-    blockedByEbay = r.BlockedByEbay, elapsedSeconds = r.ElapsedSeconds,
+    blockedByEbay = r.SourceFailed, elapsedSeconds = r.ElapsedSeconds,
 };
 
-app.MapPost("/api/comps/live/start", (string q, OnDemandCompsScraper scraper) =>
-    Results.Ok(CompsRunView(scraper.Start(q))));
+app.MapPost("/api/comps/live/start", (string q, LiveCompsLookup live) =>
+    Results.Ok(CompsRunView(live.Start(q))));
 
-app.MapGet("/api/comps/live/status", (string id, OnDemandCompsScraper scraper) =>
+app.MapGet("/api/comps/live/status", (string id, LiveCompsLookup live) =>
 {
-    var run = scraper.Get(id);
+    var run = live.Get(id);
     // A forgotten run is reported as finished rather than 404. The poller's job is to stop and
     // read the comps; a 404 would strand a progress bar at whatever percentage it last saw.
     return run is null
@@ -2397,6 +2441,19 @@ app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terape
 app.MapGet("/api/facebook/picks", async (FacebookMarketplaceService facebook, CancellationToken ct) =>
     Results.Ok(await facebook.BrowsePicksAsync(ct)));
 
+// Same-origin cache for Facebook Marketplace listing photos. Facebook's CDN URLs are signed,
+// short-lived and reject a cross-origin referrer, so the browser renders them blank; the server
+// fetches and caches them here and serves them from this origin instead. HMAC-signed and pinned to
+// a Facebook host, so it is not an open image proxy. No-op off the hosted build. See FbPhotoProxy.
+app.MapGet("/api/fb-photo", async (string? u, string? s, HttpContext httpCtx, CancellationToken ct) =>
+{
+    if (string.IsNullOrEmpty(u)) return Results.NotFound();
+    var bytes = await FbPhotoProxy.GetBytesAsync(u, s, ct);
+    if (bytes is null) return Results.NotFound();
+    httpCtx.Response.Headers.CacheControl = "public, max-age=604800, immutable";
+    return Results.File(bytes, "image/jpeg");
+});
+
 // Today's Picks, priced.
 //
 // The unpriced feed answers "what is near me" and stops there — a photo, an ask and a town. The
@@ -2479,6 +2536,18 @@ app.MapGet("/api/facebook/browse-options", () => Results.Ok(new
 
 app.MapPost("/api/facebook/connect", (FacebookMarketplaceService facebook) =>
 {
+    // The connect flow opens a real browser for the seller to log into their OWN Facebook, and that
+    // browser has to run on the machine the seller is sitting at. The hosted build's "machine" is a
+    // headless server in a datacentre — no display, no browser installed, nobody's Facebook session —
+    // so it can never succeed, and it must say why plainly instead of failing with a Playwright
+    // launch error ("start process 'node' … no such file or directory"). This is a desktop-app
+    // feature by nature, not a bug: see FacebookMarketplaceService.StartLogin.
+    if (HostedAuth.IsHostedBuild)
+        return Results.Ok(new { started = false, message =
+            "Facebook Marketplace works only in the Windows desktop app — the web version can't open a "
+            + "login browser on your computer. Everything else here (eBay pricing, sold comps, the "
+            + "Opportunity Finder) needs no such thing and works as normal." });
+
     var (started, message) = facebook.StartLogin();
     return Results.Ok(new { started, message });
 });
@@ -2836,6 +2905,129 @@ app.MapGet("/api/ebay/scan", async (
         log.Add("Error", "eBay scan failed", ex.Message);
         return Results.Ok(FailedArbitrage(q ?? "", "", 40,
             $"The eBay scan couldn't be completed: {ex.Message}"));
+    }
+});
+
+// Reprice one board row. The scan prices every row against whatever sold comps were in the database
+// when it ran, so an obscure item comes back "ESTIMATE — too few comps". The browser then fires a
+// live OpenWebNinja lookup for that one product (POST /api/comps/live/start), which writes fresh
+// sold rows into the same comps database this reads — and this re-costs the single row against the
+// now-deepened data, so the estimate becomes a real number without re-running the whole scan.
+//
+// It is the single-row echo of FindLocalArbitrageAsync's pricing half and nothing more: the same
+// LocalSupplyListing, the same category classification, the same analyzer.Build, priced with
+// retailSalesTaxPercent 0 (eBay's tax is already inside the delivered price) and no coupon pass.
+// Deliberately NEVER hits eBay or Terapeak — the live comps were already fetched by the frontend,
+// so allowRealTerapeakScrape:false and a null eBay fallback keep this to a single SQLite pass (~1s).
+//
+// Never throws to the client: a failure comes back as { repriced:false }, and the board keeps the
+// estimate it already had rather than losing a row to an exception.
+app.MapPost("/api/opportunities/reprice-row", async (
+    RepriceRowRequest req, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
+    ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
+    ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
+    ConfidenceScoringService confidenceScorer, LocalArbitrageAnalyzer analyzer, ActionLog log,
+    CancellationToken ct) =>
+{
+    if (req is null || string.IsNullOrWhiteSpace(req.Title))
+        return Results.BadRequest(new { error = "A deal row with a title is required." });
+
+    try
+    {
+        var listing = DealReprice.ToListing(req);
+        var query = DealReprice.LookupQueryFor(req);
+
+        // Cache-only, exactly like pass 1 of the scan: read the sold-comps database (into which the
+        // live lookup has just written) and whatever Terapeak already had, and price off that.
+        var analysis = await AnalyzeProductAsync(
+            query, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+            activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+            allowRealTerapeakScrape: false,
+            normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+            opportunityScorer, confidenceScorer, log, ct);
+        var pricing = ResalePricing.From(analysis, query);
+
+        // Same call the scan's ranking pass makes — retailSalesTaxPercent 0 and no coupons, because
+        // the coupon pass is a scan-level per-store lookup, not a per-row one. The result is one
+        // LocalArbitrageOpportunity, the exact shape of an /api/ebay/scan Items[] entry.
+        var row = analyzer.Build(listing, pricing, feeProfile, 0m, coupons: null);
+        return Results.Ok(row);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Deal row reprice failed", $"\"{req.Title}\": {ex.Message}");
+        // A clean signal the frontend ignores, so the row keeps its existing estimate.
+        return Results.Ok(new { repriced = false, error = ex.Message });
+    }
+});
+
+// A Claude reality-check on an estimate row. The board's comp-matcher can't tell a component from a
+// whole unit, so a "S19 XP hashboard" ($220 buy) gets matched to whole-S19-XP-miner sold comps and
+// shows $994 net / 452% ROI — nonsense that floats to the TOP of the board. This reads the listing's
+// own words (title, category, buy price, the thin estimate and how few comps back it) and asks
+// whether those comps plausibly match THIS item. Metered like /api/analyze — the gate lives inside
+// ClaudeService.CallModelAsync, so over-quota comes back as the same 429 the UI already reads — and
+// it never throws to the client: any other failure is { checked: false } so the row keeps its estimate.
+app.MapPost("/api/opportunities/analyze-deal", async (
+    AnalyzeDealRequest req, ClaudeService claude, IHttpClientFactory httpFactory, ActionLog log,
+    CancellationToken ct) =>
+{
+    if (req is null || string.IsNullOrWhiteSpace(req.Title))
+        return Results.BadRequest(new { error = "A deal row with a title is required." });
+
+    try
+    {
+        var input = new DealCheckInput
+        {
+            Title           = req.Title.Trim(),
+            Category        = (req.Category ?? "").Trim(),
+            BuyPrice        = req.BuyPrice,
+            EstimatedResale = req.EstimatedResale,
+            CompCount       = Math.Max(0, req.CompCount),
+        };
+
+        // An image sharpens the call but is never required — title-only is the core, because Claude
+        // reads "S19 XP hashboard" as a component from the words alone. The fetch is short-timeout and
+        // non-fatal: a photo host that 404s, stalls, or serves something that isn't an image must not
+        // sink the check, so anything short of a recognised image just leaves the check title-only.
+        if (!string.IsNullOrWhiteSpace(req.ImageUrl))
+        {
+            try
+            {
+                using var imgCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                imgCts.CancelAfter(TimeSpan.FromSeconds(6));
+                var http  = httpFactory.CreateClient();
+                var bytes = await http.GetByteArrayAsync(req.ImageUrl, imgCts.Token);
+                var mime  = bytes.Length is > 0 and <= 5 * 1024 * 1024 ? DetectImageMime(bytes) : null;
+                if (mime is not null)
+                {
+                    input.ImageBase64   = Convert.ToBase64String(bytes);
+                    input.ImageMimeType = mime;
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* title-only is fine — the image is a bonus, not a requirement */ }
+        }
+
+        var check = await claude.CheckDealAsync(input, ct);
+        return Results.Ok(check);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+    catch (AiQuotaExceededException ex)
+    {
+        // The one failure the UI must not read as { checked:false }: the day's allowance is gone, and
+        // FailureJson draws it the same way /api/analyze does — a 429 with the reset time on it.
+        return FailureJson(ex.Failure);
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Deal reality check failed", $"\"{req.Title}\": {ex.Message}");
+        // A clean signal the frontend renders as a short note, so the row keeps its existing estimate.
+        return Results.Ok(new { @checked = false, error = ex.Message });
     }
 });
 
@@ -5105,59 +5297,6 @@ static decimal StorePlanMonthlySales(EarningsStore earnings, DateTimeOffset now)
 
     return Math.Round(gross / 3m, 2, MidpointRounding.AwayFromZero);
 }
-
-// ── The Restock List — what to go and buy again ───────────────────────────────────────────────
-// Every sourcing board in this app starts at the market and asks "is this worth buying". This one
-// starts at the seller's own till roll and asks "what should I be looking FOR" — a different
-// question, and the one they actually ask on a Saturday morning with cash in hand.
-//
-// Reuses the earnings arithmetic wholesale: the same flips, the same cost table, the same fee
-// profile, run through EarningsCalculator exactly as Money Made and the Tax Pack do. A restock
-// recommendation that disagreed with the earnings screen about what a sale made would be worse than
-// no recommendation at all.
-//
-// One optional eBay read, for one question: is any of this actually listed right now. It fails on
-// its own — the ranking is the seller's history and does not need eBay to be up — and when it fails
-// the board says so instead of quietly reporting everything as in stock.
-app.MapGet("/api/restock", async (
-    EarningsStore store, CostBasisStore costBasis, EarningsCalculator calculator, FeeProfile feeProfile,
-    EbayService ebay, ActionLog log) =>
-{
-    // One read of the cost table for the whole set, and it is read for two things: the cost that
-    // decides whether a sale counts as profit at all, and the purchase date that turns a margin
-    // into a speed.
-    var costs = costBasis.GetAll();
-    var sales = store.GetAll()
-        .Select(flip =>
-        {
-            var basis = CostBasisStore.Find(costs, flip.ListingId, flip.Sku);
-            return new RestockSale
-            {
-                Sale = calculator.Compute(flip, basis, feeProfile),
-                AcquiredUtc = basis?.AcquiredUtc,
-            };
-        })
-        .ToList();
-
-    List<EbayListingSummary>? active = null;
-    string? stockNote = null;
-    try
-    {
-        active = await ebay.GetListingsAsync();
-    }
-    catch (Exception ex)
-    {
-        // Not connected, or the token expired. The board is still worth every penny without it —
-        // it just can't tell the seller which of these they have none of.
-        log.Add("Warning", "Restock list could not read your live listings", ex.Message);
-        stockNote = "Your live eBay listings could not be read, so this board can't say which of these you currently have none of. Everything else on it is your own sales history and is unaffected.";
-    }
-
-    // Local time, not UTC: "sold 3 days ago" has to mean the days the seller has lived through.
-    var result = RestockAnalyzer.Analyze(sales, active, DateTimeOffset.Now);
-    result.StockNote = stockNote;
-    return Results.Ok(result);
-});
 
 // ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────
 // Everything above answers one question about one moment. This carries a single flip end to end:
@@ -9013,12 +9152,29 @@ app.MapPost("/api/copilot/improve-seo/cancel", (CopilotSeoJob job) =>
 // Read-only by design — this endpoint renames nothing and revises nothing. The seller reads the
 // plan and applies it deliberately, because a bulk edit across a live store that ran on page load
 // would be indistinguishable from an accident.
-app.MapGet("/api/copilot/scan", async (EbayService ebay, ActionLog log) =>
+app.MapGet("/api/copilot/scan", async (EbayService ebay, ActionLog log,
+    ListingCategoryCache categoryCache, CancellationToken ct) =>
 {
     try
     {
         var policies = await ebay.GetBusinessPoliciesAsync();
         var listings = await ebay.GetListingsAsync();
+
+        // eBay's bulk listing call does not return the category, so the audit below would flag
+        // every listing as "category not loaded". Fill them in per-item first — cache-first, then a
+        // bounded burst of GetItem calls under an overall timeout — so the categories card runs on
+        // real data instead of sending the seller off for a manual deeper scan. Anything that times
+        // out or falls past the cap simply stays unknown, and the card counts it honestly.
+        await ListingCategoryFiller.FillCategoriesAsync(
+            listings, categoryCache,
+            fetch: async (listingId, token) =>
+            {
+                var item = await ebay.GetItemAsync(listingId, token);
+                return (item.Category, item.CategoryId);
+            },
+            onError: (id, what, detail) =>
+                log.Add("Warning", $"Copilot category lookup {what} (listing {id})", detail),
+            ct: ct);
 
         var shippingRenames = ListingCopilot.PlanPolicyRenames(policies.FulfillmentPolicies);
         var paymentRenames  = ListingCopilot.PlanPolicyRenames(policies.PaymentPolicies);
@@ -10151,6 +10307,45 @@ app.MapGet("/api/work/recoverable", (WorkRecoveryStore work, ActionLog log) =>
     }
 });
 
+// The draft the AI Listing screen puts back on screen by itself when it opens onto an empty form.
+//
+// Autosave already kept every field. Getting it back was the half that was missing: it took noticing
+// a Recover button, opening it, and picking a row — and a safety net nobody knows to reach for
+// catches nobody. The work was saved and lost anyway.
+//
+// Separate from /api/work/recoverable rather than a filter over it, because the two answer different
+// questions and only one of them is allowed to clear the screen without being asked. See
+// WorkRecoveryStore.LatestResumable for what is deliberately left out of this one: publishing and
+// failed rows keep their urgent dashboard banner and their deliberate click, because opening one in
+// the editor invites a second live listing for an item that may already be up.
+app.MapGet("/api/work/resume", (WorkRecoveryStore work, ActionLog log) =>
+{
+    try
+    {
+        var draft = work.LatestResumable();
+        if (draft is null) return Results.Ok(new { draft = (object?)null });
+
+        return Results.Ok(new
+        {
+            draft = new
+            {
+                key = draft.Key,
+                label = draft.Label,
+                payload = draft.Payload,
+                updatedUtc = draft.UpdatedUtc,
+            },
+        });
+    }
+    catch (Exception ex)
+    {
+        // Quiet, and null rather than an error: this runs on every open of the screen and nothing on
+        // it depends on the answer. A seller whose restore failed gets the blank form they would have
+        // had before this existed, with their draft still sitting under Recover.
+        log.Add("Warning", "Could not read the draft to resume", ex.Message);
+        return Results.Ok(new { draft = (object?)null });
+    }
+});
+
 app.MapPost("/api/work/discard", (WorkDiscardRequest req, WorkRecoveryStore work, ActionLog log) =>
 {
     if (string.IsNullOrWhiteSpace(req.Key)) return Results.Ok(new { discarded = false });
@@ -10191,7 +10386,7 @@ app.MapPost("/api/work/discard-all", (WorkRecoveryStore work, ActionLog log) =>
 app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStore analytics, ActionLog log, StripeService stripe, IServiceProvider services) =>
 {
     var adminKey = store.EnsureAdminKey();
-    if (string.IsNullOrWhiteSpace(k) || k != adminKey)
+    if (!store.AdminKeyMatches(k))
         return Results.Unauthorized();
     var snap = analytics.GetSnapshot();
 
@@ -10217,12 +10412,17 @@ app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStor
         },
         dashboardUrl    = $"{baseUrl}/owner?k={adminKey}"
     });
-});
+}).RateLimitLikeAuth();
+
+// ── Learned pricing calibration ───────────────────────────────────────
+// POST /api/calibration/update (arb-bot) writes it, GET /api/calibration reads it back. Both
+// admin-key gated exactly like /api/owner/stats above. See CalibrationEndpoints / CalibrationStore.
+CalibrationEndpoints.Map(app);
 
 app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =>
 {
     var adminKey = store.EnsureAdminKey();
-    if (string.IsNullOrWhiteSpace(k) || k != adminKey)
+    if (!store.AdminKeyMatches(k))
         return Results.Content("<html><body><h2>401 Unauthorized</h2></body></html>", "text/html", statusCode: 401);
     var stripeConfigured = stripe.IsConfigured;
     var stripePubKey     = stripe.PublishableKey ?? "";
@@ -10325,7 +10525,7 @@ load();
 </html>
 """;
     return Results.Content(html, "text/html");
-});
+}).RateLimitLikeAuth();
 
 // The full detail of one live listing, for the edit drawer.
 //

@@ -1,0 +1,44 @@
+{
+  "q0": {
+    "enforced": true,
+    "limit": 5,
+    "used": 0,
+    "resetsAt": "2026-08-14T00:00:00+00:00",
+    "remaining": 5,
+    "exhausted": false
+  },
+  "qFull": {
+    "enforced": true,
+    "limit": 5,
+    "used": 5,
+    "resetsAt": "2026-08-14T00:00:00+00:00",
+    "remaining": 0,
+    "exhausted": true
+  },
+  "refused": {
+    "status": 429,
+    "ok": false,
+    "headline": "You have used today's 5 AI generations",
+    "whatHappened": "This account gets 5 AI generations a day while the trial runs on the owner's Anthropic key, and all 5 have been used.",
+    "whatToDo": "Your next 5 become available at 00:00 UTC — 1 hour 36 minutes from now. Everything you have already written is saved and will still be here.",
+    "kind": "AiQuotaExhausted",
+    "body": "{\"ok\":false,\"error\":\"You have used today's 5 AI generations\",\"details\":\"Daily AI quota reached: 5/5 used, resets 2026-08-14T00:00:00.0000000+00:00.\",\"failure\":{\"kind\":\"AiQuotaExhausted\",\"domain\":\"Ai\","
+  },
+  "onScreen": "You have used today's 5 AI generations\nThis account gets 5 AI generations a day while the trial runs on the owner's Anthropic key, and all 5 have been used.\nYour next 5 become available at 00:00 UTC — 1 hour 36 minutes from now. Everything you have already written is saved and will still be here.\nNothing you entered has been lost.\nTechnical detail",
+  "qb0": {
+    "enforced": true,
+    "limit": 5,
+    "used": 0,
+    "resetsAt": "2026-08-14T00:00:00+00:00",
+    "remaining": 5,
+    "exhausted": false
+  },
+  "qb1": {
+    "enforced": true,
+    "limit": 5,
+    "used": 1,
+    "resetsAt": "2026-08-14T00:00:00+00:00",
+    "remaining": 4,
+    "exhausted": false
+  }
+}

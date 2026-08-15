@@ -1,0 +1,52 @@
+{
+  "A": "e2e-a-0813a@inglisting-test.com",
+  "B": "e2e-b-0813a@inglisting-test.com",
+  "aDealId": "1",
+  "checks": [
+    {
+      "name": "B reading A's deal pipeline via /api/deals",
+      "pass": true,
+      "detail": "status 200, no marker from A (1372 bytes)"
+    },
+    {
+      "name": "B reading A's cost basis via /api/inventory/cost-basis",
+      "pass": true,
+      "detail": "status 200, no marker from A (2 bytes)"
+    },
+    {
+      "name": "B reading A's earnings via /api/earnings",
+      "pass": true,
+      "detail": "status 200, no marker from A (2574 bytes)"
+    },
+    {
+      "name": "B reading A's drafts via /api/local-drafts/list",
+      "pass": true,
+      "detail": "status 500, no marker from A (2 bytes)"
+    },
+    {
+      "name": "B touching A's deal #1 via apply-cost",
+      "pass": true,
+      "detail": "status 404 — \"That deal is no longer on the board.\""
+    },
+    {
+      "name": "B moving A's deal #1 to another stage",
+      "pass": true,
+      "detail": "status 404 — \"That deal is no longer on the board.\""
+    },
+    {
+      "name": "B deleting A's deal #1",
+      "pass": true,
+      "detail": "status 404 — \"That deal is no longer on the board.\""
+    },
+    {
+      "name": "A's deal survived B's write/delete attempts",
+      "pass": true,
+      "detail": "still on A's board"
+    },
+    {
+      "name": "B does not inherit an eBay user token",
+      "pass": true,
+      "detail": "hasEbayUserToken=false"
+    }
+  ]
+}

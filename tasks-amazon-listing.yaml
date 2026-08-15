@@ -1,0 +1,150 @@
+# AI Listing for Amazon, mirroring the eBay flow. Owner, 2026-08-14: "Make AI Listing for Amazon -
+# exactly how you did ebay". Explicitly a DEVELOPMENT effort — the owner said it is not live yet,
+# and the credentials he supplied are the SANDBOX keyset.
+#
+# WHAT ALREADY EXISTS (surveyed before writing this — read it before starting):
+#   Services/EbayService.cs      3,952 lines. The whole eBay surface: OAuth exchange and refresh,
+#                                CreateListingAsync / PublishListingAsync, policies, inventory
+#                                revision, orders, offers. This is the shape to mirror.
+#   Services/EbayAuthFlow.cs       540 lines. The OAuth state machine.
+#   Models/ListingData.cs          PostListingRequest is the object the whole listing flow centres
+#                                on — SKU, format, duration, policies, and the AI-filled fields.
+#   Services/CrossListingExporter.cs
+#                                ALREADY knows Amazon as a marketplace, with its 15% fee and
+#                                net-parity pricing. But it only EXPORTS text/CSV for a human to
+#                                paste — nothing calls Amazon. That is the gap.
+#   web-credentials.json         amazon_spapi: sandbox client id, rotation deadline. The CLIENT
+#                                SECRET IS NOT CAPTURED — the disclosure was collapsed in the
+#                                screenshot. Ask the owner rather than inventing one.
+#
+# WHERE AMAZON IS GENUINELY DIFFERENT FROM EBAY — do not assume symmetry:
+#   * eBay lets you invent a listing. Amazon mostly does not: you either OFFER on an existing ASIN
+#     or create a new product, and creating one requires passing that product type's JSON Schema.
+#   * Attributes are per-PRODUCT-TYPE schemas fetched from the Product Type Definitions API, not a
+#     flat list of aspects. The AI cannot free-text these; it must fill a schema.
+#   * SP-API needs an LWA access token per call, and the sandbox returns canned data — a "success"
+#     against sandbox proves the plumbing and NOTHING about a real listing.
+#
+# GUARDRAILS
+#   * Nothing here may publish to a LIVE Amazon account. Sandbox only, until the owner says
+#     otherwise in writing.
+#   * The eBay flow must not regress. dotnet build + dotnet test green before finishing.
+#   * Secrets in configuration only, never the repo. Branch feat/amazon. Never push.
+
+tasks:
+  - prompt: |
+      Phase 1 — talk to Amazon SP-API at all, in sandbox, and prove it.
+
+      Build the auth and client layer that everything else needs:
+        * LWA token exchange (client id + secret -> access token), refreshed before expiry, in the
+          same shape EbayService already uses for eBay so the two read alike.
+        * An SP-API HTTP client that attaches the token and the correct host/marketplace headers.
+        * Configuration: Credentials__AmazonClientId / __AmazonClientSecret / __AmazonRefreshToken
+          / __AmazonMarketplaceId / __AmazonSellerId, plus a Sandbox flag that DEFAULTS TO TRUE.
+
+      The client secret is not in web-credentials.json — the screenshot had it collapsed. Do not
+      invent or placeholder a value that looks real: if it is absent, make the service report
+      "not configured" cleanly and say so in your summary, exactly as EbayService does when its
+      keys are missing.
+
+      Acceptance: a diagnostic endpoint (mirror /api/ebay/status) that reports whether Amazon is
+      configured, whether a token can be obtained, and which environment it is pointed at. Quote
+      its real response. If the secret is still missing, the honest expected result is
+      "configured: false" — report that rather than faking a pass.
+    session: "amz-01-spapi-auth"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 11
+
+  - prompt: |
+      Phase 2 — product types and their attribute schemas.
+
+      Amazon will not accept a free-form listing. Every product belongs to a PRODUCT TYPE, and each
+      type has a JSON Schema of required and optional attributes, fetched from the Product Type
+      Definitions API. This phase makes the app able to answer: "for this item, which product type,
+      and what does that type demand?"
+
+        * Search product types for a query, and fetch the schema for one.
+        * Cache schemas locally — they are large, they change rarely, and re-fetching one per
+          listing is both slow and rude.
+        * Surface, for a chosen type, the REQUIRED attributes distinctly from the optional ones.
+          Required is what decides whether a listing can exist at all.
+
+      Acceptance: for a real query ("bluetooth speaker" is fine), print the product type chosen and
+      the list of required attributes with their types. Say plainly whether this worked against
+      sandbox or needed production, because sandbox coverage of this API is uneven.
+    session: "amz-02-product-types"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 10
+    depends_on: ["amz-01-spapi-auth"]
+
+  - prompt: |
+      Phase 3 — let the AI fill an Amazon listing, the way it fills an eBay one.
+
+      The existing flow turns a photo or URL into a filled eBay listing (title, 20+ item specifics,
+      description, price from sold comps). Reuse ALL of that. What changes is the target shape:
+      eBay aspects are a flat list; Amazon attributes are a schema.
+
+        * Map what the AI already extracted onto the chosen product type's required attributes.
+        * Where a required attribute has no value, say which one is missing and why the listing
+          cannot go yet — never invent a value to satisfy a schema. A fabricated GTIN or brand is
+          worse than an unfinished draft, and on Amazon it is a suspension risk.
+        * Amazon's title, bullet-point and description rules differ from eBay's. CrossListingExporter
+          already encodes some of this (title limits, banned cross-site references, 15% fee, net
+          parity pricing) — reuse it rather than writing a second set of rules that will drift.
+
+      Acceptance: take one real draft the app already produced for eBay and show the Amazon
+      attribute payload it generates, with required fields marked filled or missing. Do not submit
+      it anywhere in this phase.
+    session: "amz-03-ai-fills-attributes"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 9
+    depends_on: ["amz-02-product-types"]
+
+  - prompt: |
+      Phase 4 — create a listing in SANDBOX, both paths.
+
+      Amazon has two routes and they are not interchangeable:
+        (a) OFFER ON AN EXISTING ASIN — the product already exists in Amazon's catalogue and you
+            are adding your price, condition and quantity. This is the common case for a reseller
+            and by far the easier one. Do this first.
+        (b) CREATE A NEW PRODUCT — full attribute schema, and the listing can be rejected
+            asynchronously long after a 200 response.
+
+      Implement (a) fully; implement (b) only if (a) is working and tested.
+
+      Handle Amazon's asynchronous truth: a successful HTTP response does NOT mean the listing is
+      live. Submissions are processed later and can fail with issues attached to the SKU. Poll or
+      surface those issues; a UI that says "Published" when Amazon has quietly rejected it is worse
+      than one that says "Submitted, awaiting Amazon".
+
+      SANDBOX ONLY. Do not publish to a live seller account under any circumstances in this task.
+
+      Acceptance: a sandbox submission for an existing ASIN, with the real request and response
+      quoted, and the subsequent issue-check showing how a rejection would surface. State clearly
+      what sandbox does and does not prove.
+    session: "amz-04-create-listing-sandbox"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 8
+    depends_on: ["amz-03-ai-fills-attributes"]
+
+  - prompt: |
+      Phase 5 — the UI, mirroring the eBay listing screen.
+
+      Add Amazon alongside eBay in the AI Listing flow: choose the marketplace, see which required
+      attributes are filled or missing, and submit to sandbox. Follow the existing screen's
+      conventions rather than inventing new ones — the same panels, the same wording style, the
+      same "Won't publish / N things will stop this publishing" pattern the eBay side already uses,
+      because that pattern is exactly right for Amazon's stricter requirements.
+
+      Two things the UI must say out loud:
+        * That this is SANDBOX, unmistakably, on every screen that can submit. A seller who thinks
+          they have listed on Amazon and has not is the worst outcome of this whole feature.
+        * That a submission is pending until Amazon confirms it, not "published".
+
+      Acceptance: screenshots at 1440px and 390px of the Amazon path, showing a filled draft, a
+      missing-required-attribute state, and a sandbox submission result. dotnet test green; the
+      eBay path unchanged.
+    session: "amz-05-ui"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 7
+    depends_on: ["amz-04-create-listing-sandbox"]

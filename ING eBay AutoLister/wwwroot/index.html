@@ -4,6 +4,34 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ING Listing Engine™ | ING Mining LLC</title>
+
+  <!-- Social card for the ROOT url, which is the one people actually paste.
+       https://app.inglisting.com serves THIS file — the app shell — to anyone not signed in;
+       it does not redirect to signin.html. So tags on the sign-in page alone left the shared
+       link unfurling as a blank rectangle on LinkedIn, Facebook and iMessage. Verified with
+       Facebook's own crawler user-agent, which is the only way to see what they see.
+
+       JPG, not WebP: LinkedIn does not render WebP, which is exactly how the two ingmining.com
+       pages ended up with invisible cards. 1200x630 is what both networks crop to.
+
+       No robots directive here on purpose: this is the app itself, and whether it should be
+       indexed is a decision for the marketing site to make, not a side effect of a share card. -->
+  <meta name="description" content="ING Listing Engine — paste a product link or a photo and AI writes your eBay listing, then prices it against real eBay sold records." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="ING Listing Engine" />
+  <meta property="og:url" content="https://app.inglisting.com/" />
+  <meta property="og:title" content="ING Listing Engine — AI that writes your eBay listing, and prices it" />
+  <meta property="og:description" content="Paste a product link or a photo. About ten seconds later the listing is filled in — title, 20+ item specifics, description, photos — and priced against real eBay sold records. Free beta, no card." />
+  <meta property="og:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="ING Listing Engine filling an eBay listing automatically from a product photo." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="ING Listing Engine — AI that writes your eBay listing, and prices it" />
+  <meta name="twitter:description" content="Paste a link or a photo. AI fills the listing and prices it against real eBay sold records. Free beta." />
+  <meta name="twitter:image" content="https://ingmining.com/wp-content/uploads/2026/08/ing-hero-3153-autolister-og.jpg" />
+
+  <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css?v=130" />
   <!--
@@ -110,7 +138,6 @@
         <!-- The thread between every other screen: one flip from the forecast that justified it to
              the sale that settled it. Next to Money Made because between them they answer "what
              have I made" and "what's still out there" — the two halves of the same question. -->
-        <button class="nav-item" type="button" data-page="pipeline"><svg class="nav-icon" aria-hidden="true"><use href="#i-pipeline"/></svg>Deal Pipeline</button>
         <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
         <button class="nav-item" type="button" data-page="copilot"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>Listing Copilot</button>
         <button class="nav-item" type="button" data-page="ai"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing</button>
@@ -125,19 +152,16 @@
              "what should I go and buy"; this one answers "should I buy THIS", about the thing
              already in the seller's hand. It sits first in Grow because it is the one that has to
              be found in three seconds on a phone. -->
-        <button class="nav-item" type="button" data-page="snap"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>Snap &amp; Source</button>
         <!-- The only board in Grow that isn't looking at the market. Every other one answers "is
              this worth buying" about something it found; this one answers "what should I be looking
              FOR", out of the seller's own completed sales — and that question comes first, which is
              why it sits directly under the screen they use with the item already in their hand. -->
-        <button class="nav-item" type="button" data-page="restock"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Restock List</button>
         <!-- The only screen in the app that works when nobody is looking at it. Every other
              sourcing board is a button someone has to remember to press; this one is that same
              scan, saved with a profit bar on it, running on its own. It sits first in Grow
              because the deals it finds are the ones the other screens were never open for.
              The badge is drawn from data-count in CSS, so the tab bar takes its title from this
              button's text without picking the number up with it. -->
-        <button class="nav-item" type="button" data-page="radar"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>Deal Radar<span id="nav-radar-badge" class="nav-badge hidden" data-count="0" aria-hidden="true"></span></button>
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
         <!-- The only sourcing screen that buys on the same marketplace it sells on. Sits directly
              under the Opportunity Finder because it answers the same question with a clock on it:
@@ -375,13 +399,21 @@
             <div id="step6-row" class="setup-step setup-step--optional">
               <div id="step6-icon" class="setup-step-num">6</div>
               <div class="setup-step-body">
-                <div class="setup-step-title">Connect Facebook Marketplace <span class="setup-tag">Optional</span></div>
+                <div class="setup-step-title">Connect Facebook Marketplace
+                  <span class="setup-tag fb-tag-optional">Optional</span>
+                  <!-- Shown only on the hosted web build (body.is-hosted). The desktop app,
+                       where a real browser can open, keeps the plain "Optional" tag. -->
+                  <span class="setup-tag fb-tag-desktop">Desktop only</span></div>
                 <div class="setup-step-copy" id="setup-facebook-status">Checking Facebook connection…</div>
+                <!-- Hosted-only honest note: the feature exists, it just can't run on a headless
+                     server. Rather than hide it and look like it doesn't exist, we say where it lives. -->
+                <div class="setup-step-copy fb-desktop-note">Facebook has no Marketplace API, so this logs into your own account in a real browser window — which only the free Windows desktop app can open. It isn't part of the web version.</div>
               </div>
               <!-- Secondary, not primary. Gold on the one optional row made it the loudest thing
                    on a panel whose whole job is to point at one required step at a time. -->
               <button id="setup-facebook-connect" class="btn btn-secondary" type="button">Connect Facebook →</button>
               <button id="setup-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
+              <a href="/download" class="btn btn-secondary fb-desktop-link">Get the Windows app →</a>
             </div>
 
             <!-- What's left of the extras line: AI photo generation only, now that the
@@ -1525,6 +1557,11 @@
               <span id="fb-connect-status" class="opp-connect-status">Checking Facebook connection…</span>
               <button id="fb-connect-btn" class="btn btn-primary small hidden" type="button">Connect Facebook</button>
               <button id="fb-disconnect-btn" class="btn btn-secondary small hidden" type="button">Disconnect</button>
+              <!-- Hosted web build: no browser on the server to log a person into Facebook, so the
+                   button above is hidden and this honest note takes its place. Craigslist and the
+                   clearance/liquidation feeds in this same panel still work here with no login. -->
+              <span class="opp-connect-status fb-desktop-note">Facebook Marketplace needs a real browser to log in — it's in the free Windows desktop app, not the web version. Craigslist and clearance deals below still work here.</span>
+              <a href="/download" class="btn btn-primary small fb-desktop-link">Get the Windows app →</a>
             </div>
 
             <div class="fb-search-row">
@@ -1644,12 +1681,14 @@
               <div class="fb-arb-controls">
                 <label for="fb-arb-sort">Sort by</label>
                 <select id="fb-arb-sort">
-                  <!-- ROI first, by default. Net profit puts the one $900 board above ten $150
-                       flips, and the $900 board is usually the one resting on a single loose comp.
-                       Return on what you tie up is the question a reseller is actually asking, and
-                       the $100 bar below already keeps the trivial wins off the board — so ranking
-                       by ROI cannot surface a 900% return on four dollars. -->
-                  <option value="roi" selected>ROI %</option>
+                  <!-- Balanced first, by default. Pure ROI floats a $4 flip at 4,000% over a deal
+                       that nets ten times the dollars; pure net profit floats a big, expensive,
+                       razor-margin row that ties the cash up for a thin return. Balanced multiplies
+                       net dollars by a log-damped ROI (and damps thin-comp rows), so the row that
+                       makes the most money for what it ties up leads. ROI % and Net profit stay as
+                       explicit choices for when you want one lens on its own. See BalancedScore. -->
+                  <option value="balanced" selected>Balanced (best overall)</option>
+                  <option value="roi">ROI %</option>
                   <option value="profit">Net profit</option>
                   <option value="perday">Fastest profit ($ per day)</option>
                   <option value="fastest">Days to cash</option>
@@ -1683,12 +1722,12 @@
                      LocalArbitrageAnalyzer.SolidProfit does not pay for finding, listing and
                      packing the thing, so it is not a deal — it is a row that makes the real ones
                      harder to see. Unticking it brings the small stuff back. -->
-                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" checked /> Only deals that clear $100</label>
+                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" /> Only deals that clear $100</label>
                 <!-- The other half of "these results are wrong": a big number priced off one loose
                      sold comp outranked every row that was actually checkable. Estimate-only rows
                      are hidden by default rather than dimmed, because dimming them still left them
                      at the top of the board. -->
-                <label class="fb-arb-check"><input id="fb-arb-proven-only" type="checkbox" checked /> Only prices backed by real sold comps</label>
+                <label class="fb-arb-check"><input id="fb-arb-proven-only" type="checkbox" /> Only prices backed by real sold comps</label>
                 <label class="fb-arb-check"><input id="fb-arb-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
                 <!-- Used stock that still carries cover: lower risk to buy, and a line the seller
                      can put in their own listing. A different KIND of row rather than a
@@ -1766,125 +1805,6 @@
             </div>
           </div>
 
-          <!-- Wrapped in the same panel the two blocks above use: this search
-               was the only section on the page floating loose on the
-               background, which read as unfinished next to them. -->
-          <div class="opp-supplier-panel">
-            <h3 class="opp-supplier-heading">🔎 Auction Sniper — live auctions priced below sold comps</h3>
-            <p class="opp-hint">AI cross-references live auctions ending soon against recent sold prices for the same keyword — surfacing high-demand items priced well below where they typically sell. Add a Seller username to analyze one seller's own listings instead of the open market.</p>
-
-          <div class="opp-search-row">
-            <div class="opp-field opp-field-keyword">
-              <label for="opp-search-input">Keyword</label>
-              <input id="opp-search-input" type="text" placeholder="Search a keyword or product name…" />
-            </div>
-            <div class="opp-field">
-              <label for="opp-seller-input">Seller</label>
-              <input id="opp-seller-input" type="text" placeholder="eBay username (optional)" />
-            </div>
-            <div class="opp-field">
-              <label for="opp-category-input">Category</label>
-              <input id="opp-category-input" type="text" placeholder="e.g. Video Games" />
-            </div>
-            <div class="opp-field">
-              <label for="opp-condition-select">Condition</label>
-              <select id="opp-condition-select">
-                <option value="">Any</option>
-                <option value="NEW">New</option>
-                <option value="USED">Used</option>
-                <option value="REFURBISHED">Refurbished</option>
-                <option value="FOR_PARTS">For Parts</option>
-              </select>
-            </div>
-            <div class="opp-field opp-field-price">
-              <label for="opp-min-price-input">Min Price</label>
-              <input id="opp-min-price-input" type="number" min="0" step="0.01" placeholder="Any" />
-            </div>
-            <div class="opp-field opp-field-price">
-              <label for="opp-max-price-input">Max Price</label>
-              <input id="opp-max-price-input" type="number" min="0" step="0.01" placeholder="Any" />
-            </div>
-            <div class="opp-field">
-              <label for="opp-listing-type-select">Listing Type</label>
-              <select id="opp-listing-type-select">
-                <option value="AUCTION">Auction</option>
-                <option value="FIXED_PRICE">Fixed Price</option>
-                <option value="BOTH">Both</option>
-              </select>
-            </div>
-            <div class="opp-field opp-field-checkbox">
-              <label><input id="opp-include-illiquid" type="checkbox" /> Include slow/stale-moving results</label>
-            </div>
-            <button id="opp-find-btn" class="btn btn-primary opp-search-submit" type="button">🔍 Search</button>
-          </div>
-          </div>
-
-          <div id="opp-results" class="opp-results hidden">
-            <div id="opp-stats-grid" class="opp-stats-grid"></div>
-
-            <div class="opp-results-layout">
-              <aside class="opp-filters-panel">
-                <h4>Filters</h4>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-underpriced" /> Underpriced only</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-ending-soon" /> Auctions ending soon</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-poor-titles" /> Poor titles</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-misspelled" /> Misspelled titles</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-poor-photos" /> Poor photos</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-low-competition" /> Low competition</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-high-demand" /> High demand</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-high-profit" /> High profit margin</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-high-throughput" /> High sell-through</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-newly-listed" /> Newly listed</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-exclude-low-confidence" /> Exclude low-confidence</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-exclude-parts-only" /> Exclude parts-only</label>
-                <label class="opp-filter-chip"><input type="checkbox" id="opp-filter-exclude-no-exact-model" /> Exclude non-exact-model</label>
-                <label class="opp-filter-chip opp-filter-disabled" title="Coming soon"><input type="checkbox" disabled /> Price drops</label>
-
-                <h4>Minimums / Maximums</h4>
-                <label class="opp-range-filter">Min ROI % <input type="number" id="opp-min-roi" placeholder="Any" /></label>
-                <label class="opp-range-filter">Min net profit $ <input type="number" id="opp-min-net-profit" placeholder="Any" /></label>
-                <label class="opp-range-filter">Min confidence <input type="number" id="opp-min-confidence" min="0" max="100" placeholder="Any" /></label>
-                <label class="opp-range-filter">Min sell-through % <input type="number" id="opp-min-sell-through" placeholder="Any" /></label>
-                <label class="opp-range-filter">Max days to sell <input type="number" id="opp-max-days-to-sell" placeholder="Any" /></label>
-              </aside>
-
-              <div class="opp-results-main">
-                <div class="opp-results-toolbar">
-                  <label for="opp-sort-select">Sort by</label>
-                  <select id="opp-sort-select">
-                    <option value="totalProfit">Total profit</option>
-                    <option value="opportunityScore">Opportunity Score</option>
-                    <option value="confidenceScore">Confidence</option>
-                    <option value="netProfit">Net profit</option>
-                    <option value="roiPercent">ROI</option>
-                    <option value="sellThroughPercent">Sell-through</option>
-                    <option value="velocity">Sales velocity</option>
-                    <option value="totalCost">Supplier cost</option>
-                    <option value="expectedSalePrice">Expected sale price</option>
-                    <option value="daysToSell">Days to sell</option>
-                  </select>
-                </div>
-                <!-- Live eBay lookup progress for an opportunity search. One scrape for the term
-                     being searched — never one per result — runs before anything is priced, so
-                     every row below is judged against sold prices fetched moments ago. Shares the
-                     .mr-live styling with the other two bars; only the ids differ. -->
-                <div id="opp-live" class="mr-live hidden" role="status" aria-live="polite">
-                  <div class="mr-live-head">
-                    <span id="opp-live-stage" class="mr-live-stage">Starting…</span>
-                    <span id="opp-live-elapsed" class="mr-live-elapsed"></span>
-                  </div>
-                  <div class="mr-live-track">
-                    <div id="opp-live-bar" class="mr-live-bar"></div>
-                  </div>
-                  <div id="opp-live-note" class="mr-live-note"></div>
-                </div>
-
-                <div id="opp-results-summary" class="opp-results-summary"></div>
-                <div id="opp-results-list" class="opp-results-list"></div>
-              </div>
-            </div>
-          </div>
-
           <!-- Marketplace's own front page for this account. Sits here, above the insight tiles,
                because it is the only thing on this screen that shows real local supply without
                being asked a question first — a search only ever finds what you already thought to
@@ -1896,8 +1816,13 @@
                 <h3 class="opp-supplier-heading">🧭 Today's picks — straight from your Marketplace</h3>
                 <p class="opp-hint" id="fb-picks-sub">What Facebook is showing your account near you right now. Not a search — this is local supply you'd never have thought to look for.</p>
                 <p class="opp-hint fb-picks-order" id="fb-picks-order" hidden>Best return first — highest ROI at the top; anything with no eBay sold history sits at the end.</p>
+                <!-- Hosted web build only: the picks come from a logged-in Facebook session in a real
+                     browser, which the server hasn't got — so on the web this panel is a teaser for the
+                     desktop app rather than a live feed. Controls below are hidden by body.is-hosted. -->
+                <p class="opp-hint fb-desktop-note">This pulls live listings from your own Facebook Marketplace — which needs a real browser to log in. It runs in the free Windows desktop app, alongside everything the web version already does.</p>
               </div>
               <button id="fb-picks-btn" class="btn btn-secondary small" type="button">Load picks</button>
+              <a href="/download" class="btn btn-secondary small fb-desktop-link">Get the Windows app →</a>
             </div>
             <!-- Marketplace's own filters, rebuilt as controls. Facebook serves every Marketplace
                  URL with X-Frame-Options: DENY, so their page cannot be embedded in this one by
@@ -3419,212 +3344,6 @@
            board's own scan — same sources, same sold comps, same ProfitCalculator — saved with a
            profit bar on it and run on a human cadence, so a deal that appears at 2am is waiting in
            the morning instead of gone. Backed by /api/radar/*. -->
-      <section id="radar-section" class="opportunity-overlay hidden">
-        <div class="opportunity-overlay-header">
-          <div class="opportunity-overlay-header-left">
-            <button id="rad-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
-              <div class="eyebrow">Deal Radar</div>
-              <h2>📡 The deals that find you</h2>
-            </div>
-          </div>
-          <div class="opportunity-overlay-header-actions">
-            <button id="rad-add" class="btn btn-primary" type="button">+ New watch</button>
-            <button id="rad-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
-          </div>
-        </div>
-
-        <div class="opportunity-overlay-body">
-          <div class="opp-supplier-panel">
-            <p class="opp-hint">
-              Save a search — <strong>what, where, and how far</strong> — plus the smallest profit worth
-              driving for. The radar re-runs it on its own, prices every result against the same eBay sold
-              comps the boards use, and <strong>tells your desktop</strong> the moment something clears your
-              bar. It reads the sites the way a person does: one search at a time, a few times a day.
-            </p>
-
-            <!-- The master switch, its live state, and the one browser permission this feature needs.
-                 Deliberately the first thing on the screen: everything below it is inert until this
-                 is on, and a screen full of watches that aren't running is worse than an empty one. -->
-            <div class="rad-master">
-              <label class="rad-switch" for="rad-enabled">
-                <input id="rad-enabled" type="checkbox" />
-                <span class="rad-switch-track" aria-hidden="true"></span>
-                <span class="rad-switch-text">Watch in the background</span>
-              </label>
-              <span id="rad-state" class="rad-state">Off — nothing is scanning.</span>
-              <div class="rad-master-actions">
-                <button id="rad-desktop-permit" class="btn btn-secondary small hidden" type="button">🔔 Turn on desktop alerts</button>
-                <button id="rad-settings-toggle" class="btn btn-ghost small" type="button" aria-expanded="false" aria-controls="rad-settings">Alert settings</button>
-              </div>
-            </div>
-
-            <div id="rad-settings" class="rad-settings hidden">
-              <div class="inv-controls">
-                <div class="opp-field inv-field-small">
-                  <label for="rad-quiet-from">Don't ping me from</label>
-                  <select id="rad-quiet-from"></select>
-                </div>
-                <div class="opp-field inv-field-small">
-                  <label for="rad-quiet-to">until</label>
-                  <select id="rad-quiet-to"></select>
-                </div>
-                <label class="rad-check">
-                  <input id="rad-quiet-enabled" type="checkbox" /> Use quiet hours
-                </label>
-                <label class="rad-check">
-                  <input id="rad-desktop-on" type="checkbox" /> Desktop notifications
-                </label>
-              </div>
-              <p class="rad-note">
-                Quiet hours silence the <em>ping</em>, never the scan — the whole point is that it keeps
-                working overnight. Anything found while you're asleep is in the feed at breakfast.
-              </p>
-            </div>
-
-            <!-- Where a notification can physically come from. Stated rather than assumed: promising a
-                 Windows notification the app cannot draw is worse than saying to leave the tab open. -->
-            <div id="rad-channel" class="rad-channel hidden"></div>
-          </div>
-
-          <!-- ── The watch editor ──────────────────────────────────────────────────────────────
-               Hidden until New watch or Edit. The thresholds are the interesting half: they are what
-               separates "tell me about everything" from "tell me about the ones worth the drive". -->
-          <div id="rad-form" class="rad-form hidden">
-            <div class="rad-form-head">
-              <h3 id="rad-form-title">New watch</h3>
-              <button id="rad-form-cancel" class="btn btn-ghost small" type="button">Cancel</button>
-            </div>
-
-            <p class="rad-form-legend">What to look for</p>
-            <div class="inv-controls">
-              <div class="opp-field">
-                <label for="rad-name">Name it (optional)</label>
-                <input id="rad-name" type="text" placeholder="S19s under $500" maxlength="60" />
-              </div>
-              <div class="opp-field">
-                <label for="rad-query">Keyword</label>
-                <input id="rad-query" type="text" placeholder="antminer s19" maxlength="80" />
-              </div>
-              <div class="opp-field inv-field-small">
-                <label for="rad-category">Kind of thing</label>
-                <select id="rad-category"></select>
-              </div>
-            </div>
-
-            <p class="rad-form-legend">Where</p>
-            <div class="inv-controls">
-              <div class="opp-field inv-field-small">
-                <label for="rad-zip">ZIP code</label>
-                <input id="rad-zip" type="text" inputmode="numeric" placeholder="89101" maxlength="10" />
-              </div>
-              <div class="opp-field inv-field-small">
-                <label for="rad-radius">Within</label>
-                <select id="rad-radius">
-                  <option value="10">10 miles</option>
-                  <option value="20">20 miles</option>
-                  <option value="40" selected>40 miles</option>
-                  <option value="60">60 miles</option>
-                  <option value="100">100 miles</option>
-                  <option value="150">150 miles</option>
-                </select>
-              </div>
-              <div class="opp-field">
-                <label>Sites to read</label>
-                <div id="rad-sources" class="rad-sources"></div>
-              </div>
-            </div>
-
-            <p class="rad-form-legend">What's worth waking you for</p>
-            <div class="inv-controls">
-              <div class="opp-field inv-field-small">
-                <label for="rad-min-profit">At least this much profit</label>
-                <input id="rad-min-profit" type="number" min="0" step="5" value="75" />
-              </div>
-              <div class="opp-field inv-field-small">
-                <label for="rad-min-roi">…and this much ROI (%)</label>
-                <input id="rad-min-roi" type="number" min="0" step="5" value="40" />
-              </div>
-              <div class="opp-field inv-field-small">
-                <label for="rad-max-ask">Don't show asks above</label>
-                <input id="rad-max-ask" type="number" min="0" step="25" placeholder="no limit" />
-              </div>
-              <div class="opp-field inv-field-small">
-                <label for="rad-max-distance">Within driving distance (mi)</label>
-                <input id="rad-max-distance" type="number" min="0" step="5" placeholder="anywhere in radius" />
-              </div>
-            </div>
-
-            <p class="rad-form-legend">How often</p>
-            <div class="inv-controls">
-              <div class="opp-field inv-field-small">
-                <label for="rad-interval">Re-check every</label>
-                <select id="rad-interval">
-                  <option value="30">30 minutes</option>
-                  <option value="60">1 hour</option>
-                  <option value="120">2 hours</option>
-                  <option value="180" selected>3 hours</option>
-                  <option value="360">6 hours</option>
-                  <option value="720">12 hours</option>
-                  <option value="1440">Once a day</option>
-                </select>
-              </div>
-              <label class="rad-check">
-                <input id="rad-confident" type="checkbox" checked /> Only deals backed by solid sold comps
-              </label>
-              <label class="rad-check">
-                <input id="rad-notify" type="checkbox" checked /> Notify my desktop
-              </label>
-            </div>
-
-            <p class="rad-note">
-              <strong>Only deals backed by solid sold comps</strong> is worth leaving on. With it off you'll
-              also hear about deals priced from thin or unmatched sold history — the board dims those
-              figures and explains why, and a notification has no room for the explanation.
-            </p>
-
-            <div class="rad-form-actions">
-              <span id="rad-form-error" class="rad-form-error hidden"></span>
-              <button id="rad-delete" class="btn btn-ghost small hidden" type="button">Delete this watch</button>
-              <button id="rad-save" class="btn btn-primary" type="button">Save watch</button>
-            </div>
-          </div>
-
-          <div id="rad-watches" class="rad-watches"></div>
-
-          <div id="rad-feed-head" class="rad-feed-head hidden">
-            <div>
-              <p class="eyebrow">What it found</p>
-              <h3 id="rad-feed-title">Deals</h3>
-            </div>
-            <div class="rad-feed-actions">
-              <button id="rad-read-all" class="btn btn-ghost small" type="button">Mark all read</button>
-              <button id="rad-clear" class="btn btn-ghost small" type="button">Clear feed</button>
-            </div>
-          </div>
-
-          <div id="rad-alerts" class="rad-alerts">
-            <div class="state">
-              <div class="state-icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></div>
-              <div class="state-title">The best deal you'll see this week will be posted while you're doing something else.</div>
-              <p class="state-body">A watch is one saved search plus the smallest profit worth your time. The radar re-runs it every few hours, prices what it finds against real eBay sold history, and only interrupts you for the ones that clear your bar.</p>
-              <div class="state-actions">
-                <button class="btn btn-primary" type="button" onclick="document.getElementById('rad-add')?.click()">Create your first watch</button>
-              </div>
-              <p class="state-hint">Read-only. Nothing here buys, bids, lists or messages anyone.</p>
-            </div>
-          </div>
-
-          <p class="inv-footnote">
-            Every figure on an alert is the figure the local board published at the moment it was found —
-            frozen, because a classified is deleted the hour it sells and an alert that re-read its listing
-            would blank itself exactly when you want to know what you missed. <strong>Prices and stock change;
-            check the listing before you drive.</strong> The radar reads each site once per scan, one scan at a
-            time, and never signs into anything on a schedule: Facebook is only read when you've already
-            connected it. Nothing is alerted on twice.
-          </p>
-        </div>
-      </section>
 
       <section id="trends-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
@@ -3885,87 +3604,6 @@
         </div>
       </div>
 
-      <!-- Where to Sell Highest. Every other screen prices against eBay and stops there; this one
-           checks whether eBay is even the right place to put the item. Read-only: it searches and
-           compares, and posts nothing anywhere. -->
-      <!-- Snap & Source. The one screen designed to be used on a phone, one-handed, with somebody
-           waiting: a link or a photo in, and a single word out. Everything below the verdict card
-           is evidence for it, in the order a person actually wants it — the price to pay, then the
-           resale it rests on, then how much to believe that. -->
-      <section id="snap-section" class="opportunity-overlay hidden">
-        <div class="opportunity-overlay-header">
-          <div class="opportunity-overlay-header-left">
-            <button id="snap-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
-              <div class="eyebrow">Buy or pass, in seconds</div>
-              <h2>📸 Snap &amp; Source</h2>
-            </div>
-          </div>
-          <div class="opportunity-overlay-header-actions">
-            <button id="snap-run-btn" class="btn btn-primary" type="button">⚡ Should I buy it?</button>
-            <button id="snap-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
-          </div>
-        </div>
-
-        <div class="opportunity-overlay-body snap-body">
-          <div class="snap-input-card">
-            <div class="snap-drop" id="snap-drop" tabindex="0" role="button"
-                 aria-label="Add a photo of the item. Tap to choose or take a photo, or drop an image here.">
-              <img id="snap-thumb" class="snap-thumb hidden" alt="" />
-              <div id="snap-drop-prompt" class="snap-drop-prompt">
-                <span class="snap-drop-icon" aria-hidden="true">📷</span>
-                <span class="snap-drop-label">Photo of the item</span>
-                <span class="snap-drop-hint">Tap to shoot · or drop / paste an image</span>
-              </div>
-              <button id="snap-clear-photo" class="snap-clear-photo hidden" type="button" aria-label="Remove the photo">✕</button>
-            </div>
-            <!-- capture="environment" is what makes the phone open the rear camera instead of the
-                 gallery. It is the whole difference between this being a field tool and a file picker. -->
-            <input id="snap-file" class="hidden" type="file" accept="image/*" capture="environment" />
-
-            <div class="snap-fields">
-              <div class="opp-field snap-field-wide">
-                <label for="snap-what">Paste a listing link — or type what it is</label>
-                <input id="snap-what" type="text" inputmode="url" autocomplete="off"
-                       placeholder="craigslist.org/… or “DeWalt DCD771 20V drill”" />
-              </div>
-              <div class="opp-field snap-field-price">
-                <label for="snap-ask">They want</label>
-                <input id="snap-ask" type="number" inputmode="decimal" min="0" step="0.01" placeholder="—" />
-              </div>
-            </div>
-
-            <button id="snap-go" class="btn btn-primary snap-go" type="button">⚡ Should I buy it?</button>
-            <p id="snap-status" class="snap-status" role="status" aria-live="polite"></p>
-            <p class="snap-hint">
-              No price yet? Leave it blank — you get the most to pay instead of a verdict on a number
-              nobody has said.
-            </p>
-          </div>
-
-          <div id="snap-result" class="snap-result">
-            <div class="state">
-              <div class="state-icon"><svg aria-hidden="true"><use href="#i-radar"/></svg></div>
-              <div class="state-title">Standing in front of it, with someone waiting.</div>
-              <p class="state-body">Paste the listing link or take a photo, add what they're asking, and get one word back: <strong>BUY</strong> or <strong>PASS</strong> — with the resale price, what's left after eBay's fees and shipping, and the most you can pay and still make money. Same sold comps and the same fee profile the rest of the app uses, so it can't disagree with your own boards.</p>
-              <div class="state-actions">
-                <button class="btn btn-primary" type="button" onclick="document.getElementById('snap-what')?.focus()">Paste a link</button>
-                <button class="btn btn-ghost" type="button" onclick="document.getElementById('snap-file')?.click()">Take a photo</button>
-              </div>
-              <p class="state-hint">Read-only. Nothing here buys, bids, lists or messages anyone.</p>
-            </div>
-          </div>
-
-          <p class="inv-footnote">
-            <strong>The verdict is about the money, not the item.</strong> It costs the flip with your
-            own fee profile and the shipping the matched comps actually charged, and it grades itself on
-            how many sold comps priced it — a green badge needs real sold history behind it, and a row
-            priced off one loose sale says so instead of shouting. Nothing here can see a cracked screen,
-            a missing charger or a counterfeit, so a photo verdict is a price on what the app thinks it
-            is: read the name before you trust the number.
-          </p>
-        </div>
-      </section>
 
       <section id="wts-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
@@ -4722,338 +4360,6 @@
         </div>
       </section>
 
-      <!-- The Restock List. The third screen built from the same completed sales as Money Made and
-           the Tax Pack, which is why it sits beside them here even though it lives under Grow in the
-           sidebar: those two say what the seller made and what they owe on it, and this one says
-           what to go and buy with the rest.
-
-           Every other sourcing board in the app starts at the market. This one starts at the till
-           roll, and the ranking is money per MONTH rather than money — a $70 part that sells twice a
-           month is a better thing to go looking for than a $300 flip that happened once, and every
-           board that sorts by profit says the opposite. See Services/RestockAnalyzer.cs. -->
-      <section id="restock-section" class="opportunity-overlay hidden">
-        <div class="opportunity-overlay-header">
-          <div class="opportunity-overlay-header-left">
-            <button id="rs-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
-              <div class="eyebrow">Buy what you have already proved you can sell</div>
-              <h2>🔁 Restock List</h2>
-            </div>
-          </div>
-          <div class="opportunity-overlay-header-actions">
-            <button id="rs-refresh" class="btn btn-secondary small" type="button">Refresh</button>
-            <button id="rs-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
-          </div>
-        </div>
-
-        <div class="opportunity-overlay-body">
-
-          <!-- The hero is money the seller is NOT making, and it is the only figure here that is an
-               instruction: these are lines they have already proved sell, with nothing listed. -->
-          <div class="er-hero rs-hero">
-            <div class="er-hero-main">
-              <p id="rs-hero-label" class="er-hero-label">Sitting idle — proven lines with nothing listed</p>
-              <p id="rs-hero-figure" class="er-hero-figure">$0</p>
-              <p id="rs-hero-sub" class="er-hero-sub">your sales appear here on their own once eBay is connected</p>
-            </div>
-            <div class="er-hero-side">
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">Proven lines earn</span>
-                <span id="rs-hero-proven" class="er-hero-stat-value">$0</span>
-              </div>
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">Products ranked</span>
-                <span id="rs-hero-lines" class="er-hero-stat-value">0</span>
-              </div>
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">Cash to restock them</span>
-                <span id="rs-hero-cash" class="er-hero-stat-value">—</span>
-              </div>
-            </div>
-          </div>
-
-          <div id="rs-notice" class="rs-notice hidden"></div>
-
-          <div id="rs-board" class="hidden">
-            <div class="er-chart-head rs-board-head">
-              <div>
-                <p class="eyebrow">Go and buy these</p>
-                <h3 id="rs-board-title">Ranked by what each one earns you a month</h3>
-              </div>
-              <!-- Two orders, because a seller with unlimited weekends wants the most money and a
-                   seller with $400 wants the fastest cash back. They are routinely different lines. -->
-              <div class="rs-sort" role="group" aria-label="Rank the list by">
-                <button class="rs-sort-btn active" type="button" data-sort="month">Money a month</button>
-                <button class="rs-sort-btn" type="button" data-sort="cash">Return on cash</button>
-                <button class="rs-sort-btn" type="button" data-sort="unit">Profit per unit</button>
-              </div>
-            </div>
-            <div id="rs-list" class="rs-list"></div>
-          </div>
-
-          <!-- The stop list is second, not last. It is the most valuable thing on the page: the
-               money already spent on something that sells at a loss or comes straight back. -->
-          <div id="rs-stop-card" class="er-chart-card hidden">
-            <div class="er-chart-head">
-              <div>
-                <p class="eyebrow">Don't buy these again</p>
-                <h3>What lost money or came back</h3>
-              </div>
-            </div>
-            <div id="rs-stop" class="rs-list rs-list-stop"></div>
-          </div>
-
-          <div id="rs-cost-card" class="er-chart-card hidden">
-            <div class="er-chart-head">
-              <div>
-                <p class="eyebrow">One number each, and these join the ranking</p>
-                <h3 id="rs-cost-title">Sold, with no record of what they cost</h3>
-              </div>
-              <button class="btn btn-secondary small" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;earnings&quot;]')?.click()">Enter costs on Money Made</button>
-            </div>
-            <div id="rs-cost" class="rs-list rs-list-quiet"></div>
-          </div>
-
-          <div id="rs-watch-card" class="er-chart-card hidden">
-            <div class="er-chart-head">
-              <div>
-                <p class="eyebrow">Real, but not proved</p>
-                <h3>Sold once, or sold well a long time ago</h3>
-              </div>
-            </div>
-            <div id="rs-watch" class="rs-list rs-list-quiet"></div>
-          </div>
-
-          <div id="rs-results" class="inv-results">
-            <div class="state">
-              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
-              <div class="state-title">The best thing to go and buy is something you have already sold.</div>
-              <p class="state-body">This reads your completed sales — the fee eBay actually charged, the cost you actually paid — groups them into products, and ranks them by what each one earns you a month. It also tells you which ones to stop buying, and which you have none of right now.</p>
-              <div class="state-actions">
-                <button class="btn btn-secondary" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;earnings&quot;]')?.click()">Go to Money Made</button>
-              </div>
-              <p class="state-hint">Nothing here is a market forecast. Every figure is a sale you already made.</p>
-            </div>
-          </div>
-
-          <div id="rs-honesty" class="inv-footnote hidden"></div>
-        </div>
-      </section>
-
-      <!-- The Deal Pipeline. Every other money screen in the app is a snapshot of one moment; this
-           is the thread between them, carrying one flip from the sourcing forecast that justified
-           buying it to the sale in Money Made that settled it.
-
-           The rule the whole page is built on: projected profit and realized profit are separate
-           numbers, in separate places, and nothing adds them together. The hero is CAPITAL AT
-           RISK — real money the seller told us they actually spent — because that is the only
-           figure here that isn't an estimate. See Services/DealPipelineCalculator.cs. -->
-      <section id="pipeline-section" class="opportunity-overlay hidden">
-        <div class="opportunity-overlay-header">
-          <div class="opportunity-overlay-header-left">
-            <button id="dp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
-              <div class="eyebrow">Sourced → Bought → Listed → Sold</div>
-              <h2>🧭 Deal Pipeline</h2>
-            </div>
-          </div>
-          <div class="opportunity-overlay-header-actions">
-            <button id="dp-add-btn" class="btn btn-primary" type="button">＋ Add a deal</button>
-            <button id="dp-refresh-btn" class="btn btn-secondary" type="button">Refresh</button>
-            <button id="dp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
-          </div>
-        </div>
-
-        <div class="opportunity-overlay-body">
-
-          <!-- One hero figure, and it is deliberately the least flattering one on the page: money
-               that has left the bank and hasn't come back. The projections sit beside it, labelled
-               as projections. -->
-          <div id="dp-hero" class="dp-hero hidden">
-            <div class="dp-hero-main">
-              <p class="dp-hero-label">Your money, out in the world right now</p>
-              <p id="dp-hero-figure" class="dp-hero-figure">$0</p>
-              <p id="dp-hero-sub" class="dp-hero-sub"></p>
-            </div>
-            <div class="dp-hero-side">
-              <div class="dp-hero-stat">
-                <span class="dp-hero-stat-label">Projected profit on it</span>
-                <span id="dp-hero-projected" class="dp-hero-stat-value dp-projected">$0</span>
-                <span class="dp-hero-stat-note">forecast, not earned</span>
-              </div>
-              <div class="dp-hero-stat">
-                <span class="dp-hero-stat-label">Already realized</span>
-                <span id="dp-hero-realized" class="dp-hero-stat-value dp-realized">$0</span>
-                <span id="dp-hero-realized-note" class="dp-hero-stat-note">from completed sales</span>
-              </div>
-              <div class="dp-hero-stat">
-                <span class="dp-hero-stat-label">Forecast accuracy</span>
-                <span id="dp-hero-accuracy" class="dp-hero-stat-value">—</span>
-                <span id="dp-hero-accuracy-note" class="dp-hero-stat-note">needs a closed deal</span>
-              </div>
-            </div>
-          </div>
-
-          <div id="dp-notice" class="inv-warning hidden"></div>
-
-          <!-- Do this next. The reason a board beats a spreadsheet: ranked by dollars at stake,
-               not by when the card was made. -->
-          <div id="dp-actions-card" class="dp-actions-card hidden">
-            <div class="er-chart-head">
-              <div>
-                <p class="eyebrow">Do this next</p>
-                <h3 id="dp-actions-title">What your money is waiting on</h3>
-              </div>
-              <button id="dp-actions-toggle" class="btn btn-ghost small" type="button" aria-expanded="true">Hide</button>
-            </div>
-            <div id="dp-actions" class="dp-actions"></div>
-          </div>
-
-          <div id="dp-stats" class="er-stats hidden"></div>
-
-          <div id="dp-board" class="dp-board hidden"></div>
-
-          <div id="dp-results" class="inv-results">
-            <div class="state">
-              <div class="state-icon"><svg aria-hidden="true"><use href="#i-pipeline"/></svg></div>
-              <div class="state-title">Turn scattered flips into something you can see.</div>
-              <p class="state-body">Track a deal from the moment you spot it — what you expect to make, what you actually paid, when it went live, and what it really earned. The board shows what money is in motion and tells you which deal is costing you by sitting still. Find something in Local Deals and press <strong>＋ Track</strong>, or add one by hand.</p>
-              <div class="state-actions">
-                <button class="btn btn-primary" type="button" onclick="document.getElementById('dp-add-btn')?.click()">Add a deal</button>
-                <button class="btn btn-secondary" type="button" onclick="location.hash='opportunity'">Go find one</button>
-              </div>
-              <p class="state-hint">Nothing here touches eBay. It's your own record of your own money.</p>
-            </div>
-          </div>
-
-          <div id="dp-honesty" class="inv-footnote hidden"></div>
-        </div>
-
-        <!-- Add / edit a deal. Short on purpose: a name is the only thing required. A pipeline
-             nobody can be bothered to fill in tracks nothing. -->
-        <div id="dp-add-modal" class="er-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dp-add-title">
-          <div class="er-modal-card">
-            <div class="er-modal-head">
-              <h3 id="dp-add-title">Add a deal</h3>
-              <button id="dp-add-cancel" class="nl-close-btn" type="button" title="Close">✕</button>
-            </div>
-            <div class="er-modal-body">
-              <p class="er-modal-hint">Anything you're thinking about buying, have bought, or already have listed. Fill in what you know — the rest can come later.</p>
-              <div class="er-form-grid">
-                <div class="opp-field er-field-wide">
-                  <label for="dp-f-title">What is it?</label>
-                  <input id="dp-f-title" type="text" placeholder="Antminer S19 95TH" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-stage">Where is it now?</label>
-                  <select id="dp-f-stage">
-                    <option value="sourced" selected>Sourced — found it, haven't bought</option>
-                    <option value="bought">Bought — it's mine, not listed</option>
-                    <option value="listed">Listed — it's live</option>
-                  </select>
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-qty">How many</label>
-                  <input id="dp-f-qty" type="number" min="1" step="1" value="1" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-ask">Asking price, each ($)</label>
-                  <input id="dp-f-ask" type="number" min="0" step="0.01" placeholder="450.00" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-paid">You paid, each ($)</label>
-                  <input id="dp-f-paid" type="number" min="0" step="0.01" placeholder="380.00" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-extra">Gas, freight, parts ($)</label>
-                  <input id="dp-f-extra" type="number" min="0" step="0.01" placeholder="0.00" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-resale">You expect it to sell for ($)</label>
-                  <input id="dp-f-resale" type="number" min="0" step="0.01" placeholder="1100.00" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-listing">eBay listing ID</label>
-                  <input id="dp-f-listing" type="text" placeholder="1103xxxxxxxx" />
-                </div>
-                <div class="opp-field">
-                  <label for="dp-f-sku">SKU</label>
-                  <input id="dp-f-sku" type="text" placeholder="optional" />
-                </div>
-                <div class="opp-field er-field-wide">
-                  <label for="dp-f-url">Link to the listing you found</label>
-                  <input id="dp-f-url" type="url" placeholder="https://..." />
-                </div>
-                <div class="opp-field er-field-wide">
-                  <label for="dp-f-note">Note</label>
-                  <input id="dp-f-note" type="text" placeholder="Seller says it powers on, needs a PSU" />
-                </div>
-              </div>
-              <p id="dp-add-preview" class="er-log-preview">Enter what you'd pay and what it should sell for to see the projected profit.</p>
-              <p id="dp-add-error" class="er-log-error hidden"></p>
-            </div>
-            <div class="er-modal-foot">
-              <button id="dp-add-cancel-2" class="btn btn-ghost" type="button">Cancel</button>
-              <button id="dp-add-save" class="btn btn-primary" type="button">Track this deal</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Moving a card. Each stage asks only for what that stage actually knows, and reaching
-             Listed writes the shared cost basis — which is what makes the eventual sale count as
-             real profit in Money Made without anyone typing the price twice. -->
-        <div id="dp-stage-modal" class="er-modal hidden" role="dialog" aria-modal="true" aria-labelledby="dp-stage-title">
-          <div class="er-modal-card">
-            <div class="er-modal-head">
-              <h3 id="dp-stage-title">Move this deal</h3>
-              <button id="dp-stage-cancel" class="nl-close-btn" type="button" title="Close">✕</button>
-            </div>
-            <div class="er-modal-body">
-              <p id="dp-stage-hint" class="er-modal-hint"></p>
-              <div class="er-form-grid">
-                <div class="opp-field dp-stage-buy hidden">
-                  <label for="dp-s-paid">What you paid, each ($)</label>
-                  <input id="dp-s-paid" type="number" min="0" step="0.01" placeholder="380.00" />
-                </div>
-                <div class="opp-field dp-stage-buy hidden">
-                  <label for="dp-s-extra">Gas, freight, parts ($)</label>
-                  <input id="dp-s-extra" type="number" min="0" step="0.01" placeholder="0.00" />
-                </div>
-                <div class="opp-field dp-stage-buy hidden">
-                  <label for="dp-s-bought">Date you bought it</label>
-                  <input id="dp-s-bought" type="date" />
-                </div>
-                <div class="opp-field dp-stage-list hidden">
-                  <label for="dp-s-listing">eBay listing ID</label>
-                  <input id="dp-s-listing" type="text" placeholder="1103xxxxxxxx" />
-                </div>
-                <div class="opp-field dp-stage-list hidden">
-                  <label for="dp-s-sku">SKU</label>
-                  <input id="dp-s-sku" type="text" placeholder="optional" />
-                </div>
-                <div class="opp-field dp-stage-list hidden">
-                  <label for="dp-s-price">Listed at ($)</label>
-                  <input id="dp-s-price" type="number" min="0" step="0.01" placeholder="1100.00" />
-                </div>
-                <div class="opp-field dp-stage-sold hidden">
-                  <label for="dp-s-sold">Date it sold</label>
-                  <input id="dp-s-sold" type="date" />
-                </div>
-                <div class="opp-field er-field-wide dp-stage-drop hidden">
-                  <label for="dp-s-note">What happened?</label>
-                  <input id="dp-s-note" type="text" placeholder="Sold before I got there" />
-                </div>
-              </div>
-              <p id="dp-stage-preview" class="er-log-preview hidden"></p>
-              <p id="dp-stage-error" class="er-log-error hidden"></p>
-            </div>
-            <div class="er-modal-foot">
-              <button id="dp-stage-cancel-2" class="btn btn-ghost" type="button">Cancel</button>
-              <button id="dp-stage-save" class="btn btn-primary" type="button">Move it</button>
-            </div>
-          </div>
-        </div>
-      </section>
 
       <section id="settings-section" class="panel settings-panel hidden">
         <div class="panel-header">
@@ -5224,8 +4530,11 @@
           <div class="settings-card-foot imggen-test-row">
             <button id="pg-facebook-connect" class="btn btn-primary" type="button">Connect Facebook</button>
             <button id="pg-facebook-disconnect" class="btn btn-secondary hidden" type="button">Disconnect</button>
+            <a href="/download" class="btn btn-primary fb-desktop-link">Get the Windows app →</a>
             <span id="pg-facebook-status" class="sd-test-msg">Not connected — local sourcing search is unavailable.</span>
           </div>
+          <!-- Hosted-only: the connect button above is hidden by body.is-hosted; this note replaces it. -->
+          <p class="settings-card-note fb-desktop-note">Facebook Marketplace connection runs in the free Windows desktop app, where a real browser window can open for you to log in. It isn't available in the web version — everything else here works the same in both.</p>
           <p class="settings-card-note">
             Not connecting Facebook doesn't switch local sourcing off: <strong>Craigslist searches with no login at all</strong>
             and needs nothing set up here. Connect Facebook to search both at once.
@@ -6330,6 +5639,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=147"></script>
+  <script src="app.js?v=150"></script>
 </body>
 </html>

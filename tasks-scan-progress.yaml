@@ -1,0 +1,59 @@
+# A progress bar for the eBay scan itself. Owner, 2026-08-14: "when I click scan please use a
+# progress bar - It takes some time and the user will not know that".
+#
+# DIAGNOSED, so nobody re-derives it:
+#   runEbayScan() has TWO phases and only the first is instrumented.
+#
+#     phase 1  await runLiveLookup(query, 'es')            app.js ~3478
+#              HAS a progress bar already: #es-live / #es-live-bar / -stage / -elapsed exist in
+#              index.html (~1488) and startLiveBar/paintLive drive them. Since live lookups moved
+#              to the API this phase takes about a SECOND, so the bar appears and vanishes.
+#
+#     phase 2  await localFetchJson('/api/ebay/scan?…', LOCAL_ARBITRAGE_TIMEOUT_MS)   app.js ~3480
+#              THE LONG ONE. LOCAL_ARBITRAGE_TIMEOUT_MS is 8 * 60 * 1000 — up to eight minutes,
+#              because it prices every result against sold comps. Its only feedback is one static
+#              line written once by setLocalStatus, which never changes again.
+#
+#   So the seller watches an unchanging sentence for minutes and cannot tell a working scan from
+#   a hung one. That is the actual complaint, and the existing bar does not address it because it
+#   belongs to the phase that is now nearly instant.
+#
+#   The stale wording is part of it: the status text and startLiveBar both still promise "up to
+#   three minutes" for the live lookup. That was true of the browser scraper and is not true of
+#   the API. Wrong-but-confident timings are worse than none.
+
+tasks:
+  - prompt: |
+      Give the eBay scan a progress bar that covers the part that actually takes time.
+
+      1. Extend the bar to phase 2. The scan endpoint currently answers once at the end, so there
+         is nothing to poll. Choose ONE and say which you chose and why:
+            (a) make /api/ebay/scan report progress the way the live lookup already does — start
+                the work, return an id, poll it. OnDemandCompsScraper's run/stage/percent/finished
+                protocol is the house pattern and the front end already knows how to paint it; or
+            (b) if that is too large a change, drive the existing #es-live bar from real
+                milestones the client can observe, and make the stage text change as it goes.
+
+         What is NOT acceptable is a bar that animates on a timer while knowing nothing. A fake
+         bar that reaches 90% and sits there is worse than the static line it replaced, because it
+         claims progress it cannot see.
+
+      2. Say what is happening, in the seller's terms, and keep saying it: how many listings were
+         found, how many have been priced so far, roughly how long is left. "Pricing 34 of 120"
+         tells someone the machine is alive; a spinner does not.
+
+      3. Fix the stale timings. The status line at app.js ~3436 and startLiveBar's note both still
+         say the live lookup takes "up to three minutes". That was the browser scraper. On the API
+         it is about a second. Rewrite both to match reality — and if the API path is not deployed
+         everywhere yet, say what is true of the build the user is running rather than hedging.
+
+      4. Keep the cancel path honest: if the seller navigates away or scans again, the old run's
+         bar must stop rather than keep painting over the new one.
+
+      Acceptance: run a real scan against a broad keyword ("fanuc" is the owner's own example) and
+      show the bar advancing with changing stage text over the whole scan, not just its first
+      second. State the observed wall-clock time of each phase. Do not break the other three
+      callers of runLiveLookup ('opp', 'mr', 'nl'). dotnet test green.
+    session: "ui-01-scan-progress"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 19

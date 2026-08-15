@@ -45,6 +45,13 @@ public enum FailureKind
     AiKeyMissing,
     AiKeyRejected,
     AiBilling,
+    /// <summary>
+    /// The account has used its daily allowance on a deployment where the owner's key pays for
+    /// everybody. Permanent for today and transient by tomorrow, which is why it is here rather
+    /// than beside <see cref="RateLimited"/>: retrying in ten seconds gets the same answer, so no
+    /// Retry button is offered and the message says when to come back instead.
+    /// </summary>
+    AiQuotaExhausted,
     InputTooLarge,
     EbayNotConnected,
     EbayAuthExpired,

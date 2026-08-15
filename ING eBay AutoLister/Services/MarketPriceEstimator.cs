@@ -8,7 +8,11 @@ namespace ING_eBay_AutoLister.Services;
 // Reuses MarketplacePricingCalculator for outlier removal and percentile/median math (not
 // reimplemented here); adds per-unit quantity normalization, buying-format-aware weighting, and
 // the adaptive local-vs-Terapeak blend + disagreement detection the calculator alone doesn't do.
-public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
+public sealed class MarketPriceEstimator(
+    TerapeakMarketService terapeakMarket,
+    CalibrationStore? calibration = null,
+    bool calibrationEnabled = true,
+    ActionLog? log = null)
 {
     private const int StrongMatchThreshold = 50; // MatchConfidence floor for a comp to count as "strong"
     private const int RecentDays = 90;
@@ -94,7 +98,47 @@ public sealed class MarketPriceEstimator(TerapeakMarketService terapeakMarket)
 
         ApplyAdaptiveWeighting(estimate, strongForStats.Count, terapeakResult);
 
+        // Last: nudge the finished expected-sale figure toward what the arb-bot has actually measured
+        // this predictor to be off by. Bounded, sample-gated and reversible — see ApplyCalibration.
+        ApplyCalibration(estimate);
+
         return estimate;
+    }
+
+    /// <summary>
+    /// Applies the learned, self-calibrating correction to <see cref="PriceEstimate.ExpectedSalePrice"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The arb-bot backtests the pricing predictor against held-out real sales and measures the
+    /// systematic bias — bucketed by how many comps a forecast rested on — and POSTs it here through
+    /// <see cref="CalibrationStore"/>. This multiplies the expected sale by <c>1 / (1 + bias/100)</c>
+    /// for the matching bucket, dividing out a measured over- or under-estimate.
+    /// </para>
+    /// <para>
+    /// Deliberately conservative, because it touches live pricing: it does nothing unless the feature
+    /// flag is on AND a calibration exists AND the bucket has at least
+    /// <see cref="CalibrationStore.MinBucketSample"/> holdouts behind it, and the factor is clamped to
+    /// [<see cref="CalibrationStore.MinFactor"/>, <see cref="CalibrationStore.MaxFactor"/>] so nothing
+    /// can move a price by more than 20%. An empty store leaves the price byte-for-byte unchanged.
+    /// </para>
+    /// </remarks>
+    private void ApplyCalibration(PriceEstimate estimate)
+    {
+        if (!calibrationEnabled || calibration is null) return;
+        if (estimate.ExpectedSalePrice is not { } expected || expected <= 0m) return;
+
+        var correction = calibration.ResolveCorrection(estimate.PricedOnCompCount);
+        if (!correction.Applied || correction.Factor == 1.0m) return;
+
+        var corrected = Math.Round(expected * correction.Factor, 2);
+        if (corrected == expected) return;
+
+        estimate.ExpectedSalePrice = corrected;
+        log?.Add("Info", "Pricing calibration applied",
+            $"Expected sale ${expected:0.00} -> ${corrected:0.00} "
+            + $"(x{correction.Factor:0.000}), correcting a measured {correction.BiasPct:0.0}% bias "
+            + $"in the {correction.Bucket} bucket ({estimate.PricedOnCompCount} comps, n={correction.N}).");
     }
 
     /// <summary>

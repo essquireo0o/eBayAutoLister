@@ -3004,7 +3004,7 @@ public class EbayService(
 
     // ── Fetch existing eBay listing by item ID ────────────────────────────────
 
-    public async Task<ListingData> GetItemAsync(string itemId)
+    public async Task<ListingData> GetItemAsync(string itemId, CancellationToken ct = default)
     {
         var token = await GetOrRefreshTokenAsync();
         var c     = creds.Get();
@@ -3031,8 +3031,8 @@ public class EbayService(
         request.Headers.Add("X-EBAY-API-CERT-NAME",           c.EbayClientSecret);
         request.Headers.Add("X-EBAY-API-IAF-TOKEN",           token);
 
-        var response = await client.SendAsync(request);
-        var body     = await response.Content.ReadAsStringAsync();
+        var response = await client.SendAsync(request, ct);
+        var body     = await response.Content.ReadAsStringAsync(ct);
 
         log.Add(response.IsSuccessStatusCode ? "Info" : "Warning",
             $"GetItem HTTP {(int)response.StatusCode}", body[..Math.Min(300, body.Length)]);

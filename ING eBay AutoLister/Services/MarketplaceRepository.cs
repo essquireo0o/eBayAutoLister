@@ -419,6 +419,14 @@ public sealed class MarketplaceRepository(
                 if (seller.TryGetProperty("positive_feedback_in_percentage", out var pct) && pct.TryGetDouble(out var pctVal))
                     result.SellerPositiveFeedbackPercent = pctVal;
             }
+
+            // Rows fetched live since 2026-08-14 come from the OpenWebNinja API, which carries the
+            // same two facts as flat fields rather than inside a seller object. Read here rather
+            // than reshaped on the way in, so what is stored stays the untouched API item.
+            if (root.TryGetProperty("seller_feedback_count", out var count) && count.TryGetInt32(out var countVal))
+                result.SellerFeedbackCount = countVal;
+            if (root.TryGetProperty("seller_feedback_percentage", out var percent) && percent.TryGetDouble(out var percentVal))
+                result.SellerPositiveFeedbackPercent = percentVal;
         }
         catch (JsonException)
         {

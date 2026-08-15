@@ -690,12 +690,16 @@ public class LocalArbitrageAnalyzerTests
     }
 
     [Theory]
-    [InlineData(null, "profit")]
-    [InlineData("", "profit")]
-    [InlineData("nonsense", "profit")]
+    // The default is now Balanced (net dollars weighed against ROI), not raw money-first: pure ROI
+    // floated a $4 flip over a deal that netted far more, and pure profit floated a big razor-margin
+    // row — the money is the blend. Explicit "profit" still means profit.
+    [InlineData(null, "balanced")]
+    [InlineData("", "balanced")]
+    [InlineData("nonsense", "balanced")]
+    [InlineData("profit", "profit")]
     [InlineData("FASTEST", "fastest")]
     [InlineData(" perday ", "profit_per_day")]
-    public void NormalizeSort_UnknownSortsFallBackToMoneyFirst(string? input, string expected) =>
+    public void NormalizeSort_UnknownSortsFallBackToBalanced(string? input, string expected) =>
         Assert.Equal(expected, LocalArbitrageAnalyzer.NormalizeSort(input));
 
     // ── The buy side ───────────────────────────────────────────────────────────

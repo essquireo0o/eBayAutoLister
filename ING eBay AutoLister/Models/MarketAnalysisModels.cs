@@ -287,3 +287,60 @@ public class MarketAnalysisResult
 
     public SourceBreakdown Sources { get; set; } = new();
 }
+
+// ── Deal reality-check (see Services/ClaudeService.CheckDealAsync) ───────────────────────────
+// The eBay-scanner board prices rows with a mechanical comp-matcher that cannot tell a component
+// from a whole unit, a single item from a multi-pack, or an accessory from the product it fits.
+// That failure surfaces on exactly the thin-evidence rows the matcher already flags as estimates —
+// a "S19 XP hashboard" priced off whole-miner comps shows a fantasy ROI. These carry a Claude read
+// of the listing's own words, which is enough to catch it: the model knows a hashboard is a
+// component from the title alone.
+
+/// <summary>What the reality-check hands Claude about one estimate deal. The image is optional —
+/// title-only is the core, because the words usually name the kind of thing on their own.</summary>
+public sealed class DealCheckInput
+{
+    public string Title { get; set; } = "";
+    public string Category { get; set; } = "";
+    /// <summary>What the buyer pays, delivered — the number the ROI was computed against.</summary>
+    public decimal BuyPrice { get; set; }
+    /// <summary>The scanner's automated resale estimate, or null when it had none.</summary>
+    public decimal? EstimatedResale { get; set; }
+    /// <summary>How many sold comps backed the estimate. Small — that is why the row is an estimate.</summary>
+    public int CompCount { get; set; }
+    /// <summary>A photo of the item, base64, no data: prefix. Null skips the image block entirely.</summary>
+    public string? ImageBase64 { get; set; }
+    public string? ImageMimeType { get; set; }
+}
+
+/// <summary>Claude's verdict on whether the automated estimate is credible for THIS exact item.</summary>
+public sealed class DealRealityCheck
+{
+    /// <summary>Short phrase naming what this actually is, and whether it is a whole unit —
+    /// e.g. "a single S19 XP hashboard (a mining component, not a whole miner)".</summary>
+    public string WhatItIs { get; set; } = "";
+    /// <summary>whole_unit | component_or_part | lot_or_bundle | accessory | consumable | other.</summary>
+    public string ItemType { get; set; } = "";
+    /// <summary>Do whole-unit sold comps plausibly describe THIS listing?</summary>
+    public bool CompsMatchItem { get; set; }
+    /// <summary>Realistic eBay resale for THIS exact item, USD — the low end of the range.</summary>
+    public decimal RealisticResaleLow { get; set; }
+    public decimal RealisticResaleHigh { get; set; }
+    /// <summary>real_deal | false_positive | uncertain.</summary>
+    public string Verdict { get; set; } = "";
+    /// <summary>One sentence — why, in this row's own terms.</summary>
+    public string Reason { get; set; } = "";
+}
+
+/// <summary>The POST /api/opportunities/analyze-deal body: the deal fields the board already holds,
+/// plus an optional photo URL the endpoint fetches server-side. Mirrors <see cref="RepriceRowRequest"/>
+/// in spirit — the frontend hands back what it has, the server does the rest.</summary>
+public sealed class AnalyzeDealRequest
+{
+    public string? Title { get; set; }
+    public string? Category { get; set; }
+    public decimal BuyPrice { get; set; }
+    public decimal? EstimatedResale { get; set; }
+    public int CompCount { get; set; }
+    public string? ImageUrl { get; set; }
+}

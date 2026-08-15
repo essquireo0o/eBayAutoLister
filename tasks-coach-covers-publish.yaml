@@ -1,0 +1,52 @@
+# "I cant see publish to ebay" — owner, 2026-08-14, with a screenshot of the AI Listing screen
+# where the onboarding coach card sits across the bottom and the Publish button is nowhere.
+#
+# DIAGNOSED — this is a fixed-overlay bug, not a missing button:
+#
+#   index.html:1251   <button id="nl-btn-publish" class="btn btn-primary btn-large">Publish to eBay</button>
+#                     It exists and is the last control in the listing form, at the very bottom.
+#
+#   style.css:8301    .onboard-coach {
+#                       position: fixed;  left: var(--sidebar-w);  right: 0;  bottom: 0;
+#                       z-index: 950;
+#                     }
+#
+#   NOTHING RESERVES SPACE FOR IT. There is no compensating padding-bottom on the scroll
+#   container, no scroll-margin, nothing. So the coach card permanently covers the bottom ~100px
+#   of EVERY screen it is shown on, and whatever lives there is unreachable — on this screen that
+#   is the one button the entire product exists to reach.
+#
+#   The z-index comment in the stylesheet shows the layering was thought about carefully (950, to
+#   sit above the .opportunity-overlay at 900 and below modals at 1000). The gap is purely that a
+#   fixed bar was added without giving the content underneath room to breathe.
+
+tasks:
+  - prompt: |
+      Stop the onboarding coach from covering the bottom of the page.
+
+      1. Reserve space for it. While #onboard-coach is visible, the scrolling content must gain
+         bottom padding at least equal to the coach's rendered height, so the last control on any
+         screen can still be scrolled to and clicked. Measure the height rather than hardcoding a
+         guess — the card grows when its copy wraps, and it wraps at 390px where the problem is
+         worst. A CSS variable set from the coach's own height, or a class toggled alongside the
+         existing hidden/shown logic, are both fine; a magic number is not.
+
+      2. Release it when the coach is dismissed or completed, so a seller who closes the coach
+         does not keep a dead strip of padding forever.
+
+      3. Check EVERY screen, not just AI Listing. The coach is fixed across the whole app, so any
+         screen whose last element is a primary action has the same defect. Name the screens you
+         checked in your summary, and say which ones were affected.
+
+      4. Verify by clicking, not by looking. With the coach visible at 1440px and at 390px, scroll
+         to the bottom of the AI Listing screen and confirm "Publish to eBay" is both fully
+         visible and actually clickable — an element can be on screen and still have the overlay
+         swallowing the click. Playwright's click will fail if something is intercepting it, so
+         let it prove the point.
+
+      Acceptance: screenshots at both widths showing the Publish button clear of the coach, and a
+      successful programmatic click on it with the coach displayed. State which other screens were
+      affected and fixed. dotnet test green.
+    session: "ui-03-coach-covers-publish"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 21

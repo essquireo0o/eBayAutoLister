@@ -15,7 +15,30 @@ public sealed class ExternalMarketplaceDb(string? databasePathOverride = null)
     public const string DefaultDatabasePath = @"C:\INGListing\Data\Marketplace.db";
     public const string SoldListingsTable = "SoldListings";
 
-    public string DatabasePath { get; } = databasePathOverride ?? DefaultDatabasePath;
+    /// <summary>
+    /// Where sold comps live when the collector's own database is not on this machine — a server,
+    /// or any copy of the desktop app that is not the owner's.
+    /// </summary>
+    /// <remarks>
+    /// Before live lookups worked without a browser this fallback would have been an empty file, so
+    /// the local path simply reported "unavailable" and every price came from the hosted API. Now
+    /// <see cref="LiveCompsStore"/> creates and fills it on the first lookup, which is how a
+    /// deployment with no collector gets a sold-comps table of its own at all — and why the rows a
+    /// seller waited for are readable by the pricing path a moment later.
+    /// </remarks>
+    public const string FallbackFileName = "live-comps.db";
+
+    public string DatabasePath { get; } = databasePathOverride ?? ResolveDefault();
+
+    /// <summary>
+    /// The collector's database when it is there, and a writable file under the app's own data home
+    /// when it is not. Resolved once, at construction: a path that changed the moment a file
+    /// appeared would have the reader and the writer looking at two different databases.
+    /// </summary>
+    public static string ResolveDefault() =>
+        File.Exists(DefaultDatabasePath)
+            ? DefaultDatabasePath
+            : Path.Combine(AppPaths.DataHome, "App_Data", FallbackFileName);
 
     public bool DatabaseFileExists => File.Exists(DatabasePath);
 
