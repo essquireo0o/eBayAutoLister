@@ -1,0 +1,99 @@
+# AI Listing for Amazon — MAIN PRIORITY (owner, 2026-08-15: "Make sure the bot uses amazon api and
+# setup AI Listing for Amazon - Thats the main priority").
+#
+# Same 5-phase plan as tasks-amazon-listing.yaml, but high-priority, on the bot's branch
+# (auto/queue-features-20260726) so each finished phase auto-deploys to the test site, with the
+# autonomous guardrails inline (the worker is stateless per task). SANDBOX ONLY — never a live
+# Amazon account. Credentials: amazon_spapi has client_identifier + client_secret + environment;
+# a seller refresh token / marketplace id / seller id are NOT yet supplied — where a call needs one
+# and it is absent, report "not configured" cleanly like EbayService; never invent a value.
+
+tasks:
+  - prompt: |
+      GUARDRAILS — full autonomy; never ask/wait/stop. Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister
+      on branch auto/queue-features-20260726 (the bot's branch; a commit here auto-deploys to the test site).
+      Mirror the eBay flow (EbayService.cs, EbayAuthFlow.cs, Models/ListingData.cs). BEFORE finishing run
+      dotnet build AND dotnet test; fail -> git checkout -- . ; git clean -fd and STOP; green -> git add -A && commit;
+      bump wwwroot/index.html ?v= if app.js changed; note in WORK_COMPLETED.md. NEVER push, NEVER publish to a
+      LIVE Amazon account (SANDBOX ONLY, Sandbox flag defaults TRUE), never print secrets. Do not regress eBay.
+
+      AMAZON PHASE 1 — talk to SP-API at all, in sandbox, and prove it. Build the auth + client layer:
+        * LWA token exchange (client id + secret -> access token), refreshed before expiry, in the same shape
+          EbayService uses so the two read alike.
+        * An SP-API HTTP client attaching the token + correct host/marketplace headers.
+        * Config Credentials__AmazonClientId/__AmazonClientSecret/__AmazonRefreshToken/__AmazonMarketplaceId/
+          __AmazonSellerId + a Sandbox flag defaulting TRUE; wire client id + secret from the amazon_spapi
+          credential the app already loads. Refresh token/marketplace/seller not supplied yet -> report
+          "not configured" cleanly, do not invent real-looking values.
+      Acceptance: a diagnostic endpoint mirroring /api/ebay/status reporting configured?/token obtainable?/which
+      environment. Quote its real response.
+    session: "amzp-1-auth"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 20
+
+  - prompt: |
+      GUARDRAILS — full autonomy; never ask/wait/stop. Branch auto/queue-features-20260726. Mirror eBay. Run
+      dotnet build AND dotnet test before finishing; fail -> revert (git checkout -- . ; git clean -fd) and STOP;
+      green -> commit + WORK_COMPLETED.md. NEVER push, SANDBOX ONLY, never print secrets. Don't regress eBay.
+
+      AMAZON PHASE 2 — product types + attribute schemas. Amazon won't accept a free-form listing: every product
+      has a PRODUCT TYPE with a JSON Schema of required/optional attributes (Product Type Definitions API).
+        * Search product types for a query; fetch a schema; cache schemas locally (large, rarely change).
+        * Surface REQUIRED attributes distinctly from optional.
+      Acceptance: for a real query ("bluetooth speaker") print the chosen product type + its required attributes
+      with types. Say whether it worked in sandbox or needed production.
+    session: "amzp-2-types"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 19
+    depends_on: ["amzp-1-auth"]
+
+  - prompt: |
+      GUARDRAILS — full autonomy; never ask/wait/stop. Branch auto/queue-features-20260726. Mirror eBay. Run
+      dotnet build AND dotnet test before finishing; fail -> revert and STOP; green -> commit + WORK_COMPLETED.md.
+      NEVER push, SANDBOX ONLY, never print secrets. Don't regress eBay.
+
+      AMAZON PHASE 3 — let the AI fill an Amazon listing the way it fills an eBay one. Reuse the whole
+      photo/URL -> filled-listing pipeline; the difference is the target shape (eBay aspects are flat; Amazon
+      attributes are a schema).
+        * Map what the AI extracted onto the chosen product type's REQUIRED attributes.
+        * Where a required attribute has no value, say which is missing and why the listing can't go yet — NEVER
+          invent a value (a fabricated GTIN/brand is a suspension risk).
+      Acceptance: take one real eBay draft the app already produced and show the Amazon attribute payload it
+      generates, required fields marked filled/missing. Submit nothing this phase.
+    session: "amzp-3-fill"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 18
+    depends_on: ["amzp-2-types"]
+
+  - prompt: |
+      GUARDRAILS — full autonomy; never ask/wait/stop. Branch auto/queue-features-20260726. Mirror eBay. Run
+      dotnet build AND dotnet test before finishing; fail -> revert and STOP; green -> commit + WORK_COMPLETED.md.
+      NEVER push, SANDBOX ONLY (never a live Amazon account), never print secrets. Don't regress eBay.
+
+      AMAZON PHASE 4 — create a listing in SANDBOX, both paths.
+        (a) OFFER ON AN EXISTING ASIN (price/condition/quantity on a catalogue product) — do first, common case.
+        (b) CREATE A NEW PRODUCT (full schema) — only if (a) works and is tested.
+      Handle Amazon's async truth: a 200 does NOT mean live; submissions are processed later and can fail with
+      issues attached to the SKU. Poll/surface those issues; say "Submitted, awaiting Amazon", never "Published".
+      Acceptance: a sandbox submission for an existing ASIN with the real request/response quoted + the
+      issue-check showing how a rejection surfaces. State what sandbox does/doesn't prove.
+    session: "amzp-4-sandbox"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 17
+    depends_on: ["amzp-3-fill"]
+
+  - prompt: |
+      GUARDRAILS — full autonomy; never ask/wait/stop. Branch auto/queue-features-20260726. Mirror the eBay
+      listing screen. Run dotnet build AND dotnet test before finishing; fail -> revert and STOP; green -> commit;
+      bump wwwroot/index.html ?v= (app.js changes) + WORK_COMPLETED.md. NEVER push, SANDBOX ONLY, never print secrets.
+
+      AMAZON PHASE 5 — the UI. Add Amazon alongside eBay in the AI Listing flow: choose marketplace, see required
+      attributes filled/missing, submit to sandbox. Same panels, wording, and "won't publish / N things will stop
+      this" pattern. The UI must say, unmistakably on every screen that can submit, that it is SANDBOX, and that a
+      submission is PENDING until Amazon confirms — not "published".
+      Acceptance: screenshots at 1440px and 390px showing a filled draft, a missing-required state, and a sandbox
+      submission result. dotnet test green; eBay path unchanged.
+    session: "amzp-5-ui"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 16
+    depends_on: ["amzp-4-sandbox"]

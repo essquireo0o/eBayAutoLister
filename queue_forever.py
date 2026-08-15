@@ -19,7 +19,8 @@ TARGET   = 30      # keep at least this many queued (deeper backlog so it never 
 INTERVAL = 150     # seconds between supervisor cycles
 
 GUARD = r"""GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
-VISION: optimize for (1) "how does Nick make money?" grow the seller's profit/sales; (2) "what is Nick missing?" vs Vendoo/List Perfectly/ZIK/Crosslist; (3) "the most valuable eBay-seller app in the world."
+CURRENT TOP PRIORITY (owner, 2026-08-15): AI Listing for Amazon via SP-API (SANDBOX ONLY) - mirror the eBay flow exactly. If Amazon work is unfinished, prefer it over anything else.
+VISION: optimize for (1) "how does Nick make money?" grow the seller's profit/sales; (2) "what is Nick missing?" vs Vendoo/List Perfectly/ZIK/Crosslist; (3) "the most valuable eBay-AND-Amazon-seller app in the world."
 - FIRST run: git log --oneline -30 and read WORK_COMPLETED.md; do NOT duplicate - pick the highest-leverage NEW or unfinished work.
 - Repo: C:\Users\nsquires\source\repos\ING eBay AutoLister on branch auto/queue-features-20260726. ONE cohesive END-TO-END change, high quality.
 - BEFORE finishing run BOTH: dotnet build "ING eBay AutoLister/ING eBay AutoLister.csproj" -c Debug  AND  dotnet test "ING eBay AutoLister.Tests/ING eBay AutoLister.Tests.csproj".
@@ -44,6 +45,10 @@ WN = ("WHATSNOT FEATURE (the 'WhatsNot' tab: nav data-page=\"whatsnot\", section
  "feed capture) rather than faking a live read. One cohesive, tested, working increment per task. ")
 
 POOL = [
+ # AMAZON is the current top priority (owner, 2026-08-15). Kept FIRST and generative so the endless
+ # loop keeps advancing AI Listing for Amazon after the explicit amzp-* phases drain, rather than
+ # drifting back to generic work. SANDBOX ONLY; the amzp-* phases already queued do the initial build.
+ ("AMAZON — THE TOP PRIORITY. Advance AI Listing for Amazon over eBay parity (SP-API, SANDBOX ONLY). Read git log + WORK_COMPLETED.md for what the amzp-* Amazon phases already did, then build the ONE highest-value next cohesive tested increment toward listing on Amazon exactly like eBay: LWA/SP-API auth, product-type schemas, AI filling required attributes, sandbox offer-on-ASIN then create-product, and the Amazon UI beside eBay. Mirror EbayService/EbayAuthFlow/Models.ListingData/the AI Listing screen. NEVER publish to a live Amazon account; NEVER invent GTIN/brand/identifier values; reuse CrossListingExporter's Amazon rules. If Amazon is genuinely complete and tested end to end in sandbox, say so in WORK_COMPLETED.md and only then pick other high-value work.", "amz-endless"),
  (WN + "Build the core 'arbitrage card' for WhatsNot: seller enters the item currently on screen (title, or eBay/Whatnot URL) and instantly sees recent eBay SOLD comps, sell-through rate, low/median/high, velocity, and a BID/PASS read with a suggested max bid for a target margin. Reuse Opportunity Finder + existing eBay market services. Shown beside the feed, answer in seconds.", "wn-arbitrage-card"),
  (WN + "Wire the WhatsNot arbitrage card to the app's real eBay sold-comps + sell-through data path so its numbers are real and fast; add a confidence/freshness note. Additive to sold comps, never replacing it. Add tests.", "wn-live-data"),
  (WN + "Improve the WhatsNot embedded-browser panel: navigation (back/forward/reload), remember the last feed URL, clearer handling when a site refuses to embed, general reliability/UX.", "wn-embed"),
