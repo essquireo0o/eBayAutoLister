@@ -262,6 +262,10 @@ builder.Services.AddSingleton<EbayService>();
 // production flag publishes to a real Selling Partner account. See AmazonOptions.
 builder.Services.AddSingleton(AmazonOptions.FromConfiguration(builder.Configuration));
 builder.Services.AddSingleton<AmazonService>();
+// What Amazon requires per product type. The schema cache is a singleton because it owns a folder
+// and serialises writes to it; the service is one because the cache is. See AmazonSchemaCache.
+builder.Services.AddSingleton<AmazonSchemaCache>();
+builder.Services.AddSingleton<AmazonProductTypeService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
@@ -9313,6 +9317,10 @@ app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, Server
 // The Amazon counterpart of the endpoint above. Mapped from its own file so the handler the tests
 // exercise is the handler this app serves — see AmazonStatusEndpoint.
 AmazonStatusEndpoint.Map(app);
+
+// What Amazon actually requires for a given product, before a word of the listing is written —
+// the Amazon answer to the question get_item_aspects_for_category answers for eBay.
+AmazonProductTypeEndpoints.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {

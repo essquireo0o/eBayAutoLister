@@ -14429,3 +14429,286 @@ the real value, then authorise the application against the seller account to min
   one is a 403 that names neither the region nor the marketplace.
 - **`applicationConfigured: true` only means both strings are non-empty.** As this session proved, a
   placeholder sentence satisfies it. Only Amazon can tell you the secret is real.
+
+---
+
+# Amazon phase 2 — product types and attribute schemas
+
+**Branch:** `auto/queue-features-20260726` · **Date:** 2026-08-15 · Sandbox only, nothing published.
+
+Amazon will not accept a free-form listing. Every product belongs to a PRODUCT TYPE, and each
+product type carries a JSON Schema naming every attribute, which are required, what type each one
+is and — where Amazon has decided — the closed list of values it will accept. Phase 1 built the way
+in; this is the thing you ask once you are through the door.
+
+The eBay counterpart is one call, `get_item_aspects_for_category`, returning a flat list. Amazon's
+is three requests and a schema document, and the shape of the answer is different enough that
+reusing `CategoryAspect` would have thrown away the two things that decide whether a submission is
+accepted. Both are noted where they appear below.
+
+## What was built
+
+| File | What it is |
+|---|---|
+| `ING eBay AutoLister/Models/AmazonProductTypeModels.cs` | **New.** `AmazonProductType`, `AmazonProductTypeChoice`, `AmazonProductTypeSearchResult`, `AmazonAttribute`, `AmazonProductTypeDefinition`, `AmazonDefinitionStatus` |
+| `ING eBay AutoLister/Services/AmazonProductTypes.cs` | **New**, all pure. `AmazonDefinitionsApi` (paths), `AmazonProductTypeSearchResponse`, `AmazonProductTypeChooser`, `AmazonDefinitionResponse`, `AmazonSchemaParser`, `AmazonSandboxNotice`, `AmazonAttributeReport` |
+| `ING eBay AutoLister/Services/AmazonSchemaCache.cs` | **New.** On-disk schema store, keyed by Amazon's version rather than aged by a clock |
+| `ING eBay AutoLister/Services/AmazonProductTypeService.cs` | **New.** The three requests, the cache, and the failure translations |
+| `ING eBay AutoLister/Services/AmazonProductTypeEndpoints.cs` | **New.** `/api/amazon/product-types`, `/api/amazon/product-types/{type}`, `.../report` |
+| `ING eBay AutoLister/Program.cs` | Registers `AmazonSchemaCache` + `AmazonProductTypeService`; maps the endpoints beside `/api/amazon/status` |
+| `ING eBay AutoLister.Tests/AmazonProductTypeTests.cs` | **New**, 68 tests |
+| `ING eBay AutoLister.Tests/AmazonProductTypeEndpointTests.cs` | **New**, 8 tests, real HTTP against the mapped handler |
+| `ING eBay AutoLister.Tests/AmazonProductTypeFixtures.cs` | **New.** Amazon-shaped responses — reconstructions, not captures. See the honesty note below |
+
+No eBay source file was edited. `dotnet build`: 0 errors. `dotnet test`: **5,430 passed, 0 failed**,
+90 of them new (5,340 before).
+
+## Three requests, not one
+
+1. `GET /definitions/2020-09-01/productTypes?keywords=...` — which product types exist for these words.
+2. `GET /definitions/2020-09-01/productTypes/{type}` — the metadata: version, checksum, property
+   groups, and a **link** to the schema. The schema is not in this response.
+3. The schema document itself, from a short-lived pre-signed URL — and **without the access token**.
+
+Hop 3 is the one worth stating. The URL is pre-signed, so the authorisation is already in the query
+string; attaching `x-amz-access-token` or an `Authorization` header makes it fail with a signature
+error that reads like a broken credential. It is also a different host, so a token attached there
+would be an SP-API access token sent somewhere that is not SP-API. `FetchSchemaAsync` therefore uses
+a bare client, checks the host is Amazon's before following a URL that came out of a response body,
+and caps the read at 16 MB rather than trusting someone else's `Content-Length`.
+
+The split is also what makes caching work. Hop 2 is small, so it can be made every time to learn
+whether the large document already on disk is still current.
+
+## Required is not one thing
+
+`item_name` is required. `externally_assigned_product_identifier` is required **unless** you supply
+`merchant_suggested_asin` instead — Amazon writes that as a root-level `anyOf` whose branches each
+carry their own `required`. That is a third state, and neither of the other two describes it:
+
+- called **required**, a seller holding an ASIN is sent to find a UPC they are exempt from;
+- called **optional**, a seller with neither submits and is rejected.
+
+So `AmazonAttribute` carries `Required`, `ConditionallyRequired` and a `RequirementNote` naming what
+satisfies it instead, and the report prints them as separate sections. A single-branch `anyOf` is
+*not* treated as conditional — one branch is not an alternative to anything, and saying otherwise
+tells a seller they have a choice they do not have.
+
+## The envelope, and why the type matters
+
+Nearly every attribute in an Amazon schema is literally declared as an array of objects, because the
+same attribute can hold a different value per marketplace and per language:
+
+```json
+"item_name": { "type": "array", "maxItems": 20, "maxUniqueItems": 1,
+  "selectors": ["marketplace_id", "language_tag"],
+  "items": { "type": "object", "required": ["value"], "properties": {
+    "value": { "type": "string", "maxLength": 200, "maxUtf8ByteLength": 180 },
+    "language_tag": {}, "marketplace_id": {} } } }
+```
+
+Reporting that as `array` is true and useless — what the seller types is a string of at most 180
+bytes. `AmazonSchemaParser` unwraps it, strips the selectors the schema names itself, and reports
+`Type: string, MaxLength: 180` while keeping `RawType: array` for whatever builds the payload.
+
+Four judgements inside that are each worth one line:
+
+- **`maxUniqueItems` beats `maxItems`.** `maxItems: 20` with `maxUniqueItems: 1` allows one title
+  said twenty ways, not twenty titles. Reading `maxItems` alone offers the seller twenty boxes.
+- **The tighter length limit wins.** `maxLength` counts characters and `maxUtf8ByteLength` counts
+  bytes; outside ASCII the byte limit binds first, and reporting the larger overstates what Amazon
+  takes.
+- **The schema's own `selectors` are believed over the usual pair.** `purchasable_offer` selects on
+  `audience` as well as `marketplace_id` — a price depends on who is buying — so the seller is not
+  asked to fill in an audience as though it were a property of the offer.
+- **One `value` left after stripping is a scalar; two or more is a genuine composite.** A price is
+  an amount *and* a currency, a dimension is a number *and* a unit, and applying half of either is
+  worse than applying none. Composites keep their children, with the children's own required flags
+  from the nested schema.
+
+`$ref`s into `$defs` are followed (local pointers only — a ref to another document is not fetched
+because a remote document said so), enums and `enumNames` are carried, `editable`/`hidden` are
+recorded rather than used to drop attributes, and a cyclic `$ref` terminates instead of filling the
+stack. An unparseable schema is zero attributes, never an exception.
+
+## The cache is keyed by version, not by a clock
+
+eBay's aspect cache is a dictionary in memory with a 12-hour life. That is right for a few dozen
+aspect names. An Amazon schema is a document of tens to hundreds of kilobytes that barely ever
+changes and is versioned by Amazon, so `AmazonSchemaCache` goes to disk and matches on
+`productTypeVersion`. A cached copy from a different version is a miss however recent it is —
+Amazon changed the requirements, and a listing built from yesterday's copy is a listing built to be
+rejected.
+
+The 30-day TTL is a backstop, used only when the definition call failed and the choice is between a
+schema from disk and no answer at all. That path returns `status: "stale"`, not `ok`: "these are
+Amazon's current requirements" and "these are the requirements as of the last time we could ask" are
+different claims and only one is true there.
+
+Marketplace, locale and requirement set are all in the file name, because the same product type
+genuinely has different attributes in each. Product type names arrive from a response, so they are
+sanitised before naming a file; a corrupt cache file is a miss and never a failure.
+
+## Choosing the product type — it refuses rather than guesses
+
+`AmazonProductTypeChooser` scores Amazon's candidates on words alone, against both the identifier
+and the display name, with plurals folded (`speaker` reaches `SPEAKERS`, which is how Amazon names
+most of them). It returns **null** when two candidates are within 0.05 of each other, and reports
+`ambiguous` so the seller picks.
+
+Same ethic as `AspectMatcher`, and here the cost of the alternative is concrete: a wrong product
+type is not a smaller version of no product type. The seller fills in that schema's required
+attributes, submits, and Amazon rejects the listing for missing attributes belonging to a schema
+they were never shown. Where Amazon offered exactly one candidate it is used — Amazon ran its own
+match to return it — and labelled `low` confidence rather than passed off as a decision.
+
+## Acceptance: "bluetooth speaker"
+
+```
+Query        : "bluetooth speaker"
+Candidates   : SPEAKERS, BLUETOOTH_SPEAKER, HOME_THEATER_SYSTEM
+Chosen       : BLUETOOTH_SPEAKER (high confidence) — "bluetooth speaker" is exactly Amazon's Bluetooth Speaker.
+
+Product type : BLUETOOTH_SPEAKER  (Bluetooth Speaker)
+Marketplace  : ATVPDKIKX0DER   Locale: en_US
+Requirements : LISTING (ENFORCED)
+Version      : U8L4z4Ud95N16tZlR7rsmbQ==
+
+REQUIRED ATTRIBUTES (10)
+------------------------------------------------------------------------
+  item_name                                  string (max 180)
+  brand                                      string (max 50)
+  bullet_point                               string (max 500), repeatable
+  product_description                        string (max 2000)
+  condition_type                             string — one of 5 values
+      values: new_new, used_like_new, used_very_good, used_good, used_acceptable
+  batteries_required                         boolean
+  supplier_declared_dg_hz_regulation         string — any of 5 values
+      values: not_applicable, ghs, storage, transportation, unknown
+  country_of_origin                          string — one of 4 values
+      values: US, CN, VN, MX
+  list_price                                 object
+      • value                                number  [required]
+      • currency                             string — one of 3 values  [required]
+  purchasable_offer                          object, repeatable
+      • currency                             string — one of 1 value  [required]
+      • our_price                            object, repeatable  [required]
+
+CONDITIONALLY REQUIRED (2) — needed unless the alternative is supplied
+------------------------------------------------------------------------
+  externally_assigned_product_identifier     object
+      Required unless you supply merchant_suggested_asin instead.
+      • value                                string (max 40)  [required]
+      • type                                 string — one of 3 values  [required]
+  merchant_suggested_asin                    string (max 10)
+      Required unless you supply externally_assigned_product_identifier instead.
+
+OPTIONAL ATTRIBUTES: 4
+  number_of_items                            integer
+  color                                      string (max 50)
+  item_dimensions                            object
+      • length                               object
+      • width                                object
+  item_type_keyword                          string (max 50)
+```
+
+Produced by the real chooser, the real definition reader and the real schema parser, in one pass,
+and written out by `The_printout_is_written_where_it_can_be_read`.
+
+**Where that input came from, plainly: not from Amazon.** No response above was captured off the
+wire, because this deployment still cannot obtain an Amazon access token — see the blocker below.
+The fixtures reproduce Amazon's published *grammar* (the array-of-object envelope with its
+`selectors`, `maxUniqueItems`, `enumNames`, `maxUtf8ByteLength`, `editable`, `hidden`, local `$ref`s
+and a root-level `anyOf`), so what this proves is that the app reads Amazon's schema language
+correctly. **It does not prove that `BLUETOOTH_SPEAKER`'s real required list is the ten attributes
+above.** Only Amazon can state that, and only in production.
+
+## Sandbox or production? Production — and the sandbox is a trap here
+
+Two separate answers:
+
+**The transport was proven against Amazon, for real.** Exactly the URL this app builds was sent to
+the live sandbox host with no token attached:
+
+```
+GET https://sandbox.sellingpartnerapi-na.amazon.com/definitions/2020-09-01/productTypes
+      ?marketplaceIds=ATVPDKIKX0DER&keywords=bluetooth%2Cspeaker&locale=en_US
+
+HTTP 403
+{ "errors": [ { "code": "Unauthorized",
+                "message": "Access to requested resource is denied.",
+                "details": "Access token is missing in the request header." } ] }
+```
+
+The host resolves, the path is accepted, the marketplace and keyword parameters are accepted, and
+Amazon answers with a structured SP-API error rather than a 404. The one missing thing is the token.
+That measurement changed the code: `DescribeFailure` now splits the 403, because Amazon returns the
+same status for "no token" and "your application lacks the Product Listing role" and only says which
+in `details` — and those need opposite fixes.
+
+**A real query needs production.** The SP-API sandbox does not run this API; it replays *static*
+responses. `sandbox.sellingpartnerapi-*.amazon.com/definitions/2020-09-01/productTypes` answers with
+a fixed product type set (`LUGGAGE`) whatever the `keywords` say. So "bluetooth speaker" cannot be
+answered in sandbox at all — not because of a credential, but because the sandbox has no such answer
+to give.
+
+That failure is silent and looks exactly like success: 200 OK, a well-formed response, a product type
+chosen, a real schema, real required attributes — belonging to a piece of luggage. A seller shown
+that would fill in nine fields for the wrong product. So `AmazonSandboxNotice` puts it in the answer
+itself, every time, and says so more loudly when what came back shares no word with the query.
+
+## What the endpoint answers today, verbatim
+
+Recorded from the mapped handler over real HTTP by
+`The_answers_this_deployment_actually_gives_are_written_down`. Credential values never printed:
+
+```json
+{ "query": "bluetooth speaker", "status": "not_configured", "sandboxNotice": "",
+  "message": "The Amazon LWA Client ID isn't set, so there is no application for Amazon to issue a token to. Set Credentials__AmazonClientId to the client identifier from Seller Central -> Apps & Services -> Develop Apps.",
+  "candidates": [], "chosen": null, "definition": null }
+```
+
+```json
+{ "query": "bluetooth speaker", "status": "not_configured", "sandboxNotice": "",
+  "message": "No Amazon refresh token is stored. The Client ID and Secret identify the application, not the seller - the refresh token is what says which Selling Partner account the calls are made on behalf of, and it is issued once, when that seller authorises the app. Authorise the application against the seller account and set Credentials__AmazonRefreshToken to the refresh token Amazon returns (it begins Atzr|).",
+  "candidates": [], "chosen": null, "definition": null }
+```
+
+`sandboxNotice` is empty in both because nothing was asked of the sandbox. A sentence about what the
+sandbox returned, attached to a lookup that never left the building, describes something that did
+not happen.
+
+## The blocker, unchanged from phase 1
+
+Re-checked this session against the credential store, without printing any value:
+`amazon_spapi.client_secret` is still **203 characters of prose** — the note saying the disclosure
+was collapsed in the screenshot — where an LWA secret is 80. The `client_identifier` is still real
+and well-formed. There is still no refresh token, no marketplace ID and no seller ID anywhere in
+configuration.
+
+**Two things unblock this, in order:**
+
+1. The real client secret — expand the Client secret disclosure in Seller Central -> Apps & Services
+   -> Develop Apps, or use Rotate secret.
+2. A seller authorisation against the Selling Partner account, to mint a refresh token — plus
+   `Credentials__AmazonMarketplaceId` (amazon.com is `ATVPDKIKX0DER`) and
+   `Credentials__AmazonSellerId` (the Merchant Token from Settings -> Account Info).
+
+With those set, `/api/amazon/product-types?query=bluetooth+speaker` answers the acceptance question
+against Amazon with no further code — and, because a real query needs it,
+`Credentials__AmazonSandbox=false` to leave the sandbox. Nothing in this phase writes, and every
+call it makes is a GET.
+
+## Traps for whoever picks this up
+
+- **Do not attach the access token to the schema link.** It is pre-signed and on a different host;
+  adding a header fails with a signature error that reads like a broken credential.
+- **The definition response does not contain the schema.** It contains a link to it, next to a link
+  to the *meta*-schema. Reading the meta-schema by mistake gives you a document that parses and
+  describes Amazon's own vocabulary rather than the product's attributes — valid, and about the
+  wrong thing entirely.
+- **`keywords` is a comma-delimited list, not a phrase.** "bluetooth speaker" sent as one keyword
+  matches nothing and reads exactly like Amazon having no product type for it.
+- **A 200 from the sandbox is not an answer to your question.** See above.
+- **A product type that exists in one marketplace need not exist in another**, which arrives as a
+  400 and reads as a misspelling.
