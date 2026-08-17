@@ -1354,6 +1354,9 @@
   }
 
   function setActiveNavItem(page) {
+    // The AI Listing screen has two sidebar doors and no button of its own; light the door
+    // matching where the footer's marketplace switch is pointed.
+    if (page === 'ai') page = nlMarket === NL_MARKET_AMAZON ? 'amazon' : 'ebay';
     document.querySelectorAll('.nav-item').forEach(btn => btn.classList.toggle('active', btn.dataset.page === page));
   }
 
@@ -1387,7 +1390,15 @@
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
-    ai:          { section: 'new-listing-overlay',   open: showAiSection },
+    // No sidebar button of its own since the eBay/Amazon doors below replaced it, so like the
+    // hidden five further down it carries its own tab label.
+    ai:          { section: 'new-listing-overlay',   open: showAiSection,
+                   title: 'AI Listing',              icon: '#i-ai' },
+    // Doors, not screens: either AI Listing sidebar entry lands on the one 'ai' tab above and
+    // presets the marketplace switch in the listing footer. A page of their own would be a
+    // second tab over the same form — two claims on one draft.
+    ebay:        { aiMarket: 'ebay' },
+    amazon:      { aiMarket: 'amazon' },
     photos:      { section: 'photo-library-section', open: showPhotoLibrarySection },
     // The one page that is doing something whether or not it is open. onShow/onHide only control
     // how often it re-reads itself — the scanning happens in the server either way.
@@ -1473,6 +1484,15 @@
     if (def.scrollTo) {
       openWorkspaceTab('dashboard');
       $(def.scrollTo)?.scrollIntoView({ behavior: 'smooth', block: def.scrollBlock || 'start' });
+      return;
+    }
+
+    // An AI Listing door: open (or focus) the one 'ai' tab, then point the marketplace switch
+    // where the door says. Skipped when it is already pointed there, so walking back through
+    // the same door never re-runs the Amazon check or logs a switch that didn't happen.
+    if (def.aiMarket) {
+      openWorkspaceTab('ai');
+      if (nlMarket !== def.aiMarket) nlSetMarket(def.aiMarket);
       return;
     }
 
@@ -1648,7 +1668,8 @@
       item.className = 'ws-open-menu-item';
       item.setAttribute('role', 'menuitem');
       item.dataset.page = page;
-      const open = !!findWorkspaceTab(page);
+      // A door is "open" when the screen behind it is — the tab is 'ai', not the door's own name.
+      const open = !!findWorkspaceTab(def.aiMarket ? 'ai' : page);
       item.innerHTML =
         '<svg class="ws-tab-icon" aria-hidden="true"><use href="' +
           esc(src.querySelector('use')?.getAttribute('href') || '#i-dashboard') + '"/></svg>' +
@@ -24410,6 +24431,10 @@
     $('nl-btn-publish')?.classList.toggle('hidden', amazon);
     $('nl-btn-amz-submit')?.classList.toggle('hidden', !amazon);
     $('nl-amz-send-note')?.classList.toggle('hidden', !amazon);
+
+    // The sidebar doors carry the marketplace now, so which one is lit follows the switch —
+    // but only while this screen is the one on the page.
+    if (!$('new-listing-overlay')?.classList.contains('hidden')) setActiveNavItem('ai');
 
     // A result from the other marketplace is a result about something that is no longer on
     // screen. Clearing it beats leaving "Published live!" above an Amazon submit button.
