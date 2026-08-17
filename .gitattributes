@@ -1,0 +1,4 @@
+# The deploy scripts run in WSL bash straight from this working tree, and Windows checkouts
+# with core.autocrlf=true were rewriting them CRLF — bash then dies on `set -euo pipefail\r`,
+# which is how staging quietly stopped deploying on 2026-08-15. Shell scripts are LF, always.
+*.sh text eol=lf
