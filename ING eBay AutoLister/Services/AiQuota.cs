@@ -264,6 +264,7 @@ public sealed class AiQuotaGate
     private readonly UserScope _scope;
     private readonly int _dailyLimit;
     private readonly Func<DateTimeOffset> _now;
+    private readonly Func<long, bool>? _unlimited;
 
     /// <summary>
     /// The desktop build, and any hosted deployment whose owner has turned the limit off. Nothing
@@ -276,12 +277,17 @@ public sealed class AiQuotaGate
     /// whether this build rations at all, so one object answers both questions consistently.</param>
     /// <param name="dailyLimit">Generations per account per UTC day. Zero or less means unmetered.</param>
     /// <param name="clock">The current time, injectable so a test can cross midnight without waiting.</param>
-    public AiQuotaGate(AiUsageStore? usage, UserScope scope, int dailyLimit, Func<DateTimeOffset>? clock = null)
+    /// <param name="unlimited">Accounts the daily limit does not apply to — the owner using their
+    /// own product on their own key. Answered per call, because it is resolved from an email list
+    /// in configuration and the account may not even exist yet when the gate is built.</param>
+    public AiQuotaGate(AiUsageStore? usage, UserScope scope, int dailyLimit,
+                       Func<DateTimeOffset>? clock = null, Func<long, bool>? unlimited = null)
     {
         _usage      = usage;
         _scope      = scope;
         _dailyLimit = dailyLimit;
         _now        = clock ?? (() => DateTimeOffset.UtcNow);
+        _unlimited  = unlimited;
     }
 
     /// <summary>True when this build counts generations at all.</summary>
@@ -295,6 +301,11 @@ public sealed class AiQuotaGate
     {
         var now = _now();
         if (!Enforced)
+            return new AiQuotaStatus { Enforced = false, ResetsAt = AiUsageStore.ResetAfter(now) };
+
+        // An unlimited account reads the same answer the desktop build gets: nothing is rationed
+        // FOR YOU, so the page draws no allowance at all rather than a meter that never moves.
+        if (_scope.OwnerId is { } owner && _unlimited?.Invoke(owner) == true)
             return new AiQuotaStatus { Enforced = false, ResetsAt = AiUsageStore.ResetAfter(now) };
 
         // No signed-in user: nothing has been spent because nothing may be. Reported as a full
@@ -327,7 +338,17 @@ public sealed class AiQuotaGate
         if (_scope.OwnerId is not { } userId)
             throw NoUser(operation, now);
 
-        var day  = AiUsageStore.DayOf(now);
+        var day = AiUsageStore.DayOf(now);
+
+        // An unlimited account is never refused, but it is still COUNTED — the owner dashboard's
+        // whole job is "who is spending the key", and exempt-and-invisible would hide exactly the
+        // account most able to spend. Unlimited means the cap is gone, not the meter.
+        if (_unlimited?.Invoke(userId) == true)
+        {
+            _usage!.TryConsume(userId, day, int.MaxValue, now);
+            return;
+        }
+
         var used = _usage!.TryConsume(userId, day, _dailyLimit, now);
         if (used is not null) return;
 
@@ -353,6 +374,8 @@ public sealed class AiQuotaGate
 
         if (_scope.OwnerId is not { } userId)
             throw NoUser(operation, now);
+
+        if (_unlimited?.Invoke(userId) == true) return;
 
         var used = _usage!.Used(userId, AiUsageStore.DayOf(now));
         if (used < _dailyLimit) return;
@@ -454,6 +477,25 @@ public static class AiQuota
     public const int DefaultDailyLimit = 10;
 
     /// <summary>
+    /// Accounts the daily limit does not apply to, by email address — comma or semicolon
+    /// separated (<c>Ai__UnlimitedAccounts=ns@ingmining.com</c>). For the owner using their own
+    /// product on their own key: never refused, still counted on the usage dashboard.
+    /// </summary>
+    public const string UnlimitedAccountsSetting = "Ai:UnlimitedAccounts";
+
+    /// <summary>
+    /// The exempt addresses, normalised the way <see cref="UserStore"/> matches them — so
+    /// <c>NS@ingmining.com</c> in the environment exempts the account that signed up lowercase.
+    /// </summary>
+    public static IReadOnlySet<string> UnlimitedAccountsFrom(IConfiguration configuration) =>
+        (configuration[UnlimitedAccountsSetting] ?? "")
+            .Split(',', ';')
+            .Select(UserStore.Normalize)
+            .Where(email => !string.IsNullOrEmpty(email))
+            .Select(email => email!)
+            .ToHashSet();
+
+    /// <summary>
     /// The configured limit, or <see cref="DefaultDailyLimit"/> when nothing usable is set.
     /// </summary>
     /// <remarks>
@@ -489,12 +531,31 @@ public static class AiQuota
         // table in HostedAuth.AddAccounts, and for the same reason.
         builder.Services.TryAddSingleton(sp => new AiUsageStore(sp.GetRequiredService<ListingDatabase>()));
 
+        var unlimitedEmails = UnlimitedAccountsFrom(builder.Configuration);
+
         // Singleton over a per-request answer, like every other hosted service here: the gate is
         // injected into ClaudeService, which is itself a singleton, and what has to be per-request
         // is who is asking rather than the object that asks. UserScope already resolves that.
-        builder.Services.AddSingleton(sp => new AiQuotaGate(
-            sp.GetRequiredService<AiUsageStore>(),
-            sp.GetRequiredService<UserScope>(),
-            limit));
+        builder.Services.AddSingleton(sp =>
+        {
+            // Exemption is configured by email but the gate meters by user id, so each check reads
+            // the account back and compares addresses. Looked up per call, not resolved once at
+            // startup: the exempt account may not have signed up yet when the app boots, and a
+            // point-read against the id primary key is nothing next to the Anthropic call behind
+            // it. GetService, not GetRequiredService — a build with no UserStore has nobody to
+            // exempt, which is the right answer rather than a crash.
+            var users = sp.GetService<UserStore>();
+            Func<long, bool>? unlimited =
+                unlimitedEmails.Count > 0 && users is not null
+                    ? id => users.Find(id) is { } account
+                            && unlimitedEmails.Contains(UserStore.Normalize(account.Email) ?? "")
+                    : null;
+
+            return new AiQuotaGate(
+                sp.GetRequiredService<AiUsageStore>(),
+                sp.GetRequiredService<UserScope>(),
+                limit,
+                unlimited: unlimited);
+        });
     }
 }

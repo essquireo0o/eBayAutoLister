@@ -127,6 +127,72 @@ public class AiQuotaTests : IDisposable
         Assert.Equal(5, Usage.Used(UserA, AiUsageStore.DayOf(refused.Status.ResetsAt.AddDays(-1))));
     }
 
+    // ── The owner's own account ──────────────────────────────────────────────────────────────
+
+    /// <summary>The gate with UserA exempted, the way AddAiQuota builds one from Ai:UnlimitedAccounts.</summary>
+    private AiQuotaGate GateWithUnlimited(int dailyLimit, long unlimitedUser) =>
+        new(Usage, UserScope.PerUser(() => _signedIn), dailyLimit, () => _now,
+            unlimited: id => id == unlimitedUser);
+
+    [Fact]
+    public void An_unlimited_account_is_never_refused_but_its_spend_is_still_on_the_meter()
+    {
+        var gate = GateWithUnlimited(dailyLimit: 5, unlimitedUser: UserA);
+
+        // Far past the limit that stops everyone else, without a refusal.
+        for (var i = 1; i <= 12; i++) gate.Reserve("AI listing from photo");
+        gate.EnsureNotExhausted("key check");
+
+        // Exempt from the cap, not from the count: the owner dashboard's whole job is "who is
+        // spending the key", and the account most able to spend must not be the invisible one.
+        Assert.Equal(12, Usage.Used(UserA, AiUsageStore.DayOf(_now)));
+    }
+
+    [Fact]
+    public void An_unlimited_account_reads_no_allowance_rather_than_a_meter_that_never_moves()
+    {
+        var gate = GateWithUnlimited(dailyLimit: 5, unlimitedUser: UserA);
+        for (var i = 1; i <= 7; i++) gate.Reserve("AI listing from photo");
+
+        // The same answer the desktop build gives: nothing is rationed for this account, so the
+        // page draws no allowance at all instead of "7 of 5 used".
+        var status = gate.Status();
+        Assert.False(status.Enforced);
+        Assert.Null(status.Remaining);
+        Assert.False(status.Exhausted);
+    }
+
+    [Fact]
+    public void Exempting_one_account_exempts_nobody_else()
+    {
+        var gate = GateWithUnlimited(dailyLimit: 5, unlimitedUser: UserA);
+
+        _signedIn = UserB;
+        for (var i = 1; i <= 5; i++) gate.Reserve("AI listing from photo");
+        Assert.Throws<AiQuotaExceededException>(() => gate.Reserve("AI listing from photo"));
+        Assert.True(gate.Status().Exhausted);
+    }
+
+    [Fact]
+    public void The_exempt_list_matches_addresses_the_way_sign_up_stored_them()
+    {
+        // NS@ingmining.com in an environment variable must exempt the account that signed up
+        // lowercase — the same normalisation UserStore matches sign-ins with.
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Ai:UnlimitedAccounts"] = " NS@ingmining.com ; other@example.com,, ",
+        }).Build();
+
+        var exempt = AiQuota.UnlimitedAccountsFrom(configuration);
+
+        Assert.Equal(2, exempt.Count);
+        Assert.Contains("ns@ingmining.com", exempt);
+        Assert.Contains("other@example.com", exempt);
+
+        // And nothing configured exempts nobody — the default stays the metered trial.
+        Assert.Empty(AiQuota.UnlimitedAccountsFrom(new ConfigurationBuilder().Build()));
+    }
+
     // ── What the person who ran out actually reads ───────────────────────────────────────────
 
     [Fact]
