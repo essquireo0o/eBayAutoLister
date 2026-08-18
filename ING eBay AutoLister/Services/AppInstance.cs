@@ -107,4 +107,32 @@ public static class AppInstance
         $"ING AutoLister only ever runs on http://localhost:{port} — eBay sign-in redirects there, " +
         "so it can't move to a different port.\r\n\r\n" +
         "Close whatever is using that port and start ING AutoLister again.";
+
+    /// <summary>
+    /// The sentence for a bind that failed even though the already-listening check found nobody.
+    /// Two different diseases share the symptom: something grabbed the port in the race between
+    /// check and bind (WSAEADDRINUSE), or Windows itself has the port inside a Hyper-V/WSL port
+    /// exclusion range and refuses every bind (WSAEACCES, 10013) while netstat shows nothing at
+    /// all. The second one reads as "port in use, but nothing is using it" and its fix is a
+    /// netsh command, not closing a program — so it gets its own words, with the fix in them.
+    /// </summary>
+    public static string BindFailureMessage(int port, Exception? ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AccessDenied })
+                return
+                    $"Windows itself has reserved port {port}, so nothing can use it — no other program is " +
+                    "actually listening there. PCs with Hyper-V, WSL or Docker set aside blocks of ports at " +
+                    $"every startup, and a block has landed on {port}.\r\n\r\n" +
+                    $"ING AutoLister only ever runs on http://localhost:{port} — eBay sign-in redirects there, " +
+                    "so it can't move to a different port.\r\n\r\n" +
+                    "One-time fix — run these in an Administrator command prompt, then start ING AutoLister again:\r\n" +
+                    "    net stop winnat\r\n" +
+                    $"    netsh int ipv4 add excludedportrange protocol=tcp startport={port} numberofports=1 store=persistent\r\n" +
+                    "    net start winnat\r\n\r\n" +
+                    "Reinstalling ING AutoLister also applies this fix automatically.";
+        }
+        return ForeignPortMessage(port);
+    }
 }

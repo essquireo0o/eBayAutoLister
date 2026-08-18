@@ -10638,12 +10638,17 @@ try
 }
 catch (Exception ex)
 {
+    // BindFailureMessage, not ForeignPortMessage: the check above found nothing listening, so
+    // "another program is using the port" is only one of the two ways this bind can fail. The
+    // other — Windows holding the port inside a Hyper-V/WSL exclusion range — shows the same
+    // symptom with nothing in netstat, and telling that seller to close a program is telling
+    // them to hunt for a program that does not exist.
     app.Services.GetRequiredService<ActionLog>()
         .Add("Error", $"Could not start on port {port}", ex.Message);
     if (!isWindowsService)
     {
         System.Windows.Forms.MessageBox.Show(
-            AppInstance.ForeignPortMessage(port),
+            AppInstance.BindFailureMessage(port, ex),
             "ING AutoLister is not able to start",
             System.Windows.Forms.MessageBoxButtons.OK,
             System.Windows.Forms.MessageBoxIcon.Warning);

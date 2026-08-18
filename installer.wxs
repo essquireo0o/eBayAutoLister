@@ -145,6 +145,48 @@
       <ComponentRef Id="StartMenuShortcutComp" />
     </Feature>
 
+    <!--
+      Reserve TCP port 9332 for the app. On PCs with Hyper-V / WSL / Docker, Windows sets aside
+      random blocks of ports at every boot (WinNAT "dynamic port exclusions"); when a block lands
+      on 9332 the app cannot bind it and dies with "port in use" while netstat shows nothing —
+      and 9332 is the one port the eBay OAuth relay ever redirects to, so moving is not an option.
+      The install is already elevated (perMachine), which is the only time this fix is free.
+
+      The command is three attempts in one line:
+        1. delete any stale reservation of ours (fails harmlessly if absent — makes the add clean
+           on repair/upgrade instead of erroring as a duplicate),
+        2. add a persistent ADMINISTERED exclusion for exactly 9332 — the dynamic allocator must
+           skip administered entries at every future boot, while normal programs can still bind,
+        3. only if the add failed (9332 is already inside a dynamic block right now), bounce the
+           winnat service — stopping it releases the dynamic blocks so the add lands — then start
+           it again so Hyper-V/WSL networking comes straight back.
+      Return="ignore" because a machine where netsh fails (no winnat, odd policy) must still get
+      the app installed; the app's own startup message names the manual fix for that case.
+    -->
+    <!-- Plain exe actions rather than the util extension's WixQuietExec: the build script only
+         carries WixToolset.UI.wixext, and a deferred non-impersonated action runs in the
+         installer service's session anyway, so no console window ever reaches the desktop. -->
+    <CustomAction Id="ReservePort9332"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh int ipv4 delete excludedportrange protocol=tcp startport=9332 numberofports=1 store=persistent &amp; netsh int ipv4 add excludedportrange protocol=tcp startport=9332 numberofports=1 store=persistent || (net stop winnat &amp; netsh int ipv4 add excludedportrange protocol=tcp startport=9332 numberofports=1 store=persistent &amp; net start winnat)&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- Give the reservation back on a real uninstall — not on the uninstall half of an upgrade,
+         where the new version still wants it. Leaving it behind would be harmless but rude. -->
+    <CustomAction Id="UnreservePort9332"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh int ipv4 delete excludedportrange protocol=tcp startport=9332 numberofports=1 store=persistent&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
     <!-- Finish screen: a checked-by-default "Open ING AutoLister now" checkbox so the
          user lands in the app immediately and knows how to open it. It launches the
          installed exe with the open-browser flag, which only opens the web UI (no port

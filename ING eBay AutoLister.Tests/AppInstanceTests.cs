@@ -116,6 +116,44 @@ public class AppInstanceTests
         Assert.Contains("eBay", message);
     }
 
+    /// <summary>
+    /// The bind failure with nothing in netstat: Windows has the port inside a Hyper-V/WSL
+    /// dynamic port exclusion range, and the bind dies with WSAEACCES (10013). Telling that
+    /// seller "close whatever is using the port" sends them hunting for a program that does not
+    /// exist — the message must name Windows as the holder and carry the netsh fix.
+    /// </summary>
+    [Fact]
+    public void A_windows_reserved_port_is_not_blamed_on_another_program()
+    {
+        var accessDenied = new IOException("Failed to bind to address http://localhost:9332.",
+            new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.AccessDenied));
+
+        var message = AppInstance.BindFailureMessage(AppPaths.Port, accessDenied);
+
+        Assert.Contains("Windows", message);
+        Assert.Contains("excludedportrange", message);      // the fix is in the message
+        Assert.Contains("winnat", message);
+        Assert.Contains("9332", message);
+        Assert.DoesNotContain("another program", message);  // the sentence that sends them hunting
+    }
+
+    [Fact]
+    public void A_genuinely_taken_port_keeps_the_close_the_other_program_message()
+    {
+        // WSAEADDRINUSE — something really did grab 9332 between the check and the bind. The
+        // original message is the right one there, and it is also the fallback when the failure
+        // is something this code has never seen.
+        var addressInUse = new IOException("Failed to bind to address http://localhost:9332.",
+            new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.AddressAlreadyInUse));
+
+        Assert.Equal(AppInstance.ForeignPortMessage(AppPaths.Port),
+                     AppInstance.BindFailureMessage(AppPaths.Port, addressInUse));
+        Assert.Equal(AppInstance.ForeignPortMessage(AppPaths.Port),
+                     AppInstance.BindFailureMessage(AppPaths.Port, new InvalidOperationException("boom")));
+        Assert.Equal(AppInstance.ForeignPortMessage(AppPaths.Port),
+                     AppInstance.BindFailureMessage(AppPaths.Port, null));
+    }
+
     [Fact]
     public void Port_is_not_reported_as_listening_when_it_is_free()
     {
