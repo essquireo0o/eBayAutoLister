@@ -299,7 +299,10 @@ public class WhatsNotPolishAssetTests
         var price = Between(Js, "async function wnPriceItem()", "  /// ── The one line ─");
 
         Assert.Contains("wnSayLine(\"Nothing to price — type what's on screen.\");", price, StringComparison.Ordinal);
-        Assert.Equal(4, Count(price, "wnSayLine("));
+        // Six, up from four: the live-comps fallback added two more dead-end sentences — "asking
+        // eBay live…" and the lookup's own refusal — both said out loud for the same reason as
+        // the original four (see WhatsNotLiveCompsFallbackAssetTests).
+        Assert.Equal(6, Count(price, "wnSayLine("));
     }
 
     /// <summary>

@@ -11701,6 +11701,11 @@
     wnPriceItem();
   }
 
+  // True only while the one post-lookup re-price is in flight. A flag rather than a parameter,
+  // because wnPriceItem is wired straight into click handlers — a parameter would arrive holding
+  // the click Event, which is truthy, and the fallback would never fire from the button at all.
+  let wnLiveFallbackSpent = false;
+
   async function wnPriceItem() {
     const item = ($('wn-item')?.value || '').trim();
     const card = $('wn-card');
@@ -11761,6 +11766,32 @@
       wnToken = body.token || '';
       wnTokenItem = item;
       wnRenderCard(body);
+
+      // No stored sold history is no longer the end of the question. One budget-gated live
+      // OpenWebNinja lookup — the same machinery the listing screen and the scanner board
+      // spend — then the same ask again against the rows it just wrote. Once per press: a
+      // second no_data after a fetch that FOUND rows means the titles don't match the name,
+      // not that the history is missing, and a loop would spend the day's budget proving it.
+      // The lots table stays out of this on purpose — a fetch per lot is a fetch per lot.
+      if (!wnLiveFallbackSpent && body.call === 'no_data') {
+        const q = body.search?.query || item;
+        card.insertAdjacentHTML('beforeend',
+          `<p class="wn-empty" id="wn-live-wait">No stored sold history — asking eBay live for <strong>${esc(q)}</strong>… usually a few seconds.</p>`);
+        wnSayLine('No stored sold history — asking eBay live for real sold prices…');
+        const run = await runLiveLookup(q, 'wn');
+        if (run.outcome === 'ok' && Number(run.rowsFound) > 0) {
+          wnLiveFallbackSpent = true;
+          try { await wnPriceItem(); } finally { wnLiveFallbackSpent = false; }
+          return;
+        }
+        // The lookup itself said why not — switched off, budget spent, already fetched today,
+        // or eBay genuinely has nothing. Its own sentence beats a silent shrug, because
+        // "couldn't ask" and "asked, and there are no sales" are opposite conclusions.
+        const why = run.message || 'Live lookup found nothing new.';
+        const wait = $('wn-live-wait');
+        if (wait) wait.outerHTML = `<p class="wn-empty">${esc(why)}</p>`;
+        wnSayLine(why);
+      }
     } catch (err) {
       const said = errorText(err, 'That didn\'t price.');
       card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(said)}</p>`;
