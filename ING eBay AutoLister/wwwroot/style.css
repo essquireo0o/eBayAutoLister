@@ -20187,3 +20187,24 @@ p.wn-units-refused {
     transition: none;
   }
 }
+
+/* ── WhatsNot on the hosted build ─────────────────────────────────────────────
+   The page read runs server-side with no account behind it, and Whatnot turns
+   that away on the hosted box every time (datacenter address, signed out). A
+   button that can only ever answer "turned away" is clutter pretending to be a
+   feature, so every page-read control is desktop-only (.wn-desk); the video
+   read — the seller's own signed-in tab, shared — is the primary action there,
+   and it takes the gold. */
+body.is-hosted .wn-desk { display: none !important; }
+.wn-hosted-only { display: none; }
+body.is-hosted p.wn-hosted-only { display: block; }
+body.is-hosted #wn-video-btn {
+  background: var(--grad-gold-flat);
+  border-color: var(--gold-dark);
+  color: var(--on-gold);
+  box-shadow: var(--e1), var(--inset-hi);
+}
+body.is-hosted #wn-video-btn:hover:not(:disabled) {
+  background: var(--grad-gold-hot);
+  box-shadow: var(--e2), var(--glow-gold), var(--inset-hi-strong);
+}

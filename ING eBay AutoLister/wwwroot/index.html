@@ -2855,13 +2855,13 @@
                own connection afterwards, and the screen says so every time. -->
           <div class="wn-read">
             <div class="wn-read-row">
-              <label class="wn-field wn-field-wide">
+              <label class="wn-field wn-field-wide wn-desk">
                 <span>Show address</span>
                 <input id="wn-read-url" type="text" spellcheck="false" autocomplete="off"
                        placeholder="https://www.whatnot.com/live/… — the show you're watching" />
               </label>
-              <button id="wn-read-btn" class="btn btn-primary wn-read-btn" type="button">📡 Read the show</button>
-              <button id="wn-read-here" class="btn btn-ghost" type="button"
+              <button id="wn-read-btn" class="btn btn-primary wn-read-btn wn-desk" type="button">📡 Read the show</button>
+              <button id="wn-read-here" class="btn btn-ghost wn-desk" type="button"
                       title="Copy the address the panel at the bottom of this screen is on">↧ From the panel</button>
               <!-- The check on everything above it. The card's ceiling, spread, sell-through and
                    room all come from one eBay sold search, and that search runs on the NAME in the
@@ -2869,12 +2869,12 @@
                    photograph (the read brings its address back) is the only evidence on this screen
                    that can contradict that name. Pressed, never automatic: a look at a picture costs
                    money and seconds, and the watch loop deliberately does not reach it. -->
-              <button id="wn-photo-btn" class="btn btn-ghost wn-photo-btn" type="button"
+              <button id="wn-photo-btn" class="btn btn-ghost wn-photo-btn wn-desk" type="button"
                       title="Look at the lot's photo and check it against the name being priced">🔍 Check the photo</button>
               <!-- Off by default, and it is the only thing on this screen that reaches the
                    network on its own. It also stops itself the moment the seller edits the item
                    box: whatever they typed outranks whatever the page says. -->
-              <label class="wn-watch" title="Read the show again every few seconds and price each new lot as it comes up">
+              <label class="wn-watch wn-desk" title="Read the show again every few seconds and price each new lot as it comes up">
                 <input id="wn-watch" type="checkbox" />
                 <span>Keep reading</span>
               </label>
@@ -2900,12 +2900,21 @@
                  saying nothing usable. A better name arrives here as a button, never as a
                  substitution: what the seller typed outranks what a model saw. -->
             <div id="wn-photo-out" class="wn-photo-out hidden"></div>
-            <p class="opp-hint wn-read-hint">
+            <p class="opp-hint wn-read-hint wn-desk">
               Reads the show's own page — the same one your browser loads — and puts the lot's name
               in the box below, then prices it. It reads the <strong>public page, once per press</strong>,
               with no account behind it; Whatnot's private API would answer the same question and is
               deliberately not called. What that costs is the price: a page is a snapshot at load, so
               the <strong>bid stays under your hand</strong>. Every read says where it got each field.
+            </p>
+            <!-- The hosted build's whole story in one line. The page-read controls above are
+                 desktop-only there (Whatnot turns a server-side, signed-out read away every time,
+                 so on the web they were four buttons that could only apologise), which leaves
+                 exactly two ways in: share the tab, or type the name. Say so, briefly. -->
+            <p class="opp-hint wn-hosted-only">
+              Watch the show in your own browser tab, press <strong>🎥 Read the video (AI)</strong>
+              and share that tab — the AI names each new lot on screen and prices it below. Typing
+              the lot in and pressing <strong>⚡ Price it</strong> always works too, and costs nothing.
             </p>
           </div>
 
@@ -3203,9 +3212,9 @@
             never going to render; it is still re-asked in the background, and
             <strong>Try it anyway</strong> overrules the memory.
             <strong>Open in browser</strong> is the way into a
-            site that refuses. The app cannot read what is inside the frame either (a browser refuses
+            site that refuses.<span class="wn-desk"> The app cannot read what is inside the frame either (a browser refuses
             cross-origin) — which is what <strong>📡 Read the show</strong> at the top of this screen
-            is for: it fetches the show's page through the app instead, where no such rule applies.
+            is for: it fetches the show's page through the app instead, where no such rule applies.</span>
           </p>
           <div class="wn-frame-wrap">
             <!-- Shown over the frame when the site's own headers say the embed was refused, so the

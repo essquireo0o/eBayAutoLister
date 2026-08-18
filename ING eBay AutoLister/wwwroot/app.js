@@ -11370,7 +11370,11 @@
   async function wnToggleVideoWatch() {
     if (wnVideoOn()) { wnStopVideoWatch('Stopped reading the video.'); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      wnVideoStatus("This browser can't share a tab — use Chrome or Edge, or press 📡 Read the show instead.", 'bad');
+      // On the hosted build 📡 Read the show is hidden (Whatnot turns a server-side, signed-out
+      // read away every time), so the fallback it names has to exist on the screen doing the naming.
+      wnVideoStatus(document.body.classList.contains('is-hosted')
+        ? "This browser can't share a tab — use Chrome or Edge, or type the lot in and press ⚡ Price it."
+        : "This browser can't share a tab — use Chrome or Edge, or press 📡 Read the show instead.", 'bad');
       return;
     }
 
@@ -11380,8 +11384,10 @@
     const left  = quota ? Math.max(0, (quota.limit || 0) - (quota.used || 0)) : null;
     if (quota && left === 0) {
       wnVideoStatus(`No AI reads left today — this account gets ${quota.limit} a day and has used them all. ` +
-                    'They come back at 00:00 UTC. 📡 Read the show still works: it reads the page, ' +
-                    'which costs nothing.', 'bad');
+                    'They come back at 00:00 UTC. ' +
+                    (document.body.classList.contains('is-hosted')
+                      ? 'Typing the lot in and pressing ⚡ Price it still works, and costs nothing.'
+                      : '📡 Read the show still works: it reads the page, which costs nothing.'), 'bad');
       return;
     }
     wnVideoCap = left === null ? WN_WATCH_MAX_READS : Math.min(left, WN_WATCH_MAX_READS);
@@ -11501,8 +11507,10 @@
     if (++wnVideoReads > wnVideoCap) {
       wnStopVideoWatch(wnVideoCap < WN_WATCH_MAX_READS
         ? `Stopped — that was the last of today's ${wnVideoCap} AI read` +
-          `${wnVideoCap === 1 ? '' : 's'}. They come back at 00:00 UTC, and 📡 Read the show ` +
-          'still works in the meantime.'
+          `${wnVideoCap === 1 ? '' : 's'}. They come back at 00:00 UTC, and ` +
+          (document.body.classList.contains('is-hosted')
+            ? 'typing the lot in still prices it in the meantime.'
+            : '📡 Read the show still works in the meantime.')
         : `Stopped after ${wnVideoCap} reads — it is not something to leave running ` +
           'all night. Press 🎥 to start again for the next lot.');
       return;
@@ -11518,7 +11526,9 @@
         // hour and be refused every time. Stop, and hand over the server's own sentence.
         if (wnIsQuotaRefusal(body)) {
           wnStopVideoWatch(`${body.error}. ${body.failure?.whatToDo || ''} ` +
-                           '📡 Read the show reads the page instead, and costs nothing.');
+                           (document.body.classList.contains('is-hosted')
+                             ? 'Typing the lot in prices it instead, and costs nothing.'
+                             : '📡 Read the show reads the page instead, and costs nothing.'));
           return;
         }
         wnVideoStatus(body.error || "That video read didn't happen.", 'bad');
