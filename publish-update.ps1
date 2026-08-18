@@ -94,7 +94,10 @@ try {
     $h = Invoke-WebRequest -Uri $publicUrl -Method Head -TimeoutSec 60 -UseBasicParsing -Headers $ua
     $beforeLen = (@($h.Headers['Content-Length'])[0])
     $beforeMod = (@($h.Headers['Last-Modified'])[0])
-    Ok "live now: $([math]::Round([int64]$beforeLen/1MB,2)) MB, $beforeMod"
+    # The URL is served by dl.php (download tracking) since 2026-08-18, and PHP answers HEAD
+    # without a Content-Length. Last-Modified still moves on every ship and is what step 6 uses.
+    if ($beforeLen) { Ok "live now: $([math]::Round([int64]$beforeLen/1MB,2)) MB, $beforeMod" }
+    else            { Ok "live now: $beforeMod" }
 } catch { Warn "No installer live yet (first release?)" }
 
 if ($WhatIf) {
@@ -208,12 +211,14 @@ try {
     }
     Ok "302 -> $loc"
 
+    # The redirect lands on dl.php (download tracking), whose HEAD answer carries no
+    # Content-Length. The byte-for-byte proof already happened in step 6 against the same
+    # target this 302 points at; here it is enough that following the redirect answers 200.
     $mine = Invoke-WebRequest -Uri $mineUrl -Method Head -TimeoutSec 120 -UseBasicParsing -Headers $ua
-    $mineLen = (@($mine.Headers['Content-Length'])[0])
-    if ([int64]$mineLen -ne $msi.Length) {
-        Die "Following the redirect gives $mineLen bytes, not $($msi.Length)."
+    if ($mine.StatusCode -ne 200) {
+        Die "Following the redirect answered HTTP $($mine.StatusCode), not 200."
     }
-    Ok "follows to $([math]::Round([int64]$mineLen/1MB,2)) MB"
+    Ok "follows to HTTP 200"
 
     # That site returns 503 to non-browser agents, hence the User-Agent header everywhere here.
     # Not $home - PowerShell reserves that one and assigning it is a terminating error.
