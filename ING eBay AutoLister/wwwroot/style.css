@@ -20208,3 +20208,82 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   background: var(--grad-gold-hot);
   box-shadow: var(--e2), var(--glow-gold), var(--inset-hi-strong);
 }
+
+/* ── WhatsNot, visual pass (2026-08-18) ──────────────────────────────────────
+   From a screenshot rather than a hunch, what was wrong: nothing was grouped —
+   controls, prose and panels sat on the page background as one undifferentiated
+   column; three paragraphs of small print interrupted the controls they
+   explained; the field row had no rhythm (a floating checkbox, random widths,
+   the primary action mid-row); and a refused embed still held 70vh of black
+   screen. So: two real cards, the prose folded behind a summary line each, one
+   aligned control row, and a frame that gives the space back when the site
+   refuses to render in it. */
+.wn-read, .wn-ask {
+  background: var(--card, var(--panel-2, rgba(255, 255, 255, .02)));
+  border: 1px solid var(--line, var(--border, #2a2f3a));
+  border-radius: 12px;
+  padding: 16px 18px 12px;
+  box-shadow: var(--e1, 0 1px 2px rgba(0, 0, 0, .12));
+}
+.wn-read { margin-bottom: 14px; }
+.wn-ask { margin-bottom: 14px; }
+.wn-read-row, .wn-ask-row { gap: 10px 12px; }
+.wn-field-wide { flex: 1 1 340px; min-width: 240px; }
+
+/* The primary action ends the row it answers, at a weight that says so. */
+.wn-price-btn { margin-left: auto; padding-left: 24px; padding-right: 24px; }
+
+/* The one checkbox in a row of inputs, dressed like the switch it is (same
+   treatment as .wn-watch) instead of a bare box floating between fields. */
+.wn-field-exempt {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--line, var(--border, #2a2f3a));
+  border-radius: 8px;
+  cursor: pointer;
+  align-self: flex-end;
+  white-space: nowrap;
+}
+.wn-field-exempt:hover { border-color: var(--accent, #d4a24a); }
+.wn-field-exempt > span { margin: 0; }
+.wn-field-exempt > input { margin: 0; cursor: pointer; }
+
+/* Prose folded behind one quiet line. The first night it opens; every night
+   after it stays out of the way of the controls it explains. */
+.wn-help {
+  margin: 12px 2px 2px;
+  border-top: 1px dashed var(--line, var(--border, #2a2f3a));
+  padding-top: 8px;
+}
+.wn-help > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a7);
+  list-style: none;
+  user-select: none;
+}
+.wn-help > summary::-webkit-details-marker { display: none; }
+.wn-help > summary::before { content: '▸ '; opacity: .7; }
+.wn-help[open] > summary::before { content: '▾ '; }
+.wn-help > summary:hover { color: var(--text, inherit); }
+.wn-help .opp-hint { margin: 6px 0 0; }
+
+/* A refused embed keeps its explanation and hands back the screen: 70vh of
+   black rectangle under an apology was most of what made this page read as
+   broken. (:has is fine here — every browser this app supports ships it.) */
+.wn-frame-wrap:has(> #wn-blocked:not(.hidden)) {
+  min-height: 0;
+  height: auto;
+  flex: 0 0 auto;
+  background: var(--card, var(--panel-2, rgba(255, 255, 255, .02)));
+}
+.wn-frame-wrap:has(> #wn-blocked:not(.hidden)) > .wn-frame {
+  min-height: 0;
+  height: 0;
+}
+.wn-frame-wrap:has(> #wn-blocked:not(.hidden)) > #wn-blocked {
+  position: static;
+  padding: 18px;
+}
