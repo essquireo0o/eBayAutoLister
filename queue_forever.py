@@ -15,7 +15,10 @@ CQ   = [sys.executable, r"C:/Users/nsquires/source/repos/claude-queue/claude-que
 QF   = r"C:/Users/nsquires/.claude-queue/tasks.json"
 LOG  = r"C:/Users/nsquires/source/repos/claude-queue-worker.log"
 PROJ = r"C:/Users/nsquires/source/repos/ING eBay AutoLister"
-TARGET   = 30      # keep at least this many queued (deeper backlog so it never looks empty)
+TARGET   = 0       # 2026-08-20: NO invented tasks. The owner queues work explicitly; the bot only runs that.
+                   # (It was 30 - a self-refilling backlog that ran Claude around the clock and competed
+                   # with the owner's own session for usage. 'Make sure it doesn't exhaust the claude session.')
+QUIET_START, QUIET_END = 23, 6   # local hours the worker may run: 23:00 -> 06:00, when nobody is using Claude
 INTERVAL = 150     # seconds between supervisor cycles
 
 GUARD = r"""GUARDRAILS - FULL AUTONOMY; NEVER ask the user, NEVER wait, NEVER stop to confirm - decide and proceed. Free beta, NO paywalls/subscriptions/gating.
@@ -111,14 +114,41 @@ def add_task(prompt, session):
         time.sleep(0.5)
     return False
 
+def in_quiet_hours():
+    h = time.localtime().tm_hour
+    return h >= QUIET_START or h < QUIET_END
+
+
+def worker_idle():
+    """No task is mid-flight. Only then may a daytime worker be stopped - a task killed halfway is a
+    half-written tree the next failure-clean wipes, so a running task always gets to finish."""
+    try:
+        import json
+        with open(QF, encoding="utf-8") as f:
+            return not any(t.get("status") == "running" for t in json.load(f))
+    except Exception:
+        return False
+
+
+def stop_idle_worker():
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'claude-queue.py worker' } "
+                    "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                   capture_output=True, text=True, timeout=60)
+    print("supervisor: daytime - stopped the idle worker; explicit tasks resume at %02d:00" % QUIET_START, flush=True)
+
+
 def main():
     i = 0
-    print("supervisor: perpetual loop started", flush=True)
+    print("supervisor: loop started - explicit tasks only, worker alive %02d:00-%02d:00" % (QUIET_START, QUIET_END), flush=True)
     while True:
         try:
-            if not worker_running():
-                launch_worker()
-                time.sleep(6)
+            if in_quiet_hours():
+                if not worker_running():
+                    launch_worker()
+                    time.sleep(6)
+            elif worker_running() and worker_idle():
+                stop_idle_worker()
             q = queued_count()
             if q < TARGET:
                 need = TARGET - q
