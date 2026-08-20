@@ -67,3 +67,5 @@ docs/assets/
 build_pages.py
 wordpress-plugin/
 ING eBay AutoLister/ebay-callback-relay.php
+
+firmware/photobox/build/
