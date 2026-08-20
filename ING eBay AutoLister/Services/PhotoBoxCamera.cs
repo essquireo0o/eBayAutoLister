@@ -40,6 +40,9 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
     /// <summary>Photo Library folder every snap lands in.</summary>
     public const string LibraryFolder = "photo-box";
 
+    /// <summary>The name the firmware publishes itself under, for when its IP has moved.</summary>
+    public const string MdnsUrl = "http://photobox.local";
+
     private static readonly JsonSerializerOptions Json = new(System.Text.Json.JsonSerializerDefaults.Web);
     private readonly object _gate = new();
 
@@ -327,10 +330,11 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         if (s is null || string.IsNullOrWhiteSpace(s.CameraUrl))
             return new(false, null, null, false, null);
 
+        var http = httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(4);
+
         try
         {
-            var http = httpFactory.CreateClient();
-            http.Timeout = TimeSpan.FromSeconds(4);
             var body = await http.GetStringAsync(s.CameraUrl + "/", ct);
             var ours = body.Contains("ing-photobox");
             return new(true, s.CameraUrl, s.Ssid, ours,
@@ -338,8 +342,26 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         }
         catch (Exception ex)
         {
+            // The stored address is an IP the router handed out, and routers hand out
+            // different ones. Before telling a seller to redo the USB setup — the single
+            // most annoying instruction in this feature — ask for the camera by name:
+            // the firmware publishes itself as photobox.local, so a moved camera answers
+            // there. When it does, the new address is remembered and nothing was asked.
+            try
+            {
+                var byName = await http.GetStringAsync(MdnsUrl + "/", ct);
+                if (byName.Contains("ing-photobox"))
+                {
+                    var moved = ReadField(byName, "ip") is { Length: > 0 } ip ? $"http://{ip}" : MdnsUrl;
+                    Save(new Settings { CameraUrl = moved, Ssid = s.Ssid, SavedAt = DateTimeOffset.UtcNow });
+                    return new(true, moved, s.Ssid, true,
+                        $"The camera had moved to a new address on your network ({moved}) — found it by name and remembered it.");
+                }
+            }
+            catch { /* not there either; fall through to the honest report below */ }
+
             return new(true, s.CameraUrl, s.Ssid, false,
-                $"The camera didn't answer at {s.CameraUrl} ({ex.Message}). It may still be booting, or the router gave it a new address — run the USB setup again to find it.");
+                $"The camera didn't answer at {s.CameraUrl}, or as {MdnsUrl}. Most often it simply has no power — check it is plugged in. ({ex.Message})");
         }
     }
 
