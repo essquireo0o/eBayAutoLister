@@ -2658,10 +2658,11 @@
     on('fb-arb-price', 'change', renderArbitrageRows);
     // Touching any quality bar switches the board out of auto-relax for good — see
     // renderArbitrageRows. A filter the seller set themselves is an instruction, not a default.
-    on('fb-arb-hide-losers', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
-    on('fb-arb-proven-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
-    on('fb-arb-fast-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
-    on('fb-arb-warranty-only', 'change', () => { arbFiltersTouched = true; renderArbitrageRows(); });
+    // A bar the seller set by hand is remembered across scans and visits: the two strict ones are
+    // on by default now, and somebody who deliberately turns one off should not have to do it
+    // again on every search.
+    for (const id of ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'])
+      on(id, 'change', () => { arbFiltersTouched = true; arbSaveFilters(); renderArbitrageRows(); });
     on('ebay-scan-btn', 'click', runEbayScan);
     on('fb-picks-btn', 'click', () => loadFacebookPicks(true));
     on('fb-picks-search-btn', 'click', () => loadFacebookPicks(true));
@@ -3925,7 +3926,7 @@
     renderArbitrageCategoryFilter(data.categories);
     // A new scan is a new question, so the board is allowed to relax for it again. Without this,
     // one manual filter change early on would leave every later scan silently showing one row.
-    arbFiltersTouched = false;
+    arbFiltersTouched = arbRestoreFilters();   // the seller's remembered bars count as touched
     arbShowAll = false;   // every new scan opens as the top-50 shortlist
     renderArbitrageRows();
     wrap.classList.remove('hidden');
@@ -3992,6 +3993,30 @@
   // Set true by any manual change, and never reset except by a new scan.
   let arbFiltersTouched = false;
 
+  // The four bars, remembered. Saved whenever the seller sets one by hand; put back on every scan
+  // so the board opens the way they left it. Nothing saved means the defaults in the markup — the
+  // two strict bars on — and the auto-relax may still loosen the two preference bars.
+  const ARB_FILTER_IDS = ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'];
+
+  function arbSaveFilters() {
+    try {
+      const saved = {};
+      for (const id of ARB_FILTER_IDS) saved[id] = !!$(id)?.checked;
+      localStorage.setItem('arbFilters', JSON.stringify(saved));
+    } catch { /* storage full or blocked: the session still works, it just forgets */ }
+  }
+
+  // True when a saved choice was applied — which counts as the seller having touched the bars,
+  // so the auto-relax keeps its hands off them.
+  function arbRestoreFilters() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('arbFilters') || 'null');
+      if (!saved) return false;
+      for (const id of ARB_FILTER_IDS) { const el = $(id); if (el && id in saved) el.checked = !!saved[id]; }
+      return true;
+    } catch { return false; }
+  }
+
   // Fewer than this on the board, out of a scan that priced plenty, is the "is this broken?" point.
   const ARB_MIN_BOARD = 5;
 
@@ -4012,10 +4037,12 @@
 
     // ── Auto-relax ────────────────────────────────────────────────────────────
     // Only ever loosens, only before the seller has touched a filter, and only when the board
-    // would otherwise be nearly empty. Relaxed in order of what costs least to give up: warranty
-    // and speed are preferences, "backed by real sold comps" is evidence quality (the rows come
-    // back dimmed and labelled ESTIMATE ONLY, so nothing is being passed off as proven), and the
-    // $100 floor goes last because a $14 row really is not a deal.
+    // would otherwise be nearly empty — and only the two PREFERENCES, warranty and speed. It used
+    // to relax the evidence bar and then the $100 floor too, which is how a board opened on a $10
+    // "thin" win, three long shots and a -$48 Pass at #5 — "a bunch of junk" (owner, 2026-08-20).
+    // An empty board under those two bars is an answer the owner asked for by name ("if there
+    // are no opportunities that's fine"); the empty state below says so, and offers the rest as
+    // a deliberate click rather than a quiet loosening.
     const relaxed = [];
     if (!arbFiltersTouched) {
       const survives = (hl, po, fo, wo) => arbitrageData.items.filter(r =>
@@ -4027,8 +4054,6 @@
       const steps = [
         ['warrantyOnly', () => warrantyOnly, () => { warrantyOnly = false; }, 'items still under warranty'],
         ['fastOnly',     () => fastOnly,     () => { fastOnly = false; },     'money back in 3 weeks'],
-        ['provenOnly',   () => provenOnly,   () => { provenOnly = false; },   'only prices backed by real sold comps'],
-        ['hideLosers',   () => hideLosers,   () => { hideLosers = false; },   `only deals that clear $${WORTH_DOING_NET}`],
       ];
       for (const [, isOn, turnOff, label] of steps) {
         if (survives(hideLosers, provenOnly, fastOnly, warrantyOnly) >= ARB_MIN_BOARD) break;
@@ -4188,7 +4213,11 @@
       return thin ? 1 : 0;
     };
     const chosenSort = cmp[sort] || cmp.balanced;
-    rows.sort((a, b) => (confidenceTier(a) - confidenceTier(b)) || chosenSort(a, b));
+    // A loser is last whatever its confidence: a CONFIDENT -$48 Pass used to outrank an estimated
+    // +$60 because tiers sorted first, and it sat at #5 on "best overall". Money first, then how
+    // sure we are of it, then the chosen order.
+    const makesMoney = r => (r.netProfit > 0 ? 1 : 0);
+    rows.sort((a, b) => (makesMoney(b) - makesMoney(a)) || (confidenceTier(a) - confidenceTier(b)) || chosenSort(a, b));
 
     // Open as a shortlist — the top ARB_DEFAULT_CAP by rank. The filters and the confidence-first sort
     // above run on the FULL set first, so the cap only ever trims the already-ranked tail; the rows
@@ -4273,6 +4302,7 @@
       if (!box) return;
       box.checked = false;
       arbFiltersTouched = true;   // a deliberate choice, same as ticking the box by hand
+      arbSaveFilters();
       renderArbitrageRows();
     }));
 
