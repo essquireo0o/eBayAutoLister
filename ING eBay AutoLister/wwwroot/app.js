@@ -7466,6 +7466,10 @@
     if (val) val.textContent = pbZoomLevel.toFixed(1) + '×';
   }
 
+  // The snaps taken since this screen opened, oldest first. The AI Listing button
+  // reads the newest and carries the whole set onto the listing's photo grid.
+  let pbSessionSnaps = [];
+
   async function pbSnap() {
     const note = $('pb-snap-note');
     const btn = $('pb-snap');
@@ -7476,16 +7480,66 @@
         body: JSON.stringify({ zoom: pbZoomLevel })
       });
       const r = await res.json();
+      if (res.ok && r.url) {
+        pbSessionSnaps.push(r.url);
+        const ai = $('pb-ai');
+        if (ai) {
+          ai.disabled = false;
+          ai.textContent = pbSessionSnaps.length > 1
+            ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing';
+        }
+      }
       if (note) {
         note.classList.remove('hidden');
         note.textContent = res.ok
-          ? `Saved to the Photo Library (${r.folder}) — it's ready to use on a listing.`
+          ? `Saved to the Photo Library (${r.folder}). Snap more angles, or press ✨ AI Listing to have the AI write and price the listing from ${pbSessionSnaps.length > 1 ? 'these photos' : 'this photo'}.`
           : (r.error || 'The snap failed.');
       }
     } catch (err) {
       if (note) { note.classList.remove('hidden'); note.textContent = 'Snap failed: ' + err; }
     } finally {
       if (btn) btn.disabled = false;
+    }
+  }
+
+  // Snap → finished draft, one press. The newest snap is what the AI reads (title,
+  // item specifics, description, category, and NEW vs USED off the photo itself);
+  // every snap from this session rides along on the listing's photo grid; and the
+  // price comes from the same sold-comps blend every listing here is priced with —
+  // stored history plus the live OpenWebNinja sold feed. Nothing bespoke: this walks
+  // through the AI Listing screen's own front door so every rule that screen
+  // enforces (used-item real-photo gate, quotas, autosave) applies unchanged.
+  async function pbAiListing() {
+    if (!pbSessionSnaps.length) return;
+    const btn = $('pb-ai');
+    const note = $('pb-snap-note');
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading the photo…'; }
+    try {
+      const newest = pbSessionSnaps[pbSessionSnaps.length - 1];
+      const blob = await fetch(newest).then(r => { if (!r.ok) throw new Error('could not read the saved photo'); return r.blob(); });
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => reject(new Error('could not encode the photo'));
+        fr.readAsDataURL(blob);
+      });
+
+      // Through the AI Listing door, exactly as an upload arrives there.
+      openWorkspaceTab('ai');
+      if (typeof nlMarket !== 'undefined' && nlMarket !== 'ebay') nlSetMarket('ebay');
+      nlImageBase64 = b64;
+      nlMimeType = blob.type || 'image/jpeg';
+      await nlAnalyze();
+
+      // The analysis flow saves and places the photo it read; the rest of the
+      // session's angles join it here, after its slot-reset has already run.
+      for (const u of pbSessionSnaps.slice(0, -1)) {
+        try { nlAddPhotoRow(u); } catch { /* an angle that fails to attach is re-addable from the library */ }
+      }
+    } catch (err) {
+      if (note) { note.classList.remove('hidden'); note.textContent = 'AI Listing hand-off failed: ' + (err?.message || err); }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = pbSessionSnaps.length > 1 ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing'; }
     }
   }
 
@@ -7501,6 +7555,7 @@
     $('pb-scan')?.addEventListener('click', pbScanPorts);
     $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);
+    $('pb-ai')?.addEventListener('click', pbAiListing);
     $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
     $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
     $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));
