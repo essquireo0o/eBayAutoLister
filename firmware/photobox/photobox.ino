@@ -146,23 +146,9 @@ static bool initCamera() {
 
 // The sensor's mode is set once at boot and never touched again: this module
 // wedges its driver on ANY runtime set_framesize (tried both directions; the
-// stream died from the first switched frame). Instead the viewfinder is made
-// cheap in software — the raw VGA frame is decimated 2:1 to QVGA with a pixel
-// skip that costs milliseconds, and only then JPEG-encoded. Full frames go
-// through software JPEG only when the shutter asks for one.
-static uint8_t* viewBuf = nullptr;
-static bool decimatedJpeg(camera_fb_t* fb, int quality, uint8_t** jpg, size_t* jlen) {
-  const int w = fb->width / 2, h = fb->height / 2;
-  if (!viewBuf) viewBuf = (uint8_t*)(psramFound() ? ps_malloc(w * h * 2) : malloc(w * h * 2));
-  if (!viewBuf) return false;
-  const uint16_t* src = (const uint16_t*)fb->buf;
-  uint16_t* dst = (uint16_t*)viewBuf;
-  for (int y = 0; y < h; y++) {
-    const uint16_t* row = src + (size_t)(y * 2) * fb->width;
-    for (int x = 0; x < w; x++) *dst++ = row[x * 2];
-  }
-  return fmt2jpg(viewBuf, (size_t)w * h * 2, w, h, PIXFORMAT_RGB565, quality, jpg, jlen);
-}
+// stream died from the first switched frame). A 2:1 decimated viewfinder lived
+// here for one evening and is gone: once the 10MHz clock stopped the byte loss,
+// the sensor's own frame rate set the pace and the shrink only cost pixels.
 
 // One frame as JPEG bytes whatever the sensor speaks. Returns false when there is
 // nothing to send; *ownedJpg is set when the buffer must be free()d by the caller.
@@ -270,10 +256,13 @@ static void pumpStream() {
   lastStreamFrame = millis();
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) return;
+  // Full frames on the stream, not the old 2:1 decimation. Once the 10MHz clock
+  // stopped the byte loss, the sensor's own frame rate became the pace-setter —
+  // shrinking the picture saved no meaningful time and cost three quarters of
+  // the pixels, which the owner noticed immediately ("the resolution was way
+  // bigger"). Quality 70 keeps a VGA frame near 30KB, small enough to send.
   uint8_t* jpg = nullptr; size_t len = 0; bool owned = false;
-  bool ok = jpegNative
-      ? frameAsJpeg(fb, 55, &jpg, &len, &owned)
-      : (owned = decimatedJpeg(fb, 60, &jpg, &len));
+  bool ok = frameAsJpeg(fb, jpegNative ? 55 : 70, &jpg, &len, &owned);
   if (ok) {
     streamClient.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", len);
     streamClient.write(jpg, len);
