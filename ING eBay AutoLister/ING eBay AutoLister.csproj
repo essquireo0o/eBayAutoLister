@@ -54,6 +54,10 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="Stripe.net" Version="51.2.0" />
+    <!-- The Photo Box camera is provisioned over its USB serial port (PhotoBoxCamera.cs).
+         Referenced in both builds so the code compiles once; the hosted endpoints refuse
+         before any port is touched, because a server has no camera on its USB. -->
+    <PackageReference Include="System.IO.Ports" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

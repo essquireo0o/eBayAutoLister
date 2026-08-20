@@ -272,6 +272,9 @@ builder.Services.AddSingleton<AmazonListingSubmitService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
+// The desk-side ESP32-S3 product camera and its USB-cable WiFi setup. See PhotoBoxCamera.cs
+// for why provisioning goes over the serial port instead of a hotspot dance.
+builder.Services.AddSingleton<PhotoBoxCamera>();
 builder.Services.AddSingleton<ActionLog>();
 builder.Services.AddSingleton<DraftStore>();
 // Crash recovery and duplicate-publish protection. Singletons, and PublishGuard must be one:
@@ -9382,6 +9385,56 @@ app.MapGet("/api/photos/default-folders", (PhotoLibrary photos) => Results.Ok(ph
 // Every model folder + its photo URLs, so the UI can show/manage the seller's real stock photos.
 app.MapGet("/api/photos/library", (PhotoLibrary photos) =>
     Results.Ok(photos.GetAllFolders().Select(f => new { f.ModelKey, f.ImageCount, photos = photos.ListPhotoUrls(f.ModelKey) })));
+
+// ── Photo Box Camera ──────────────────────────────────────────────────────────
+// The desk-side ESP32-S3 camera: found on a COM port, given the WiFi over the USB
+// cable, then streamed from and snapped into the Photo Library. Desktop only —
+// a hosted server has no USB and shares no LAN with the seller, so every one of
+// these answers there with the same sentence instead of a mystery.
+static IResult? PhotoBoxHostedRefusal() => HostedAuth.IsHostedBuild
+    ? Results.BadRequest(new
+      {
+          error = "The Photo Box camera plugs into the computer the app runs on.",
+          detail = "This is the hosted app in a browser — it has no USB port. Set the camera up in the desktop app; once it is on your WiFi its stream works from any screen on your network."
+      })
+    : null;
+
+app.MapGet("/api/photobox/ports", async (PhotoBoxCamera box, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(new { ports = await box.ListPortsAsync(ct) });
+});
+
+app.MapPost("/api/photobox/provision", async (PhotoBoxProvisionRequest req, PhotoBoxCamera box, ActionLog log, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    var result = await box.ProvisionAsync(req.Port ?? "", req.Ssid ?? "", req.Password ?? "", ct);
+    log.Add(result.Ok ? "Info" : "Warning", "Photo Box camera WiFi setup",
+        result.Ok ? $"connected at {result.Ip}" : $"{result.Status}: {result.Detail.Split('\n')[0]}");
+    return Results.Ok(result);
+});
+
+app.MapGet("/api/photobox/status", async (PhotoBoxCamera box, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(await box.StatusAsync(ct));
+});
+
+app.MapPost("/api/photobox/forget", (PhotoBoxCamera box) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    box.Forget();
+    return Results.Ok(new { ok = true });
+});
+
+app.MapPost("/api/photobox/snap", async (PhotoBoxCamera box, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    var (url, error) = await box.SnapAsync(photos, ct);
+    if (error is not null) return Results.BadRequest(new { error });
+    log.Add("Info", "Photo Box snap", $"saved {url}");
+    return Results.Ok(new { url, folder = PhotoBoxCamera.LibraryFolder });
+});
 
 // Create an empty model folder (e.g. when the seller starts a new model's photo set).
 app.MapPost("/api/photos/library/create", (LibraryCreateRequest req, PhotoLibrary photos) =>

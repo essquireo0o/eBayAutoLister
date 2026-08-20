@@ -146,6 +146,9 @@
         <button class="nav-item" type="button" data-page="ebay"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing eBay</button>
         <button class="nav-item" type="button" data-page="amazon"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing Amazon</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
+        <!-- Desktop only (wn-desk): the camera plugs into the machine the app runs on,
+             and the hosted build has no USB port to find it on. -->
+        <button class="nav-item wn-desk" type="button" data-page="photobox"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Box Camera</button>
 
         <p class="nav-group-label">Grow</p>
         <!-- Live-feed sourcing: an embedded browser on a live-selling feed (Whatnot etc.), so the
@@ -2826,6 +2829,83 @@
            so "blank" is never left to mean "this app is broken". The live item-analysis
            (read what's on screen, price it against real eBay costs) is a separate, larger build
            that an iframe cannot do cross-origin; this panel is the container it will grow from. -->
+      <!-- ── Photo Box Camera ───────────────────────────────────────────────────────
+           The ESP32-S3 camera on the seller's desk (firmware/photobox). Set up over the
+           USB cable — pick the port, type the WiFi, press send — then it lives on the
+           shelf as a network camera: live view here, every snap straight into the
+           Photo Library's photo-box folder for listings. Desktop only; the nav entry
+           carries wn-desk so the hosted build never shows a screen about a USB port
+           the server doesn't have. -->
+      <section id="photobox-section" class="opportunity-overlay hidden">
+        <div class="opportunity-overlay-header">
+          <div class="opportunity-overlay-header-left">
+            <button id="pb-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
+            <div>
+              <div class="eyebrow">Photo Box</div>
+              <h2>📷 Photo Box Camera</h2>
+            </div>
+          </div>
+          <div class="opportunity-overlay-header-actions">
+            <button id="pb-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <div class="opportunity-overlay-body">
+          <!-- Step one: the USB conversation. Plug the camera in, find its port, hand it
+               the WiFi. After a successful send this card is done and stays only as the
+               way to move the camera to a new network. -->
+          <div class="pb-card">
+            <div class="wn-read-row">
+              <label class="wn-field">
+                <span>Camera port</span>
+                <select id="pb-port"></select>
+              </label>
+              <button id="pb-scan" class="btn btn-ghost" type="button"
+                      title="Look on every serial port for the camera's heartbeat">↻ Find camera</button>
+              <label class="wn-field">
+                <span>WiFi network</span>
+                <input id="pb-ssid" type="text" spellcheck="false" autocomplete="off" placeholder="your 2.4GHz network" />
+              </label>
+              <label class="wn-field">
+                <span>Password</span>
+                <input id="pb-pass" type="password" autocomplete="off" />
+              </label>
+              <button id="pb-provision" class="btn btn-primary" type="button">📶 Send WiFi to camera</button>
+            </div>
+            <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
+            <details class="wn-help">
+              <summary>How this works</summary>
+              <p class="opp-hint">
+                The camera is set up <strong>through the USB cable</strong> — no hotspot to join, no
+                password typed on a phone. Plug the board in (use the port on it labelled
+                <strong>UART/COM</strong>), press <strong>↻ Find camera</strong>, type the WiFi it
+                should live on — <strong>2.4GHz networks only</strong>, this chip doesn't do 5GHz —
+                and send. The board remembers the network on its own flash, so from then on it just
+                needs power: unplug it from the computer and put it in the photo box. Snapped frames
+                land in the Photo Library under <strong>photo-box</strong>.
+              </p>
+            </details>
+          </div>
+
+          <!-- Step two, and every day after: the live view. -->
+          <div class="pb-card">
+            <div class="pb-live-head">
+              <div id="pb-cam-status" class="wn-video-status">Checking for the camera…</div>
+              <div class="pb-live-actions">
+                <button id="pb-snap" class="btn btn-primary" type="button" disabled>📸 Snap to Photo Library</button>
+                <button id="pb-open" class="btn btn-ghost" type="button" disabled title="Open the raw stream in your browser">Open stream ↗</button>
+                <button id="pb-forget" class="btn btn-ghost" type="button" disabled title="Forget this camera's address">Forget</button>
+              </div>
+            </div>
+            <div class="pb-stream-wrap">
+              <img id="pb-stream" alt="Live view from the Photo Box camera" />
+              <div id="pb-stream-empty" class="pb-stream-empty">No camera on the network yet — set it up above.</div>
+            </div>
+            <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
       <section id="whatsnot-section" class="opportunity-overlay hidden">
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">

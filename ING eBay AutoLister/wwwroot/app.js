@@ -1109,6 +1109,7 @@
     bindWatcherOffers();
     bindRescue();
     bindBudget();
+    bindPhotoBox();
     bindRelist();
     bindLotAnalyzer();
     bindPromoted();
@@ -1421,6 +1422,10 @@
     promoted:    { section: 'promoted-section',      open: showPromotedSection },
     copilot:     { section: 'copilot-section',       open: showCopilotSection },
     shipping:    { section: 'shipping-section',      open: showShippingSection },
+    // Leaving the tab parks the stream: an MJPEG <img> holds an open connection to the
+    // camera, and the little board serves one viewer well, two poorly.
+    photobox:    { section: 'photobox-section',      open: showPhotoBoxSection,
+                   onHide: () => pbStopStream() },
     whatsnot:    { section: 'whatsnot-section',      open: showWhatsNotSection,
                    // Switching tabs holds the screen in the DOM, so the video read would keep its
                    // screen-share and its AI spend on a screen nobody is looking at. Stop it on hide.
@@ -1796,7 +1801,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -7201,6 +7206,178 @@
   // each candidate carries the profit figure it was given on the board it came from, so the basket
   // can never quote a number the table beside it doesn't.
   let budgetPlan = null;
+
+  // ── Photo Box Camera ─────────────────────────────────────────────────────────
+  // The ESP32-S3 camera on the desk. Setup is one serial conversation the server
+  // has on this page's behalf; after that this screen is a viewfinder with a
+  // shutter button, and every snap lands in the Photo Library's photo-box folder.
+  let pbCameraUrl = null;
+
+  function showPhotoBoxSection() {
+    hideOverlaySections();
+    $('photobox-section')?.classList.remove('hidden');
+    setActiveNavItem('photobox');
+    markWorkspaceTabOpen('photobox');
+    pbRefreshStatus();
+  }
+
+  function pbSetupStatus(text, kind) {
+    const box = $('pb-setup-status');
+    if (!box) return;
+    box.className = 'wn-video-status' + (kind ? ' wn-video-' + kind : '') + (text ? '' : ' hidden');
+    box.textContent = text || '';
+  }
+
+  function pbStopStream() {
+    const img = $('pb-stream');
+    // Clearing src is what actually hangs up the MJPEG connection.
+    if (img && img.src) img.src = '';
+  }
+
+  function pbShowStream(url) {
+    pbCameraUrl = url;
+    const img = $('pb-stream');
+    const empty = $('pb-stream-empty');
+    if (img) { img.src = url + '/stream?t=' + Date.now(); img.style.display = 'block'; }
+    if (empty) empty.style.display = 'none';
+    $('pb-snap')?.removeAttribute('disabled');
+    $('pb-open')?.removeAttribute('disabled');
+    $('pb-forget')?.removeAttribute('disabled');
+  }
+
+  function pbNoStream(message) {
+    pbStopStream();
+    const img = $('pb-stream');
+    const empty = $('pb-stream-empty');
+    if (img) img.style.display = 'none';
+    if (empty) { empty.style.display = ''; empty.textContent = message; }
+    $('pb-snap')?.setAttribute('disabled', '');
+    $('pb-open')?.setAttribute('disabled', '');
+  }
+
+  async function pbRefreshStatus() {
+    const status = $('pb-cam-status');
+    try {
+      const res = await fetch('/api/photobox/status');
+      const s = await res.json();
+      if (!res.ok) { if (status) status.textContent = s.error || 'Unavailable.'; return; }
+      if (!s.configured) {
+        if (status) status.textContent = 'No camera set up yet.';
+        pbNoStream('No camera on the network yet — set it up above.');
+        $('pb-forget')?.setAttribute('disabled', '');
+        return;
+      }
+      $('pb-forget')?.removeAttribute('disabled');
+      if (s.reachable) {
+        if (status) status.textContent = `Live — ${s.url} on “${s.ssid}”.`;
+        pbShowStream(s.url);
+      } else {
+        if (status) status.textContent = s.detail || `The camera at ${s.url} didn't answer.`;
+        pbNoStream('The camera is remembered but not answering — power it up, or run the USB setup again.');
+      }
+    } catch {
+      if (status) status.textContent = 'Could not ask the app about the camera.';
+    }
+  }
+
+  async function pbScanPorts() {
+    const btn = $('pb-scan');
+    const sel = $('pb-port');
+    if (!sel) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Listening…'; }
+    pbSetupStatus('Listening on every serial port for the camera (a few seconds per port)…', 'busy');
+    try {
+      const res = await fetch('/api/photobox/ports');
+      const body = await res.json();
+      if (!res.ok) { pbSetupStatus(body.error || 'Could not list ports.', 'bad'); return; }
+      sel.innerHTML = '';
+      const ports = body.ports || [];
+      if (!ports.length) {
+        pbSetupStatus('No serial ports at all. Plug the camera in over USB — the board port labelled UART/COM — and press ↻ again.', 'bad');
+        return;
+      }
+      let found = null;
+      for (const p of ports) {
+        const opt = document.createElement('option');
+        opt.value = p.port;
+        opt.textContent = p.isCamera ? `${p.port} — ✓ this is the camera` : p.port;
+        sel.appendChild(opt);
+        if (p.isCamera && !found) found = p.port;
+      }
+      if (found) {
+        sel.value = found;
+        pbSetupStatus(`Found the camera on ${found}. Type the WiFi and press send.`, 'ok');
+      } else {
+        pbSetupStatus('Ports listed, but none answered like the camera. If it is plugged in and silent, it may need the Photo Box firmware first — see firmware/photobox in the repo.', 'bad');
+      }
+    } catch (err) {
+      pbSetupStatus('Port scan failed: ' + err, 'bad');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Find camera'; }
+    }
+  }
+
+  async function pbProvision() {
+    const port = $('pb-port')?.value || '';
+    const ssid = ($('pb-ssid')?.value || '').trim();
+    const pass = $('pb-pass')?.value || '';
+    if (!port) { pbSetupStatus('Pick the camera’s port first — press ↻ Find camera.', 'bad'); return; }
+    if (!ssid) { pbSetupStatus('Type the WiFi network name.', 'bad'); return; }
+    const btn = $('pb-provision');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    pbSetupStatus('Sending the WiFi over the cable — the board takes up to half a minute to join…', 'busy');
+    try {
+      const res = await fetch('/api/photobox/provision', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port, ssid, password: pass })
+      });
+      const r = await res.json();
+      if (r.ok) {
+        pbSetupStatus(`Connected — the camera is at ${r.ip}${r.mdns ? ' (' + r.mdns + ')' : ''}. It remembers this network on its own now; it can leave the USB cable and live in the photo box.`, 'ok');
+        pbRefreshStatus();
+      } else {
+        pbSetupStatus(r.detail || r.error || 'The camera never reported a connection.', 'bad');
+      }
+    } catch (err) {
+      pbSetupStatus('Setup failed: ' + err, 'bad');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📶 Send WiFi to camera'; }
+    }
+  }
+
+  async function pbSnap() {
+    const note = $('pb-snap-note');
+    const btn = $('pb-snap');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch('/api/photobox/snap', { method: 'POST' });
+      const r = await res.json();
+      if (note) {
+        note.classList.remove('hidden');
+        note.textContent = res.ok
+          ? `Saved to the Photo Library (${r.folder}) — it's ready to use on a listing.`
+          : (r.error || 'The snap failed.');
+      }
+    } catch (err) {
+      if (note) { note.classList.remove('hidden'); note.textContent = 'Snap failed: ' + err; }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function bindPhotoBox() {
+    $('pb-home')?.addEventListener('click', () => showDashboard());
+    $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
+    $('pb-scan')?.addEventListener('click', pbScanPorts);
+    $('pb-provision')?.addEventListener('click', pbProvision);
+    $('pb-snap')?.addEventListener('click', pbSnap);
+    $('pb-open')?.addEventListener('click', () => { if (pbCameraUrl) window.open(pbCameraUrl + '/stream', '_blank'); });
+    $('pb-forget')?.addEventListener('click', async () => {
+      await fetch('/api/photobox/forget', { method: 'POST' });
+      pbCameraUrl = null;
+      pbRefreshStatus();
+    });
+  }
 
   function showBudgetSection() {
     hideOverlaySections();
