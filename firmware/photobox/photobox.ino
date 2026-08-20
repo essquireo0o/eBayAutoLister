@@ -46,6 +46,18 @@
 
 Preferences prefs;
 WebServer server(80);
+// The stream lives on its own port with its own socket, written a frame at a
+// time from loop(). WebServer serves exactly one connection at a time, and a
+// stream inside a handler owned that slot forever: while anybody watched, /jpg
+// hung, a page refresh wedged on the old half-dead stream, and the serial
+// setup went deaf. One viewer, frame by frame, everything else still answering.
+WiFiServer streamServer(81);
+WiFiClient streamClient;
+unsigned long lastStreamFrame = 0;
+// While a snap is being served, the stream holds its breath: this board cannot
+// push a viewfinder and a full-quality frame through one small radio at once,
+// and the shutter is the one that must not lose.
+volatile unsigned long snapHoldUntil = 0;
 bool cameraOk = false;
 bool jpegNative = true;     // false = the sensor has no JPEG encoder; frames get converted in software
 bool serverStarted = false; // the web server exists only once WiFi does — see startServerOnce()
@@ -66,7 +78,11 @@ static bool tryInitCamera(pixformat_t fmt) {
   c.pin_xclk = XCLK_GPIO_NUM; c.pin_pclk = PCLK_GPIO_NUM; c.pin_vsync = VSYNC_GPIO_NUM;
   c.pin_href = HREF_GPIO_NUM; c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
   c.pin_pwdn = PWDN_GPIO_NUM; c.pin_reset = RESET_GPIO_NUM;
-  c.xclk_freq_hz = 20000000;
+  // 10MHz, not the usual 20: the no-JPEG sensor in this kit loses bytes on the
+  // parallel bus at 20MHz — cam_hal logged FB-SIZE mismatches and threw away
+  // almost every frame, which read as a one-frame-per-eight-seconds stream.
+  // Native-JPEG modules keep the full clock; they were never the ones dropping.
+  c.xclk_freq_hz = (fmt == PIXFORMAT_JPEG) ? 20000000 : 10000000;
   c.pixel_format = fmt;
   if (fmt == PIXFORMAT_JPEG && psramFound()) {
     c.frame_size   = FRAMESIZE_UXGA;   // 1600x1200 off the hardware encoder
@@ -80,10 +96,11 @@ static bool tryInitCamera(pixformat_t fmt) {
     c.fb_count     = 1;
     c.fb_location  = CAMERA_FB_IN_DRAM;
   } else {
-    // Raw RGB565: ~2 bytes a pixel, so the size is bounded by RAM rather than taste.
-    // SVGA in PSRAM is ~937KB a frame and converts to JPEG in software fast enough
-    // for a viewfinder; without PSRAM, QVGA is what fits.
-    c.frame_size   = psramFound() ? FRAMESIZE_SVGA : FRAMESIZE_QVGA;
+    // Raw RGB565. VGA, not SVGA: the sensor in this kit silently delivers ~640x480
+    // whatever bigger size is asked of it (the cam_hal FB-SIZE mismatch), and asking
+    // for the phantom size is also what wedged the driver on a mid-run switch.
+    // Init at the largest size the sensor actually produces.
+    c.frame_size   = psramFound() ? FRAMESIZE_VGA : FRAMESIZE_QVGA;
     c.fb_count     = psramFound() ? 2 : 1;
     c.grab_mode    = CAMERA_GRAB_LATEST;
     c.fb_location  = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
@@ -99,6 +116,9 @@ static bool tryInitCamera(pixformat_t fmt) {
     s->set_vflip(s, 1);         // the Freenove module ships upside-down relative to its case
     s->set_brightness(s, 1);    // a photo box is bright; keep detail out of the highlights
     s->set_saturation(s, 0);
+    // Which module is actually on the ribbon — the one fact every remote
+    // diagnosis of this board has had to guess at. Printed once, kept in /.
+    say(String("{\"status\":\"sensor\",\"pid\":\"0x") + String(s->id.PID, HEX) + "\"}");
   }
   return true;
 }
@@ -116,11 +136,31 @@ static bool initCamera() {
   return false;
 }
 
+// The sensor's mode is set once at boot and never touched again: this module
+// wedges its driver on ANY runtime set_framesize (tried both directions; the
+// stream died from the first switched frame). Instead the viewfinder is made
+// cheap in software — the raw VGA frame is decimated 2:1 to QVGA with a pixel
+// skip that costs milliseconds, and only then JPEG-encoded. Full frames go
+// through software JPEG only when the shutter asks for one.
+static uint8_t* viewBuf = nullptr;
+static bool decimatedJpeg(camera_fb_t* fb, int quality, uint8_t** jpg, size_t* jlen) {
+  const int w = fb->width / 2, h = fb->height / 2;
+  if (!viewBuf) viewBuf = (uint8_t*)(psramFound() ? ps_malloc(w * h * 2) : malloc(w * h * 2));
+  if (!viewBuf) return false;
+  const uint16_t* src = (const uint16_t*)fb->buf;
+  uint16_t* dst = (uint16_t*)viewBuf;
+  for (int y = 0; y < h; y++) {
+    const uint16_t* row = src + (size_t)(y * 2) * fb->width;
+    for (int x = 0; x < w; x++) *dst++ = row[x * 2];
+  }
+  return fmt2jpg(viewBuf, (size_t)w * h * 2, w, h, PIXFORMAT_RGB565, quality, jpg, jlen);
+}
+
 // One frame as JPEG bytes whatever the sensor speaks. Returns false when there is
 // nothing to send; *ownedJpg is set when the buffer must be free()d by the caller.
-static bool frameAsJpeg(camera_fb_t* fb, uint8_t** buf, size_t* len, bool* ownedJpg) {
+static bool frameAsJpeg(camera_fb_t* fb, int quality, uint8_t** buf, size_t* len, bool* ownedJpg) {
   if (jpegNative) { *buf = fb->buf; *len = fb->len; *ownedJpg = false; return true; }
-  *ownedJpg = frame2jpg(fb, 85, buf, len);
+  *ownedJpg = frame2jpg(fb, quality, buf, len);
   return *ownedJpg;
 }
 
@@ -170,10 +210,11 @@ static void handleRoot() {
 
 static void handleJpg() {
   if (!cameraOk) { server.send(503, "text/plain", "camera not initialised"); return; }
+  snapHoldUntil = millis() + 4000;   // the stream yields; the shutter shoots
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { server.send(503, "text/plain", "no frame"); return; }
   uint8_t* jpg; size_t len; bool owned;
-  if (!frameAsJpeg(fb, &jpg, &len, &owned)) {
+  if (!frameAsJpeg(fb, 88, &jpg, &len, &owned)) {
     esp_camera_fb_return(fb);
     server.send(503, "text/plain", "jpeg conversion failed");
     return;
@@ -186,26 +227,52 @@ static void handleJpg() {
   esp_camera_fb_return(fb);
 }
 
-static void handleStream() {
-  if (!cameraOk) { server.send(503, "text/plain", "camera not initialised"); return; }
-  WiFiClient client = server.client();
-  client.print("HTTP/1.1 200 OK\r\n"
-               "Access-Control-Allow-Origin: *\r\n"
-               "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n");
-  while (client.connected()) {
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) break;
-    uint8_t* jpg; size_t len; bool owned;
-    if (!frameAsJpeg(fb, &jpg, &len, &owned)) { esp_camera_fb_return(fb); break; }
-    client.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", len);
-    client.write(jpg, len);
-    client.print("\r\n");
-    if (owned) free(jpg);
-    esp_camera_fb_return(fb);
-    // ~12 fps is plenty for framing a product shot and keeps the board cool.
-    // (Software-converted sensors land lower on their own; the delay still bounds it.)
-    delay(80);
+// Port 80's /stream is a signpost now, not the stream: browsers follow a 302 for
+// an <img>, so old links keep working while the bytes come from port 81.
+static void handleStreamRedirect() {
+  server.sendHeader("Location", String("http://") + WiFi.localIP().toString() + ":81/stream");
+  server.send(302, "text/plain", "the stream lives on :81");
+}
+
+// Called every loop(): adopt a newly-knocked viewer (the newest one wins — a
+// refresh must replace the dead stream, not queue behind it), then write one
+// frame if it is time. Never blocks longer than one frame write.
+static void pumpStream() {
+  if (!serverStarted) return;
+  WiFiClient knock = streamServer.accept();
+  if (knock) {
+    if (streamClient) streamClient.stop();
+    streamClient = knock;
+    streamClient.setTimeout(2);
+    // Read and discard the request line + headers; the answer is the same
+    // whatever was asked on this port.
+    unsigned long until = millis() + 500;
+    while (streamClient.connected() && millis() < until && streamClient.available())
+      streamClient.read();
+    streamClient.print("HTTP/1.1 200 OK\r\n"
+                       "Access-Control-Allow-Origin: *\r\n"
+                       "Cache-Control: no-cache\r\n"
+                       "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n");
+    lastStreamFrame = 0;
   }
+  if (!streamClient || !streamClient.connected()) return;
+  if (!cameraOk) { streamClient.stop(); return; }
+  if (millis() < snapHoldUntil) return;          // a snap is in flight — hold this breath
+  if (millis() - lastStreamFrame < 160) return;
+  lastStreamFrame = millis();
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) return;
+  uint8_t* jpg = nullptr; size_t len = 0; bool owned = false;
+  bool ok = jpegNative
+      ? frameAsJpeg(fb, 55, &jpg, &len, &owned)
+      : (owned = decimatedJpeg(fb, 60, &jpg, &len));
+  if (ok) {
+    streamClient.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", len);
+    streamClient.write(jpg, len);
+    streamClient.print("\r\n");
+    if (owned) free(jpg);
+  }
+  esp_camera_fb_return(fb);
 }
 
 // The server exists only once WiFi does. Standing it up with the radio off is
@@ -215,8 +282,10 @@ static void startServerOnce() {
   if (serverStarted) return;
   server.on("/", handleRoot);
   server.on("/jpg", handleJpg);
-  server.on("/stream", handleStream);
+  server.on("/stream", handleStreamRedirect);
   server.begin();
+  streamServer.begin();
+  streamServer.setNoDelay(true);
   serverStarted = true;
 }
 
@@ -264,6 +333,7 @@ void setup() {
 
 void loop() {
   if (serverStarted) server.handleClient();
+  pumpStream();
   pollSerial(Serial);
   pollSerial(Serial0);
 

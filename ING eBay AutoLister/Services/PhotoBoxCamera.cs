@@ -257,7 +257,9 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         try
         {
             var http = httpFactory.CreateClient();
-            http.Timeout = TimeSpan.FromSeconds(10);
+            // A full-size frame from a sensor with no hardware encoder is seconds of
+            // software JPEG on the board, plus a size switch — the shutter gets time.
+            http.Timeout = TimeSpan.FromSeconds(25);
             var bytes = await http.GetByteArrayAsync(s.CameraUrl + "/jpg", ct);
             if (bytes.Length < 1000) return (null, "The camera answered with an empty frame.");
 

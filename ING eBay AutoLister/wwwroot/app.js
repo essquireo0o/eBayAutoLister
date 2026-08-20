@@ -7271,7 +7271,9 @@
     pbCameraUrl = url;
     const img = $('pb-stream');
     const empty = $('pb-stream-empty');
-    if (img) { img.src = url + '/stream?t=' + Date.now(); img.style.display = 'block'; }
+    // Port 81 is the stream's own door (the firmware keeps :80 free for /jpg and
+    // setup, so a held-open stream can never wedge the snap button again).
+    if (img) { img.src = url + ':81/stream?t=' + Date.now(); img.style.display = 'block'; }
     if (empty) empty.style.display = 'none';
     $('pb-snap')?.removeAttribute('disabled');
     $('pb-open')?.removeAttribute('disabled');
@@ -7425,7 +7427,7 @@
     $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
     $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
     $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));
-    $('pb-open')?.addEventListener('click', () => { if (pbCameraUrl) window.open(pbCameraUrl + '/stream', '_blank'); });
+    $('pb-open')?.addEventListener('click', () => { if (pbCameraUrl) window.open(pbCameraUrl + ':81/stream', '_blank'); });
     $('pb-forget')?.addEventListener('click', async () => {
       await fetch('/api/photobox/forget', { method: 'POST' });
       pbCameraUrl = null;
