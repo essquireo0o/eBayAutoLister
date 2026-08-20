@@ -7378,12 +7378,29 @@
     }
   }
 
+  let pbZoomLevel = 1;
+
+  function pbApplyZoom(z) {
+    pbZoomLevel = Math.min(4, Math.max(1, z));
+    const img = $('pb-stream');
+    // scale() on the stream is the viewfinder; the snap endpoint crops the same
+    // centred window out of the real frame, so the picture matches the preview.
+    if (img) img.style.transform = pbZoomLevel > 1 ? `scale(${pbZoomLevel})` : '';
+    const slider = $('pb-zoom');
+    if (slider && Math.abs(parseFloat(slider.value) - pbZoomLevel) > 0.01) slider.value = pbZoomLevel;
+    const val = $('pb-zoom-val');
+    if (val) val.textContent = pbZoomLevel.toFixed(1) + '×';
+  }
+
   async function pbSnap() {
     const note = $('pb-snap-note');
     const btn = $('pb-snap');
     if (btn) btn.disabled = true;
     try {
-      const res = await fetch('/api/photobox/snap', { method: 'POST' });
+      const res = await fetch('/api/photobox/snap', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zoom: pbZoomLevel })
+      });
       const r = await res.json();
       if (note) {
         note.classList.remove('hidden');
@@ -7405,6 +7422,9 @@
     $('pb-scan')?.addEventListener('click', pbScanPorts);
     $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);
+    $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
+    $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
+    $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));
     $('pb-open')?.addEventListener('click', () => { if (pbCameraUrl) window.open(pbCameraUrl + '/stream', '_blank'); });
     $('pb-forget')?.addEventListener('click', async () => {
       await fetch('/api/photobox/forget', { method: 'POST' });

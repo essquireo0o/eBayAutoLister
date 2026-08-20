@@ -26,6 +26,9 @@ namespace ING_eBay_AutoLister.Services;
 /// </remarks>
 public sealed record PhotoBoxProvisionRequest(string? Port, string? Ssid, string? Password);
 
+/// <summary>The viewfinder's zoom at the moment the shutter was pressed. 1 (or absent) = full frame.</summary>
+public sealed record PhotoBoxSnapRequest(double? Zoom);
+
 public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
 {
     /// <summary>The provisioning conversation's speed — matches the firmware's Serial.begin.</summary>
@@ -240,8 +243,14 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         }
     }
 
-    /// <summary>One full-resolution frame off the camera, straight into the Photo Library.</summary>
-    public async Task<(string? Url, string? Error)> SnapAsync(PhotoLibrary photos, CancellationToken ct)
+    /// <summary>
+    /// One frame off the camera, straight into the Photo Library. A zoom above 1 crops
+    /// the centred 1/zoom window out of the frame before saving — the same window the
+    /// screen's viewfinder was showing — so the photo is what the seller framed, not a
+    /// wide shot they then have to crop by hand. The lens is fixed; this is the only
+    /// kind of zoom this hardware will ever have, and it is honest about being a crop.
+    /// </summary>
+    public async Task<(string? Url, string? Error)> SnapAsync(PhotoLibrary photos, double zoom, CancellationToken ct)
     {
         var s = Load();
         if (s is null) return (null, "No camera is set up yet.");
@@ -251,6 +260,16 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
             http.Timeout = TimeSpan.FromSeconds(10);
             var bytes = await http.GetByteArrayAsync(s.CameraUrl + "/jpg", ct);
             if (bytes.Length < 1000) return (null, "The camera answered with an empty frame.");
+
+            if (zoom > 1.01 && OperatingSystem.IsWindows())
+            {
+                var cropped = CropCenter(bytes, Math.Min(zoom, 8.0));
+                if (cropped is not null) bytes = cropped;
+                // A crop that fails for any reason saves the full frame rather than nothing:
+                // the seller pressed a shutter, and a shutter that answers "error" over a
+                // resize is worse than a photo that needs a trim.
+            }
+
             var url = await photos.SavePhotoAsync(LibraryFolder, bytes, "jpg");
             return (url, null);
         }
@@ -258,6 +277,35 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         {
             return (null, $"Couldn't get a frame: {ex.Message}");
         }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static byte[]? CropCenter(byte[] jpeg, double zoom)
+    {
+        try
+        {
+            using var src = System.Drawing.Image.FromStream(new MemoryStream(jpeg));
+            var w = (int)(src.Width / zoom);
+            var h = (int)(src.Height / zoom);
+            if (w < 16 || h < 16) return null;
+            var x = (src.Width - w) / 2;
+            var y = (src.Height - h) / 2;
+            using var bmp = new System.Drawing.Bitmap(w, h);
+            using (var g = System.Drawing.Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(src, new System.Drawing.Rectangle(0, 0, w, h),
+                            new System.Drawing.Rectangle(x, y, w, h), System.Drawing.GraphicsUnit.Pixel);
+            }
+            using var outStream = new MemoryStream();
+            var codec = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
+                .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+            using var ep = new System.Drawing.Imaging.EncoderParameters(1);
+            ep.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 92L);
+            bmp.Save(outStream, codec, ep);
+            return outStream.ToArray();
+        }
+        catch { return null; }
     }
 }
 

@@ -9437,12 +9437,13 @@ app.MapPost("/api/photobox/forget", (PhotoBoxCamera box) =>
     return Results.Ok(new { ok = true });
 });
 
-app.MapPost("/api/photobox/snap", async (PhotoBoxCamera box, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
+app.MapPost("/api/photobox/snap", async (PhotoBoxSnapRequest? req, PhotoBoxCamera box, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    var (url, error) = await box.SnapAsync(photos, ct);
+    var zoom = req?.Zoom is > 1.0 and <= 8.0 ? req.Zoom.Value : 1.0;
+    var (url, error) = await box.SnapAsync(photos, zoom, ct);
     if (error is not null) return Results.BadRequest(new { error });
-    log.Add("Info", "Photo Box snap", $"saved {url}");
+    log.Add("Info", "Photo Box snap", zoom > 1.0 ? $"saved {url} at {zoom:0.0}x zoom" : $"saved {url}");
     return Results.Ok(new { url, folder = PhotoBoxCamera.LibraryFolder });
 });
 

@@ -2902,6 +2902,14 @@
             <div class="pb-live-head">
               <div id="pb-cam-status" class="wn-video-status">Checking for the camera…</div>
               <div class="pb-live-actions">
+                <!-- Digital zoom — the lens is fixed, so this is a centred crop, and the snap
+                     crops the SAME window server-side: what you frame is what you get. -->
+                <div class="pb-zoom" title="Zoom — a centred crop; the snap saves exactly what you see">
+                  <button id="pb-zoom-out" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom out">−</button>
+                  <input id="pb-zoom" type="range" min="1" max="4" step="0.1" value="1" aria-label="Zoom level" />
+                  <button id="pb-zoom-in" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom in">+</button>
+                  <span id="pb-zoom-val" class="pb-zoom-val">1.0×</span>
+                </div>
                 <button id="pb-snap" class="btn btn-primary" type="button" disabled>📸 Snap to Photo Library</button>
                 <button id="pb-open" class="btn btn-ghost" type="button" disabled title="Open the raw stream in your browser">Open stream ↗</button>
                 <button id="pb-forget" class="btn btn-ghost" type="button" disabled title="Forget this camera's address">Forget</button>
