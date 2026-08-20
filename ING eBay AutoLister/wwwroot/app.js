@@ -7537,7 +7537,7 @@
         try { nlAddPhotoRow(u); } catch { /* an angle that fails to attach is re-addable from the library */ }
       }
     } catch (err) {
-      if (note) { note.classList.remove('hidden'); note.textContent = 'AI Listing hand-off failed: ' + (err?.message || err); }
+      if (note) { note.classList.remove('hidden'); note.textContent = 'AI Listing hand-off failed. ' + errorText(err, 'The photo could not be handed to the AI Listing screen — it is still in the Photo Library.'); }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = pbSessionSnaps.length > 1 ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing'; }
     }
