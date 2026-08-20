@@ -68,6 +68,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Photo Box camera's firmware bundle: the compiled binaries plus Espressif's
+         signed esptool.exe, copied beside the exe so the app's Flash button can write a
+         customer's factory-fresh board with zero toolchain installed. See
+         PhotoBoxCamera.FlashAsync. Refresh the .bin files (and version.txt, and the
+         FW_VERSION in photobox.ino) whenever firmware/photobox changes. -->
+    <Content Include="firmware-dist\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- credentials.json is the live secrets of whichever machine is doing the build - the eBay app
          client secret, the seller's OAuth refresh token, the Anthropic key, the Stripe secret key and
          webhook secret - and it sits in the project folder, so the Web SDK's default Content glob

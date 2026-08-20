@@ -2881,6 +2881,12 @@
                 <input id="pb-pass" type="password" autocomplete="off" />
               </label>
               <button id="pb-provision" class="btn btn-primary" type="button">📶 Send WiFi to camera</button>
+              <!-- The new-customer button. A factory-fresh board has no firmware and answers
+                   nothing; this writes the version bundled with this very build of the app —
+                   esptool and the binaries ship in the installer, so there is no toolchain to
+                   install and nothing to download. Also the update path for older cameras. -->
+              <button id="pb-flash" class="btn btn-ghost" type="button"
+                      title="Write the latest camera firmware over USB — needed once for a brand-new camera, or to update an old one">⚡ Flash firmware</button>
             </div>
             <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
             <details class="wn-help">

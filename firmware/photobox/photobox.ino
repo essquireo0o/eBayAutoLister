@@ -44,6 +44,10 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
+// Bump in step with ING eBay AutoLister/firmware-dist/version.txt — the app compares
+// the two to tell a seller their camera is behind and one button-press fixes it.
+const char FW_VERSION[] = "1.1.0";
+
 Preferences prefs;
 WebServer server(80);
 // The stream lives on its own port with its own socket, written a frame at a
@@ -198,7 +202,8 @@ static void announceConnected() {
 
 static void handleRoot() {
   server.send(200, "application/json",
-    String("{\"device\":\"ing-photobox\",\"camera\":") + (cameraOk ? "true" : "false") +
+    String("{\"device\":\"ing-photobox\",\"fw\":\"") + FW_VERSION +
+    "\",\"camera\":" + (cameraOk ? "true" : "false") +
     ",\"ip\":\"" + WiFi.localIP().toString() + "\"}");
 }
 

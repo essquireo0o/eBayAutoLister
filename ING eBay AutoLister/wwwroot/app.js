@@ -7502,6 +7502,33 @@
     }
   }
 
+  // The one-button firmware write. A brand-new camera answers nothing on its port —
+  // this is what makes it a camera. It is also the update path: the binaries ship
+  // inside the installer, so "latest" means "what this build of the app was tested
+  // with", not "whatever the internet had today".
+  async function pbFlash() {
+    const btn = $('pb-flash');
+    const port = $('pb-port')?.value || '';
+    if (btn) { btn.disabled = true; btn.textContent = '⚡ Flashing — about a minute, don’t unplug…'; }
+    pbSetupStatus('Writing the camera firmware over USB. Leave the cable alone until this finishes — an interrupted write is harmless but has to be redone.', 'busy');
+    try {
+      const res = await fetch('/api/photobox/flash', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: port || null })
+      });
+      const r = await res.json();
+      if (r.ok) {
+        pbSetupStatus(`Firmware ${r.version} is on the camera. Give it ~10 seconds to restart, press ↻ Find camera, then send it your WiFi.`, 'ok');
+      } else {
+        pbSetupStatus(r.detail || r.error || 'The flash failed.', 'bad');
+      }
+    } catch (err) {
+      pbSetupStatus('The flash failed. ' + errorText(err, 'Try again with the board on its UART/COM socket.'), 'bad');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Flash firmware'; }
+    }
+  }
+
   // Snap → finished draft, one press. The newest snap is what the AI reads (title,
   // item specifics, description, category, and NEW vs USED off the photo itself);
   // every snap from this session rides along on the listing's photo grid; and the
@@ -7556,6 +7583,7 @@
     $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);
     $('pb-ai')?.addEventListener('click', pbAiListing);
+    $('pb-flash')?.addEventListener('click', pbFlash);
     $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
     $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
     $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));

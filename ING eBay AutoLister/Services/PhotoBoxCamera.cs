@@ -29,6 +29,9 @@ public sealed record PhotoBoxProvisionRequest(string? Port, string? Ssid, string
 /// <summary>The viewfinder's zoom at the moment the shutter was pressed. 1 (or absent) = full frame.</summary>
 public sealed record PhotoBoxSnapRequest(double? Zoom);
 
+/// <summary>Which port to flash, or absent to take the one that isn't Bluetooth.</summary>
+public sealed record PhotoBoxFlashRequest(string? Port);
+
 public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
 {
     /// <summary>The provisioning conversation's speed — matches the firmware's Serial.begin.</summary>
@@ -216,6 +219,103 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
             return doc.RootElement.TryGetProperty(field, out var v) ? v.GetString() : null;
         }
         catch { return null; }
+    }
+
+    // ── Flashing the firmware from inside the app ────────────────────────────────
+    // The camera ships to customers who will never install Python, arduino-cli or a
+    // toolchain. Everything a flash needs travels IN the installer: the compiled
+    // firmware pieces and Espressif's own signed esptool.exe, in firmware-dist beside
+    // the app. One button writes a factory-fresh or out-of-date board to the version
+    // this build of the app was tested with.
+
+    /// <summary>Where the bundled firmware + flasher live: beside the executable.</summary>
+    private static string FirmwareDir => Path.Combine(AppContext.BaseDirectory, "firmware-dist");
+
+    /// <summary>The firmware version this app ships, or "" when the bundle is absent (dev tree).</summary>
+    public static string BundledFirmwareVersion
+    {
+        get
+        {
+            try { return File.ReadAllText(Path.Combine(FirmwareDir, "version.txt")).Trim(); }
+            catch { return ""; }
+        }
+    }
+
+    public sealed record FlashResult(bool Ok, string Detail);
+
+    /// <summary>
+    /// Writes the bundled firmware onto the board on <paramref name="portName"/> (or the
+    /// first port that isn't Bluetooth when none is named). Takes a couple of minutes and
+    /// must not be interrupted — the caller's UI says so before calling.
+    /// </summary>
+    public async Task<FlashResult> FlashAsync(string? portName, CancellationToken ct)
+    {
+        var esptool = Path.Combine(FirmwareDir, "esptool.exe");
+        string[] parts = ["photobox.bootloader.bin", "photobox.partitions.bin", "boot_app0.bin", "photobox.app.bin"];
+        if (!File.Exists(esptool) || parts.Any(p => !File.Exists(Path.Combine(FirmwareDir, p))))
+            return new(false, "The firmware bundle isn't beside the app (firmware-dist). Reinstall the app to restore it.");
+
+        var port = string.IsNullOrWhiteSpace(portName)
+            ? SerialPort.GetPortNames().Distinct().OrderBy(n => n).FirstOrDefault(LooksLikeUsbSerial)
+            : portName.Trim();
+        if (port is null)
+            return new(false, "No camera on USB. Plug the board's UART/COM socket in with a data cable, then press Flash again.");
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = esptool,
+            WorkingDirectory = FirmwareDir,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var a in new[]
+        {
+            "--chip", "esp32s3", "--port", port, "--baud", "460800", "write-flash",
+            "0x0", "photobox.bootloader.bin", "0x8000", "photobox.partitions.bin",
+            "0xe000", "boot_app0.bin", "0x10000", "photobox.app.bin",
+        }) psi.ArgumentList.Add(a);
+
+        try
+        {
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null) return new(false, "The flasher would not start.");
+            var output = new List<string>();
+            proc.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) lock (output) output.Add(e.Data); };
+            proc.ErrorDataReceived  += (_, e) => { if (e.Data is { Length: > 0 }) lock (output) output.Add(e.Data); };
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromMinutes(4));
+            try { await proc.WaitForExitAsync(deadline.Token); }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return new(false, "The flash didn't finish within four minutes. Check the cable and try again — an interrupted write is recovered by simply flashing again.");
+            }
+
+            string tail;
+            lock (output) tail = string.Join("\n", output.TakeLast(8));
+            return proc.ExitCode == 0
+                ? new(true, $"Flashed firmware {BundledFirmwareVersion} on {port}.\n{tail}")
+                : new(false, $"The flasher exited with code {proc.ExitCode}. If it could not connect: hold the board's BOOT button while plugging it in, then flash again.\n{tail}");
+        }
+        catch (Exception ex)
+        {
+            return new(false, $"Flash failed to run: {ex.Message}");
+        }
+    }
+
+    /// <summary>Bluetooth SPP ports advertise as COM ports too; the camera never does.</summary>
+    private static bool LooksLikeUsbSerial(string port)
+    {
+        // The two Bluetooth ports on the dev machine are COM3/COM4, but a customer's
+        // machine numbers ports arbitrarily — so probe by behaviour where it matters
+        // (ListPortsAsync) and only fall back to "not the lowest two BT-typical ports"
+        // here, where the caller declined to name one.
+        return port is not ("COM3" or "COM4");
     }
 
     public sealed record CameraStatus(bool Configured, string? Url, string? Ssid, bool Reachable, string? Detail);

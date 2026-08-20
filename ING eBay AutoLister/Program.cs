@@ -2480,8 +2480,8 @@ app.MapPost("/api/local/price-these", async (
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log,
-    int? maxItems, int? terapeakBudget, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live, ActionLog log,
+    int? maxItems, int? terapeakBudget, int? liveBudget, CancellationToken ct) =>
 {
     try
     {
@@ -2499,7 +2499,11 @@ app.MapPost("/api/local/price-these", async (
             retailSalesTaxPercent: 0m,
             marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
             profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
-            couponService, category: null);
+            couponService, category: null,
+            // The live half of the sold-comps path — the part a Facebook feed never got. Same
+            // lookup, same allowance and the board's own default of three products per scan; the
+            // cards say what was fetched and what ran out. See LiveCompsPass.
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
 
         return Results.Ok(result);
     }
@@ -3047,13 +3051,14 @@ app.MapPost("/api/opportunities/analyze-deal", async (
 });
 
 app.MapGet("/api/local/arbitrage", async (
-    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, int? liveBudget, string? sort,
     string? sources, string? craigslistSite, decimal? salesTax, bool? coupons, string? category,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, CouponService couponService, ActionLog log, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live, ActionLog log,
+    CancellationToken ct) =>
 {
     try
     {
@@ -3074,7 +3079,10 @@ app.MapGet("/api/local/arbitrage", async (
             coupons == false ? null : couponService,
             // What kind of thing to look for. Changes the craigslist board that is searched, what is
             // allowed to value each row, and what selling it costs — see ResaleCategoryCatalog.
-            ResaleCategoryCatalog.Resolve(category));
+            ResaleCategoryCatalog.Resolve(category),
+            // Then live eBay sold prices for the products stored comps left thin — the Facebook and
+            // Craigslist rows' share of the path the eBay scanner's rows always had. See LiveCompsPass.
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
 
         return Results.Ok(result);
     }
@@ -3145,12 +3153,12 @@ app.MapGet("/api/coupons", async (
 // The original Facebook-only route, kept working: it predates the source picker, and silently
 // changing what an existing URL searches would be worse than one line of aliasing.
 app.MapGet("/api/facebook/arbitrage", async (
-    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, string? sort,
+    string q, string? zip, int? radius, int? maxItems, int? terapeakBudget, int? liveBudget, string? sort,
     LocalSupplySources registry, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, LiveCompsLookup live, ActionLog log, CancellationToken ct) =>
 {
     try
     {
@@ -3162,7 +3170,9 @@ app.MapGet("/api/facebook/arbitrage", async (
             RetailBuyCosts.DefaultSalesTaxPercent,
             marketplace, normalizer, matcher,
             priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
-            terapeak, analyzer, log, ct);
+            terapeak, analyzer, log, ct,
+            // Facebook rows get the live half of the sold-comps path here too. See LiveCompsPass.
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
 
         return Results.Ok(result);
     }
@@ -6624,7 +6634,12 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, ActionLog log, CancellationToken ct,
-    CouponService? couponService = null, ResaleCategory? category = null)
+    CouponService? couponService = null, ResaleCategory? category = null,
+    // The live half of the sold-comps path, for the scans that get it: after stored comps, up to
+    // liveBudget products are looked up live on eBay and re-priced (see LiveCompsPass). Defaulted
+    // off so the eBay scanner — whose browser already fetched live comps for its search term
+    // before calling here — is costed exactly as it always was.
+    LiveCompsLookup? live = null, int liveBudget = 0)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var wanted = category ?? ResaleCategoryCatalog.Anything;
@@ -6719,6 +6734,66 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             cached[group.Key] = await terapeakMarket.GetAsync(
                 normalizer.Normalize(group.LookupTitle), group.LookupTitle, allowRealScrape: false, ct: ct) is not null;
             pricing[group.Key] = await PriceAsync(group, allowScrape: false);
+        }
+
+        // ── Pass 1b: live eBay sold prices for the products stored comps couldn't settle ───────────
+        // The half of the path a Facebook Marketplace row never got. The eBay scanner's rows are
+        // priced after the browser fetches live sold comps for the search term, and the board then
+        // deepens its top estimates row by row; a Facebook feed has no single term to look up first,
+        // its cards had no per-row path, and on the hosted build there is no browser to run one
+        // from — so a drill, a couch or a golf cart was priced against whatever the stored database
+        // happened to hold, which for ordinary local goods is nothing, and the card said "no sold
+        // data" about an item eBay sells every day.
+        //
+        // Same lookup the browser uses (LiveCompsLookup: one call per product, the same daily
+        // allowance, the same 24-hour cache), run here for the few products where it changes a
+        // decision — LiveCompsPass.SelectTargets — and then the SAME cache-only PriceAsync re-read,
+        // so a row refreshed here is costed exactly like one the browser refreshed. Any failure is
+        // a sentence on the result, never a dead scan.
+        if (live is not null && liveBudget > 0)
+        {
+            try
+            {
+                if (!live.IsAvailable)
+                {
+                    result.LiveLookupNote =
+                        "Live sold-price lookups aren't available here, so everything is priced from stored comps.";
+                }
+                else
+                {
+                    var byKeyLive = groups.ToDictionary(g => g.Key);
+                    var candidates = groups.Select(g =>
+                    {
+                        // Judged on the row the board would actually show for the group's best buy —
+                        // its evidence tier, its preliminary profit, and whether a title lookup may
+                        // reprice it at all — never on a second reading of the same comps.
+                        var cheapest = g.Listings.OrderBy(l => l.IsFree ? 0m : l.Price ?? decimal.MaxValue).First();
+                        var preliminary = analyzer.Build(cheapest, pricing[g.Key], feeProfile, retailSalesTaxPercent);
+                        return LiveCompsPass.Candidate(g.Key, g.LookupTitle, preliminary, g.LowestAsk);
+                    }).ToList();
+
+                    var targets = LiveCompsPass.SelectTargets(candidates, liveBudget);
+                    var pass = await LiveCompsPass.RunAsync(
+                        targets.Select(k => (k, byKeyLive[k].LookupTitle)).ToList(), live.FetchAsync, ct);
+
+                    foreach (var key in pass.Refreshed)
+                        pricing[key] = await PriceAsync(byKeyLive[key], allowScrape: false);
+
+                    result.LiveLookupsUsed = pass.LookupsUsed;
+                    result.LiveLookupsRefreshed = pass.Refreshed.Count;
+                    result.LiveLookupNote = pass.Note;
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                log.Add("Warning", "Live sold-comps pass failed", ex.Message);
+                result.LiveLookupNote =
+                    "The live sold-price lookups didn't run, so everything is priced from stored comps.";
+            }
         }
 
         // ── Pass 2: spend the scrape budget on the products where it changes a decision ─────────────
@@ -9428,6 +9503,17 @@ app.MapGet("/api/photobox/status", async (PhotoBoxCamera box, CancellationToken 
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
     return Results.Ok(await box.StatusAsync(ct));
+});
+
+// The whole point of shipping the flasher in the installer: a customer with a
+// factory-fresh board presses one button instead of installing a toolchain.
+app.MapPost("/api/photobox/flash", async (PhotoBoxFlashRequest? req, PhotoBoxCamera box, ActionLog log, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    var result = await box.FlashAsync(req?.Port, ct);
+    log.Add(result.Ok ? "Info" : "Warning", "Photo Box firmware flash",
+        result.Ok ? $"firmware {PhotoBoxCamera.BundledFirmwareVersion} written" : result.Detail.Split('\n')[0]);
+    return Results.Ok(new { result.Ok, result.Detail, version = PhotoBoxCamera.BundledFirmwareVersion });
 });
 
 app.MapPost("/api/photobox/forget", (PhotoBoxCamera box) =>
