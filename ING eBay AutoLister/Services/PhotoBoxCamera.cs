@@ -260,3 +260,104 @@ public sealed class PhotoBoxCamera(IHttpClientFactory httpFactory)
         }
     }
 }
+
+/// <summary>
+/// Whether the camera is even on the USB — answered from Windows' own device list, before any
+/// serial port is opened. Three different desks produce the same empty port list: nothing plugged
+/// in, a charge-only cable (the board enumerates as an unidentifiable device), and a serial chip
+/// whose driver Windows doesn't have. The seller cannot tell them apart and the fix for each is
+/// different, so this names which one it is and what to do — with the driver download when THAT
+/// is the problem.
+/// </summary>
+public static class PhotoBoxUsb
+{
+    /// <summary>One USB device as Windows reports it. Problem is ConfigManagerErrorCode; 0 is healthy.</summary>
+    public sealed record Device(string Name, string PnpId, uint Problem);
+
+    public sealed record Diagnosis(string Verdict, string Sentence, string WhatToDo, string? DriverUrl,
+                                   IReadOnlyList<Device> Seen);
+
+    /// <summary>WCH's own CH343 driver page — the UART chip on the Freenove ESP32-S3 board.</summary>
+    public const string WchDriverUrl = "https://www.wch-ic.com/downloads/CH343SER_EXE.html";
+
+    /// <summary>Silicon Labs' CP210x driver page, the other common ESP32 UART chip.</summary>
+    public const string SiliconLabsDriverUrl = "https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers";
+
+    /// <summary>The live answer, from WMI. Desktop only — the endpoint refuses before this runs elsewhere.</summary>
+    public static Diagnosis Diagnose()
+    {
+        if (!OperatingSystem.IsWindows()) return Classify([]);
+
+        var seen = new List<Device>();
+        using var searcher = new System.Management.ManagementObjectSearcher(
+            "SELECT Name, PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPDeviceID LIKE 'USB%'");
+        foreach (var found in searcher.Get())
+        {
+            seen.Add(new Device(
+                found["Name"]?.ToString() ?? "",
+                found["PNPDeviceID"]?.ToString() ?? "",
+                found["ConfigManagerErrorCode"] is { } code ? Convert.ToUInt32(code) : 0));
+        }
+        return Classify(seen);
+    }
+
+    /// <summary>
+    /// The verdict for one snapshot of the USB tree. Pure, so the four desks this has to tell
+    /// apart can each be a test instead of a piece of hardware.
+    /// </summary>
+    public static Diagnosis Classify(IReadOnlyList<Device> seen)
+    {
+        // A healthy USB serial port wins outright — whatever else is plugged in, there is
+        // something to scan. Bluetooth COM ports don't count; their ids start BTHENUM, and two of
+        // them sitting on every Windows machine is exactly how "there's a port" lies.
+        var ready = seen.FirstOrDefault(d =>
+            d.Problem == 0 && System.Text.RegularExpressions.Regex.IsMatch(d.Name, @"\(COM\d+\)"));
+        if (ready is not null)
+        {
+            var com = System.Text.RegularExpressions.Regex.Match(ready.Name, @"\((COM\d+)\)").Groups[1].Value;
+            return new Diagnosis("ok",
+                $"A USB serial device is on {com} — that should be the camera.",
+                "Press ↻ Find camera below.",
+                null, seen);
+        }
+
+        // A serial chip that is present but broken is almost always code 28 — no driver. This is
+        // the one problem a download actually fixes, so it outranks the cable verdict: a machine
+        // can show both, and installing the driver is the step that changes what happens next.
+        var chip = seen.FirstOrDefault(d => d.Problem != 0 && ChipOf(d.PnpId) is not null);
+        if (chip is not null)
+        {
+            var (name, url) = ChipOf(chip.PnpId)!.Value;
+            return new Diagnosis("driver",
+                $"The camera's USB chip ({name}) is plugged in, but Windows has no working driver for it.",
+                url is null
+                    ? "Unplug and replug the board — Windows carries this driver and usually just needs the nudge."
+                    : "Install the driver, replug the board, then press Check USB again.",
+                url, seen);
+        }
+
+        // Enumeration failed at the electrical level: the device cannot even say what it is. No
+        // driver can be installed for a device with no identity — this is the cable or the socket.
+        if (seen.Any(d => d.Problem != 0 &&
+                (d.Name.Contains("Device Descriptor Request Failed", StringComparison.OrdinalIgnoreCase)
+                 || d.PnpId.Contains(@"VID_0000", StringComparison.OrdinalIgnoreCase))))
+            return new Diagnosis("cable",
+                "Something on USB cannot identify itself — that is the cable or the socket, not a missing driver.",
+                "Use a DATA cable (a charge-only cable does exactly this), plugged into the board socket " +
+                "labelled UART/COM, straight into the PC. Then press Check USB again.",
+                null, seen);
+
+        return new Diagnosis("none",
+            "Nothing that could be the camera is on USB.",
+            "Plug the board's UART/COM socket into this computer with a data cable, then press Check USB again.",
+            null, seen);
+    }
+
+    /// <summary>The serial chip a PNP id names, or null when it isn't one this recognises.</summary>
+    /// <remarks>Espressif's native USB carries no url: Windows ships that driver, so the fix is a replug, not a download.</remarks>
+    private static (string Name, string? Url)? ChipOf(string pnpId) =>
+        pnpId.Contains("VID_1A86", StringComparison.OrdinalIgnoreCase) ? ("WCH CH340/CH343", WchDriverUrl)
+      : pnpId.Contains("VID_10C4", StringComparison.OrdinalIgnoreCase) ? ("Silicon Labs CP210x", SiliconLabsDriverUrl)
+      : pnpId.Contains("VID_303A", StringComparison.OrdinalIgnoreCase) ? ("Espressif native USB", (string?)null)
+      : null;
+}

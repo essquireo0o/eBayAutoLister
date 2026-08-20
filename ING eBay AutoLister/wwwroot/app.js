@@ -7219,6 +7219,39 @@
     setActiveNavItem('photobox');
     markWorkspaceTabOpen('photobox');
     pbRefreshStatus();
+    // The first question on the screen answers itself: opening the page checks the USB, so a
+    // seller who just plugged the board in reads a verdict, not a button they haven't found yet.
+    pbCheckUsb();
+  }
+
+  // Which of the three empty-port-list desks this machine is — nothing plugged in, a charge-only
+  // cable, or a serial chip with no driver — said in the server's words, with the driver download
+  // shown only when a download is the fix.
+  async function pbCheckUsb() {
+    const status = $('pb-usb-status');
+    const driver = $('pb-usb-driver');
+    const btn = $('pb-usb-check');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch('/api/photobox/usb');
+      const d = await res.json();
+      if (!res.ok) { if (status) status.textContent = d.error || 'Could not read the USB device list.'; return; }
+      if (status) {
+        status.className = 'wn-video-status wn-video-' + (d.verdict === 'ok' ? 'ok' : 'bad');
+        status.textContent = d.sentence + ' ' + d.whatToDo;
+      }
+      if (driver) {
+        driver.classList.toggle('hidden', !d.driverUrl);
+        if (d.driverUrl) driver.href = d.driverUrl;
+      }
+      // A healthy port means the next step can just happen — scan it rather than leaving the
+      // seller to press the second button an inch below the first.
+      if (d.verdict === 'ok') pbScanPorts();
+    } catch (err) {
+      if (status) status.textContent = 'USB check failed: ' + err;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   function pbSetupStatus(text, kind) {
@@ -7368,6 +7401,7 @@
   function bindPhotoBox() {
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
+    $('pb-usb-check')?.addEventListener('click', pbCheckUsb);
     $('pb-scan')?.addEventListener('click', pbScanPorts);
     $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);

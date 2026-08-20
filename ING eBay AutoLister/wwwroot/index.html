@@ -2855,6 +2855,16 @@
                the WiFi. After a successful send this card is done and stays only as the
                way to move the camera to a new network. -->
           <div class="pb-card">
+            <!-- Step zero, before any port is opened: is the camera even on the USB? Three desks
+                 produce the same empty port list — nothing plugged in, a charge-only cable, a
+                 serial chip with no driver — and only one of them is fixed by a download. This
+                 row names which desk this is, and carries the driver link when that is the fix. -->
+            <div class="wn-read-row">
+              <button id="pb-usb-check" class="btn btn-ghost" type="button"
+                      title="Ask Windows what is on the USB, before any port is opened">🔌 Check USB</button>
+              <div id="pb-usb-status" class="wn-video-status" role="status" aria-live="polite">Checking the USB for the camera…</div>
+              <a id="pb-usb-driver" class="btn btn-primary hidden" href="#" target="_blank" rel="noopener">Install the driver ↗</a>
+            </div>
             <div class="wn-read-row">
               <label class="wn-field">
                 <span>Camera port</span>

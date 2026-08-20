@@ -58,6 +58,10 @@
          Referenced in both builds so the code compiles once; the hosted endpoints refuse
          before any port is touched, because a server has no camera on its USB. -->
     <PackageReference Include="System.IO.Ports" Version="9.0.0" />
+    <!-- The Photo Box screen's "is the camera even on USB?" check reads Windows' own device
+         list (PhotoBoxUsb.Diagnose) to tell a charge-only cable from a missing serial driver.
+         Windows-only at runtime; the hosted endpoints refuse before it is ever touched. -->
+    <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

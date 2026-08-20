@@ -9399,6 +9399,16 @@ static IResult? PhotoBoxHostedRefusal() => HostedAuth.IsHostedBuild
       })
     : null;
 
+// Before any port is opened: is the camera even on the USB, and if not, which of the three
+// reasons — nothing plugged in, a charge-only cable, a serial chip with no driver. The port
+// scan below can only say "no ports"; this says why, with the driver download when that is
+// the fix. Off the device list, so it costs nothing and cannot hang on a Bluetooth port.
+app.MapGet("/api/photobox/usb", () =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(PhotoBoxUsb.Diagnose());
+});
+
 app.MapGet("/api/photobox/ports", async (PhotoBoxCamera box, CancellationToken ct) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
