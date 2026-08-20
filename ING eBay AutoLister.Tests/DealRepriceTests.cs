@@ -115,6 +115,31 @@ public class DealRepriceTests
     }
 
     [Fact]
+    public void Reprice_AFacebookRowCarriesTheSameSoldEvidenceAnEbayRowDoes()
+    {
+        // What the card prints beside the money — the tier, its sentence, the counts — is graded by
+        // the same LocalArbitrageAnalyzer.GradeEvidence on the same fields as every eBay row, so the
+        // Facebook card and the board can never describe one set of comps two ways.
+        var listing = DealReprice.ToListing(Request(price: 50m));
+
+        var backed = Analyzer.Build(listing, Pricing(expected: 200m), Fees, 0m, coupons: null);
+        Assert.Equal("facebook", backed.Source);
+        Assert.Equal(LocalArbitrageEvidence.Confident, backed.EvidenceTier);
+        Assert.Equal(8, backed.SoldCompCount);
+        Assert.Equal(8, backed.PricedCompCount);
+        Assert.Contains("8 sold comps", backed.EvidenceNote, StringComparison.Ordinal);
+
+        // Two comps is an estimate, however the arithmetic comes out — and the row says so itself.
+        var thinPricing = Pricing(expected: 200m);
+        thinPricing.SoldCompCount = 2;
+        thinPricing.PricedCompCount = 2;
+        var thin = Analyzer.Build(listing, thinPricing, Fees, 0m, coupons: null);
+        Assert.Equal(LocalArbitrageEvidence.Low, thin.EvidenceTier);
+        Assert.Contains("2 sold comps", thin.EvidenceNote, StringComparison.Ordinal);
+        Assert.Equal(200m, thin.EbayExpectedSale);
+    }
+
+    [Fact]
     public void Reprice_WithNoComps_IsNoDataNotAFabricatedProfit()
     {
         // A live lookup that found nothing leaves the comps database unchanged, so the reprice reads

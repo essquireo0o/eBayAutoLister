@@ -3296,61 +3296,176 @@
    * seller staring at a blank panel for a minute assumes it is broken. The prices arrive after,
    * into cards that are already on screen and already clickable.
    */
+  // The priced rows behind the cards, by Facebook's own item id — what the per-card live lookup
+  // reprices and what the sort reads. Reset on every load, like the grid itself.
+  let fbPickRows = new Map();
+  const fbPickRepriceInFlight = new Set();
+
+  /**
+   * What a pick card says about its evidence — the same three facts the deals board puts on every
+   * eBay row (LocalArbitrageAnalyzer.GradeEvidence's evidenceTier, the comp counts, the resale
+   * price), read off the same fields, so a Facebook card and an eBay row priced off the same comps
+   * can never describe them differently.
+   *
+   * Pure — no DOM, no fetch — so the rule can be run on its own (FacebookPickEvidenceTests).
+   */
+  function facebookPickEvidence(row) {
+    const tier = (row && row.evidenceTier) || 'none';
+    const found = (row && row.soldCompCount) || 0;
+    const priced = (row && row.pricedCompCount) || 0;
+    const sale = row ? (row.ebayExpectedSale ?? row.ebayResaleMedian ?? null) : null;
+    // No comps means no opinion. Saying "$0 profit" would be a claim; saying "no sold data" is
+    // the truth, and the seller can still open the listing and judge it themselves.
+    const priceable = sale != null && found > 0 && tier !== 'none';
+    // "Not confident" covers both halves of being wrong: too few or too scattered comps, and a
+    // comp set that priced a different product than the one in the photo.
+    const guess = priceable && (tier !== 'confident' || row.identityVerified === false);
+    const word = !priceable ? 'No sold data' : guess ? 'Estimate' : 'Backed';
+    const why = !priceable ? ''
+      : row.identityVerified === false
+        ? 'No sold comp matched this exact model — this price is for a different product that shares the brand.'
+        : (row.evidenceNote || (guess ? 'Too few or too scattered sold comps to call this a market price.' : ''));
+    // Whether a title-based live lookup could honestly reprice it — the board's own canReprice
+    // rule (a lot, a freebie, or a valuation refused by a non-comps provider gets no lookup; a
+    // row the comps provider merely found nothing for does), plus "not already confident": a card
+    // with the comps has nothing to fetch.
+    const val = row && row.valuation;
+    const refused = !!val && val.status === 'manual' && val.providerId !== 'ebay_comps';
+    const canLive = !!row && !row.liquidation && !row.freebie && !refused && tier !== 'confident';
+    return { tier, word, priceable, guess, found, priced, sale, why, canLive };
+  }
+
+  // The money on one card: the profit line, the hedge when it is a guess, and the evidence line —
+  // resale price, the comps that priced it (the board's own compsCell), which database answered and
+  // the grade. Plus the board's per-row "Get real sold price" on any card that is not yet confident.
+  function facebookPickMoneyHtml(row) {
+    const ev = facebookPickEvidence(row);
+    const key = esc(String(row.itemId || ''));
+    const source = ARB_SOURCES[row.resaleSource] || '';
+    const liveBtn = ev.canLive
+      ? `<button class="btn btn-secondary small fb-pick-live-btn" type="button" data-pick-live="${key}" ` +
+        `title="Fetch this item's recent eBay sold prices and reprice this card from them — the same lookup the deals board's rows use.">` +
+        `Get real sold price</button>`
+      : '';
+    const liveNote = row.__liveNote ? `<span class="fb-pick-live-note">${esc(row.__liveNote)}</span>` : '';
+
+    if (!ev.priceable) {
+      // Said once, in the evidence line's own voice, with the lookup that can change it underneath.
+      return `<span class="fb-pick-evidence fb-pick-ev-none" title="${esc(row.evidenceNote || '')}">${esc(ev.word)}${source ? ` · ${source}` : ''}</span>` +
+        liveBtn + liveNote;
+    }
+
+    const profit = row.netProfit;
+    const roi = row.roiPercent;
+    const good = profit != null && profit > 0;
+    return `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}${ev.guess ? ' is-guess' : ''}">` +
+        `${profit != null ? `${good ? '+' : ''}${money(profit)}` : '—'}${roi != null ? ` · ${Math.round(roi)}%` : ''}</span>` +
+      (ev.guess ? `<span class="fb-pick-guess" title="${esc(ev.why)}">rough estimate — tap to see why</span>` : '') +
+      `<span class="fb-pick-comp">sells ~${money(ev.sale)} · ${compsCell(row)}</span>` +
+      `<span class="fb-pick-evidence fb-pick-ev-${esc(ev.tier)}" title="${esc(row.evidenceNote || '')}">${esc(ev.word)}` +
+        `${source ? ` · ${source}` : ''}${row.confidenceLevel ? ` · ${esc(row.confidenceLevel)}` : ''}</span>` +
+      liveBtn + liveNote;
+  }
+
+  // The card is a link to Marketplace, so the button inside it has to stop the click from opening
+  // the listing — pressing "Get real sold price" is asking a question, not leaving the app.
+  function bindFacebookPickLive(slot) {
+    slot?.querySelectorAll('.fb-pick-live-btn').forEach(btn => btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      repriceFacebookPick(btn.dataset.pickLive || '');
+    }));
+  }
+
+  // Fetch one card's real sold prices, then reprice the card from them — the deals board's own
+  // per-row path (runLiveLookup, then /api/opportunities/reprice-row) on a Facebook card. Never
+  // throws and never blanks the card: every live outcome ends as a short note, and the reprice
+  // re-reads stored comps regardless (harmless when nothing new landed).
+  async function repriceFacebookPick(id) {
+    const row = fbPickRows.get(id);
+    if (!row || fbPickRepriceInFlight.has(id)) return;
+    fbPickRepriceInFlight.add(id);
+
+    const slotFor = () => document.querySelector(`[data-pick-money="${CSS.escape(id)}"]`);
+    const btn = slotFor()?.querySelector('.fb-pick-live-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking eBay…'; }
+
+    try {
+      // The fullest wording the pricing had for this product — the same string the card was priced as.
+      const query = row.pricedAs && row.pricedAs !== row.title ? row.pricedAs : row.title;
+      const run = await runLiveLookup(query, 'fbpick');
+      const note = liveOutcomeNote(run);
+
+      const { data } = await localFetchJson('/api/opportunities/reprice-row', 30000, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dealForReprice(row, query)),
+      });
+
+      // A rebuilt row carries a source; the never-fail error body ({ repriced:false }) does not.
+      const fresh = data && data.source != null && data.repriced !== false ? data : row;
+      fresh.__liveNote = note;
+      fbPickRows.set(id, fresh);
+
+      const slot = slotFor();
+      if (slot) { slot.innerHTML = facebookPickMoneyHtml(fresh); bindFacebookPickLive(slot); }
+      reorderFacebookPicks(Array.from(fbPickRows.values()));
+    } finally {
+      fbPickRepriceInFlight.delete(id);
+    }
+  }
+
+  /**
+   * Fills each pick card with the numbers that decide whether it is a buy: what it sells for on
+   * eBay, how many sold comps that is based on and how far to believe them, the profit after fees,
+   * and the ROI.
+   *
+   * The grid renders first and unpriced, because the browse is already a ~30 second page load and a
+   * seller staring at a blank panel for a minute assumes it is broken. The prices arrive after,
+   * into cards that are already on screen and already clickable.
+   *
+   * The pricing is the scan pipeline's own — stored sold comps, then live eBay sold prices for the
+   * products that leaves thin (liveBudget, see LiveCompsPass), exactly the stored-plus-live path
+   * the eBay scanner's rows take. A Facebook card used to get only the first half, so a drill or a
+   * couch was "no sold data" about an item eBay sells every day.
+   */
   async function priceFacebookPicks(feed) {
     const note = $('fb-picks-status');
-    if (note) note.textContent = 'Pricing these against real eBay sold data…';
+    if (note) note.textContent = 'Pricing these against real eBay sold data — stored comps first, then live eBay sold prices for the ones that leaves thin…';
 
-    const { data } = await localFetchJson('/api/local/price-these?maxItems=40&terapeakBudget=0', 180000, {
+    const { data } = await localFetchJson('/api/local/price-these?maxItems=40&terapeakBudget=0&liveBudget=3', 240000, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(feed)
     });
 
     if (!data || !(data.items || []).length) {
-      if (note) note.textContent = '';
+      if (note) note.textContent = data && data.liveLookupNote ? data.liveLookupNote : '';
       return;
     }
 
+    fbPickRows = new Map();
     let priced = 0, solid = 0, estimates = 0;
     for (const row of data.items) {
-      const slot = document.querySelector(`[data-pick-money="${CSS.escape(row.itemId || '')}"]`);
+      const id = String(row.itemId || '');
+      if (id) fbPickRows.set(id, row);
+      const slot = document.querySelector(`[data-pick-money="${CSS.escape(id)}"]`);
       if (!slot) continue;
 
-      const profit = row.netProfit;
-      const roi = row.roiPercent;
-      const comp = row.ebayExpectedSale ?? row.ebayResaleMedian;
-      const comps = row.soldCompCount || 0;
       // How far to believe the figures, graded server-side by LocalArbitrageAnalyzer.GradeEvidence
-      // — the same grade the deals board dims its rows on. This panel used to ignore it entirely
-      // and print every price as a fact, which is how a $1,900 car came back as "-$1,771 · -93%":
-      // the only Saabs in the sold-comps database are Saab ECU modules at $75, so the car was
-      // priced as a car part and the loss was arithmetic on the wrong product. The server already
-      // knew — it graded that row "low" and wrote the reason — and the card threw it away.
-      const tier = row.evidenceTier || 'none';
+      // — the same grade the deals board dims its rows on, now printed on the card in the board's
+      // own words. This panel used to ignore it entirely and print every price as a fact, which is
+      // how a $1,900 car came back as "-$1,771 · -93%": the only Saabs in the sold-comps database
+      // are Saab ECU modules at $75, so the car was priced as a car part and the loss was
+      // arithmetic on the wrong product. The server already knew — it graded that row "low" and
+      // wrote the reason — and the card threw it away.
+      slot.innerHTML = facebookPickMoneyHtml(row);
+      bindFacebookPickLive(slot);
 
-      // No comps means no opinion. Saying "$0 profit" would be a claim; saying "no sold data" is
-      // the truth, and the seller can still open the listing and judge it themselves.
-      if (comp == null || !comps || tier === 'none') {
-        slot.innerHTML = '<span class="fb-pick-nodata">no sold data</span>';
-        continue;
-      }
-
-      const good = profit != null && profit > 0;
-      // "Not confident" covers both halves of being wrong: too few or too scattered comps, and a
-      // comp set that priced a different product than the one in the photo.
-      const guess = tier !== 'confident' || row.identityVerified === false;
-      const why = row.identityVerified === false
-        ? 'No sold comp matched this exact model — this price is for a different product that shares the brand.'
-        : (row.evidenceNote || 'Too few or too scattered sold comps to call this a market price.');
-
-      slot.innerHTML =
-        `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}${guess ? ' is-guess' : ''}">` +
-          `${good ? '+' : ''}${money(profit)}${roi != null ? ` · ${Math.round(roi)}%` : ''}</span>` +
-        (guess ? `<span class="fb-pick-guess" title="${esc(why)}">rough estimate — tap to see why</span>` : '') +
-        `<span class="fb-pick-comp">sells ~${money(comp)} · ${comps} sold${
-          row.pricedCompCount && row.pricedCompCount !== comps ? ` (${row.pricedCompCount} used)` : ''}</span>`;
+      const ev = facebookPickEvidence(row);
+      if (!ev.priceable) continue;
       priced++;
-      if (guess) estimates++; else solid++;
+      if (ev.guess) estimates++; else solid++;
     }
 
     // The numbers are on the cards; now put the best one first. Only worth doing — and only
@@ -3362,8 +3477,9 @@
       // it was one answer and four guesses, and the seller quite reasonably asked why only one of
       // them showed what they would make.
       const nodata = feed.items.length - priced;
+      const refreshed = data.liveLookupsRefreshed || 0;
       note.textContent = !priced
-        ? 'None of these could be priced — no matching eBay sold history.'
+        ? ['None of these could be priced — no matching eBay sold history.', data.liveLookupNote || ''].filter(Boolean).join(' ')
         : [
             solid
               ? `${solid} of ${feed.items.length} priced against sold comps that actually match. Profit is after fees and shipping.`
@@ -3372,6 +3488,13 @@
               ? `${estimates} more ${estimates === 1 ? 'is a rough estimate' : 'are rough estimates'} — too few, too scattered, or the closest sold listings are a different product. Treat those figures as a starting point, not a price.`
               : '',
             nodata ? `${nodata} have no eBay sold history at all.` : '',
+            // The live half, said out loud: which of these were priced on sold prices fetched from
+            // eBay moments ago rather than read from the database — and, when the daily allowance
+            // ran out mid-pass, that it did. "Get real sold price" on a card spends one more.
+            refreshed
+              ? `${refreshed} ${refreshed === 1 ? 'was' : 'were'} re-priced on sold prices fetched live from eBay just now.`
+              : '',
+            data.liveLookupNote || '',
           ].filter(Boolean).join(' ');
     }
   }
@@ -3618,11 +3741,21 @@
     setLocalStatus(`Searching ${sourceLabelsFor(sources)} ${scopeTextFor(sources, radius, zip)}, ` +
       'then pricing every result against eBay sold data — this can take a couple of minutes…');
 
+    // Scrape THIS term's sold prices from eBay before the scan prices anything against them — the
+    // same step the eBay Scanner takes, for the same reason: every row on the board below, Facebook
+    // and Craigslist alike, is a buy/pass call made against these comps. One scrape for the term,
+    // never one per result; the server then deepens the thinnest products itself (LiveCompsPass).
+    // A blank query — a whole category board, the freebie board — has no term to look up.
+    // keepOpen so the lookup's bar isn't hidden a beat before the scan repurposes it as a sweep.
+    if (query) await runLiveLookup(query, 'ls', { keepOpen: true });
+    scanWorking('ls', `Searching ${sourceLabelsFor(sources)} and pricing every result against sold comps…`);
+
     // The scan comes back already ordered the way the seller last chose to look at it. Changing
     // the sort afterwards is still purely client-side — it must never re-run a multi-minute scan.
     const sort = $('fb-arb-sort')?.value || 'balanced';
     const { data, error } = await localFetchJson(
       `/api/local/arbitrage?${qs}&sort=${encodeURIComponent(sort)}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
+    scanWorkingDone('ls');
     buttons.forEach(b => { b.disabled = false; });
 
     if (!data) {
@@ -3752,13 +3885,22 @@
     // a board where most of the percentages are estimates is a different board from one where two
     // of them are — and that is not visible from any single row.
     const estimates = (data.items || []).filter(r => r.evidenceTier === 'low' && r.netProfit != null).length;
+    // The live half, said out loud: which of those prices were fetched from eBay moments ago rather
+    // than read from the database — and, when the daily allowance ran out mid-scan, that it did.
+    const refreshed = data.liveLookupsRefreshed || 0;
+    const live = refreshed
+      ? ` ${refreshed} product${refreshed === 1 ? ' was' : 's were'} re-priced on sold prices fetched live from eBay just now.`
+      : '';
+    const liveNote = data.liveLookupNote
+      ? ` <span class="fb-arb-live-summary-note">${esc(data.liveLookupNote)}</span>` : '';
 
     $('fb-arb-summary').innerHTML =
       scanned +
       `<div class="fb-arb-sources">Priced ${data.productsPriced} distinct product${data.productsPriced === 1 ? '' : 's'} against sold comps` +
       `.` +
       `${estimates ? ` <strong class="fb-arb-estimate-flag">${estimates} row${estimates === 1 ? ' is an estimate' : 's are estimates'}</strong>` +
-        ` — too few matching sold comps to trust, so the ROI and margin on ${estimates === 1 ? 'it' : 'them'} are dimmed rather than shown as real rates.` : ''}</div>`;
+        ` — too few matching sold comps to trust, so the ROI and margin on ${estimates === 1 ? 'it' : 'them'} are dimmed rather than shown as real rates.` : ''}` +
+      `${live}${liveNote}</div>`;
 
     const warn = $('fb-arb-warning');
     if (warn) {
@@ -4218,9 +4360,22 @@
   // Which rows a title-based sold-comps lookup can honestly reprice. A liquidation lot and a freebie
   // are priced by their own arithmetic, not a title query, and a category the app refuses to value
   // (cars, etc.) would only be refused again — so none of them get the button.
+  //
+  // A "manual" valuation alone is NOT a refusal. The eBay-comps provider stamps the same status on a
+  // row it looked up and found nothing for ("no sold history"), and that row is the one a live
+  // lookup exists to fix: this rule used to read every manual valuation as "refused by category",
+  // which kept the button — and the automatic pass — off exactly the rows with no sold data at all.
+  // Only a manual verdict from some OTHER provider (the vehicle book, a category with no comp
+  // source) means a title lookup would be refused again.
   function canReprice(row) {
-    return !!row && !row.liquidation && !row.freebie
-      && !(row.valuation && row.valuation.status === 'manual');
+    return !!row && !row.liquidation && !row.freebie && !valuationRefused(row);
+  }
+
+  // Whether the row's valuation was refused by a provider that does not price off title comps —
+  // as opposed to priced by the comps provider, or looked up by it and found empty.
+  function valuationRefused(row) {
+    const val = row && row.valuation;
+    return !!val && val.status === 'manual' && val.providerId !== 'ebay_comps';
   }
 
   // The button (and its little note) that sit in the row's badges. The button is offered on any row

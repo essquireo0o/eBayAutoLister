@@ -15150,3 +15150,103 @@ is what says so inside the answer itself.
   tail like "2 will stop this". On a phone that one unbreakable string held the toggle row open and
   squeezed the headline beside it to one word per line. The Amazon panel's summary row now stacks
   below 520px.
+
+---
+
+## 2026-08-20 — Opportunity Finder: every Facebook Marketplace row priced on the stored + live sold-comps path
+
+**Owner request (high priority):** Facebook Marketplace results in the Opportunity Finder were not
+being priced against eBay SOLD comps the way the eBay scanner rows are; each Facebook card must show
+the sold evidence it used (comp count, resale price, evidence tier) exactly like the eBay rows.
+
+### What was actually wrong (traced end to end)
+
+| Step | eBay scanner rows | Facebook rows (before) |
+|---|---|---|
+| Stored comps (`FindLocalArbitrageAsync` pass 1 → `AnalyzeProductAsync` → `IMarketplaceRepository`) | yes | yes — `/api/local/price-these` (the picks the Finder loads on open), `/api/local/arbitrage`, `/api/facebook/arbitrage` all ran it |
+| Live sold comps for the search term (`runLiveLookup` before the scan) | yes (`runEbayScan`) | **no** — `runLocalArbitrage` went straight to the scan; the picks feed has no term at all |
+| Per-row live deepen (`runLiveLookup` + `/api/opportunities/reprice-row`, auto top-3 + button) | yes | **no** on the picks cards; on the board the button/auto-pass were hidden for every row with **no** comps (see next row) |
+| `canReprice` rule | — | `valuation.status === 'manual'` was read as "refused by category", but `EbayCompsValuationProvider` stamps the SAME status on a row it looked up and found nothing for ("no sold history"). So the rows with the least evidence were the only ones never offered more — and `LocalArbitrageAnalyzer` → `DealReprice` never saw them |
+| Evidence on the card | tier + "N sold comps priced it of M" + source + confidence | profit/ROI + "sells ~$X · N sold" only; the tier word and the priced/found split were not shown; nothing for no-comps rows but "no sold data" |
+
+Measured on the live desktop app before the change: a Facebook feed priced through
+`/api/local/price-these` returned `evidenceTier: none, soldCompCount: 0` for ordinary local goods
+(a DeWalt drill, DDR4 RAM, a toy) because the stored database is miner/parts-heavy — and nothing
+could ever fetch more.
+
+### The fix, at the root
+
+- **`Services/LiveCompsPass.cs` (new)** — the live half of the sold-comps path, for a whole scan:
+  `SelectTargets` (never a confident group, never a lot/freebie/refused category; profitable
+  estimates first, then no-comps groups by ask, then loss estimates; hard-capped) and `RunAsync`
+  (sequential, stops on `busy`/`rate_limited`/`unavailable`/`error`/`timeout` with the lookup's own
+  sentence; only `ok` marks a group for re-pricing). `ValuationRefused` is the corrected rule:
+  manual **and** not the `ebay_comps` provider.
+- **`LiveCompsLookup.FetchAsync`** — `Start` + wait, for callers that price on the server and
+  cannot poll (the browser's protocol is untouched).
+- **`Program.cs` `FindLocalArbitrageAsync`** — new "pass 1b" between the stored-comps pass and the
+  Terapeak pass: candidates are judged on the very row `analyzer.Build` would show, the lookup is
+  the browser's own `LiveCompsLookup` (same daily allowance, same 24-h cache), and refreshed groups
+  are re-priced by the same cache-only `PriceAsync` — no second pricing path. Parameters
+  `LiveCompsLookup? live = null, int liveBudget = 0`; `/api/local/price-these`,
+  `/api/local/arbitrage`, `/api/facebook/arbitrage` pass `liveBudget` (default
+  `LiveCompsPass.DefaultBudget` = 3, clamp 0..10). **`/api/ebay/scan` is untouched** (its browser
+  already fetched live comps for the term; the board deepens its top rows afterwards).
+- **`LocalArbitrageResult`** — `LiveLookupsUsed`, `LiveLookupsRefreshed`, `LiveLookupNote`.
+- **`app.js`** — `facebookPickEvidence(row)` (pure; tier/word/counts/resale/canLive) and
+  `facebookPickMoneyHtml(row)`: every pick card now shows profit/ROI, the hedge, `sells ~$X ·
+  <compsCell(row)>` (the board's own "N sold comps priced it of M"), and an evidence line
+  `Backed | Estimate | No sold data · sold-comps DB · <confidence>`; `repriceFacebookPick` is the
+  board's per-row path on a card (`runLiveLookup` → `/api/opportunities/reprice-row` →
+  `dealForReprice`); `canReprice` now uses `valuationRefused(row)`; `runLocalArbitrage` runs the
+  term's live lookup before the scan like `runEbayScan` (new `#ls-live` bar in `index.html`); the
+  board summary and the picks status say how many products were re-priced live and repeat the
+  lookup's note when it stopped. Stamps: `app.js?v=152`, `style.css?v=132`.
+
+### Tests (5585, all green)
+
+- `LiveCompsPassTests` (14): selection rules and order, hard cap, defaults mirror the board's
+  auto-pass and a day's allowance, `Candidate` read off the row, **no-comps ≠ refused**, outcome
+  handling (`ok`/`empty`/`fresh`), stop-on-refusal keeping the lookup's sentence, cancellation.
+- `FacebookSoldCompsPathTests` (19): pipeline order (stored → live → Terapeak), every Facebook route
+  asks for the live half, the eBay scanner does not, result fields, the Finder opens → loads picks →
+  prices with `liveBudget`, card uses `compsCell`/tier/resale/source, per-card reprice order, local
+  board term lookup before the scan, `#ls-live`, stamps; and the shipped `facebookPickEvidence` and
+  `canReprice` run under node against real row shapes (thin / backed / none / wrong-product /
+  lot / freebie / refused-by-vehicle-provider / no-sold-history-from-comps-provider).
+- `LiveCompsTests` (+2): `FetchAsync` waits and returns the finished run; a refusal returns at once
+  with no call spent. `DealRepriceTests` (+1): a Facebook row carries the same evidence fields an
+  eBay row does (confident at 8 comps / 70, low at 2 comps).
+
+### Verified end to end on the running desktop app (http://localhost:9332, restarted on the new build)
+
+- `POST /api/local/price-these?liveBudget=1` with a Facebook row the stored DB has nothing for
+  (`ddr4 8gb computer memory`, `valuation: manual / ebay_comps`): `liveLookupsUsed: 1` — the row
+  entered the live pass (activity log: the lookup ran for that title).
+- Browser (`verification/fb-picks-sold-comps.mjs`, screenshot
+  `verification/opportunity_finder_facebook_picks.png`): the Finder opened, loaded 31 real picks
+  from the owner's Marketplace, priced them; **31/31 cards carry an evidence line**, 24 carry "Get
+  real sold price" (the other 7 are free items and vehicles, excluded by the board's own rule), 3
+  priced as estimates with "N sold comps priced it", and the status line reads the live outcome.
+
+### ⚠ Found while verifying — the live source itself is down (not caused by this change)
+
+Every live lookup, including the eBay scanner's, currently fails at the source: OpenWebNinja
+answers **HTTP 500 `"eBay now requires an authenticated session to return sold and completed
+listings, and our …"`** (and HTTP 504 timeouts). Each failed attempt still spends one of the 10/day
+allowance. The pass handles it honestly — outcome `error`, stop, `LiveLookupNote` = "The sold-price
+lookup couldn't be completed, so this is priced from stored comps instead." — so until a working
+sold-listings source replaces `OpenWebNinjaClient.SearchSoldAsync`, the live half cannot add rows
+for anyone and stored comps are the only source that answers. Nothing upstream needs to change
+when one does.
+
+### Not done / notes
+
+- Another session was editing the photobox files at the same time. Its commit `d5ba536` ("One
+  button turns a bare board into a Photo Box camera") swept this session's `Program.cs` hunks in
+  with it (the full-file commit carried the `FindLocalArbitrageAsync` pass and the three route
+  changes), so `d5ba536` on its own does not compile — `LiveCompsPass.cs`, `LiveCompsLookup.FetchAsync`
+  and the `LocalArbitrageResult` fields arrive in the commit that records this entry. Nothing of
+  the other session's was committed from here.
+- Free ($0, not `isFree`) Facebook picks still render an empty money slot — `screened` drops a
+  zero price that isn't flagged free; pre-existing, out of scope.

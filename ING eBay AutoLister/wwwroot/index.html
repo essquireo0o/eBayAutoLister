@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=131" />
+  <link rel="stylesheet" href="style.css?v=132" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1740,6 +1740,21 @@
             <!-- Home position for the shared results block: under the local panel, where a local
                  search puts it back. moveScanResultsTo() moves it between here and
                  #ebay-results-slot so results always render under the box that was searched. -->
+            <!-- The live sold-price lookup for the term typed above, run before the scan prices a
+                 single row against it — the same bar and the same step the eBay scanner has
+                 (#es-live). The rows below, Facebook and Craigslist alike, are then judged against
+                 comps fetched moments ago rather than whatever was last stored. -->
+            <div id="ls-live" class="mr-live hidden" role="status" aria-live="polite">
+              <div class="mr-live-head">
+                <span id="ls-live-stage" class="mr-live-stage">Starting…</span>
+                <span id="ls-live-elapsed" class="mr-live-elapsed"></span>
+              </div>
+              <div class="mr-live-track">
+                <div id="ls-live-bar" class="mr-live-bar"></div>
+              </div>
+              <div id="ls-live-note" class="mr-live-note"></div>
+            </div>
+
             <div id="local-results-slot"></div>
 
             <div id="fb-status" class="mr-status"></div>
@@ -5851,6 +5866,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=151"></script>
+  <script src="app.js?v=152"></script>
 </body>
 </html>

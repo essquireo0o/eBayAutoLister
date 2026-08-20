@@ -337,6 +337,37 @@ public class LiveCompsTests
         Assert.DoesNotContain("OnDemandCompsScraper scraper", program, StringComparison.Ordinal);
     }
 
+    // ── Waiting for a run on the server ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task FetchAsync_waits_for_the_lookup_and_hands_back_the_finished_run()
+    {
+        // The scan pipeline prices on the server and cannot poll like the browser does; this is how
+        // a Facebook feed gets the live half of the sold-comps path. Same Start, same rows filed,
+        // same call spent — it only waits.
+        using var world = new World();
+
+        var run = await world.Lookup.FetchAsync("antminer s19");
+
+        Assert.True(run.Finished);
+        Assert.Equal("ok", run.Outcome);
+        Assert.Equal(2, run.RowsFound);
+        Assert.Equal(1, world.Handler.Calls);
+        Assert.Equal(2, world.Store.StoredRowCount("antminer s19"));
+    }
+
+    [Fact]
+    public async Task FetchAsync_returns_a_refusal_at_once_without_spending_a_call()
+    {
+        using var world = new World { Enabled = false };
+
+        var run = await world.Lookup.FetchAsync("antminer s19");
+
+        Assert.True(run.Finished);
+        Assert.Equal("unavailable", run.Outcome);
+        Assert.Equal(0, world.Handler.Calls);
+    }
+
     // ── Scaffolding ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>One app's worth of live lookups: a stub API, a scratch comps table, a movable clock.</summary>

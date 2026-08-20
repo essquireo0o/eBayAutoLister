@@ -260,6 +260,17 @@ public class LocalArbitrageResult
     public int ProductsPriced { get; set; }        // distinct products, after grouping
     public int TerapeakScrapesUsed { get; set; }
     public bool TerapeakConnected { get; set; }
+
+    // ── The live half of the sold-comps path ─────────────────────────────────
+    // Every row is priced against stored sold comps first and, for the products that leaves thin,
+    // a live eBay sold-price lookup filed into the same database and re-read — the path the eBay
+    // scanner's rows always had and a Facebook Marketplace feed never did. How many lookups this
+    // scan spent (one API call each, off the same daily allowance the browser's own lookups use),
+    // how many products came back re-priced on the rows they filed, and — when the pass stopped
+    // early — the lookup's own sentence saying why. See Services/LiveCompsPass.cs.
+    public int LiveLookupsUsed { get; set; }
+    public int LiveLookupsRefreshed { get; set; }
+    public string LiveLookupNote { get; set; } = "";
     public bool SoldCompsConfigured { get; set; }
     // Set when neither pricing source can answer — the table would otherwise be
     // a column of dashes with no explanation.

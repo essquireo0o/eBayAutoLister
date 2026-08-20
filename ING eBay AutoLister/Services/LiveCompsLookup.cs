@@ -123,6 +123,35 @@ public sealed class LiveCompsLookup(
         return started;
     }
 
+    /// <summary>
+    /// Starts a lookup for <paramref name="query"/> and waits for it to finish, the way the
+    /// browser's poll loop does — for callers that price on the server and cannot poll.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is how a scan prices its rows against the SAME stored-plus-live path the browser
+    /// gives a single row: <see cref="Start"/> files the fresh sold rows into the comps database,
+    /// and the caller re-reads that database once this returns. Facebook Marketplace rows — a
+    /// whole feed of them, with no single search term the browser could look up first — were the
+    /// rows that never got the live half, because nothing server-side could wait for it.
+    /// </para>
+    /// <para>
+    /// Never throws for a lookup reason: every refusal comes back as the finished run it already
+    /// is. A refusal returns immediately; a real call returns when the API has answered or the
+    /// run's own <see cref="Timeout"/> has ended it. Only the caller's own cancellation propagates.
+    /// </para>
+    /// </remarks>
+    public async Task<LiveCompsRun> FetchAsync(string query, CancellationToken ct = default)
+    {
+        var run = Start(query);
+        // A little past the run's own timeout, which is what actually ends a slow call — this wait
+        // only exists so a run that somehow never flips Finished cannot hold a scan open forever.
+        var deadline = DateTimeOffset.UtcNow + Timeout + TimeSpan.FromSeconds(10);
+        while (!run.Finished && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        return run;
+    }
+
     private async Task RunAsync(LiveCompsRun run, long userId)
     {
         using var kill = new CancellationTokenSource(Timeout);

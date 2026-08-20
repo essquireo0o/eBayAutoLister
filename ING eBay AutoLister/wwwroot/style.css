@@ -15842,6 +15842,28 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   cursor: help;
 }
 
+/* The evidence line on a Today's Picks card: the same grade the deals board gives every eBay row
+   (Backed / Estimate / No sold data), the comps that priced it, and which database answered. A
+   card without this was a number with no way of knowing how far to believe it. */
+.fb-pick-evidence {
+  display: block; font-size: 10.5px; line-height: 1.3; margin-top: 2px;
+  font-weight: 700; letter-spacing: .01em;
+}
+.fb-pick-ev-confident { color: #16a34a; }
+.fb-pick-ev-low { color: #b45309; }
+.fb-pick-ev-none { color: var(--text-muted, #606e74); font-weight: 600; }
+
+/* The per-card live lookup — the board's "Get real sold price", on a card. It sits inside the card's
+   link, so it has to read as a button rather than as more of the link. */
+.fb-pick-live-btn {
+  display: inline-block; margin: 4px 0 2px; padding: 2px 8px;
+  font-size: 11px; line-height: 1.4; position: relative; z-index: 1;
+}
+.fb-pick-live-note { display: block; font-size: 10.5px; color: var(--text-muted, #606e74); font-style: italic; }
+
+/* The board summary's note when the live pass stopped early (allowance spent, lookup busy). */
+.fb-arb-live-summary-note { color: #b45309; }
+
 /* Update banner. Deliberately calm: an update is worth knowing about, not worth alarming
    someone mid-listing. Sits with the recovery banner at the top of the dashboard. */
 .update-banner {
