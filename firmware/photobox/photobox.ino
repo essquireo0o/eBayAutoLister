@@ -20,6 +20,7 @@
 //   GET /stream  -> multipart MJPEG (what the app's live view embeds)
 
 #include "esp_camera.h"
+#include "img_converters.h"   // frame2jpg: software JPEG for sensors without a hardware encoder
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -46,6 +47,8 @@
 Preferences prefs;
 WebServer server(80);
 bool cameraOk = false;
+bool jpegNative = true;     // false = the sensor has no JPEG encoder; frames get converted in software
+bool serverStarted = false; // the web server exists only once WiFi does — see startServerOnce()
 bool wifiUp = false;
 unsigned long lastBeacon = 0;
 
@@ -54,7 +57,7 @@ static void say(const String& line) {
   Serial0.println(line);  // CH340 (the port labelled UART/COM)
 }
 
-static bool initCamera() {
+static bool tryInitCamera(pixformat_t fmt) {
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0;
   c.ledc_timer   = LEDC_TIMER_0;
@@ -64,22 +67,33 @@ static bool initCamera() {
   c.pin_href = HREF_GPIO_NUM; c.pin_sccb_sda = SIOD_GPIO_NUM; c.pin_sccb_scl = SIOC_GPIO_NUM;
   c.pin_pwdn = PWDN_GPIO_NUM; c.pin_reset = RESET_GPIO_NUM;
   c.xclk_freq_hz = 20000000;
-  c.pixel_format = PIXFORMAT_JPEG;
-  // Product photos want the sharpest frame the RAM allows; PSRAM is soldered on
-  // this board, but a unit that arrives without it must still produce a picture.
-  if (psramFound()) {
-    c.frame_size   = FRAMESIZE_UXGA;   // 1600x1200
+  c.pixel_format = fmt;
+  if (fmt == PIXFORMAT_JPEG && psramFound()) {
+    c.frame_size   = FRAMESIZE_UXGA;   // 1600x1200 off the hardware encoder
     c.jpeg_quality = 10;
     c.fb_count     = 2;
     c.grab_mode    = CAMERA_GRAB_LATEST;
     c.fb_location  = CAMERA_FB_IN_PSRAM;
-  } else {
-    c.frame_size   = FRAMESIZE_SVGA;   // 800x600
+  } else if (fmt == PIXFORMAT_JPEG) {
+    c.frame_size   = FRAMESIZE_SVGA;
     c.jpeg_quality = 12;
     c.fb_count     = 1;
     c.fb_location  = CAMERA_FB_IN_DRAM;
+  } else {
+    // Raw RGB565: ~2 bytes a pixel, so the size is bounded by RAM rather than taste.
+    // SVGA in PSRAM is ~937KB a frame and converts to JPEG in software fast enough
+    // for a viewfinder; without PSRAM, QVGA is what fits.
+    c.frame_size   = psramFound() ? FRAMESIZE_SVGA : FRAMESIZE_QVGA;
+    c.fb_count     = psramFound() ? 2 : 1;
+    c.grab_mode    = CAMERA_GRAB_LATEST;
+    c.fb_location  = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
   }
-  if (esp_camera_init(&c) != ESP_OK) return false;
+  if (esp_camera_init(&c) != ESP_OK) {
+    // A failed init can leave the driver half-standing — and every camera call
+    // after that is the reboot loop this firmware once shipped with. Tear it down.
+    esp_camera_deinit();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
     s->set_vflip(s, 1);         // the Freenove module ships upside-down relative to its case
@@ -87,6 +101,27 @@ static bool initCamera() {
     s->set_saturation(s, 0);
   }
   return true;
+}
+
+// JPEG straight off the sensor when it has an encoder; raw RGB converted in
+// software when it doesn't (Freenove ships both kinds of module in this kit,
+// and "JPEG format is not supported on this sensor" was this exact board).
+static bool initCamera() {
+  if (tryInitCamera(PIXFORMAT_JPEG)) { jpegNative = true; return true; }
+  if (tryInitCamera(PIXFORMAT_RGB565)) {
+    jpegNative = false;
+    say("{\"status\":\"camera_soft_jpeg\"}");
+    return true;
+  }
+  return false;
+}
+
+// One frame as JPEG bytes whatever the sensor speaks. Returns false when there is
+// nothing to send; *ownedJpg is set when the buffer must be free()d by the caller.
+static bool frameAsJpeg(camera_fb_t* fb, uint8_t** buf, size_t* len, bool* ownedJpg) {
+  if (jpegNative) { *buf = fb->buf; *len = fb->len; *ownedJpg = false; return true; }
+  *ownedJpg = frame2jpg(fb, 85, buf, len);
+  return *ownedJpg;
 }
 
 // One JSON line in, credentials out. Tolerant of whitespace, intolerant of guesswork:
@@ -122,6 +157,7 @@ static void announceConnected() {
   MDNS.end();
   bool mdns = MDNS.begin("photobox");
   if (mdns) MDNS.addService("http", "tcp", 80);
+  startServerOnce();
   say(String("{\"status\":\"connected\",\"ip\":\"") + ip +
       (mdns ? "\",\"mdns\":\"photobox.local\"}" : "\"}"));
 }
@@ -136,10 +172,17 @@ static void handleJpg() {
   if (!cameraOk) { server.send(503, "text/plain", "camera not initialised"); return; }
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { server.send(503, "text/plain", "no frame"); return; }
+  uint8_t* jpg; size_t len; bool owned;
+  if (!frameAsJpeg(fb, &jpg, &len, &owned)) {
+    esp_camera_fb_return(fb);
+    server.send(503, "text/plain", "jpeg conversion failed");
+    return;
+  }
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.setContentLength(fb->len);
+  server.setContentLength(len);
   server.send(200, "image/jpeg", "");
-  server.client().write(fb->buf, fb->len);
+  server.client().write(jpg, len);
+  if (owned) free(jpg);
   esp_camera_fb_return(fb);
 }
 
@@ -152,13 +195,29 @@ static void handleStream() {
   while (client.connected()) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) break;
-    client.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", fb->len);
-    client.write(fb->buf, fb->len);
+    uint8_t* jpg; size_t len; bool owned;
+    if (!frameAsJpeg(fb, &jpg, &len, &owned)) { esp_camera_fb_return(fb); break; }
+    client.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", len);
+    client.write(jpg, len);
     client.print("\r\n");
+    if (owned) free(jpg);
     esp_camera_fb_return(fb);
     // ~12 fps is plenty for framing a product shot and keeps the board cool.
+    // (Software-converted sensors land lower on their own; the delay still bounds it.)
     delay(80);
   }
+}
+
+// The server exists only once WiFi does. Standing it up with the radio off is
+// how this firmware used to die: a socket over no netif asserted in FreeRTOS and
+// the board rebooted every three seconds, taking the serial setup down with it.
+static void startServerOnce() {
+  if (serverStarted) return;
+  server.on("/", handleRoot);
+  server.on("/jpg", handleJpg);
+  server.on("/stream", handleStream);
+  server.begin();
+  serverStarted = true;
 }
 
 static void pollSerial(Stream& port) {
@@ -186,6 +245,9 @@ void setup() {
   Serial0.setTimeout(200);
   delay(300);
 
+  // The radio exists before anything asks the network stack for a socket.
+  WiFi.mode(WIFI_STA);
+
   cameraOk = initCamera();
   if (!cameraOk) say("{\"status\":\"camera_failed\"}");
 
@@ -196,17 +258,12 @@ void setup() {
 
   if (ssid.length() > 0 && joinWifi(ssid, pass, 15000)) {
     wifiUp = true;
-    announceConnected();
+    announceConnected();   // starts the web server too — WiFi is up by then
   }
-
-  server.on("/", handleRoot);
-  server.on("/jpg", handleJpg);
-  server.on("/stream", handleStream);
-  server.begin();
 }
 
 void loop() {
-  server.handleClient();
+  if (serverStarted) server.handleClient();
   pollSerial(Serial);
   pollSerial(Serial0);
 
