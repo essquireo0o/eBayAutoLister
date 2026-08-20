@@ -7303,11 +7303,13 @@
         if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
         if (empty) empty.style.display = 'none';
         // Full-size mode is a loop of stills: the moment one lands, ask for the next. The
-        // camera spends ~10s making it, so this polls nothing — the encode IS the interval.
+        // camera spends a couple of seconds making each (measured ~2s with a healthy ribbon
+        // — the 10s frames were the loose cable forcing retries), so the encode IS the
+        // interval and this polls almost nothing.
         if (pbViewMode === 'full')
           pbFrameTimer = setTimeout(() => {
             if (seq === pbViewSeq && img.src) img.src = url + '/jpg?t=' + Date.now();
-          }, 1500);
+          }, 400);
       };
       // A dropped connection, not a missing camera — the server said reachable moments ago.
       // Say so and knock again in a beat, rather than leaving a broken-image glyph.
@@ -7331,7 +7333,7 @@
       // the shutter is never a mystery.
       empty.style.display = '';
       empty.textContent = pbViewMode === 'full'
-        ? 'Fetching a full-size frame — about ten seconds each. Switch to Fast for a small live preview.'
+        ? 'Fetching a full-size frame — a few seconds each. Switch to Fast for a small live preview.'
         : 'Warming up — first frame in a few seconds. This preview is small on purpose; snaps and Full size are the camera’s whole picture.';
     }
     pbWarmTimer = setTimeout(() => {
