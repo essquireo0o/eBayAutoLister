@@ -7265,16 +7265,86 @@
     const img = $('pb-stream');
     // Clearing src is what actually hangs up the MJPEG connection.
     if (img && img.src) img.src = '';
+    pbViewSeq++;   // any frame loop in flight stops itself
+    if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
+    if (pbFrameTimer) { clearTimeout(pbFrameTimer); pbFrameTimer = null; }
+  }
+
+  // The viewfinder's two truths, both from one small radio and one slow software encoder
+  // (this sensor has no hardware JPEG): full-size frames arrive about every ten seconds,
+  // and the fast preview is small. Rather than pick one and field "no picture" or "why is
+  // it 320x240" forever, the seller picks — and full size is the default, because a product
+  // shot is about detail, not motion. The other silent failure handled here: the camera
+  // serves exactly ONE stream viewer, so a second tab or a probe freezes whoever was
+  // watching before. Black is captioned while it is expected, a drop reconnects itself,
+  // and a long stall knocks again to take the slot back.
+  let pbWarmTimer = null;      // warming caption / retry / watchdog
+  let pbFrameTimer = null;     // the full-size mode's next-frame fetch
+  let pbViewSeq = 0;           // stale loops from a mode switch stop themselves
+  let pbViewMode = localStorage.getItem('pbViewMode') || 'full';
+
+  function pbSizeToggleLabel() {
+    const btn = $('pb-size-toggle');
+    if (btn) btn.textContent = pbViewMode === 'full' ? '🖼 Full size · slow' : '🎞 Fast · small';
   }
 
   function pbShowStream(url) {
     pbCameraUrl = url;
+    const seq = ++pbViewSeq;
     const img = $('pb-stream');
     const empty = $('pb-stream-empty');
-    // Port 81 is the stream's own door (the firmware keeps :80 free for /jpg and
-    // setup, so a held-open stream can never wedge the snap button again).
-    if (img) { img.src = url + ':81/stream?t=' + Date.now(); img.style.display = 'block'; }
-    if (empty) empty.style.display = 'none';
+    if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
+    if (pbFrameTimer) { clearTimeout(pbFrameTimer); pbFrameTimer = null; }
+    pbSizeToggleLabel();
+
+    if (img) {
+      img.onload = () => {
+        if (seq !== pbViewSeq) return;
+        if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
+        if (empty) empty.style.display = 'none';
+        // Full-size mode is a loop of stills: the moment one lands, ask for the next. The
+        // camera spends ~10s making it, so this polls nothing — the encode IS the interval.
+        if (pbViewMode === 'full')
+          pbFrameTimer = setTimeout(() => {
+            if (seq === pbViewSeq && img.src) img.src = url + '/jpg?t=' + Date.now();
+          }, 1500);
+      };
+      // A dropped connection, not a missing camera — the server said reachable moments ago.
+      // Say so and knock again in a beat, rather than leaving a broken-image glyph.
+      img.onerror = () => {
+        if (seq !== pbViewSeq || !img.src) return;   // a mode switch or hang-up is not an error
+        if (empty) { empty.style.display = ''; empty.textContent = 'The picture dropped — reconnecting…'; }
+        if (pbWarmTimer) clearTimeout(pbWarmTimer);
+        pbWarmTimer = setTimeout(() => { if (seq === pbViewSeq) pbShowStream(url); }, 4000);
+      };
+      // Full: the camera's own full-resolution frame endpoint, one still after another.
+      // Fast: the MJPEG preview on port 81, the stream's own door (the firmware keeps :80
+      // free for /jpg and setup, so a held-open stream can never wedge the snap button).
+      img.src = pbViewMode === 'full'
+        ? url + '/jpg?t=' + Date.now()
+        : url + ':81/stream?t=' + Date.now();
+      img.style.display = 'block';
+    }
+    if (empty) {
+      // Captioned black beats silent black: ten dark seconds with no words is a support
+      // question. Each mode's caption also says what the trade was, so the toggle beside
+      // the shutter is never a mystery.
+      empty.style.display = '';
+      empty.textContent = pbViewMode === 'full'
+        ? 'Fetching a full-size frame — about ten seconds each. Switch to Fast for a small live preview.'
+        : 'Warming up — first frame in a few seconds. This preview is small on purpose; snaps and Full size are the camera’s whole picture.';
+    }
+    pbWarmTimer = setTimeout(() => {
+      // Well past a frame's worth of patience: in fast mode the one viewing slot was
+      // probably taken by another tab. One knock takes it back.
+      if (seq === pbViewSeq && empty && empty.style.display !== 'none' && img) {
+        empty.textContent = 'Still waiting — knocking on the camera again…';
+        img.src = pbViewMode === 'full'
+          ? url + '/jpg?t=' + Date.now()
+          : url + ':81/stream?t=' + Date.now();
+      }
+    }, 30000);
+    $('pb-size-toggle')?.removeAttribute('disabled');
     $('pb-snap')?.removeAttribute('disabled');
     $('pb-open')?.removeAttribute('disabled');
     $('pb-forget')?.removeAttribute('disabled');
@@ -7421,6 +7491,11 @@
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
     $('pb-usb-check')?.addEventListener('click', pbCheckUsb);
+    $('pb-size-toggle')?.addEventListener('click', () => {
+      pbViewMode = pbViewMode === 'full' ? 'fast' : 'full';
+      localStorage.setItem('pbViewMode', pbViewMode);
+      if (pbCameraUrl) pbShowStream(pbCameraUrl); else pbSizeToggleLabel();
+    });
     $('pb-scan')?.addEventListener('click', pbScanPorts);
     $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);
