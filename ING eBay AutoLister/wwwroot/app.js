@@ -1200,10 +1200,23 @@
     // load, which reads as the site "redirecting" you away from the home page every time. So on a
     // fresh load we do NOT restore the section from the hash; we clear the stale hash and stay on
     // the dashboard. In-session navigation still sets the hash and still works — this only governs
-    // where an open/reload lands. Crash-recovered drafts still surface via the dashboard's recovery
+    // where an open lands. Crash-recovered drafts still surface via the dashboard's recovery
     // banner (loadRecoverableWork above), so nothing at risk is lost by not auto-opening #ai.
-    if (location.hash && location.hash !== '#dashboard')
+    //
+    // EXCEPT a refresh of the page the seller is on (2026-08-20: "when I refresh it goes to the
+    // homepage — have it go to the page I am on"). The browser tells the two apart: a navigation
+    // of type 'reload' (or back/forward) is F5 on a screen somebody was using, and losing that
+    // screen is the opposite of what a refresh means. A fresh open — bookmark, new tab, the tray
+    // icon, which arrives as type 'navigate' — still lands on the dashboard, as asked in August.
+    const navType = performance.getEntriesByType?.('navigation')?.[0]?.type || '';
+    const refreshedPage = location.hash.slice(1);
+    if (refreshedPage && refreshedPage !== 'dashboard'
+        && (navType === 'reload' || navType === 'back_forward')
+        && WORKSPACE_PAGES[refreshedPage]) {
+      handleNav(refreshedPage);
+    } else if (location.hash && location.hash !== '#dashboard') {
       history.replaceState(null, '', location.pathname + location.search);
+    }
   }
 
   // ── Theme ─────────────────────────────────────────────────────────────────────
