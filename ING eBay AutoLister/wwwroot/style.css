@@ -20287,3 +20287,47 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   position: static;
   padding: 18px;
 }
+
+/* ── Photo Box Camera ─────────────────────────────────────────────────────────
+   Same card language as the WhatsNot pass above: setup in one card, the
+   viewfinder in another, prose folded. The stream area is deliberately dark in
+   both themes — it is a camera's ground glass, not a panel. */
+.pb-card {
+  background: var(--card, var(--panel-2, rgba(255, 255, 255, .02)));
+  border: 1px solid var(--line, var(--border, #2a2f3a));
+  border-radius: 12px;
+  padding: 16px 18px 12px;
+  box-shadow: var(--e1, 0 1px 2px rgba(0, 0, 0, .12));
+  margin-bottom: 14px;
+}
+.pb-live-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.pb-live-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pb-stream-wrap {
+  position: relative;
+  background: #0b0e14;
+  border: 1px solid var(--line, var(--border, #2a2f3a));
+  border-radius: 10px;
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.pb-stream-wrap img {
+  display: none;
+  max-width: 100%;
+  max-height: 72vh;
+}
+.pb-stream-empty {
+  color: var(--text-dim, #8b93a7);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
