@@ -114,8 +114,16 @@ static bool tryInitCamera(pixformat_t fmt) {
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
     s->set_vflip(s, 1);         // the Freenove module ships upside-down relative to its case
-    s->set_brightness(s, 1);    // a photo box is bright; keep detail out of the highlights
-    s->set_saturation(s, 0);
+    // A photo box is BRIGHT. The old brightness=+1 pushed an already-clipping GC0308
+    // further over, and everything near a light smeared into purple noise. Neutral
+    // brightness, auto white balance and auto gain, saturation eased a notch: let the
+    // sensor's own loops fight the light instead of leaning into it.
+    s->set_brightness(s, 0);
+    s->set_saturation(s, -1);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_exposure_ctrl(s, 1);
     // Which module is actually on the ribbon — the one fact every remote
     // diagnosis of this board has had to guess at. Printed once, kept in /.
     say(String("{\"status\":\"sensor\",\"pid\":\"0x") + String(s->id.PID, HEX) + "\"}");
