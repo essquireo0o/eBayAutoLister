@@ -1,0 +1,155 @@
+# Queued by the owner, 2026-08-21. Three unrelated jobs; the two camera ones are related
+# to each other, the third is a deletion.
+#
+# CONTEXT FOR THE TWO CAMERA TASKS — read before starting either.
+#   The seller's iPhone is the photo-box camera, with the shutter on the DESKTOP.
+#   * Services/PhoneCapture.cs — a SEPARATE Kestrel listener on port 9443, HTTPS with a
+#     self-signed certificate the app makes for itself, gated by a random token that only
+#     appears in a QR code (Services/QrCode.cs). It is deliberately NOT a route on the main
+#     app: the desktop app has no password and holds the seller's eBay refresh token, so it
+#     stays on loopback. Do not move it.
+#   * The phone page (PageHtml, a raw string inside PhoneCapture.cs) opens getUserMedia,
+#     holds a Screen Wake Lock (re-taken on visibilitychange), posts a ~640px preview frame
+#     every second to /p/{token}/preview, and long-polls /p/{token}/poll. When the desktop
+#     presses Snap, that poll answers "shoot", the page grabs a full-resolution frame and
+#     POSTs it to /p/{token}/photo.
+#   * NOTE, 2026-08-21: a parallel session was midway through REMOVING the ESP32 USB board
+#     camera (PhotoBoxCamera.cs deleted, the flash/provision/ports endpoints gone, *.bak-usbremoval
+#     files left behind). Check the current state of the tree before you start. If the board
+#     camera is gone, the phone is the only camera and there is nothing to route between —
+#     do not resurrect it, and do not leave dead references to it.
+#
+#   In PageHtml, remember the raw-string escaping: it is $$""" ... """, so {{ }} interpolates
+#   and single braces are literal. JavaScript braces are fine as they are.
+
+tasks:
+  - prompt: |
+      Default the iPhone camera to its widest lens, and let the seller change it.
+
+      WHY: the owner tried the phone's zoom-out in the photo box and it is dramatically better
+      than anything else for staging a whole product with its accessories — the ultra-wide sees
+      the entire lightbox floor from a short distance. Right now the capture page asks for
+      `facingMode: environment` and takes whatever lens iOS hands over, which is the standard
+      wide, not the ultra-wide. The seller has to physically move the phone instead.
+
+      WHAT TO DO, in the PageHtml block of Services/PhoneCapture.cs:
+
+      1. After getUserMedia succeeds, read the real capability rather than guessing:
+         `track.getCapabilities()`, and when `zoom` is present apply
+         `track.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min }] })`. On iOS the
+         ultra-wide is exposed as zoom values below 1 on the virtual multi-camera device, so the
+         minimum IS the widest lens. Guard all of it — getCapabilities is absent in some
+         browsers and must never break the page.
+
+      2. Only if that finds no zoom range, fall back to
+         `navigator.mediaDevices.enumerateDevices()` and prefer a videoinput whose label
+         suggests the ultra-wide, reopening the stream with that deviceId. Do not run both paths.
+
+      3. Give the seller control ON THE PHONE PAGE: a small zoom slider or -/+ row bound to the
+         same applyConstraints call, defaulting to the minimum, with the wide end labelled
+         plainly ("widest"). Some items need the tighter lens; a default that cannot be
+         overridden is a worse camera.
+
+      4. The captured frame must use whichever lens is selected. shoot() draws from the same
+         <video>, so confirm that is still true and say so in a comment rather than assuming it.
+
+      5. Do NOT crop or scale on the desktop to fake a wider view. This is about which lens the
+         phone opens, not about the picture afterwards.
+
+      VERIFY: rebuild, restart, confirm the page still serves and still round-trips a photo.
+      The lens itself CANNOT be verified without the owner's phone — say that plainly in the
+      summary instead of claiming it was tested, and leave one sentence telling the owner what
+      to look for (the view should be noticeably wider the moment the camera starts). Run the
+      full test suite; it must stay green. Commit and push.
+    session: "photobox-phone-widest-lens"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 12
+    max_attempts: 3
+
+  - prompt: |
+      Let the phone record VIDEO as well as stills, in the same Photo Box flow.
+
+      WHY: the owner wants video of an item, not only photographs — for listings where movement
+      or condition is the point (a machine running, a scratch catching the light, a turn around
+      the product). The phone is already open on the item with the shutter on the desktop, so
+      the recording control belongs in the same place.
+
+      WHAT TO DO:
+
+      1. PHONE PAGE (PageHtml in Services/PhoneCapture.cs): add MediaRecorder over the existing
+         stream. Start and stop are driven by the DESKTOP, exactly like the shutter — extend the
+         /p/{token}/poll answer from a boolean to a small command ("shoot" | "record-start" |
+         "record-stop" | none) rather than adding a second poll loop, and keep the existing
+         shutter behaviour compatible so a stale page cannot break. Choose the mime type by
+         feature detection: prefer 'video/mp4' (Safari records mp4), fall back to 'video/webm'.
+         POST the finished blob to a new /p/{token}/video. Show elapsed time while recording.
+
+      2. SERVER (PhoneCapture.cs): accept the upload and save it beside the photos. Video is NOT
+         an image — do not push it through PhotoLibrary.SavePhotoAsync, whose extension
+         allow-list is images and whose callers assume they can render whatever they get. Use a
+         sibling folder under the same data home, return its url, cap the accepted size, and
+         refuse politely past the cap.
+
+      3. DESKTOP (Program.cs + wwwroot): a Record / Stop button beside Snap, enabled on the same
+         rule Snap uses (a connected phone is a working camera). Show elapsed time while
+         recording and make the state obvious. New endpoints under /api/photobox/phone/. When a
+         recording finishes, list it with a link that plays it.
+
+      4. LIMITS, said on screen BEFORE the seller starts, not after: long recordings are large
+         files over wifi. Pick a default maximum (60s is reasonable), stop automatically at it,
+         and never silently truncate.
+
+      5. eBay does not take a video file on a listing the way it takes photos, so do NOT wire
+         video into the AI Listing hand-off or imply it will be published. It is for the
+         seller's own record and for platforms that do accept video. Say so in one sentence.
+
+      VERIFY: prove the round trip the way the stills were proven — a scripted fake phone that
+      connects, is told to record, and posts a file back, with the desktop showing it. Run the
+      full suite; it must stay green. Commit and push.
+    session: "photobox-phone-video"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 8
+    max_attempts: 3
+    depends_on: ["photobox-phone-widest-lens"]
+
+  - prompt: |
+      Remove the Store Plan feature completely — the sidebar entry and its page.
+
+      WHY: the owner marked the whole screen with a cross and asked for it gone. It answers a
+      question eBay's own Store page already answers, and it changes nothing on eBay.
+
+      WHAT TO REMOVE (this is the full footprint; search for stragglers, do not trust this list
+      to be exhaustive):
+        * wwwroot/index.html — the nav button `data-page="storeplan"` (line ~137) and the whole
+          `<section id="storeplan-section">` (line ~4440).
+        * wwwroot/app.js — the WORKSPACE_PAGES entry `storeplan:`, and the functions
+          showStorePlanSection, bindStorePlan, loadStorePlan, loadStorePlanRates,
+          renderStorePlan, renderStorePlanHero, renderStorePlanRows, renderStorePlanRates,
+          renderStorePlanControls, renderStorePlanBillingWin — plus the bindStorePlan() call
+          and the 'storeplan-section' entry in OVERLAY_SECTIONS.
+        * wwwroot/style.css — any rules only that screen used.
+        * Program.cs — the endpoints /api/store-plan, /api/store-plan/rates,
+          /api/store-plan/settings, and their DI registrations.
+        * Services/StorePlanCatalog.cs and Services/StorePlanOptimizer.cs, plus any request or
+          response records only they used.
+        * Tests: StorePlanAssetTests.cs and StorePlanOptimizerTests.cs.
+
+      RULES:
+        * There is a test that every screen the router can open is also one hideOverlaySections()
+          can hide (WorkspaceTabsAssetTests). Removing a screen must leave BOTH lists consistent
+          — that test is the thing that will catch a half-removal, so let it.
+        * A tab the seller had open on that page must not strand the app on the next launch:
+          check how a saved/URL-hash route to a page that no longer exists behaves, and make it
+          fall back to the Dashboard rather than a blank screen.
+        * Leave no dead references — no orphan CSS, no unused icons, no nav gap, no leftover
+          entry in any page registry, no dangling settings key that only that screen wrote.
+        * Do not remove anything else that merely mentions a store: the fee/quota logic other
+          screens rely on is not part of this.
+
+      VERIFY: build, run the FULL test suite (it must be green), start the app and confirm the
+      sidebar no longer lists Store Plan, the remaining screens still open, and nothing in the
+      console complains. Commit and push.
+    session: "remove-store-plan"
+    working_dir: "C:/Users/nsquires/source/repos/ING eBay AutoLister"
+    priority: 10
+    max_attempts: 3
