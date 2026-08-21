@@ -870,12 +870,16 @@
                 <span id="nl-ai-msg">Analyzing with AI...</span>
               </div>
 
+              <!-- The AI is the whole product, and this box is the only place it reports back. It
+                   used to be small text with two `.small` buttons squeezed onto the same line, in a
+                   column narrow enough that the label wrapped mid-phrase — which read as nothing
+                   having happened. Full size, and the actions get their own row. -->
               <div id="nl-ai-done" class="nl-ai-done hidden">
                 <span class="nl-ai-check">✓</span>
-                <span>AI analysis complete — review and edit fields</span>
-                <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
-                  <button id="nl-btn-reanalyze" class="btn btn-ghost small" type="button">Re-analyze</button>
-                  <button id="nl-btn-improve-seo" class="btn btn-secondary small" type="button">Improve SEO + Description</button>
+                <span class="nl-ai-done-msg">AI analysis complete — review and edit the fields</span>
+                <div class="nl-ai-done-actions">
+                  <button id="nl-btn-reanalyze" class="btn btn-ghost" type="button">Re-analyze</button>
+                  <button id="nl-btn-improve-seo" class="btn btn-secondary" type="button">Improve SEO + Description</button>
                 </div>
               </div>
 

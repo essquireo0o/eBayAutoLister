@@ -2982,21 +2982,51 @@ textarea {
   background: rgba(255,255,255,.75);
   font-size: var(--fs-sm); color: var(--brand-ink-2);
 }
+/* ── What the AI is doing, and what it did ──────────────────────────────────
+   These two boxes are the only report the AI gives on this screen, and they used to be quiet
+   small-print in a narrow column: a 16px spinner and one line of --fs-sm while a vision call ran
+   for twenty seconds. It read as a screen that had stopped. Both are now full-size, and the
+   working state carries a moving bar as well as a spinner, because during a long call the one
+   question being asked is "is this still going?" */
 .nl-ai-status {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 13px;
+  padding: 17px 18px;
   border-radius: var(--r-md);
   background: var(--info-tint);
-  border: 1px solid var(--info-line);
+  border: 1.5px solid var(--info-line);
   color: var(--info);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+/* A bar that keeps travelling. A spinner alone can be mistaken for a stuck graphic; something
+   crossing the full width of the box cannot. */
+.nl-ai-status::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 38%;
+  background: var(--info);
+  opacity: .55;
+  border-radius: 3px;
+  animation: nl-ai-sweep 1.5s ease-in-out infinite;
+}
+@keyframes nl-ai-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(363%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nl-ai-status::after { animation: none; width: 100%; opacity: .3; }
 }
 .nl-ai-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--info-line);
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--info-line);
   border-top-color: var(--info);
   border-radius: 50%;
   animation: spin .7s linear infinite;
@@ -3005,16 +3035,37 @@ textarea {
 .nl-ai-done {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 11px;
+  padding: 17px 18px;
   border-radius: var(--r-md);
   background: var(--success-tint);
-  border: 1px solid var(--success-line);
+  border: 1.5px solid var(--success-line);
   color: var(--success);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
+  font-weight: 700;
   flex-wrap: wrap;
 }
-.nl-ai-check { font-size: var(--fs-lg); font-weight: 800; }
+.nl-ai-done-msg { flex: 1 1 auto; min-width: 0; }
+/* Their own row, sharing the width. Squeezed onto the message line in a narrow column, the longer
+   label broke across two lines mid-phrase and both buttons looked like debris. */
+/* Stacked, not side by side. This column is about 330px wide and "Improve SEO + Description" needs
+   most of that on its own — sharing the row made it overflow its own button. Two full-width buttons
+   read as two things you can press; two clipped ones read as damage. */
+.nl-ai-done-actions {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.nl-ai-done-actions .btn {
+  width: 100%;
+  min-height: 40px;
+  font-size: var(--fs-base);
+  font-weight: 700;
+  white-space: normal;
+}
+.nl-ai-check { font-size: var(--fs-2xl); font-weight: 800; line-height: 1; }
 .nl-ai-error {
   display: flex;
   align-items: flex-start;
