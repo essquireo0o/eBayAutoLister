@@ -7765,9 +7765,13 @@
     const link = $('pb-phone-url'); if (link) link.textContent = st.url || '';
     const state = $('pb-phone-state');
     if (state) {
+      // "Waiting" and "it stopped answering" are different problems with different fixes,
+      // and the second one is what a locked phone looks like from here.
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
-        : 'Waiting for the phone to open the page…';
+        : st.phoneWasConnected
+          ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
+          : 'Waiting for the phone to open the page…';
       state.className = 'pb-phone-state ' + (st.phoneConnected ? 'wn-video-ok' : 'wn-video-busy');
     }
 

@@ -38,7 +38,11 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// <summary>Where the phone connects. Deliberately not 9332: that port is the app's alone.</summary>
     public const int Port = 9443;
 
-    /// <summary>A session that has heard nothing from a phone in this long has been abandoned.</summary>
+    /// <summary>
+    /// A session that has heard nothing from a phone in this long has been abandoned, and the
+    /// port closes. A phone that is actually there says something every second, so this can only
+    /// fire on a session the seller has walked away from — never on one in use.
+    /// </summary>
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -56,10 +60,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     // a preview is not a photograph and has no business in the photo library.
     private byte[]? _preview;
     private DateTimeOffset _previewAt;
+    // Qualified: the desktop build also has WinForms in scope, and its Timer is a different animal.
+    private System.Threading.Timer? _idleSweep;
 
     public sealed record Status(
         bool Running, string? Url, bool PhoneConnected, int ShotCount, string[] Shots, string? QrSvg, string? Detail,
-        bool HasPreview = false);
+        bool HasPreview = false, bool PhoneWasConnected = false);
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -70,7 +76,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         if (_app is null) return new(false, null, false, 0, [], null, null);
         var url = PublicUrl;
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
-                   _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null);
+                   _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null,
+                   _phoneEverConnected);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -127,6 +134,14 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             await web.StartAsync(ct);
             _app = web;
 
+            _idleSweep?.Dispose();
+            _idleSweep = new System.Threading.Timer(_ =>
+            {
+                if (_app is null || DateTimeOffset.UtcNow - _lastSeen <= IdleTimeout) return;
+                log.Add("Info", "Phone camera closed", $"no phone for {IdleTimeout.TotalMinutes:0} minutes");
+                _ = StopAsync();
+            }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+
             log.Add("Info", "Phone camera ready", PublicUrl);
             return Snapshot();
         }
@@ -145,6 +160,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         await _gate.WaitAsync();
         try
         {
+            _idleSweep?.Dispose();
+            _idleSweep = null;
             if (_app is null) return;
             // Anything still waiting on the shutter is told no, so a phone hung up on mid-poll
             // does not sit there holding a request that will never be answered.
@@ -316,6 +333,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           button{margin-top:16px;padding:14px 22px;font-size:16px;font-weight:600;border:0;border-radius:10px;
                  background:#c79a36;color:#241703}
           .count{margin-top:12px;font-size:14px;color:#9fb9bd}
+          .awake{margin-top:6px;font-size:12px;color:#6f8b90}
+          .awake.warn{color:#f0d79a}
           .flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .18s}
         </style></head>
         <body>
@@ -324,6 +343,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           <video id="v" playsinline muted autoplay></video>
           <div class="status busy" id="s">Starting the camera…</div>
           <div class="count" id="c"></div>
+          <div class="awake" id="awake"></div>
           <button id="start">Allow camera</button>
           <canvas id="cv" style="display:none"></canvas>
           <div class="flash" id="fl"></div>
@@ -332,9 +352,47 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         const v = document.getElementById('v'), cv = document.getElementById('cv');
         const s = document.getElementById('s'), c = document.getElementById('c');
         const startBtn = document.getElementById('start'), fl = document.getElementById('fl');
-        let taken = 0, running = false;
+        const awakeEl = document.getElementById('awake');
+        let taken = 0, running = false, wakeLock = null;
 
         function say(t, cls) { s.textContent = t; s.className = 'status ' + (cls || ''); }
+
+        // ── Keeping the phone awake ────────────────────────────────────────────────
+        // An iPhone locks its screen after thirty seconds, and a locked screen suspends
+        // this page: the camera stops, the shutter on the computer finds nobody home, and
+        // the seller is left pressing Snap at a dead link. The Screen Wake Lock API is the
+        // supported way to say "I am a camera, stay on" — iOS has had it since 16.4. It is
+        // dropped every time the page is backgrounded, so it has to be taken again on the
+        // way back rather than once at the start.
+        async function keepAwake() {
+          if (!('wakeLock' in navigator)) {
+            awakeEl.textContent = 'This phone cannot hold its own screen awake — set Settings → Display & Brightness → Auto-Lock to Never while you photograph.';
+            awakeEl.className = 'awake warn';
+            return;
+          }
+          try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            awakeEl.textContent = 'Screen held awake while this page is open.';
+            awakeEl.className = 'awake';
+            wakeLock.addEventListener('release', () => { wakeLock = null; });
+          } catch (e) {
+            awakeEl.textContent = 'Could not hold the screen awake (' + e.name + '). Set Auto-Lock to Never while you photograph.';
+            awakeEl.className = 'awake warn';
+          }
+        }
+
+        // Coming back from a lock, an app switch or an incoming call: retake the wake lock,
+        // and restart the camera if the browser stopped it while we were away. Without this
+        // the page looks fine on return and quietly never sends another frame.
+        document.addEventListener('visibilitychange', async () => {
+          if (document.visibilityState !== 'visible' || !running) return;
+          await keepAwake();
+          try {
+            const live = v.srcObject && v.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+            if (!live) { running = false; await begin(); return; }
+            if (v.paused) await v.play();
+          } catch (e) { say('Tap Allow camera to start again.', 'bad'); startBtn.style.display = ''; }
+        });
 
         async function begin() {
           try {
@@ -348,6 +406,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             await v.play();
             startBtn.style.display = 'none';
             running = true;
+            await keepAwake();
             say('Ready — press Snap on your computer.', 'ok');
             poll();
             preview();
