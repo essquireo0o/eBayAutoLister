@@ -38,14 +38,20 @@
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
     seller who picked dark would get a full white page first and then a flash to
-    dark on every single load. Stored choice wins; "system" (the default) reads
-    the OS. app.js takes it from here — see initTheme().
+    dark on every single load.
+
+    The default is LIGHT, not "match the OS". This app is a workbench somebody
+    photographs products against and reads prices off, and it should open clean and
+    bright the way a sheet of paper does — not hand a seller a dark screen because
+    their laptop happened to be set that way. Dark and "match system" are both still
+    one click away in the header; they are choices now rather than an accident.
+    Stored choice always wins. app.js takes it from here — see initTheme().
   -->
   <script>
     (function () {
       var stored = null;
       try { stored = localStorage.getItem('ingTheme'); } catch (e) { /* private mode */ }
-      var choice = (stored === 'light' || stored === 'dark') ? stored : 'system';
+      var choice = (stored === 'light' || stored === 'dark' || stored === 'system') ? stored : 'light';
       var dark = choice === 'dark' || (choice === 'system' && window.matchMedia
         && window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');

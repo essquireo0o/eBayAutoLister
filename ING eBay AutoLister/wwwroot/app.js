@@ -1264,11 +1264,11 @@
 
   function readThemeChoice() {
     const choice = document.documentElement.getAttribute('data-theme-choice');
-    return THEME_ORDER.includes(choice) ? choice : 'system';
+    return THEME_ORDER.includes(choice) ? choice : 'light';
   }
 
   function applyTheme(choice) {
-    if (!THEME_ORDER.includes(choice)) choice = 'system';
+    if (!THEME_ORDER.includes(choice)) choice = 'light';
     const root = document.documentElement;
     const dark = choice === 'dark' || (choice === 'system' && !!systemDarkQuery?.matches);
 
@@ -1280,11 +1280,11 @@
 
     root.setAttribute('data-theme', dark ? 'dark' : 'light');
     root.setAttribute('data-theme-choice', choice);
-    // 'system' is the absence of a choice, so it is stored as the absence of a key —
-    // which is also what the head script reads it back as.
+    // Every choice is stored, 'system' included. It used to be the absence of a key, which worked
+    // while 'system' WAS the default — now that the default is light, storing nothing would mean
+    // light, and a seller who deliberately asked to follow their OS would silently stop doing so.
     try {
-      if (choice === 'system') localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, choice);
+      localStorage.setItem(THEME_KEY, choice);
     } catch { /* private mode: the choice lasts the session */ }
 
     renderThemeSwitch(choice);
@@ -3292,6 +3292,7 @@
     // numbers landed. The placeholder tiles stay up instead, and what replaces them is the
     // finished thing: priced, graded and already in its final order.
     const rows = await priceFacebookPicks(data);
+    await aiEstimateUnpricedPicks(data.items, rows);
     renderFacebookPicks(data.items, rows);
   }
 
@@ -3357,6 +3358,20 @@
     const liveNote = row.__liveNote ? `<span class="fb-pick-live-note">${esc(row.__liveNote)}</span>` : '';
 
     if (!ev.priceable) {
+      // No sold comp matched — so the AI's read of the wider resale market stands in, clearly
+      // labelled as the guess it is. The profit is arithmetic on that guess: the asking price
+      // and the fees are facts, only the resale figure is estimated, and the chip says so.
+      const ai = row.__aiEstimate;
+      if (ai && ai.mid > 0) {
+        const guessProfit = row.__aiProfit != null ? row.__aiProfit : null;
+        return `<span class="fb-pick-profit is-ai">~${money(ai.mid)}</span>` +
+          `<span class="fb-pick-comp">could sell ${money(ai.low)}–${money(ai.high)}` +
+            `${ai.basis ? ` · ${esc(ai.basis)}` : ''}</span>` +
+          `<span class="fb-pick-evidence fb-pick-ev-ai" ` +
+            `title="No sold listing matched this item, so this is the AI's estimate from what things like it fetch across eBay, Mercari, Marketplace and auctions. Treat it as a starting point, not a price.">` +
+            `AI estimate</span>` +
+          liveBtn + liveNote;
+      }
       // Said once, in the evidence line's own voice, with the lookup that can change it underneath.
       return `<span class="fb-pick-evidence fb-pick-ev-none" title="${esc(row.evidenceNote || '')}">${esc(ev.word)}${source ? ` · ${source}` : ''}</span>` +
         liveBtn + liveNote;
@@ -3508,6 +3523,43 @@
     }
 
     return data.items;
+  }
+
+  /**
+   * Everything the comps could not price, sent to the AI in one call.
+   *
+   * "No sold data" is true and useless: the seller still has to decide whether this is worth
+   * driving across town for, and a rough number they can argue with beats no number at all. The
+   * answers are written onto the rows as __aiEstimate and never anywhere else — an AI guess can
+   * never lift a row's grade, and a comp-backed price always outranks it. One call for the whole
+   * board, so it costs one generation and a few seconds rather than forty of each.
+   */
+  async function aiEstimateUnpricedPicks(items, rows) {
+    const byId = new Map();
+    for (const row of rows || []) if (row && row.itemId) byId.set(String(row.itemId), row);
+
+    const need = [];
+    for (const item of items || []) {
+      const row = byId.get(String(item.itemId || ''));
+      if (!row || facebookPickEvidence(row).priceable) continue;   // comps already answered
+      need.push({ itemId: String(item.itemId || ''), title: item.title || '',
+                  askingPrice: item.price ?? null, condition: item.condition || '' });
+    }
+    if (!need.length) return;
+
+    const note = $('fb-picks-status');
+    if (note) note.textContent = `Pricing the last ${need.length} from what these sell for across the wider resale market…`;
+
+    try {
+      const { data } = await localFetchJson('/api/local/ai-estimate', 180000, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: need })
+      });
+      for (const est of (data && data.estimates) || []) {
+        const row = byId.get(String(est.itemId || ''));
+        if (row) row.__aiEstimate = est;
+      }
+    } catch { /* a board with fewer numbers on it, not a broken one */ }
   }
 
   /**
