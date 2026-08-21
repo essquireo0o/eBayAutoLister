@@ -25693,7 +25693,12 @@
   }
 
   // Loads a description into all three tabs and returns the field to the readable default.
-  // Opening a listing should read like a listing, not like its source.
+  //
+  // That default is PREVIEW — what the buyer will actually see. It used to be Edit Text, which
+  // meant the first thing shown after the AI wrote a listing was a box of source to proofread
+  // rather than the thing itself. Both editors are one click away and neither loses anything:
+  // the HTML field is still the only value ever saved, and descCommitText banks pending text
+  // edits on the way out of the tab.
   function descSetHtml(prefix, html) {
     const ids = descIds(prefix);
     const value = html || '';
@@ -25701,10 +25706,10 @@
     if ($(ids.text)) $(ids.text).value = nlHtmlToText(value);
     descTextDirty.delete(prefix);   // freshly loaded, not edited
     descTabBar(prefix)?.querySelectorAll('.desc-tab')
-      .forEach(t => t.classList.toggle('active', t.dataset.descTab === 'text'));
+      .forEach(t => t.classList.toggle('active', t.dataset.descTab === 'preview'));
     $(ids.editWrap)?.classList.add('hidden');
-    $(ids.textWrap)?.classList.remove('hidden');
-    $(ids.prevWrap)?.classList.add('hidden');
+    $(ids.textWrap)?.classList.add('hidden');
+    $(ids.prevWrap)?.classList.remove('hidden');
     descSyncPreview(prefix);
     descUpdateCount(prefix);
   }

@@ -1015,18 +1015,18 @@
                   <summary>Description</summary>
                   <div class="field">
                     <div class="desc-tab-bar" data-desc-prefix="nl">
-                      <button class="desc-tab active" data-desc-tab="text" type="button">Edit Text</button>
+                      <button class="desc-tab" data-desc-tab="text" type="button">Edit Text</button>
                       <button class="desc-tab" data-desc-tab="edit" type="button">Edit HTML</button>
-                      <button class="desc-tab" data-desc-tab="preview" type="button">Preview</button>
+                      <button class="desc-tab active" data-desc-tab="preview" type="button">Preview</button>
                       <span class="desc-tab-hint">eBay-safe HTML &nbsp;<span class="char-count" id="nl-desc-count">0 / 9,000</span></span>
                     </div>
                     <div id="nl-desc-edit-wrap" class="hidden">
                       <textarea id="nl-description" rows="10" placeholder="Full listing description. HTML is supported and rendered live in Preview."></textarea>
                     </div>
-                    <div id="nl-desc-text-wrap">
+                    <div id="nl-desc-text-wrap" class="hidden">
                       <textarea id="nl-desc-text" rows="10" placeholder="Edit as plain text. Headings, bullet points, and styling are preserved when switching back to HTML."></textarea>
                     </div>
-                    <div id="nl-desc-preview-wrap" class="hidden">
+                    <div id="nl-desc-preview-wrap">
                       <div id="nl-desc-preview" class="nl-desc-preview"></div>
                     </div>
                   </div>
@@ -5076,18 +5076,18 @@
               <!-- Same three tabs as the New Listing form, driven by the same code (initDescTabs).
                    Opening a listing used to drop the seller straight into the raw markup. -->
               <div class="desc-tab-bar" data-desc-prefix="f">
-                <button class="desc-tab active" data-desc-tab="text" type="button">Edit Text</button>
+                <button class="desc-tab" data-desc-tab="text" type="button">Edit Text</button>
                 <button class="desc-tab" data-desc-tab="edit" type="button">Edit HTML</button>
-                <button class="desc-tab" data-desc-tab="preview" type="button">Preview</button>
+                <button class="desc-tab active" data-desc-tab="preview" type="button">Preview</button>
                 <span class="desc-tab-hint">eBay-safe HTML &nbsp;<span class="char-count" id="f-desc-count">0 / 9,000</span></span>
               </div>
               <div id="f-desc-edit-wrap" class="hidden">
                 <textarea id="f-description" rows="10" placeholder="Full listing description. HTML is supported and rendered live in Preview."></textarea>
               </div>
-              <div id="f-desc-text-wrap">
+              <div id="f-desc-text-wrap" class="hidden">
                 <textarea id="f-desc-text" rows="10" placeholder="Edit as plain text. Headings, bullet points, and styling are preserved when switching back to HTML."></textarea>
               </div>
-              <div id="f-desc-preview-wrap" class="hidden">
+              <div id="f-desc-preview-wrap">
                 <div id="f-desc-preview" class="nl-desc-preview"></div>
               </div>
             </div>

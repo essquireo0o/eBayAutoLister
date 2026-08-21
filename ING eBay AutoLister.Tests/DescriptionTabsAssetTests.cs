@@ -40,10 +40,12 @@ public class DescriptionTabsAssetTests
     [InlineData("nl")]
     public void TheReadableTabIsTheOneThatOpens(string prefix)
     {
-        // The whole point of the change: raw HTML is a tab you can reach, not the tab you land on.
+        // Raw HTML is a tab you can reach, not the tab you land on — and the tab you land on is now
+        // Preview, the thing the buyer will actually see. Landing on an editor meant the first sight
+        // of an AI-written description was a box of source to proofread rather than the listing.
         var active = Regex.Match(TabBar(prefix), "<button class=\"desc-tab active\" data-desc-tab=\"([a-z]+)\"");
         Assert.True(active.Success, $"no tab is marked active in the {prefix}- description tab bar");
-        Assert.Equal("text", active.Groups[1].Value);
+        Assert.Equal("preview", active.Groups[1].Value);
     }
 
     [Theory]
@@ -52,10 +54,12 @@ public class DescriptionTabsAssetTests
     public void TheRawHtmlBoxIsHiddenBehindItsTabAndTheReadableOneIsNot(string prefix)
     {
         // Each editor lives in its own wrapper, and it is the wrapper's `hidden` class that decides
-        // what the drawer shows first. The HTML wrapper starts hidden; the text wrapper does not.
+        // what the drawer shows first. Both editors start hidden; the preview does not. The markup
+        // and descSetHtml have to agree — if only one of them moved, the drawer would paint one tab
+        // as active while showing another.
         Assert.Contains($"""<div id="{prefix}-desc-edit-wrap" class="hidden">""", Html, StringComparison.Ordinal);
-        Assert.Contains($"""<div id="{prefix}-desc-preview-wrap" class="hidden">""", Html, StringComparison.Ordinal);
-        Assert.Contains($"""<div id="{prefix}-desc-text-wrap">""", Html, StringComparison.Ordinal);
+        Assert.Contains($"""<div id="{prefix}-desc-text-wrap" class="hidden">""", Html, StringComparison.Ordinal);
+        Assert.Contains($"""<div id="{prefix}-desc-preview-wrap">""", Html, StringComparison.Ordinal);
 
         // And all three views are actually there to switch between.
         foreach (var id in new[] { $"{prefix}-description", $"{prefix}-desc-text", $"{prefix}-desc-preview" })
