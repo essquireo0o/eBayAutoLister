@@ -121,34 +121,32 @@
       </div>
       <nav class="nav-list" aria-label="Primary">
         <p class="nav-group-label">Sell</p>
+        <!-- Ordered by how often a seller opens it, not by how the code grew (2026-08-21, the
+             owner: "put the most important stuff towards the top — think about the user"). The
+             top of this list is one item's journey — photograph it, let the AI write it, watch it
+             go live — because that loop runs many times a day. Everything that reports on money
+             already made runs monthly, so it sits at the bottom where a monthly job belongs. -->
         <button class="nav-item active" type="button" data-page="dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</button>
-        <!-- The one screen that reports money already in the bank rather than money forecast. It
-             sits with Sell, above the tools, because it is the answer to "is any of this working". -->
-        <button class="nav-item" type="button" data-page="earnings"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Money Made</button>
-        <!-- Directly under Money Made, because it is the second half of that sentence: what you
-             made, and how much of it was never yours. Sellers who never open it once a year are the
-             ones who overpay, so it sits in the nav rather than behind a link on the earnings page. -->
-        <button class="nav-item" type="button" data-page="tax"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Tax Pack</button>
-        <!-- The third of the three "what do you actually keep" screens, and the only one that costs
-             money whether the seller sells anything or not. It sits beside Money Made and the Tax
-             Pack rather than under the sourcing tools because it is not a tool — it is a bill, it
-             arrives every month, and most sellers chose their tier once at a listing count they no
-             longer have. Nothing else on this list can be fixed in one click and never revisited. -->
-        <!-- The thread between every other screen: one flip from the forecast that justified it to
-             the sale that settled it. Next to Money Made because between them they answer "what
-             have I made" and "what's still out there" — the two halves of the same question. -->
-        <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
-        <button class="nav-item" type="button" data-page="copilot"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>Listing Copilot</button>
-        <!-- Two doors, one screen: both open the AI Listing tab, and the door you took presets
-             the marketplace switch in its footer. The draft is one draft either way — see the
-             switch itself in the new-listing footer. -->
+        <!-- The two doors on the one screen that turns a photo into a finished listing. This is
+             what the app is for, so nothing sits above it but the way home. The door taken presets
+             the marketplace switch in the listing's footer; the draft is one draft either way. -->
         <button class="nav-item" type="button" data-page="ebay"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing eBay</button>
         <button class="nav-item" type="button" data-page="amazon"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing Amazon</button>
-        <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
-        <!-- Desktop only (wn-desk): the camera plugs into the machine the app runs on,
-             and the hosted build has no USB port to find it on. -->
+        <!-- Above the library because it comes first in the real world: the photograph has to be
+             taken before there is anything to file. Desktop only (wn-desk) — the phone reaches the
+             capture page over the seller's own network, which a hosted server never shares. -->
         <button class="nav-item wn-desk" type="button" data-page="photobox"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Box Camera</button>
-
+        <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
+        <!-- What is live now, and the tool that improves it. Daily, but only after something has
+             been listed — so directly under the listing loop rather than inside it. -->
+        <button class="nav-item" type="button" data-page="listings"><svg class="nav-icon" aria-hidden="true"><use href="#i-listings"/></svg>Listings</button>
+        <button class="nav-item" type="button" data-page="copilot"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>Listing Copilot</button>
+        <!-- The two "what did I actually keep" screens, kept together and kept last. Money Made
+             reports money already in the bank; the Tax Pack is the second half of that sentence —
+             what you made, and how much of it was never yours. Both are read at the end of a month,
+             not in the middle of listing an item, and a nav is a record of what you do most. -->
+        <button class="nav-item" type="button" data-page="earnings"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Money Made</button>
+        <button class="nav-item" type="button" data-page="tax"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Tax Pack</button>
         <p class="nav-group-label">Grow</p>
         <!-- Live-feed sourcing: an embedded browser on a live-selling feed (Whatnot etc.), so the
              seller can price what's on screen against real eBay costs without leaving the app. The
