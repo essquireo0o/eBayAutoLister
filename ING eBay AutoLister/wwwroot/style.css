@@ -2517,43 +2517,15 @@ textarea {
 .nl-action-how    { font-size: var(--fs-xs); color: var(--muted); margin: 0; }
 .nl-action-why    { font-size: var(--fs-sm); font-weight: 700; margin: 2px 0 8px; color: var(--brand-ink-2); }
 .nl-action-row    { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.nl-action-card--assistant .nl-action-why { color: var(--accent-600); }
 .nl-action-card--hero      .nl-action-why { color: var(--gold-ink); }
-/* The one way in. It used to wear a 4px glow ring and a badge because it was competing with three
-   cards beside it; with those folded away it is the only thing on the screen and does not need to
-   shout to be found. A quiet border and the one gold button are enough. */
+/* Hero card (AI Product Research) — the headline feature, made impossible to miss */
 .nl-action-card--hero {
-  background: var(--warning-tint);
-  border: 1.5px solid var(--gold);
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
-  padding: 22px 24px 20px;
+  background: linear-gradient(135deg, var(--warning-tint) 0%, var(--warning-tint) 100%);
+  border: 2px solid var(--gold);
+  box-shadow: 0 0 0 4px rgba(199,154,54,.12), 0 10px 26px rgba(199,154,54,.2);
+  padding: 20px 22px 18px;
 }
-.nl-action-card--hero .nl-action-why { font-weight: 500; color: var(--muted); max-width: 62ch; }
-
-/* ── The ways in that are not the usual way in ──────────────────────────────
-   Present, one click away, and silent until asked for. Remembered open for whoever lives in them. */
-.nl-more { margin-top: 14px; }
-.nl-more-summary {
-  cursor: pointer;
-  list-style: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--muted);
-  padding: 6px 2px;
-  transition: color var(--dur-1);
-}
-.nl-more-summary::-webkit-details-marker { display: none; }
-.nl-more-summary::before {
-  content: '›';
-  font-size: var(--fs-md);
-  line-height: 1;
-  transition: transform var(--dur-1);
-}
-.nl-more[open] .nl-more-summary::before { transform: rotate(90deg); }
-.nl-more-summary:hover { color: var(--ink); }
-.nl-more[open] .nl-action-grid { margin-top: 10px; }
 .nl-action-card--hero .nl-action-icon  { font-size: var(--fs-3xl); }
 .nl-action-card--hero .nl-action-title { font-size: var(--fs-xl); }
 .nl-action-card--hero .nl-action-how   { font-size: var(--fs-base); color: var(--ink); font-weight: 600; margin-top: 2px; }
@@ -2603,9 +2575,7 @@ textarea {
 }
 .nl-url-go:hover    { opacity: .85; }
 .nl-url-go:disabled { opacity: .5; cursor: default; }
-/* Every start button is the same colour on purpose. Gold, teal and purple side by side made three
-   equal claims on the eye and none of them won — colour here should say "this is the action", not
-   "this is a different feature". The one gold button is the hero's. */
+.nl-bulk-go  { background: var(--teal-700) !important; }
 .nl-quickfill-go   { background: var(--gold) !important; color: var(--on-gold) !important; }
 .nl-quickfill-go:hover   { opacity: .88; }
 .nl-quickfill-go.loading { opacity: .6; cursor: wait; }
@@ -2809,6 +2779,10 @@ textarea {
 }
 .nl-ai-modify-input:focus { border-color: var(--accent-600) !important; }
 .nl-ai-modify-input::placeholder { color: var(--pale-accent); }
+.nl-ai-modify-go {
+  background: var(--accent-600) !important;
+  color: var(--on-solid) !important;
+}
 .nl-ai-modify-go:hover   { opacity: .88; }
 .nl-ai-modify-go.loading { opacity: .6; cursor: wait; }
 /* The modal's one scroller: everything between the pinned header and the pinned footer.
@@ -18530,3 +18504,74 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   font-size: var(--fs-xs); color: var(--muted); opacity: .8;
 }
 #whatsnot-section .wn-blocked-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+/* ── Photo Box: the rail's QR, and the deck under the stage ────────────────────
+   The QR panel was built for a full-width card: a 190px code beside its instructions, side by
+   side. Moved into the 340px rail that row had ~60px left for the words, so "Scan this with
+   your iPhone" came out one word per line and the four steps rendered as a ribbon of single
+   syllables. In a column it has the whole width for both. */
+#photobox-section .pb-rail .pb-phone-panel {
+  display: block;
+  padding: 14px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+#photobox-section .pb-rail .pb-phone-qr {
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto 14px;
+  padding: 10px;
+  border-radius: var(--r-md, 10px);
+}
+#photobox-section .pb-rail .pb-phone-qr svg { width: min(190px, 100%); height: auto; }
+#photobox-section .pb-rail .pb-phone-words { min-width: 0; }
+#photobox-section .pb-rail .pb-phone-words h3 { font-size: var(--fs-sm); color: var(--ink); margin-bottom: 8px; }
+#photobox-section .pb-rail .pb-phone-words ol { margin: 0 0 10px 18px; padding: 0; }
+#photobox-section .pb-rail .pb-phone-words li { margin-bottom: 6px; line-height: 1.55; }
+#photobox-section .pb-rail .pb-phone-link { margin-bottom: 8px; }
+
+/* The stage, empty, is an invitation rather than a void: the camera says what it is waiting
+   for, and the glyph gives the eye somewhere to land in a very large dark rectangle. */
+#photobox-section .pb-stage {
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--gold) 6%, transparent) 0%, transparent 60%),
+    #05171a;
+}
+#photobox-section .pb-stream-empty {
+  flex-direction: column;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  padding: 32px;
+}
+#photobox-section .pb-stream-empty::before {
+  content: "📷";
+  font-size: 42px;
+  line-height: 1;
+  opacity: .4;
+  filter: grayscale(1);
+}
+
+/* Zoom and the shutter are one instrument, so they read as two halves of a deck under the
+   stage rather than two rows of loose controls on the page background. */
+#photobox-section .pb-zoombar,
+#photobox-section .pb-shutter-row,
+#photobox-section .pb-actions {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 14px);
+  padding: 12px 14px;
+}
+#photobox-section .pb-zoombar { gap: 12px; }
+#photobox-section .pb-zoombar::before {
+  content: "Zoom";
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+#photobox-section .pb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* The rail's cards carry the same weight as the deck, so the two columns look like one screen. */
+#photobox-section .pb-rail-card { background: var(--panel); }
+#photobox-section .pb-rail-status { font-size: var(--fs-sm); color: var(--muted); }
+#photobox-section .pb-tips li { margin-bottom: 7px; }

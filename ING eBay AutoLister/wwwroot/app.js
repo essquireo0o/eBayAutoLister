@@ -1404,12 +1404,7 @@
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
     // No sidebar button of its own since the eBay/Amazon doors below replaced it, so like the
     // hidden five further down it carries its own tab label.
-    // onShow, not just open: coming back to an already-loaded tab deliberately skips open() so a
-    // finished scan is not thrown away and re-charged. That means anything which must be true on
-    // EVERY arrival has to hang here — including shutting "Other ways to start", which otherwise
-    // stays open from a previous visit and brings the old four-card wall back with it.
     ai:          { section: 'new-listing-overlay',   open: showAiSection,
-                   onShow: nlShutMoreWays,
                    title: 'AI Listing',              icon: '#i-ai' },
     // Doors, not screens: either AI Listing sidebar entry lands on the one 'ai' tab above and
     // presets the marketplace switch in the listing footer. A page of their own would be a
@@ -1797,20 +1792,6 @@
     activeWorkspaceTabId = home.id;
     bindWorkspaceTabs();
     renderWorkspaceTabs();
-  }
-
-  /// Shut "Other ways to start", every single time the listing screen is arrived at.
-  ///
-  /// This used to remember being open, on the theory that somebody who lives in bulk import
-  /// shouldn't have to keep clicking. What actually happened: opening it once brought the old
-  /// four-card wall back permanently, and the screen looked like it had reverted itself. A fold
-  /// that stays open is not a fold. The element also survives in the DOM between visits, so
-  /// leaving it open during one listing would carry into the next — hence this runs on the
-  /// screen's onShow as well as its opener.
-  function nlShutMoreWays() {
-    const more = $('nl-more-ways');
-    if (more) more.open = false;
-    try { localStorage.removeItem('nlMoreWays'); } catch { /* private mode — nothing stored anyway */ }
   }
 
   // The AI Listing screen, opened the way the seller opens it — the sidebar, a tab, a deep link.
@@ -22827,7 +22808,6 @@
     on('nl-quickfill-go', 'click', nlQuickFillByName);
     on('nl-quickfill-input', 'keydown', e => { if (e.key === 'Enter') nlQuickFillByName(); });
 
-    nlShutMoreWays();
     on('nl-sold-comps-close', 'click', () => $('nl-sold-comps-strip')?.classList.add('hidden'));
     on('nl-sold-comps-connect-btn', 'click', nlSoldCompsConnect);
     on('nl-bulk-go', 'click', nlBulkImport);
@@ -22853,7 +22833,6 @@
   function openNewListingModal(keepTabs = false) {
     // Starting a listing, not reviewing a rewrite: the intake block comes back.
     $('new-listing-overlay')?.classList.remove('nl-review-draft');
-    nlShutMoreWays();
     // The AI Listing screen is a workspace tab like any other, and it opens by several routes
     // that never went through the sidebar — a pasted screenshot, a recovered draft, the dashboard
     // button. Clearing the other screens here means every one of those routes behaves the same.
@@ -23562,9 +23541,9 @@
     const itemName = input?.value.trim();
     if (!itemName) return;
 
-    // One box, two things people arrive with. Asking a seller to notice they pasted a link into the
-    // "name" field — and to go and find the other field — is the kind of small tax that makes an app
-    // feel like paperwork. Work out which it was and run the right one.
+    // A link pasted into the NAME box is a slip, not a request to research the words
+    // "https://www.ebay.com/itm/123". Import From URL is right there beside this card and does the
+    // real job, so hand it over rather than sending an address to the product-research call.
     if (nlLooksLikeUrl(itemName)) {
       const urlBox = $('nl-url-input');
       if (urlBox) {
