@@ -128,7 +128,7 @@ public sealed class LocalArbitrageAnalyzer(
     // So the ROI floors below never promote a row on their own — every tier has a dollar figure
     // that must be cleared first, and ROI only decides how good a row that already clears it is.
     //
-    // Public because Roll the Dice, the auction sniper and the negotiation advisor all quote these
+    // Public because the category sweep, the auction sniper and the negotiation advisor all quote these
     // bars back at the seller ("pay under $X and this clears the goldmine threshold") — see
     // JackpotHunter.TargetBuyPrice and AuctionSniperAnalyzer.MaxBidFor. One definition of "worth
     // doing", not a second, friendlier one for the flashier feature.

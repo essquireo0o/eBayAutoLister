@@ -11,7 +11,7 @@ namespace ING_eBay_AutoLister.Services;
 /// <para>
 /// Nothing here prices anything. The resale side arrives already computed by
 /// <c>AnalyzeProductAsync</c> — the same eBay sold comps + sell-through pipeline the Opportunity
-/// Finder, Local Deals, Roll the Dice and the auction sniper all run — and the money is
+/// Finder, Local Deals, the category sweep and the auction sniper all run — and the money is
 /// <see cref="JackpotHunter.BreakEvenBuyPrice"/> and
 /// <see cref="AuctionSniperAnalyzer.MaxBidDetail"/>, unchanged. A live card that disagreed with the
 /// sniper about the same item at the same price would mean the app has two opinions and the bidder

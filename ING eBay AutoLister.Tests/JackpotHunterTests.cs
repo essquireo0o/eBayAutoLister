@@ -3,7 +3,7 @@ using ING_eBay_AutoLister.Services;
 
 namespace ING_eBay_AutoLister.Tests;
 
-// Roll the Dice hands someone a product they have never heard of and tells them to spend money on
+// The sweep hands someone a product they have never heard of and tells them to spend money on
 // it, so what's pinned here is the honesty of it: which clusters are too vague or too thin to price
 // at all, that the buy prices are the same arithmetic Local Deals uses, and that a "jackpot" badge
 // is the same bar LocalArbitrageAnalyzer already calls a goldmine — never a friendlier one.

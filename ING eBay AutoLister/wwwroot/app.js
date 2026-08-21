@@ -1103,7 +1103,6 @@
     bindFacebookMarketplace();
     bindNegotiation();
     bindCouponCheck();
-    bindRollTheDice();
     bindPhotoLibrary();
     bindInventoryHealth();
     bindWatcherOffers();
@@ -1550,7 +1549,7 @@
   }
 
   // Some screens open by a route other than the sidebar — the AI Listing modal off a pasted
-  // screenshot or a recovered draft, the Opportunity Finder off Roll the Dice. Every show*Section
+  // screenshot or a recovered draft. Every show*Section
   // ends here, so a screen that put itself on the page always gets a tab, without opening twice.
   function markWorkspaceTabOpen(page) {
     if (!WORKSPACE_PAGES[page]) return;
@@ -5661,452 +5660,6 @@
       btn.textContent = 'Select and copy';
     }
     setTimeout(() => { btn.textContent = original; }, 2000);
-  }
-
-  // ── Roll the Dice ────────────────────────────────────────────────────────
-  // The board every other panel can't produce: the seller types nothing, the server sweeps whole
-  // categories of sold history, and what comes back is what to buy, for how much, and where.
-  //
-  // A roll is minutes of server work across four external systems, so it borrows the local panel's
-  // never-throw fetch contract (localFetchJson) — a roll that will never come back has to stop
-  // looking like one that is still working.
-  const DICE_TIMEOUT_MS = 10 * 60 * 1000;
-
-  let diceData = null;
-  let diceNextSeed = null;
-  let diceRolling = false;
-  // The rows currently drawn, in the order they were drawn — the actions on a row need the whole
-  // play, and sorting/filtering means a row's position is not its position in diceData.plays.
-  let diceRows = [];
-  // Searches Deal Radar is already watching, so re-rolling into the same product says "already
-  // watching" instead of offering to spend a second of the twelve slots on it. Keyed the way the
-  // server compares them — see PlayWatchBuilder.SameSearch.
-  let diceWatchedSearches = new Set();
-
-  const searchKey = q => (q || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
-  const DICE_TIERS = {
-    jackpot: { label: '🎰 Jackpot', cls: 'jackpot' },
-    strong:  { label: '💰 Strong play', cls: 'strong' },
-    target:  { label: '🎯 Target price', cls: 'target' },
-    thin:    { label: '⚠️ Thin margin', cls: 'thin' },
-    watch:   { label: '👀 Watch — thin data', cls: 'watch' },
-    pass:    { label: '✕ Pass', cls: 'pass' },
-  };
-
-  const DICE_WATCHING_LABEL = '🔔 Deal Radar is watching';
-
-  function bindRollTheDice() {
-    // The dashboard band: one click has to produce a board, not a form to fill in.
-    on('btn-roll-dice', 'click', () => {
-      showOpportunitySection();
-      $('dice-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      rollTheDice(null);
-    });
-    on('dice-roll-btn', 'click', () => rollTheDice(null));
-    on('dice-again-btn', 'click', () => rollTheDice(diceNextSeed));
-    on('dice-only-buyable', 'change', renderDiceBoard);
-    on('dice-min-100', 'change', renderDiceBoard);
-    on('dice-sort', 'change', renderDiceBoard);
-    on('dice-fast-only', 'change', renderDiceBoard);
-    on('dice-zip-input', 'keydown', e => { if (e.key === 'Enter') rollTheDice(null); });
-
-    // Same remembered zip and radius the local scan uses — a seller types their zip code once.
-    const zip = localStorage.getItem('fbZip');
-    const radius = localStorage.getItem('fbRadius');
-    if (zip && $('dice-zip-input')) $('dice-zip-input').value = zip;
-    if (radius && $('dice-radius-select')) {
-      const select = $('dice-radius-select');
-      if ([...select.options].some(o => o.value === radius)) select.value = radius;
-    }
-  }
-
-  function setDiceStatus(message, retry) {
-    const el = $('dice-status');
-    if (!el) return;
-    if (!message) { el.innerHTML = ''; return; }
-    el.innerHTML = esc(message) +
-      (retry ? ' <button type="button" class="btn btn-secondary small dice-retry-btn">Try again</button>' : '');
-    el.querySelector('.dice-retry-btn')?.addEventListener('click', () => rollTheDice(null));
-  }
-
-  // seed === null means "a fresh random roll"; passing the previous response's nextSeed is what
-  // makes Roll again sweep categories this seller hasn't just seen.
-  async function rollTheDice(seed) {
-    if (diceRolling) return;
-
-    const zip = $('dice-zip-input')?.value.trim() || '';
-    const radius = $('dice-radius-select')?.value || '40';
-    const niches = $('dice-niches-select')?.value || '4';
-    if (zip) localStorage.setItem('fbZip', zip);
-    localStorage.setItem('fbRadius', radius);
-
-    // Whatever sites the seller ticked in Local Deals. Omitted when nothing is ticked (or the
-    // picker hasn't loaded), which lets the server search everything reachable.
-    const sources = selectedSourceIds();
-
-    // "best" is the server's own ranking, which is the default — only the velocity sorts are worth
-    // asking for, and the board can still be re-sorted client-side afterwards without re-rolling.
-    const sort = $('dice-sort')?.value || 'best';
-
-    const qs = `niches=${encodeURIComponent(niches)}&zip=${encodeURIComponent(zip)}` +
-      `&radius=${encodeURIComponent(radius)}` +
-      (sources.length ? `&sources=${encodeURIComponent(sources.join(','))}` : '') +
-      (seed != null ? `&seed=${encodeURIComponent(seed)}` : '') +
-      `&sort=${encodeURIComponent(sort)}`;
-
-    const buttons = ['dice-roll-btn', 'dice-again-btn', 'btn-roll-dice'].map($).filter(Boolean);
-    diceRolling = true;
-    buttons.forEach(b => { b.disabled = true; });
-    $('dice-results')?.classList.add('hidden');
-    // Honest about the cost: a sweep, a real sold-comp lookup per product, then a supply search
-    // per product. Minutes, not seconds — and Facebook loads a real browser page.
-    setDiceStatus(`🎲 Rolling — sweeping ${niches} categories of eBay sold history, pricing the best ` +
-      `products against real comps, then hunting for where to buy them` +
-      `${zip ? ` near ${zip}` : ' on eBay'}. Give it a minute or two…`);
-
-    const { data, error } = await localFetchJson(`/api/opportunities/roll-the-dice?${qs}`, DICE_TIMEOUT_MS);
-
-    diceRolling = false;
-    buttons.forEach(b => { b.disabled = false; });
-
-    if (!data) {
-      setDiceStatus(`The roll didn't complete. ${error}`, true);
-      return;
-    }
-    renderDice(data);
-  }
-
-  function renderDice(data) {
-    const wrap = $('dice-results');
-    if (!wrap) return;
-
-    diceNextSeed = data.nextSeed;
-    $('dice-again-btn')?.classList.remove('hidden');
-
-    if (data.status === 'error') {
-      setDiceStatus(data.error || 'The roll came back with nothing usable.', true);
-      return;
-    }
-
-    diceData = data;
-
-    const swept = (data.niches || []).length;
-    const summary = [
-      data.jackpotCount
-        ? `<strong class="fb-arb-hit">${data.jackpotCount} jackpot${data.jackpotCount === 1 ? '' : 's'}</strong>`
-        : `<strong>${data.count}</strong> play${data.count === 1 ? '' : 's'}`,
-      `across ${swept} categor${swept === 1 ? 'y' : 'ies'}`,
-      data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
-      data.totalPotentialProfit > 0
-        ? `${money(data.totalPotentialProfit)} of profit sitting in supply you can buy right now`
-        : '',
-    ].filter(Boolean).join(' · ');
-
-    // The funnel, in full. What was thrown away matters as much as what survived: a short board is
-    // the guards working, and this is where a seller can see that rather than assume the sweep
-    // simply found nothing.
-    $('dice-summary').innerHTML = summary +
-      `<div class="fb-arb-sources">Mined ${data.compsScanned.toLocaleString()} sold comps → ` +
-      `${data.productsConsidered} product${data.productsConsidered === 1 ? '' : 's'} worth a look → ` +
-      `${data.productsPriced} priced against real comps → ${data.productsSourced} checked for supply` +
-      `. ` +
-      `${data.productsDropped ? `${data.productsDropped} dropped — too little sold history, or two reads of it that disagreed. ` : ''}` +
-      `${data.supplyRejected ? `${data.supplyRejected} cheap listing${data.supplyRejected === 1 ? '' : 's'} rejected as parts or accessories rather than the product. ` : ''}` +
-      `Roll #${data.seed} · ${data.rollsToCoverEverything} rolls covers all ${data.nichesInUniverse} categories.</div>`;
-
-    const warn = $('dice-warning');
-    if (warn) {
-      warn.textContent = data.dataWarning || '';
-      warn.classList.toggle('hidden', !data.dataWarning);
-    }
-
-    // Which categories were dug, and what each one gave up — a sweep that reports "no plays"
-    // without saying where it looked can't be trusted or repeated.
-    const chips = $('dice-niche-chips');
-    if (chips) {
-      chips.innerHTML = (data.niches || []).map(n => {
-        const detail = n.playsFound
-          ? `${n.playsFound} play${n.playsFound === 1 ? '' : 's'}`
-          : n.note ? esc(n.note)
-          : `${n.productsFound} product${n.productsFound === 1 ? '' : 's'}, none made the board`;
-        return `<span class="dice-chip${n.playsFound ? ' dice-chip-hit' : ''}">
-                  <strong>${esc(n.label)}</strong> ${detail}
-                  <span class="dice-chip-probe">${(n.probes || []).map(esc).join(', ')}</span>
-                </span>`;
-      }).join('');
-    }
-
-    // Which sourcing channels actually answered — an empty supply list has to be distinguishable
-    // from a site that was never searched.
-    const searched = [
-      data.ebaySupplySearched ? 'eBay Buy It Now' : '',
-      ...(data.sources || []).map(s => s.status === 'ok'
-        ? `${s.label} (${s.count})`
-        : `${s.label} — ${s.status === 'not_connected' ? 'not connected'
-            : s.status === 'session_expired' ? 'session expired' : 'unavailable'}`),
-    ].filter(Boolean);
-    setDiceStatus(searched.length
-      ? `Supply checked on: ${searched.join(' · ')}.`
-      : 'No supply sites were searched — add a zip code to include local classifieds.');
-
-    // What Deal Radar is already looking for. Its own call, failing on its own: if it doesn't
-    // answer, the buttons still offer to create a watch and the server reports the duplicate — the
-    // wrong wording for a moment, never a second watch.
-    loadDiceWatchedSearches();
-
-    renderDiceBoard();
-    wrap.classList.remove('hidden');
-  }
-
-  async function loadDiceWatchedSearches() {
-    const status = await fetch('/api/radar/status').then(r => r.json()).catch(() => null);
-    if (!status) return;
-    diceWatchedSearches = new Set((status.watches || []).map(w => searchKey(w.query)));
-    renderDiceBoard();
-  }
-
-  // Sorting and filtering are pure views over the response already in hand — neither may re-run a
-  // roll, which is minutes of work across four systems.
-  /** What a play is worth: the live buy's net, or what buying at the target would net. */
-  const cashOf = p => (p.netProfit != null ? p.netProfit : p.profitAtTarget) || 0;
-
-  function renderDiceBoard() {
-    const board = $('dice-board');
-    if (!board || !diceData) return;
-
-    const onlyBuyable = !!$('dice-only-buyable')?.checked;
-    const fastOnly = !!$('dice-fast-only')?.checked;
-    const sort = $('dice-sort')?.value || 'best';
-    const all = diceData.plays || [];
-
-    let rows = onlyBuyable ? all.filter(p => p.sources && p.sources.length) : all.slice();
-    if (fastOnly) rows = rows.filter(p => p.speedTier === 'fast');
-
-    // The $100 bar. Judged on the same figure the headline quotes — what the live buy nets, or what
-    // buying at the target would net — so a row can't clear the bar in one place and fail it in
-    // another. A play that nets $33 does not pay for finding, buying, listing and packing the thing.
-    if ($('dice-min-100')?.checked) rows = rows.filter(p => cashOf(p) >= 100);
-
-    // "best" is the order the server ranked them in — believability first — and is left alone.
-    // The velocity sorts keep plays that can't be believed at the bottom, same rule the server uses.
-    // The play's money: what the live buy nets, or what buying at the target would net.
-    const cash = cashOf;
-    const weak = p => p.tier === 'pass' || p.tier === 'no_data';
-    const diceCmp = {
-      // Highest return on the cash tied up. Plays that cannot be believed stay at the bottom, the
-      // same rule the other sorts use, and net profit breaks a tie.
-      roi: (a, b) => (weak(a) - weak(b))
-        || ((a.roiPercent == null) - (b.roiPercent == null))
-        || ((b.roiPercent - a.roiPercent) || (cash(b) - cash(a))) || 0,
-      fastest: (a, b) => (weak(a) - weak(b))
-        || ((a.daysToCash == null) - (b.daysToCash == null))
-        || ((a.daysToCash - b.daysToCash) || (cash(b) - cash(a))) || 0,
-      perday: (a, b) => (weak(a) - weak(b))
-        || ((a.profitPerDay == null) - (b.profitPerDay == null))
-        || ((b.profitPerDay - a.profitPerDay) || (cash(b) - cash(a))) || 0,
-      profit: (a, b) => (weak(a) - weak(b)) || (cash(b) - cash(a)),
-    }[sort];
-    if (diceCmp) rows = rows.slice().sort(diceCmp);
-
-    const shown = $('dice-shown');
-    if (shown) {
-      shown.textContent = rows.length === all.length
-        ? `${rows.length} shown`
-        : `${rows.length} of ${all.length} shown`;
-    }
-
-    // Kept so a row's actions can reach the whole play: sorting and filtering mean a row's position
-    // on screen is not its position in diceData.plays.
-    diceRows = rows;
-
-    board.innerHTML = rows.length
-      ? rows.map(dicePlayHtml).join('')
-      : all.length
-        ? `<p class="opportunity-empty">${fastOnly
-            ? 'Nothing on this board turns your money around inside three weeks. Untick that filter to see the slower plays — or roll again for different categories.'
-            : 'Nothing on this board is for sale anywhere right now. Untick the filter above and use “Watch for one” on the plays worth keeping — Deal Radar will say when one turns up. Or roll again for different categories.'}</p>`
-        : '<p class="opportunity-empty">This roll found no product with enough sold history to stand behind. That is a real answer, not an error — roll again and the sweep moves on to different categories.</p>';
-
-    board.querySelectorAll('.dice-hunt-btn').forEach(btn =>
-      btn.addEventListener('click', () => huntPlayLocally(btn.dataset.query || '')));
-    board.querySelectorAll('.dice-watch-btn').forEach(btn =>
-      btn.addEventListener('click', () => watchPlay(btn)));
-  }
-
-  // Hands one play to Deal Radar and keeps it. A roll is minutes of work across four systems and
-  // the next roll throws all of it away — this is the only thing on the board that outlives it, and
-  // it is the tier the board has nothing else to offer: "nothing is for sale right now, buy under
-  // $X". The keyword and that price become a saved search with the app's own jackpot bar on it.
-  async function watchPlay(btn) {
-    const play = diceRows[Number(btn.dataset.idx)];
-    if (!play) return;
-
-    const label = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Saving…';
-
-    // safePost throws on a dropped connection and on an expired trial. Either way the button has to
-    // come back — left saying "Saving…" it reads as a watch that exists and doesn't.
-    let body = null;
-    try {
-      ({ body } = await safePost('/api/opportunities/watch-play', {
-        product: play.product,
-        searchQuery: play.searchQuery,
-        targetBuyPrice: play.targetBuyPrice,
-        maxBuyPrice: play.maxBuyPrice,
-        soldCompCount: play.soldCompCount,
-        terapeakCompCount: play.terapeakCompCount,
-        confidenceScore: play.confidenceScore,
-        // Where the roll looked, so the watch looks there too rather than somewhere never chosen.
-        zipCode: $('dice-zip-input')?.value.trim() || '',
-        radiusMiles: parseInt($('dice-radius-select')?.value || '40', 10),
-        sources: selectedSourceIds().join(','),
-      }));
-    } catch (e) {
-      body = { ok: false, error: errorText(e, 'That couldn\'t be saved as a watch.') };
-    }
-
-    if (!body?.ok) {
-      btn.disabled = false;
-      btn.textContent = label;
-      toast(body?.error || 'That couldn\'t be saved as a watch.', { kind: 'warning', title: 'Not watching' });
-      return;
-    }
-
-    // Remembered as well as re-labelled: re-sorting the board redraws every row from scratch, and a
-    // button that forgets on a sort offers to create the watch a second time.
-    diceWatchedSearches.add(searchKey(play.searchQuery));
-    btn.classList.add('is-watching');
-    btn.textContent = DICE_WATCHING_LABEL;
-
-    const openRadar = { label: 'Open Deal Radar', onClick: () => showRadarSection() };
-    if (body.alreadyWatching) {
-      toast(`“${body.watch.name}” was already on the radar — nothing new was created.`,
-        { kind: 'info', title: 'Already watching', action: openRadar });
-    } else if (!body.radarRunning) {
-      toast('Saved. Switch on “Watch in the background” in Deal Radar and it starts looking.',
-        { kind: 'info', title: 'One more step', action: openRadar });
-    } else {
-      toastOk(`Deal Radar will keep looking for one at ${moneyExact(play.targetBuyPrice)} or less, and ping you when one turns up.`,
-        { title: 'Watching', action: openRadar });
-    }
-  }
-
-  function dicePlayHtml(play, index) {
-    const tier = DICE_TIERS[play.tier] || DICE_TIERS.watch;
-    // A live buy shows what it actually nets; a target shows what buying at the target would net.
-    const live = play.netProfit != null;
-    const headline = live ? play.netProfit : play.profitAtTarget;
-    const headlineNote = live
-      ? `net after fees, buying at ${moneyExact(play.bestBuyPrice)}`
-      : play.targetBuyPrice > 0
-        ? `net if you buy it at ${moneyExact(play.targetBuyPrice)}`
-        // No price clears the jackpot bar, so the honest headline is what's left at a cost of
-        // nothing — quoting "buy it at $0.00" would read as a bug.
-        : `net even if it were free — break even is ${moneyExact(play.maxBuyPrice)}`;
-
-    const facts = [
-      // The number a reseller reads first: what it actually goes for. Everything else on the row is
-      // arithmetic derived from it, so it gets the emphasis rather than sitting in a run of facts.
-      play.ebayExpectedSale != null
-        ? `<span class="sells-for">SELLS FOR: <strong>${money(play.ebayExpectedSale)}</strong></span>` : '',
-      `Break even at <strong>${moneyExact(play.maxBuyPrice)}</strong>`,
-      play.targetBuyPrice > 0 ? `Target buy <strong>${moneyExact(play.targetBuyPrice)}</strong>` : '',
-      play.roiPercent != null ? `${Math.round(play.roiPercent)}% ROI` : '',
-      // The wait, and what the money earns per day of it — the difference between a flip and a
-      // shelf. Rendered as a badge so a "dead money" play can't read like a fast one.
-      play.daysToCash != null
-        ? `<span class="speed-badge speed-${(SPEED_TIERS[play.speedTier] || SPEED_TIERS.unknown).cls}" title="${esc(play.speedNote || '')}">` +
-          `~${play.daysToCash}d to cash${play.profitPerDay > 0 ? ` · ${perDay(play.profitPerDay)}` : ''}</span>`
-        : '',
-    ].filter(Boolean).join(' · ');
-
-    const evidence = [
-      `${play.soldCompCount} sold comp${play.soldCompCount === 1 ? '' : 's'}`,
-      play.confidenceLevel ? esc(play.confidenceLevel) : '',
-      play.liquidityLevel ? esc(play.liquidityLevel) : '',
-      play.estimatedMonthlySales > 0 ? `~${Math.round(play.estimatedMonthlySales)} sold/month` : '',
-    ].filter(Boolean).join(' · ');
-
-    const sources = (play.sources || []).map(src => {
-      const good = src.netProfit != null && src.netProfit > 0;
-      const meta = [
-        src.distanceMiles != null ? `${src.distanceMiles} mi` : '',
-        src.location ? esc(src.location) : '',
-        src.postedAgo ? esc(src.postedAgo) : '',
-      ].filter(Boolean).join(' · ');
-      return `<div class="dice-source">
-                <span class="local-badge local-badge-${esc(src.source)}">${esc(src.sourceLabel || src.source)}</span>
-                <a class="dice-source-title" href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.title)} ↗</a>
-                <span class="dice-source-buy">${moneyExact(src.buyPrice)}</span>
-                <span class="dice-source-net ${good ? 'good' : 'bad'}">${src.netProfit != null ? `${good ? '+' : ''}${money(src.netProfit)} net` : '—'}</span>
-                <span class="dice-source-meta">${meta}</span>
-              </div>`;
-    }).join('');
-
-    // eBay's own sold-listing search for the same keyword: the seller can check the comps behind
-    // the number themselves, with no API call and no trust required.
-    const soldUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(play.searchQuery || play.product)}&LH_Sold=1&LH_Complete=1`;
-
-    // Whether this play can be kept is the SERVER's answer (see PlayWatchBuilder.CanWatch) — the
-    // board never re-derives the evidence bar, or the two would drift apart and the button would
-    // start offering something the endpoint refuses.
-    const watching = diceWatchedSearches.has(searchKey(play.searchQuery));
-    const watchBtn = play.canWatch
-      ? watching
-        ? `<button class="btn btn-ghost small dice-watch-btn is-watching" type="button" disabled>${DICE_WATCHING_LABEL}</button>`
-        : `<button class="btn btn-secondary small dice-watch-btn" type="button" data-idx="${index}">🔔 Watch for one at ${moneyExact(play.targetBuyPrice)}</button>`
-      : '';
-
-    // Why not, but only on a row where watching was the only thing left to do. On a row with live
-    // supply the seller has somewhere to click, and on a thin row the tier note above already says
-    // the evidence is thin — repeating it here is noise on the rows that need it least.
-    const watchRefusal = !play.canWatch && play.watchRefusal && !(play.sources && play.sources.length)
-      ? `<span class="dice-watch-refusal">🔕 ${esc(play.watchRefusal)}</span>`
-      : '';
-
-    return `
-      <article class="dice-play dice-play-${tier.cls}">
-        <div class="dice-play-rank">${index + 1}</div>
-        ${play.imageUrl
-          ? `<img class="dice-play-thumb" src="${esc(play.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
-          : '<div class="dice-play-thumb dice-play-thumb-empty">📦</div>'}
-        <div class="dice-play-body">
-          <div class="dice-play-head">
-            <span class="dice-tier dice-tier-${tier.cls}">${tier.label}</span>
-            <span class="dice-play-niche">${esc(play.nicheLabel)}</span>
-          </div>
-          <h4 class="dice-play-title">${esc(play.product)}</h4>
-          <div class="dice-play-money">
-            <span class="dice-play-profit ${headline > 0 ? 'good' : 'bad'}">${money(headline)}</span>
-            <span class="dice-play-profit-note">${headlineNote}</span>
-          </div>
-          <div class="dice-play-facts">${facts}</div>
-          <div class="dice-play-note">${esc(play.tierNote)}</div>
-          <div class="dice-play-evidence">${evidence}${play.disagreementMessage ? ` <span class="fb-arb-flag" title="${esc(play.disagreementMessage)}">⚠</span>` : ''}</div>
-          <div class="dice-play-where">${esc(play.whereToLook)}</div>
-          ${sources ? `<div class="dice-sources">${sources}</div>` : ''}
-          <div class="dice-play-actions">
-            <button class="btn btn-secondary small dice-hunt-btn" type="button" data-query="${esc(play.searchQuery)}">📍 Hunt this locally</button>
-            ${watchBtn}
-            <a class="btn btn-ghost small" href="${esc(soldUrl)}" target="_blank" rel="noopener">See the sold comps ↗</a>
-            ${watchRefusal}
-          </div>
-        </div>
-      </article>`;
-  }
-
-  // Hands the play straight to the local scan below — the roll says WHAT to buy, and Local Deals is
-  // already the panel that finds every one of them near you and ranks them.
-  function huntPlayLocally(query) {
-    if (!query) return;
-    const input = $('fb-query-input');
-    if (input) input.value = query;
-    const diceZip = $('dice-zip-input')?.value.trim() || '';
-    if (diceZip && $('fb-zip-input')) $('fb-zip-input').value = diceZip;
-    $('fb-arb-btn')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    runLocalArbitrage();
   }
 
   // Opening Settings from the top bar lands on whichever required step is still outstanding.
@@ -12403,7 +11956,11 @@
         const wait = $('wn-live-wait');
         if (wait) wait.outerHTML = `<p class="wn-empty">${esc(why)}</p>`;
         wnSayLine(why);
+        await wnAiEstimate(item);
       }
+
+      // Nothing in the comps and nothing to fetch — the AI still owes this lot a number.
+      if (wnLiveFallbackSpent && body.call === 'no_data') await wnAiEstimate(item);
     } catch (err) {
       const said = errorText(err, 'That didn\'t price.');
       card.innerHTML = `<p class="wn-empty wn-empty-bad">${esc(said)}</p>`;
@@ -12559,6 +12116,40 @@
     const back = card.querySelector(`[data-keep="${was.focus}"]`);
     if (!back) return;
     (back.tagName === 'DETAILS' ? back.querySelector('summary') : back)?.focus();
+  }
+
+  // A lot with no sold history at all still has to carry a number: the bidding is running and
+  // "CAN'T PRICE IT" tells somebody holding a paddle nothing they can act on. This is the AI's
+  // read of the wider resale market — the same estimator the picks board uses, one item at a
+  // time — and it is labelled a guess everywhere it appears. It never becomes the ceiling: the
+  // ceiling is arithmetic on comps, and there are none.
+  async function wnAiEstimate(item) {
+    const card = $('wn-card');
+    if (!card || !item) return;
+    const holder = document.createElement('div');
+    holder.className = 'wn-ai-est is-busy';
+    holder.textContent = 'Asking the AI what this sells for across the wider market…';
+    card.insertBefore(holder, card.firstChild);
+
+    try {
+      const { data } = await localFetchJson('/api/local/ai-estimate', 180000, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [{ itemId: 'wn', title: item, askingPrice: wnNumber('wn-bid') || null,
+                                         condition: wnCondition() || '' }] })
+      });
+      const est = ((data && data.estimates) || [])[0];
+      if (!est || !(est.mid > 0)) { holder.remove(); return; }
+
+      holder.className = 'wn-ai-est';
+      holder.innerHTML =
+        `<span class="wn-ai-tag">AI estimate</span>` +
+        `<span class="wn-ai-price">sells ~${money(est.mid)}</span>` +
+        `<span class="wn-ai-range">${money(est.low)}–${money(est.high)}${est.basis ? ` · ${esc(est.basis)}` : ''}</span>` +
+        `<span class="wn-ai-note">No sold listing matched this lot, so this is a guess from what things like it fetch — a starting point for your own judgement, not a ceiling.</span>`;
+      wnSayLine(`No sold history. The AI puts this around ${money(est.mid)}.`);
+    } catch {
+      holder.remove();
+    }
   }
 
   function wnRenderCard(c) {
@@ -15456,7 +15047,7 @@
     const windowDays = $('tr-window')?.value || '45';
     const niches = $('tr-niches')?.value || '5';
     const direction = $('tr-direction')?.value || 'rising';
-    // "Scan different categories" is the seed advancing — the same rotation Roll the Dice uses, so
+    // "Scan different categories" is the seed advancing — the same category rotation, so
     // a second scan digs categories the first one never touched instead of repeating itself.
     const useSeed = nextSeed ? trendScan?.nextSeed : seed;
     const seedArg = useSeed != null ? `&seed=${useSeed}` : '';

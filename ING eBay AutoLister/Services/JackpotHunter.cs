@@ -4,7 +4,7 @@ using ING_eBay_AutoLister.Models;
 namespace ING_eBay_AutoLister.Services;
 
 /// <summary>
-/// The brain behind Roll the Dice: turns a haul of sold comps from many categories into a ranked
+/// The brain behind the cross-category sweep: turns a haul of sold comps from many categories into a ranked
 /// board of flips worth making, and says what to pay for each one.
 ///
 /// Three jobs, all of them separable and (except the fee arithmetic, which delegates to

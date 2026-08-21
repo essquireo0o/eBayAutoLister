@@ -3,7 +3,7 @@ using ING_eBay_AutoLister.Models;
 namespace ING_eBay_AutoLister.Services;
 
 /// <summary>
-/// Turns one play off the Roll the Dice board into a saved Deal Radar watch.
+/// Turns one play off the cross-category sweep into a saved Deal Radar watch.
 /// </summary>
 /// <remarks>
 /// <para>

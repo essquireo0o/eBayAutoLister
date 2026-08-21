@@ -1,6 +1,6 @@
 namespace ING_eBay_AutoLister.Models;
 
-// ── Roll the Dice ─────────────────────────────────────────────────────────────
+// ── Cross-category sweep ──────────────────────────────────────────────────────
 // Every other money feature in this app starts with the seller already knowing what to look for:
 // they type "Antminer S19" into Local Deals, or drop in a supplier price list. This one starts
 // with nothing. It sweeps the sold-comps database across many CATEGORIES at once, finds the
@@ -230,7 +230,7 @@ public class JackpotResult
     public string Status { get; set; } = "ok";
     public string? Error { get; set; }
 
-    // The roll this was, and the one the "Roll again" button should ask for — the sweep window
+    // The sweep this was, and the one a follow-on sweep should ask for — the sweep window
     // advances with the seed, so a second roll digs different categories (see CategorySweep).
     public int Seed { get; set; }
     public int NextSeed { get; set; }

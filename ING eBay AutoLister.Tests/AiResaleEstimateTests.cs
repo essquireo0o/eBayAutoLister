@@ -101,6 +101,25 @@ public class AiResaleEstimateTests
         Assert.DoesNotContain("identityVerified", estimator, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void A_live_lot_nothing_could_price_still_gets_a_number()
+    {
+        // The bidding is running and "CAN'T PRICE IT" tells somebody holding a paddle nothing they
+        // can act on. The AI's read goes on the card — after the stored comps and the live lookup
+        // have both had their go, never instead of them.
+        var fn = Between(Js, "async function wnAiEstimate(item)", "  function wnRenderCard(c)");
+
+        Assert.Contains("'/api/local/ai-estimate'", fn, StringComparison.Ordinal);
+        Assert.Contains("AI estimate", fn, StringComparison.Ordinal);
+        // It is never allowed to become the ceiling: that is arithmetic on comps, and there are none.
+        Assert.Contains("not a ceiling", fn, StringComparison.Ordinal);
+        Assert.DoesNotContain("maxBid", fn, StringComparison.Ordinal);
+
+        // And it only runs once the comps have failed.
+        var price = Between(Js, "async function wnPriceItem()", "  /// ── The one line ─");
+        Assert.Contains("await wnAiEstimate(item)", price, StringComparison.Ordinal);
+    }
+
     private static string Between(string text, string from, string to)
     {
         var start = text.IndexOf(from, StringComparison.Ordinal);

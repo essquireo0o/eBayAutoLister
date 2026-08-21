@@ -82,9 +82,6 @@
       <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6"/><path d="M7 9h10v3a5 5 0 01-10 0z"/><path d="M12 17v4"/></symbol>
       <symbol id="i-money" viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19V3"/><path d="M3 21h18"/></symbol>
       <symbol id="i-pipeline" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="10" rx="1"/><rect x="9.5" y="4" width="5" height="16" rx="1"/><rect x="16" y="4" width="5" height="7" rx="1"/></symbol>
-      <!-- Roll the Dice. The 🎲 emoji renders as an OS-coloured picture at its own
-           weight; beside two stroke icons on the dashboard it read as a sticker. -->
-      <symbol id="i-dice" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.15" fill="currentColor" stroke="none"/></symbol>
       <!-- The three theme states. Drawn on the same 24-grid and the same stroke weight
            as the nav set, so the switch reads as part of the app rather than as three
            borrowed glyphs. -->
@@ -467,8 +464,7 @@
         <!-- The three things worth doing on open, at the size of that importance. Two of
              them were a button in the hero row and one was a whole band of its own; as
              cards they read as one set of choices, which is what they are. The ids are
-             the ones app.js already binds — Roll the Dice keeps btn-roll-dice, so its
-             busy state and the dice board behind it are untouched. -->
+             the ones app.js already binds. -->
         <div class="dash-quick">
           <button id="dash-act-goldmines" class="dash-act dash-act--gold" type="button">
             <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-opportunity"/></svg></span>
@@ -481,12 +477,6 @@
             <span class="dash-act-title">New AI Listing</span>
             <span class="dash-act-sub">Name a product or paste a link. AI finds the photos, specs and sold prices and writes the whole listing.</span>
             <span class="dash-act-go">Start a draft<span class="dash-act-arrow" aria-hidden="true">→</span></span>
-          </button>
-          <button id="btn-roll-dice" class="dash-act dash-act--dice" type="button">
-            <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-dice"/></svg></span>
-            <span class="dash-act-title">Roll the Dice</span>
-            <span class="dash-act-sub">No idea what to sell? Sweeps whole categories of sold history for what's making money, then finds where to buy it.</span>
-            <span class="dash-act-go">No keyword needed<span class="dash-act-arrow" aria-hidden="true">→</span></span>
           </button>
         </div>
 
@@ -1430,90 +1420,6 @@
         </div>
 
         <div class="opportunity-overlay-body">
-
-          <!-- Roll the Dice — first panel in the finder on purpose: everything below it needs the
-               seller to already know what they're looking for, and this is the one that doesn't. -->
-          <div class="opp-supplier-panel dice-panel">
-            <h3 class="opp-supplier-heading">🎲 Roll the Dice — the biggest money on the board right now</h3>
-            <p class="opp-hint">
-              Sweeps several product categories of real eBay sold history at once, keeps only the
-              products with a genuine margin <em>and</em> genuine demand, then hunts for where each
-              one can be bought today. Add your zip code to include Craigslist and Facebook
-              Marketplace supply, not just eBay. <strong>Roll again</strong> sweeps different
-              categories every time.
-            </p>
-
-            <div class="dice-controls">
-              <div class="opp-field dice-field-zip">
-                <label for="dice-zip-input">Zip code <span class="dice-optional">optional</span></label>
-                <input id="dice-zip-input" type="text" inputmode="numeric" maxlength="10" placeholder="89101" />
-              </div>
-              <div class="opp-field">
-                <label for="dice-radius-select">Radius</label>
-                <select id="dice-radius-select">
-                  <option value="20">20 miles</option>
-                  <option value="40" selected>40 miles</option>
-                  <option value="60">60 miles</option>
-                  <option value="100">100 miles</option>
-                  <option value="250">250 miles</option>
-                </select>
-              </div>
-              <div class="opp-field">
-                <label for="dice-niches-select">Categories per roll</label>
-                <select id="dice-niches-select">
-                  <option value="2">2 — fastest</option>
-                  <option value="4" selected>4</option>
-                  <option value="6">6</option>
-                  <option value="8">8 — widest sweep</option>
-                </select>
-              </div>
-              <button id="dice-roll-btn" class="btn btn-dice opp-search-submit" type="button">🎲 Roll the Dice</button>
-              <button id="dice-again-btn" class="btn btn-secondary opp-search-submit hidden" type="button">🔄 Roll again — new categories</button>
-            </div>
-
-            <div id="dice-status" class="mr-status"></div>
-
-            <div id="dice-results" class="hidden">
-              <div id="dice-summary" class="opp-results-summary"></div>
-              <div id="dice-warning" class="fb-arb-warning hidden"></div>
-              <div id="dice-niche-chips" class="dice-niche-chips"></div>
-              <div class="dice-board-controls">
-                <label for="dice-sort">Sort by</label>
-                <select id="dice-sort">
-                  <!-- ROI first by default: return on the cash tied up is the question, and net
-                       profit alone puts one big-ticket play above several better ones. -->
-                  <option value="roi" selected>ROI %</option>
-                  <option value="best">Best play</option>
-                  <option value="perday">Fastest profit ($ per day)</option>
-                  <option value="fastest">Days to cash</option>
-                  <option value="profit">Net profit</option>
-                </select>
-                <!-- "If I can't make $100 off it, forget it." On by default, same bar as the deal
-                     board. A $33 play is not a play - it is a row that hides the real ones. -->
-                <label class="fb-arb-check"><input id="dice-min-100" type="checkbox" checked /> Only plays that clear $100</label>
-                <label class="fb-arb-check"><input id="dice-only-buyable" type="checkbox" /> Only plays I can buy right now</label>
-                <label class="fb-arb-check"><input id="dice-fast-only" type="checkbox" /> Only money back in 3 weeks</label>
-                <span id="dice-shown" class="fb-arb-shown"></span>
-              </div>
-              <div id="dice-board" class="dice-board"></div>
-              <p class="fb-arb-footnote">
-                Resale prices are real eBay sold comps from the sold-comps database — never asking prices. Profit subtracts eBay's standard final
-                value fee and the shipping the comps show buyers paying. <strong>Max to pay</strong> is
-                the price where the flip breaks even; <strong>target</strong> is what it takes to clear
-                $75 net at 75% ROI — the same bar Local Deals calls a goldmine.
-                Nothing for sale today? <strong>Watch for one</strong> hands the product and its
-                target price to Deal Radar, which keeps looking on its own and pings you when one
-                turns up — the one thing on this board that survives the next roll.
-                A short board is the guards working, not an empty market: accessories, lots, broken-item
-                comps and anything that hasn't sold in four months are dropped before pricing; a product
-                needs at least five sold comps to appear at all; and supply priced under a quarter of
-                what the product itself sells for is rejected rather than booked as profit, because in
-                practice it's a spare part, an empty box or a broken unit. Nothing here accounts for your
-                drive, your time, or a used item not being what the photo says — verify condition before
-                you buy.
-              </p>
-            </div>
-          </div>
 
           <div class="opp-supplier-panel">
             <h3 class="opp-supplier-heading">📦 Supplier File Analyzer</h3>

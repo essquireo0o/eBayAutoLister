@@ -10,7 +10,7 @@
 public sealed record SweepNiche(string Id, string Label, string[] Probes);
 
 /// <summary>
-/// The category universe behind Roll the Dice, plus the rotation that makes "Roll again" mean
+/// The category universe behind the cross-category sweep, plus the rotation that makes a repeat sweep mean
 /// something: each roll takes the NEXT window of niches, so consecutive rolls dig entirely
 /// different categories and a handful of rolls covers the whole board.
 ///
@@ -61,7 +61,7 @@ public static class CategorySweep
     /// <summary>
     /// The niches this roll digs: a window of <paramref name="count"/> niches that advances by
     /// <paramref name="count"/> every roll, wrapping at the end of the universe. Consecutive seeds
-    /// therefore never repeat a niche, which is the whole point of "Roll again".
+    /// therefore never repeat a niche, which is the whole point of sweeping again.
     /// </summary>
     public static List<SweepNiche> Select(int seed, int count)
     {

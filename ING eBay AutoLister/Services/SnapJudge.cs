@@ -9,7 +9,7 @@ namespace ING_eBay_AutoLister.Services;
 /// <para>
 /// Everything here is a <b>translation</b>, never a second opinion. The profit, the ROI, the
 /// break-even and the verdict tier were all decided by <see cref="LocalArbitrageAnalyzer.Build"/>,
-/// which is the same call the Local Deals board, Deal Radar and Roll the Dice make — so a snap and
+/// which is the same call the Local Deals board, Deal Radar and the category sweep make — so a snap and
 /// a board row for the same item at the same price cannot disagree. What this adds is the thing a
 /// table does not have to answer and a person standing in a driveway does: which single word.
 /// </para>

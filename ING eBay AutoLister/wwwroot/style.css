@@ -8622,233 +8622,9 @@ body.is-hosted #pg-facebook-disconnect { display: none !important; }
 @media (max-width: 900px) {
   #new-listing-overlay .failure-panel { margin: 0 16px var(--s3); }
 }
-/* ── Roll the Dice ─────────────────────────────────────────────────────────────
-   The one feature a seller with no idea what to sell can use, so it gets the loudest
-   surface in the app: a card in the dashboard's quick actions (.dash-act--dice) and a
-   gold-lit board in the Opportunity Finder. Everything below still reads money in the
-   same colours the rest of the app uses — success/danger for profit, gold for a
-   jackpot — because the point is that these numbers are the same numbers, not a
-   louder set of them.
-
-   The full-width .dice-band that used to carry this on the dashboard is gone: it was
-   one of six bands competing there, and it is now one of the three action cards. */
-
-/* The one button in the app that should look like a lever worth pulling. */
-.btn-dice {
-  background: linear-gradient(180deg, var(--gold-light), var(--gold-dark));
-  border-color: var(--gold-deep);
-  color: var(--on-gold);
-  font-size: var(--fs-md);
-  font-weight: 800;
-  letter-spacing: .01em;
-  padding: 12px 22px;
-  box-shadow: var(--e2), inset 0 1px 0 rgba(255, 255, 255, .4);
-}
-.btn-dice:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--gold-pale), var(--gold-dark));
-  box-shadow: var(--e3), 0 8px 22px rgba(199, 154, 54, .35), inset 0 1px 0 rgba(255, 255, 255, .5);
-}
-.dice-panel { border-color: var(--gold); }
-.dice-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--s3);
-  margin: var(--s4) 0 var(--s2);
-}
-.dice-field-zip { max-width: 130px; }
-.dice-optional {
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--muted);
-}
-/* Where the sweep actually looked. Present even when a category gave up nothing — a roll
-   that reports "no plays" without saying where it dug can't be judged. */
-.dice-niche-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  margin: var(--s3) 0;
-}
-.dice-chip {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--soft);
-  font-size: var(--fs-xs);
-  color: var(--ink-2);
-}
-.dice-chip-hit {
-  border-color: var(--gold);
-  background: var(--gold-soft);
-  color: var(--gold-ink);
-}
-.dice-chip-probe { color: var(--muted); font-size: var(--fs-2xs); }
-.dice-board-controls {
-  display: flex;
-  align-items: center;
-  gap: var(--s4);
-  flex-wrap: wrap;
-  margin: var(--s3) 0 var(--s2);
-  font-size: var(--fs-sm);
-  color: var(--ink-2);
-}
-/* Same reason as .fb-arb-controls select: a toolbar control, not a stacked form field. */
-.dice-board-controls select {
-  width: auto;
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-xs);
-}
-.dice-board { display: flex; flex-direction: column; gap: var(--s3); }
-.dice-play {
-  display: flex;
-  gap: var(--s4);
-  padding: var(--s4);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--line-strong);
-  border-radius: var(--r-md);
-  background: var(--card);
-  box-shadow: var(--e1);
-}
-.dice-play-jackpot { border-left-color: var(--gold); background: linear-gradient(90deg, var(--gold-soft), var(--card) 55%); }
-.dice-play-strong  { border-left-color: var(--success); }
-.dice-play-target  { border-left-color: var(--info); }
-.dice-play-thin    { border-left-color: var(--warning); }
-.dice-play-watch   { border-left-color: var(--line-strong); }
-.dice-play-pass    { border-left-color: var(--line-strong); opacity: .72; }
-.dice-play-rank {
-  flex: 0 0 24px;
-  font-size: var(--fs-lg);
-  font-weight: 800;
-  color: var(--muted);
-  text-align: right;
-}
-.dice-play-thumb {
-  flex: 0 0 84px;
-  width: 84px;
-  height: 84px;
-  object-fit: contain;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  background: var(--soft);
-}
-.dice-play-thumb-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-3xl);
-}
-.dice-play-body { flex: 1 1 auto; min-width: 0; }
-.dice-play-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  flex-wrap: wrap;
-}
-.dice-tier {
-  font-size: var(--fs-2xs);
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-caps);
-  padding: 2px 8px;
-  border-radius: var(--r-pill);
-  background: var(--soft-2);
-  color: var(--muted);
-}
-.dice-tier-jackpot { background: var(--gold); color: var(--on-gold); }
-.dice-tier-strong  { background: var(--success-soft); color: var(--success); border: 1px solid var(--success-line); }
-.dice-tier-target  { background: var(--info-soft); color: var(--info); border: 1px solid var(--info-line); }
-.dice-tier-thin    { background: var(--warning-soft); color: var(--warning); border: 1px solid var(--warning-line); }
-.dice-play-niche { font-size: var(--fs-xs); color: var(--muted); }
-.dice-play-title {
-  margin: var(--s2) 0 var(--s1);
-  font-size: var(--fs-md);
-  line-height: 1.35;
-  color: var(--ink);
-}
-.dice-play-money {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
-  flex-wrap: wrap;
-}
-.dice-play-profit { font-size: var(--fs-2xl); font-weight: 800; letter-spacing: -.01em; }
-.dice-play-profit.good { color: var(--success); }
-.dice-play-profit.bad  { color: var(--danger); }
-.dice-play-profit-note { font-size: var(--fs-sm); color: var(--ink-2); }
-.dice-play-facts,
-.dice-play-note,
-.dice-play-evidence,
-.dice-play-where {
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  color: var(--ink-2);
-}
-.dice-play-facts { margin-top: var(--s1); }
-.dice-play-note { color: var(--ink); }
-.dice-play-evidence { color: var(--muted); }
-.dice-play-where { margin-top: var(--s1); font-weight: 600; color: var(--ink-2); }
-.dice-sources {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
-  margin-top: var(--s2);
-  padding-top: var(--s2);
-  border-top: 1px solid var(--line-soft);
-}
-.dice-source {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  flex-wrap: wrap;
-  font-size: var(--fs-sm);
-}
-.dice-source-title {
-  flex: 1 1 220px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dice-source-buy { font-weight: 700; color: var(--ink); }
-.dice-source-net { font-weight: 700; }
-.dice-source-net.good { color: var(--success); }
-.dice-source-net.bad  { color: var(--danger); }
-.dice-source-meta { color: var(--muted); font-size: var(--fs-xs); }
-.dice-play-actions {
-  display: flex;
-  gap: var(--s2);
-  flex-wrap: wrap;
-  margin-top: var(--s3);
-  align-items: center;
-}
-/* Already handed to Deal Radar. Reads as a state, not as a button that failed — it is the only
-   thing on this board that survives the next roll. */
-.dice-watch-btn.is-watching {
-  opacity: 1;
-  cursor: default;
-  color: var(--ok);
-  border-color: currentColor;
-}
-/* Why a row can't be kept, shown only where keeping it was the one thing left to do. */
-.dice-watch-refusal {
-  font-size: 12px;
-  color: var(--muted);
-  align-self: center;
-}
 /* eBay joins Craigslist and Facebook as a place supply comes from, so it needs the badge
    colour the other two already have. */
 .local-badge-ebay { background: var(--src-ebay); }
-@media (max-width: 900px) {
-  .dice-play { flex-wrap: wrap; }
-  .dice-play-thumb { flex-basis: 64px; width: 64px; height: 64px; }
-}
 /* ── Liquidation Lot / Manifest Analyzer ──────────────────────────────────
    Reuses the inventory-health tiles, table, warning bar and footnote
    wholesale — it is the same money model pointed at a pallet instead of a
@@ -12466,7 +12242,7 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 /* ═══════════════════════════════════════════════════════════════════════
    The Dashboard
    The front page had become a stack of equal bands — hero, three money
-   bands, a dice band, then the tiles — each the full width of the page and
+   bands, then the tiles — each the full width of the page and
    each about as loud as the one above it. Nothing was first. This gives it
    one order to read in: masthead, the three things worth doing, the money,
    the counts, then the market.
@@ -12694,7 +12470,6 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .dash-act--gold .dash-act-go { border-top-color: rgba(199, 154, 54, .22); color: var(--gold-ink); }
 .dash-act--ai .dash-act-icon { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .dash-act--ai .dash-act-go { color: var(--accent); }
-.dash-act--dice .dash-act-icon { border-color: var(--info-line); background: var(--info-soft); }
 /* ── The money row ─────────────────────────────────────────────────────
    Three bands stacked full-width was three headline figures each claiming
    the page. Side by side they read as one answer with three parts, and the
@@ -18643,3 +18418,20 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .fb-pick-profit.is-ai { color: var(--ink); font-weight: var(--fw-semibold); opacity: .92; }
 .fb-pick-ev-ai { color: var(--muted); }
 .fb-pick-ev-ai::before { background: #7aa2c8; opacity: 1; }
+
+/* The AI's number on a live card that no comp could price. Calm, and unmistakably a guess. */
+.wn-ai-est {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  margin: 0 0 12px; padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #7aa2c8 40%, var(--line));
+  border-radius: var(--r-md, 10px);
+  background: color-mix(in srgb, #7aa2c8 8%, transparent);
+}
+.wn-ai-est.is-busy { color: var(--muted); font-size: var(--fs-xs); }
+.wn-ai-tag {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: #7aa2c8; font-weight: var(--fw-semibold);
+}
+.wn-ai-price { font-size: var(--fs-md); font-weight: var(--fw-bold); color: var(--ink); }
+.wn-ai-range { font-size: var(--fs-xs); color: var(--muted); }
+.wn-ai-note { flex: 1 0 100%; font-size: var(--fs-xs); color: var(--muted); line-height: 1.55; }

@@ -34,7 +34,7 @@ public sealed class AuctionSniperAnalyzer(ProfitCalculator profitCalc, JackpotHu
     /// <summary>Bid this many seconds before the close. Bidding sooner only raises the price.</summary>
     public const int SnipeSecondsBeforeEnd = 20;
 
-    // Evidence bars. The same ones Local Deals and Roll the Dice use — one definition of "enough
+    // Evidence bars. The same ones Local Deals and the category sweep use — one definition of "enough
     // sold history to bet money on", not a looser one here because the row has a countdown on it.
     public const int MinCompsToBid = 3;
     public const int MinCompsToSnipe = LocalArbitrageAnalyzer.GoldmineMinComps;

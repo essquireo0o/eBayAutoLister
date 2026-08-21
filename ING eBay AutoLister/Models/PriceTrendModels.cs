@@ -6,7 +6,7 @@ namespace ING_eBay_AutoLister.Models;
 // its way up, at yesterday's price. The sold-comps database already holds the evidence (a sold
 // price AND a sold date on every row); nothing had ever read it as a time series.
 //
-// This does. It sweeps the same category universe Roll the Dice uses, measures each product's
+// This does. It sweeps the same category universe the jackpot hunter uses, measures each product's
 // recent sold prices and sale VELOCITY against the window before it, and ranks what is climbing.
 //
 // Two rules keep it from being a horoscope, and both are enforced in PriceTrendAnalyzer:

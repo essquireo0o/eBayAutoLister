@@ -2,7 +2,7 @@ using ING_eBay_AutoLister.Services;
 
 namespace ING_eBay_AutoLister.Tests;
 
-// "Roll again" is the whole promise of the feature: a second roll has to dig somewhere new, and a
+// Sweeping again is the whole promise of the rotation: a second sweep has to dig somewhere new, and a
 // handful of rolls has to have dug everywhere. That's a property of the rotation, so it's pinned
 // here rather than left to whatever the sweep happened to return on the day.
 public class CategorySweepTests

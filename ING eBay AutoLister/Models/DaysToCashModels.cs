@@ -7,7 +7,7 @@ namespace ING_eBay_AutoLister.Models;
 // second one is a shelf with money on it.
 //
 // See Services/DaysToCashEstimator.cs. Produced once per opportunity and carried by the local
-// arbitrage rows, the Roll the Dice plays and the trend-radar rows alike, so "fastest profit"
+// arbitrage rows, the category-sweep plays and the trend-radar rows alike, so "fastest profit"
 // means exactly the same thing on all three boards.
 public class DaysToCashEstimate
 {

@@ -32,7 +32,7 @@ public sealed class LotAnalyzer(ProfitCalculator profitCalc)
     // The same evidence bar the local-arbitrage verdicts and the repricer use.
     public const int MinCompsForConfidence = 3;
     // Enough sold history to settle a disagreement between the comps and the manifest's own
-    // retail column — the same "5 comps" bar Roll the Dice uses before it will show a product.
+    // retail column — the same "5 comps" bar the category sweep uses before it will show a product.
     public const int GoodEvidenceComps = 5;
 
     /// <summary>
