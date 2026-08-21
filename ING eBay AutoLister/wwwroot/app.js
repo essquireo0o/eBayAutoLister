@@ -11729,6 +11729,119 @@
   let wnVideoSig = null;      // signature of the frame last SENT, so an unchanged picture isn't re-read
   let wnVideoSkips = 0;       // consecutive frames skipped as unchanged, so a miss can't last forever
 
+  // ── Hearing the host ─────────────────────────────────────────────────────────
+  // Half of what a live show tells you is never on screen. The overlay says "APPLE
+  // IPAD"; the host says "64 gig, cellular, sealed in the box, retails four twenty".
+  // The picture cannot carry that and the listing does not have it.
+  //
+  // Claude has no ears — the API takes text, images and PDFs, and no audio — so this
+  // does not send sound to the AI. It records the shared tab's audio in short pieces,
+  // posts each to /api/whatsnot/listen to be turned into words, and keeps the last
+  // couple of minutes' worth. Those words ride along with the next frame, and the same
+  // read that looks at the picture also reads what was said over it.
+  //
+  // Every piece is a COMPLETE recording, not a slice of a longer one: a MediaRecorder
+  // given a timeslice writes the container header into the first chunk only, and every
+  // chunk after it is undecodable on its own. So each cycle starts a new recorder and
+  // stops it, and what gets posted is a whole, playable file.
+  let wnAudioTrack = null;    // the shared tab's audio, when the seller ticked "share audio"
+  let wnListenRec = null;     // the recorder for the piece being captured right now
+  let wnListenTimer = null;
+  let wnListenClips = 0;
+  let wnHeard = [];           // recent transcripts, oldest first
+  let wnHeardNote = '';       // why listening is off, when it is off for a reason worth saying
+
+  const WN_LISTEN_MS = 12000;        // one piece of audio — long enough for a sentence, short enough to be current
+  const WN_LISTEN_KEEP = 4;          // pieces kept as context (~48s of talk)
+  const WN_LISTEN_MAX_CLIPS = 200;   // ~40 minutes; a watch left running must not transcribe all night
+
+  function wnListening() { return wnListenTimer !== null; }
+
+  function wnStartListening(stream) {
+    const tracks = stream.getAudioTracks();
+    if (!tracks.length) {
+      // Chrome only offers audio when a TAB is shared, and only if the box is ticked.
+      wnHeardNote = 'No sound in that share — reading the picture only. To have the host heard too, ' +
+                    'share the Whatnot TAB and tick "Also share tab audio".';
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      wnHeardNote = "This browser can't record audio — reading the picture only.";
+      return;
+    }
+    wnAudioTrack = tracks[0];
+    wnHeard = [];
+    wnHeardNote = '';
+    wnListenClips = 0;
+    wnListenTimer = setInterval(wnListenCycle, WN_LISTEN_MS + 400);
+    wnListenCycle();
+  }
+
+  function wnStopListening() {
+    if (wnListenTimer) { clearInterval(wnListenTimer); wnListenTimer = null; }
+    if (wnListenRec) { try { wnListenRec.stop(); } catch { /* already stopped */ } wnListenRec = null; }
+    wnAudioTrack = null;
+    wnHeard = [];
+  }
+
+  function wnListenCycle() {
+    if (!wnVideoOn() || !wnAudioTrack || wnListenRec) return;
+    if (++wnListenClips > WN_LISTEN_MAX_CLIPS) {
+      if (wnListenTimer) { clearInterval(wnListenTimer); wnListenTimer = null; }
+      wnHeardNote = 'Stopped listening after 40 minutes — still reading the picture.';
+      return;
+    }
+
+    let rec;
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+      .find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+    try {
+      rec = new MediaRecorder(new MediaStream([wnAudioTrack]), mime ? { mimeType: mime } : undefined);
+    } catch {
+      if (wnListenTimer) { clearInterval(wnListenTimer); wnListenTimer = null; }
+      wnHeardNote = "This browser can't record the tab's audio — reading the picture only.";
+      return;
+    }
+
+    const parts = [];
+    rec.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+    rec.onstop = () => {
+      wnListenRec = null;
+      if (!wnVideoOn() || !parts.length) return;
+      wnSendClip(new Blob(parts, { type: rec.mimeType || 'audio/webm' }));
+    };
+
+    wnListenRec = rec;
+    try { rec.start(); } catch { wnListenRec = null; return; }
+    setTimeout(() => { try { if (rec.state !== 'inactive') rec.stop(); } catch { /* fine */ } }, WN_LISTEN_MS);
+  }
+
+  async function wnSendClip(blob) {
+    const form = new FormData();
+    form.append('clip', blob, (blob.type || '').includes('mp4') ? 'clip.mp4' : 'clip.webm');
+    try {
+      const res = await fetch('/api/whatsnot/listen', { method: 'POST', body: form });
+      if (!res.ok) return;                       // one lost piece of a long show is not worth a message
+      const body = await res.json();
+      if (!wnVideoOn()) return;
+
+      if (!body.ok) {
+        // A missing key or a rejected one will be true for every piece that follows, so say it once
+        // and stop asking — the picture read carries on regardless.
+        if (body.detail && /key|credit|rate-limited/i.test(body.detail)) {
+          if (wnListenTimer) { clearInterval(wnListenTimer); wnListenTimer = null; }
+          wnHeardNote = body.detail;
+        }
+        return;
+      }
+
+      const text = (body.text || '').trim();
+      if (!text) return;
+      wnHeard.push(text);
+      while (wnHeard.length > WN_LISTEN_KEEP) wnHeard.shift();
+    } catch { /* the network dropped one piece; the next one comes in twelve seconds */ }
+  }
+
   // ── The allowance this loop is spending out of ───────────────────────────────
   // On the hosted build the owner's Anthropic key pays for everybody, so each account
   // gets a handful of AI generations a day (AiQuota) — and this loop is the only
@@ -11791,7 +11904,10 @@
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false });
+      // Audio is asked for so the host can be HEARD, not just seen. Chrome shows the seller a
+      // "Also share tab audio" tick when they pick a tab; if they leave it off, or share a window
+      // instead, no audio track arrives and the read falls back to the picture alone.
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: true });
     } catch (err) {
       wnVideoStatus('', '');   // the seller closed the share picker — nothing to do
       return;
@@ -11808,10 +11924,15 @@
     stream.getVideoTracks().forEach(t =>
       t.addEventListener('ended', () => wnStopVideoWatch('The tab share ended, so the video read stopped.')));
     const btn = $('wn-video-btn');
-    if (btn) { btn.classList.add('active'); btn.textContent = '⏹ Stop reading the video'; }
+    if (btn) { btn.classList.add('active'); btn.textContent = '⏹ Stop watching'; }
+
+    wnStartListening(stream);
+
     // The count is said up front because it is small and it is spent automatically: a seller who
     // is told "reading every 20s" and not "you have four of these" finds out by running out.
-    wnVideoStatus(`Reading the video every ${Math.round(WN_WATCH_MS / 1000)}s — point the shared tab at the show.` +
+    wnVideoStatus(`${wnListening() ? 'Watching and listening' : 'Reading the video'} every ` +
+                  `${Math.round(WN_WATCH_MS / 1000)}s — point the shared tab at the show.` +
+                  (wnHeardNote ? ` ${wnHeardNote}` : '') +
                   (left === null ? '' : ` ${wnVideoCap} AI read${wnVideoCap === 1 ? '' : 's'} left today, ` +
                                          'and this spends one on each new thing it sees.'), 'busy');
     wnVideoTimer = setInterval(wnVideoTick, WN_WATCH_MS);
@@ -11820,13 +11941,14 @@
 
   function wnStopVideoWatch(why) {
     if (wnVideoTimer) { clearInterval(wnVideoTimer); wnVideoTimer = null; }
+    wnStopListening();   // before the tracks stop, so the recorder is not torn out from under
     if (wnVideoStream) { try { wnVideoStream.getTracks().forEach(t => t.stop()); } catch { /* already gone */ } }
     wnVideoStream = null;
     wnVideoBusy = false;
     const vid = $('wn-video-el');
     if (vid) { try { vid.pause(); } catch { /* fine */ } vid.srcObject = null; }
     const btn = $('wn-video-btn');
-    if (btn) { btn.classList.remove('active'); btn.textContent = '🎥 Read the video (AI)'; }
+    if (btn) { btn.classList.remove('active'); btn.textContent = '🎥 Watch & listen (AI)'; }
     wnVideoStatus(why || '', why ? 'idle' : '');
   }
 
@@ -11915,7 +12037,11 @@
 
     wnVideoBusy = true;
     try {
-      const { res, body } = await safePost('/api/whatsnot/watch', { imageBase64: dataUrl, mediaType: 'image/jpeg' });
+      const { res, body } = await safePost('/api/whatsnot/watch', {
+        imageBase64: dataUrl,
+        mediaType: 'image/jpeg',
+        heard: wnHeard.join(' '),   // what the host has been saying over these last few frames
+      });
       if (!wnVideoOn()) return;   // stopped while the read was out
       if (!res.ok) {
         // Out of allowance is not a read that failed — it is a loop with nothing left to spend,
@@ -11956,8 +12082,10 @@
       setVal('wn-item', seen);
       wnDropToken();          // a different item is a different question; the comps in hand answer the old one
       wnResetLotBoxes();      // qty / condition belong to the lot they were read on, not the next one
-      wnVideoStatus(`On screen: ${seen} (${body.certainty || '?'}) — pricing…` +
-                    (body.checkThis ? `  Check: ${body.checkThis}` : ''), 'ok');
+      wnVideoStatus(`${body.heardVoice ? 'Seen and heard' : 'On screen'}: ${seen} ` +
+                    `(${body.certainty || '?'}) — pricing…` +
+                    (body.checkThis ? `  Check: ${body.checkThis}` : '') +
+                    (wnHeardNote ? `  ${wnHeardNote}` : ''), 'ok');
       wnPriceItem();
     } catch (err) {
       if (wnVideoOn()) wnVideoStatus(errorText(err, "That video read didn't happen."), 'bad');

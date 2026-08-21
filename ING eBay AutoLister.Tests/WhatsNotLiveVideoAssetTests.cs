@@ -39,18 +39,60 @@ public class WhatsNotLiveVideoAssetTests
     }
 
     /// <summary>
-    /// The same call the photo check and Snap &amp; Source make. A second prompt for "what is this"
-    /// would be a second opinion about identity on the one screen with no time to notice there are
-    /// two of them.
+    /// One identification, returning the one <c>SnapIdentity</c> shape the photo check and Snap &amp;
+    /// Source get. A second prompt for "what is this" would be a second opinion about identity on the
+    /// one screen with no time to notice there are two of them. This frame gets its own prompt only
+    /// because it is a screenshot of a selling app rather than a photograph of an object — there is
+    /// an overlay to read and, when the tab was shared with sound, a host to have heard.
     /// </summary>
     [Fact]
     public void A_frame_goes_through_the_same_identification_every_other_photo_does()
     {
         var endpoint = Between(Program, "app.MapPost(\"/api/whatsnot/watch\"", "\n});");
 
-        Assert.Contains("claude.IdentifyItemAsync(base64, mediaType, ct)", endpoint, StringComparison.Ordinal);
+        Assert.Contains("claude.IdentifyLiveLotAsync(base64, mediaType, heard, ct)", endpoint, StringComparison.Ordinal);
         Assert.Contains("catch (OperationCanceledException) { throw; }", endpoint, StringComparison.Ordinal);
         Assert.Contains("FailureTranslator.Translate(ex, FailureDomain.Ai)", endpoint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Claude has no ears: the Messages API takes text, images and PDFs and there is no audio content
+    /// block. So "analyse the voice" has to mean transcribing the sound somewhere else and handing the
+    /// model words — and the day someone tries to POST a clip straight at the vision call, this fails.
+    /// </summary>
+    [Fact]
+    public void The_voice_reaches_the_model_as_words_never_as_audio()
+    {
+        var endpoint = Between(Program, "app.MapPost(\"/api/whatsnot/watch\"", "\n});");
+
+        // The transcript is a string on the request, capped before it is put in front of the prompt.
+        Assert.Contains("req.Heard", endpoint, StringComparison.Ordinal);
+        Assert.Contains("heard = heard[^1200..]", endpoint, StringComparison.Ordinal);
+
+        // Sound is turned into words at its own endpoint, by a service that is not the model.
+        Assert.Contains("app.MapPost(\"/api/whatsnot/listen\"", Program, StringComparison.Ordinal);
+        Assert.Contains("transcriber.TranscribeAsync", Program, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A show is hours long and every piece of audio costs money to transcribe, so listening stops
+    /// when watching does — and each piece posted is a complete recording, because a MediaRecorder
+    /// given a timeslice puts the container header in the first chunk only and every chunk after it
+    /// is undecodable on its own.
+    /// </summary>
+    [Fact]
+    public void Listening_starts_and_stops_with_the_watch()
+    {
+        Assert.Contains("audio: true", Js, StringComparison.Ordinal);
+        Assert.Contains("wnStartListening(stream)", Js, StringComparison.Ordinal);
+
+        var stop = Between(Js, "function wnStopVideoWatch(why)", "\n  }");
+        Assert.Contains("wnStopListening()", stop, StringComparison.Ordinal);
+
+        // Each cycle builds its own recorder and stops it, rather than slicing one long one.
+        var cycle = Between(Js, "function wnListenCycle()", "\n  }");
+        Assert.Contains("new MediaRecorder", cycle, StringComparison.Ordinal);
+        Assert.DoesNotContain("rec.start(WN_LISTEN_MS)", cycle, StringComparison.Ordinal);
     }
 
     /// <summary>

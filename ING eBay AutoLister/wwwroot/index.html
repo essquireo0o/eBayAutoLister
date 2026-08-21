@@ -3028,13 +3028,15 @@
                 <input id="wn-watch" type="checkbox" />
                 <span>Keep reading</span>
               </label>
-              <!-- Reads the VIDEO, not the page. Whatnot refuses to be embedded and a browser cannot
+              <!-- Reads the SHOW, not the page. Whatnot refuses to be embedded and a browser cannot
                    see inside a cross-origin frame, so this asks you to share your Whatnot tab, samples
-                   a frame from it every few seconds, and has AI name what is physically on screen —
-                   then prices it exactly like a typed name. This is the one control that spends an AI
-                   read per frame, on purpose and only while it is on. -->
+                   a frame from it every few seconds, records the tab's sound in short pieces, and has
+                   AI name what is on screen using both — then prices it exactly like a typed name.
+                   Tick "Also share tab audio" in the share picker and the host is heard as well as
+                   seen. This is the one control that spends an AI read per frame, on purpose and
+                   only while it is on. -->
               <button id="wn-video-btn" class="btn btn-ghost wn-video-btn" type="button"
-                      title="Share your Whatnot tab and let AI read what's on screen, then price it">🎥 Read the video (AI)</button>
+                      title="Share your Whatnot tab — with tab audio ticked — and AI reads the screen and hears the host, then prices it">🎥 Watch &amp; listen (AI)</button>
             </div>
             <!-- Visual status only, deliberately NOT a live region: #wn-say is the one live region on
                  this screen, and a second announcement competing with it during a live sale leaves a
@@ -3067,9 +3069,10 @@
                  so on the web they were four buttons that could only apologise), which leaves
                  exactly two ways in: share the tab, or type the name. Say so, briefly. -->
             <p class="opp-hint wn-hosted-only">
-              Watch the show in your own browser tab, press <strong>🎥 Read the video (AI)</strong>
-              and share that tab — the AI names each new lot on screen and prices it below. Typing
-              the lot in and pressing <strong>⚡ Price it</strong> always works too, and costs nothing.
+              Watch the show in your own browser tab, press <strong>🎥 Watch &amp; listen (AI)</strong>
+              and share that tab with <strong>"Also share tab audio"</strong> ticked — the AI reads
+              each new lot off the screen, hears what the host says about it, and prices it below.
+              Typing the lot in and pressing <strong>⚡ Price it</strong> always works too, and costs nothing.
             </p>
           </div>
 
