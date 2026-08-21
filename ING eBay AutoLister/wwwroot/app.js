@@ -7405,51 +7405,33 @@
   // can never quote a number the table beside it doesn't.
   let budgetPlan = null;
 
-  // ── Photo Box Camera ─────────────────────────────────────────────────────────
-  // The ESP32-S3 camera on the desk. Setup is one serial conversation the server
-  // has on this page's behalf; after that this screen is a viewfinder with a
-  // shutter button, and every snap lands in the Photo Library's photo-box folder.
-  let pbCameraUrl = null;
+  // ── Photo Box Camera ──────────────────────────────────────────────────────
+  // The seller's phone is the camera (PhoneCapture.cs): it holds a page open on its own
+  // camera, the shutter stays on this screen, and every snap lands in the Photo Library's
+  // photo-box folder. The ESP32 board that used to live here — USB provisioning, driver
+  // checks, firmware flashing, MJPEG streaming — was removed 2026-08-21: a phone is two
+  // orders of magnitude the better sensor and needs no hardware at all.
 
   function showPhotoBoxSection() {
     hideOverlaySections();
     $('photobox-section')?.classList.remove('hidden');
     setActiveNavItem('photobox');
     markWorkspaceTabOpen('photobox');
-    pbRefreshStatus();
-    // The first question on the screen answers itself: opening the page checks the USB, so a
-    // seller who just plugged the board in reads a verdict, not a button they haven't found yet.
-    pbCheckUsb();
+    // A phone left connected from earlier keeps working across a tab switch, so the screen asks
+    // what is actually happening rather than assuming it starts cold.
+    pbPhoneRefresh();
   }
 
-  // Which of the three empty-port-list desks this machine is — nothing plugged in, a charge-only
-  // cable, or a serial chip with no driver — said in the server's words, with the driver download
-  // shown only when a download is the fix.
-  async function pbCheckUsb() {
-    const status = $('pb-usb-status');
-    const driver = $('pb-usb-driver');
-    const btn = $('pb-usb-check');
-    if (btn) btn.disabled = true;
-    try {
-      const res = await fetch('/api/photobox/usb');
-      const d = await res.json();
-      if (!res.ok) { if (status) status.textContent = d.error || 'Could not read the USB device list.'; return; }
-      if (status) {
-        status.className = 'wn-video-status wn-video-' + (d.verdict === 'ok' ? 'ok' : 'bad');
-        status.textContent = d.sentence + ' ' + d.whatToDo;
-      }
-      if (driver) {
-        driver.classList.toggle('hidden', !d.driverUrl);
-        if (d.driverUrl) driver.href = d.driverUrl;
-      }
-      // A healthy port means the next step can just happen — scan it rather than leaving the
-      // seller to press the second button an inch below the first.
-      if (d.verdict === 'ok') pbScanPorts();
-    } catch (err) {
-      if (status) status.textContent = 'USB check failed: ' + err;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+  // The viewfinder with no camera behind it. One place, so "the phone stopped" and "the phone was
+  // never started" cannot drift into saying different things about the same empty box.
+  function pbNoCamera(message) {
+    const img = $('pb-stream');
+    const empty = $('pb-stream-empty');
+    if (img) { img.src = ''; img.style.display = 'none'; }
+    if (empty) { empty.style.display = ''; empty.textContent = message; }
+    $('pb-snap')?.setAttribute('disabled', '');
+    const status = $('pb-cam-status');
+    if (status) status.textContent = 'No camera yet.';
   }
 
   function pbSetupStatus(text, kind) {
@@ -7457,223 +7439,6 @@
     if (!box) return;
     box.className = 'wn-video-status' + (kind ? ' wn-video-' + kind : '') + (text ? '' : ' hidden');
     box.textContent = text || '';
-  }
-
-  function pbStopStream() {
-    const img = $('pb-stream');
-    // Clearing src is what actually hangs up the MJPEG connection.
-    if (img && img.src) img.src = '';
-    pbViewSeq++;   // any frame loop in flight stops itself
-    if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
-    if (pbFrameTimer) { clearTimeout(pbFrameTimer); pbFrameTimer = null; }
-  }
-
-  // The viewfinder's two truths, both from one small radio and one slow software encoder
-  // (this sensor has no hardware JPEG): full-size frames arrive about every ten seconds,
-  // and the fast preview is small. Rather than pick one and field "no picture" or "why is
-  // it 320x240" forever, the seller picks — and full size is the default, because a product
-  // shot is about detail, not motion. The other silent failure handled here: the camera
-  // serves exactly ONE stream viewer, so a second tab or a probe freezes whoever was
-  // watching before. Black is captioned while it is expected, a drop reconnects itself,
-  // and a long stall knocks again to take the slot back.
-  let pbWarmTimer = null;      // warming caption / retry / watchdog
-  let pbFrameTimer = null;     // the full-size mode's next-frame fetch
-  let pbViewSeq = 0;           // stale loops from a mode switch stop themselves
-  let pbViewMode = localStorage.getItem('pbViewMode') || 'full';
-
-  function pbSizeToggleLabel() {
-    const btn = $('pb-size-toggle');
-    if (btn) btn.textContent = pbViewMode === 'full' ? '🖼 Full size · slow' : '🎞 Fast · small';
-  }
-
-  function pbShowStream(url) {
-    pbCameraUrl = url;
-    const seq = ++pbViewSeq;
-    const img = $('pb-stream');
-    const empty = $('pb-stream-empty');
-    if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
-    if (pbFrameTimer) { clearTimeout(pbFrameTimer); pbFrameTimer = null; }
-    pbSizeToggleLabel();
-
-    if (img) {
-      img.onload = () => {
-        if (seq !== pbViewSeq) return;
-        if (pbWarmTimer) { clearTimeout(pbWarmTimer); pbWarmTimer = null; }
-        if (empty) empty.style.display = 'none';
-        // Full-size mode is a loop of stills: the moment one lands, ask for the next. The
-        // camera spends a couple of seconds making each (measured ~2s with a healthy ribbon
-        // — the 10s frames were the loose cable forcing retries), so the encode IS the
-        // interval and this polls almost nothing.
-        if (pbViewMode === 'full')
-          pbFrameTimer = setTimeout(() => {
-            if (seq === pbViewSeq && img.src) img.src = url + '/jpg?t=' + Date.now();
-          }, 400);
-      };
-      // A dropped connection, not a missing camera — the server said reachable moments ago.
-      // Say so and knock again in a beat, rather than leaving a broken-image glyph.
-      img.onerror = () => {
-        if (seq !== pbViewSeq || !img.src) return;   // a mode switch or hang-up is not an error
-        if (empty) { empty.style.display = ''; empty.textContent = 'The picture dropped — reconnecting…'; }
-        if (pbWarmTimer) clearTimeout(pbWarmTimer);
-        pbWarmTimer = setTimeout(() => { if (seq === pbViewSeq) pbShowStream(url); }, 4000);
-      };
-      // Full: the camera's own full-resolution frame endpoint, one still after another.
-      // Fast: the MJPEG preview on port 81, the stream's own door (the firmware keeps :80
-      // free for /jpg and setup, so a held-open stream can never wedge the snap button).
-      img.src = pbViewMode === 'full'
-        ? url + '/jpg?t=' + Date.now()
-        : url + ':81/stream?t=' + Date.now();
-      img.style.display = 'block';
-    }
-    if (empty) {
-      // Captioned black beats silent black: ten dark seconds with no words is a support
-      // question. Each mode's caption also says what the trade was, so the toggle beside
-      // the shutter is never a mystery.
-      empty.style.display = '';
-      empty.textContent = pbViewMode === 'full'
-        ? 'Fetching a full-size frame — a few seconds each. Switch to Fast for a small live preview.'
-        : 'Warming up — first frame in a few seconds. This preview is small on purpose; snaps and Full size are the camera’s whole picture.';
-    }
-    pbWarmTimer = setTimeout(() => {
-      // Well past a frame's worth of patience: in fast mode the one viewing slot was
-      // probably taken by another tab. One knock takes it back.
-      if (seq === pbViewSeq && empty && empty.style.display !== 'none' && img) {
-        empty.textContent = 'Still waiting — knocking on the camera again…';
-        img.src = pbViewMode === 'full'
-          ? url + '/jpg?t=' + Date.now()
-          : url + ':81/stream?t=' + Date.now();
-      }
-    }, 30000);
-    $('pb-size-toggle')?.removeAttribute('disabled');
-    $('pb-snap')?.removeAttribute('disabled');
-    $('pb-open')?.removeAttribute('disabled');
-    $('pb-forget')?.removeAttribute('disabled');
-  }
-
-  function pbNoStream(message) {
-    // The board camera has nothing to show. That says nothing about the phone, which may be
-    // sitting there ready to shoot — so this must not touch the viewfinder or the shutter
-    // when the phone owns them.
-    if (pbPhoneLive) { $('pb-open')?.setAttribute('disabled', ''); return; }
-    pbStopStream();
-    const img = $('pb-stream');
-    const empty = $('pb-stream-empty');
-    if (img) img.style.display = 'none';
-    if (empty) { empty.style.display = ''; empty.textContent = message; }
-    $('pb-snap')?.setAttribute('disabled', '');
-    $('pb-open')?.setAttribute('disabled', '');
-  }
-
-  async function pbRefreshStatus() {
-    // While the phone is the camera it owns the viewfinder and the status line; a board that
-    // is unplugged in the drawer has no business overwriting either.
-    if (pbPhoneLive) return;
-    const status = $('pb-cam-status');
-    try {
-      const res = await fetch('/api/photobox/status');
-      const s = await res.json();
-      // Checked again on the way out, not only on the way in: this request can take the four
-      // seconds an absent board takes to time out, and the phone can go live inside that
-      // window. Answering then would overwrite a working viewfinder with a stale complaint
-      // about a camera nobody is using.
-      if (pbPhoneLive) return;
-      if (!res.ok) { if (status) status.textContent = s.error || 'Unavailable.'; return; }
-      if (!s.configured) {
-        if (status) status.textContent = 'No camera set up yet.';
-        pbNoStream('No camera on the network yet — set it up above.');
-        $('pb-forget')?.setAttribute('disabled', '');
-        return;
-      }
-      $('pb-forget')?.removeAttribute('disabled');
-      if (s.reachable) {
-        if (status) status.textContent = `Live — ${s.url} on “${s.ssid}”.`;
-        pbShowStream(s.url);
-      } else {
-        if (status) status.textContent = s.detail || `The camera at ${s.url} didn't answer.`;
-        pbNoStream('The camera is remembered but not answering — power it up, or run the USB setup again.');
-      }
-    } catch {
-      if (status) status.textContent = 'Could not ask the app about the camera.';
-    }
-  }
-
-  async function pbScanPorts() {
-    const btn = $('pb-scan');
-    const sel = $('pb-port');
-    if (!sel) return;
-    if (btn) { btn.disabled = true; btn.textContent = 'Listening…'; }
-    pbSetupStatus('Listening on every serial port for the camera (a few seconds per port)…', 'busy');
-    try {
-      const res = await fetch('/api/photobox/ports');
-      const body = await res.json();
-      if (!res.ok) { pbSetupStatus(body.error || 'Could not list ports.', 'bad'); return; }
-      sel.innerHTML = '';
-      const ports = body.ports || [];
-      if (!ports.length) {
-        pbSetupStatus('No serial ports at all. Plug the camera in over USB — the board port labelled UART/COM — and press ↻ again.', 'bad');
-        return;
-      }
-      let found = null;
-      for (const p of ports) {
-        const opt = document.createElement('option');
-        opt.value = p.port;
-        opt.textContent = p.isCamera ? `${p.port} — ✓ this is the camera` : p.port;
-        sel.appendChild(opt);
-        if (p.isCamera && !found) found = p.port;
-      }
-      if (found) {
-        sel.value = found;
-        pbSetupStatus(`Found the camera on ${found}. Type the WiFi and press send.`, 'ok');
-      } else {
-        pbSetupStatus('Ports listed, but none answered like the camera. If it is plugged in and silent, it may need the Photo Box firmware first — see firmware/photobox in the repo.', 'bad');
-      }
-    } catch (err) {
-      pbSetupStatus('Port scan failed: ' + err, 'bad');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '↻ Find camera'; }
-    }
-  }
-
-  async function pbProvision() {
-    const port = $('pb-port')?.value || '';
-    const ssid = ($('pb-ssid')?.value || '').trim();
-    const pass = $('pb-pass')?.value || '';
-    if (!port) { pbSetupStatus('Pick the camera’s port first — press ↻ Find camera.', 'bad'); return; }
-    if (!ssid) { pbSetupStatus('Type the WiFi network name.', 'bad'); return; }
-    const btn = $('pb-provision');
-    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-    pbSetupStatus('Sending the WiFi over the cable — the board takes up to half a minute to join…', 'busy');
-    try {
-      const res = await fetch('/api/photobox/provision', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port, ssid, password: pass })
-      });
-      const r = await res.json();
-      if (r.ok) {
-        pbSetupStatus(`Connected — the camera is at ${r.ip}${r.mdns ? ' (' + r.mdns + ')' : ''}. It remembers this network on its own now; it can leave the USB cable and live in the photo box.`, 'ok');
-        pbRefreshStatus();
-      } else {
-        pbSetupStatus(r.detail || r.error || 'The camera never reported a connection.', 'bad');
-      }
-    } catch (err) {
-      pbSetupStatus('Setup failed: ' + err, 'bad');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '📶 Send WiFi to camera'; }
-    }
-  }
-
-  let pbZoomLevel = 1;
-
-  function pbApplyZoom(z) {
-    pbZoomLevel = Math.min(4, Math.max(1, z));
-    const img = $('pb-stream');
-    // scale() on the stream is the viewfinder; the snap endpoint crops the same
-    // centred window out of the real frame, so the picture matches the preview.
-    if (img) img.style.transform = pbZoomLevel > 1 ? `scale(${pbZoomLevel})` : '';
-    const slider = $('pb-zoom');
-    if (slider && Math.abs(parseFloat(slider.value) - pbZoomLevel) > 0.01) slider.value = pbZoomLevel;
-    const val = $('pb-zoom-val');
-    if (val) val.textContent = pbZoomLevel.toFixed(1) + '×';
   }
 
   // The snaps taken since this screen opened, oldest first. The AI Listing button
@@ -7685,10 +7450,7 @@
     const btn = $('pb-snap');
     if (btn) btn.disabled = true;
     try {
-      const res = await fetch('/api/photobox/snap', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zoom: pbZoomLevel })
-      });
+      const res = await fetch('/api/photobox/snap', { method: 'POST' });
       const r = await res.json();
       if (res.ok && r.url) {
         pbSessionSnaps.push(r.url);
@@ -7753,7 +7515,7 @@
       const b = $('pb-phone'); if (b) b.textContent = '📱 Use my phone';
       pbPhoneLive = false;
       pbStopPhonePreview();
-      pbRefreshStatus();   // hand the viewfinder back to the board camera
+      pbNoCamera('No camera yet — press 📱 Use my phone and scan the code.');
       return;
     }
     panel.classList.remove('hidden');
@@ -7834,33 +7596,6 @@
     }
   }
 
-  // The one-button firmware write. A brand-new camera answers nothing on its port —
-  // this is what makes it a camera. It is also the update path: the binaries ship
-  // inside the installer, so "latest" means "what this build of the app was tested
-  // with", not "whatever the internet had today".
-  async function pbFlash() {
-    const btn = $('pb-flash');
-    const port = $('pb-port')?.value || '';
-    if (btn) { btn.disabled = true; btn.textContent = '⚡ Flashing — about a minute, don’t unplug…'; }
-    pbSetupStatus('Writing the camera firmware over USB. Leave the cable alone until this finishes — an interrupted write is harmless but has to be redone.', 'busy');
-    try {
-      const res = await fetch('/api/photobox/flash', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port: port || null })
-      });
-      const r = await res.json();
-      if (r.ok) {
-        pbSetupStatus(`Firmware ${r.version} is on the camera. Give it ~10 seconds to restart, press ↻ Find camera, then send it your WiFi.`, 'ok');
-      } else {
-        pbSetupStatus(r.detail || r.error || 'The flash failed.', 'bad');
-      }
-    } catch (err) {
-      pbSetupStatus('The flash failed. ' + errorText(err, 'Try again with the board on its UART/COM socket.'), 'bad');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '⚡ Flash firmware'; }
-    }
-  }
-
   // Snap → finished draft, one press. The newest snap is what the AI reads (title,
   // item specifics, description, category, and NEW vs USED off the photo itself);
   // every snap from this session rides along on the listing's photo grid; and the
@@ -7905,27 +7640,9 @@
   function bindPhotoBox() {
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
-    $('pb-usb-check')?.addEventListener('click', pbCheckUsb);
-    $('pb-size-toggle')?.addEventListener('click', () => {
-      pbViewMode = pbViewMode === 'full' ? 'fast' : 'full';
-      localStorage.setItem('pbViewMode', pbViewMode);
-      if (pbCameraUrl) pbShowStream(pbCameraUrl); else pbSizeToggleLabel();
-    });
-    $('pb-scan')?.addEventListener('click', pbScanPorts);
-    $('pb-provision')?.addEventListener('click', pbProvision);
     $('pb-snap')?.addEventListener('click', pbSnap);
     $('pb-ai')?.addEventListener('click', pbAiListing);
-    $('pb-flash')?.addEventListener('click', pbFlash);
     $('pb-phone')?.addEventListener('click', pbTogglePhone);
-    $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
-    $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
-    $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));
-    $('pb-open')?.addEventListener('click', () => { if (pbCameraUrl) window.open(pbCameraUrl + ':81/stream', '_blank'); });
-    $('pb-forget')?.addEventListener('click', async () => {
-      await fetch('/api/photobox/forget', { method: 'POST' });
-      pbCameraUrl = null;
-      pbRefreshStatus();
-    });
   }
 
   function showBudgetSection() {

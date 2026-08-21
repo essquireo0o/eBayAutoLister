@@ -272,9 +272,6 @@ builder.Services.AddSingleton<AmazonListingSubmitService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<PhotoLibrary>();
-// The desk-side ESP32-S3 product camera and its USB-cable WiFi setup. See PhotoBoxCamera.cs
-// for why provisioning goes over the serial port instead of a hotspot dance.
-builder.Services.AddSingleton<PhotoBoxCamera>();
 // The seller's phone as the photo-box camera, with the shutter still on this screen.
 // Its own listener on its own port — see PhoneCapture for why it is not a route here.
 builder.Services.AddSingleton<PhoneCapture>();
@@ -9465,87 +9462,36 @@ app.MapGet("/api/photos/library", (PhotoLibrary photos) =>
     Results.Ok(photos.GetAllFolders().Select(f => new { f.ModelKey, f.ImageCount, photos = photos.ListPhotoUrls(f.ModelKey) })));
 
 // ── Photo Box Camera ──────────────────────────────────────────────────────────
-// The desk-side ESP32-S3 camera: found on a COM port, given the WiFi over the USB
-// cable, then streamed from and snapped into the Photo Library. Desktop only —
-// a hosted server has no USB and shares no LAN with the seller, so every one of
-// these answers there with the same sentence instead of a mystery.
+// The phone camera, and why a hosted server cannot offer it: the capture page is served
+// to the phone over the seller's own network by the app on their own machine, and a
+// container in a datacentre shares no network with anybody's phone. Every endpoint here
+// answers with the same sentence there instead of a mystery.
 static IResult? PhotoBoxHostedRefusal() => HostedAuth.IsHostedBuild
     ? Results.BadRequest(new
       {
-          error = "The Photo Box camera plugs into the computer the app runs on.",
-          detail = "This is the hosted app in a browser — it has no USB port. Set the camera up in the desktop app; once it is on your WiFi its stream works from any screen on your network."
+          error = "The Photo Box camera runs on the computer the app is installed on.",
+          detail = "This is the hosted app in a browser. Using your phone as the camera needs the desktop app, which serves the capture page to your phone over your own network."
       })
     : null;
 
-// Before any port is opened: is the camera even on the USB, and if not, which of the three
-// reasons — nothing plugged in, a charge-only cable, a serial chip with no driver. The port
-// scan below can only say "no ports"; this says why, with the driver download when that is
-// the fix. Off the device list, so it costs nothing and cannot hang on a Bluetooth port.
-app.MapGet("/api/photobox/usb", () =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    return Results.Ok(PhotoBoxUsb.Diagnose());
-});
-
-app.MapGet("/api/photobox/ports", async (PhotoBoxCamera box, CancellationToken ct) =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    return Results.Ok(new { ports = await box.ListPortsAsync(ct) });
-});
-
-app.MapPost("/api/photobox/provision", async (PhotoBoxProvisionRequest req, PhotoBoxCamera box, ActionLog log, CancellationToken ct) =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    var result = await box.ProvisionAsync(req.Port ?? "", req.Ssid ?? "", req.Password ?? "", ct);
-    log.Add(result.Ok ? "Info" : "Warning", "Photo Box camera WiFi setup",
-        result.Ok ? $"connected at {result.Ip}" : $"{result.Status}: {result.Detail.Split('\n')[0]}");
-    return Results.Ok(result);
-});
-
-app.MapGet("/api/photobox/status", async (PhotoBoxCamera box, CancellationToken ct) =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    return Results.Ok(await box.StatusAsync(ct));
-});
-
-// The whole point of shipping the flasher in the installer: a customer with a
-// factory-fresh board presses one button instead of installing a toolchain.
-app.MapPost("/api/photobox/flash", async (PhotoBoxFlashRequest? req, PhotoBoxCamera box, ActionLog log, CancellationToken ct) =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    var result = await box.FlashAsync(req?.Port, ct);
-    log.Add(result.Ok ? "Info" : "Warning", "Photo Box firmware flash",
-        result.Ok ? $"firmware {PhotoBoxCamera.BundledFirmwareVersion} written" : result.Detail.Split('\n')[0]);
-    return Results.Ok(new { result.Ok, result.Detail, version = PhotoBoxCamera.BundledFirmwareVersion });
-});
-
-app.MapPost("/api/photobox/forget", (PhotoBoxCamera box) =>
-{
-    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    box.Forget();
-    return Results.Ok(new { ok = true });
-});
-
-app.MapPost("/api/photobox/snap", async (PhotoBoxSnapRequest? req, PhotoBoxCamera box, PhoneCapture phone, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
+app.MapPost("/api/photobox/snap", async (PhoneCapture phone, ActionLog log, CancellationToken ct) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
 
-    // One shutter, two cameras. When a phone is holding the capture page open it is the better
-    // sensor by two orders of magnitude, so it wins — and the rest of this screen, including the
-    // AI Listing hand-off, never learns which camera took the picture.
-    if (phone.Snapshot() is { Running: true, PhoneConnected: true })
-    {
-        var (phoneUrl, phoneError) = await phone.ShootAsync(ct);
-        if (phoneError is not null) return Results.BadRequest(new { error = phoneError });
-        log.Add("Info", "Phone camera snap", $"saved {phoneUrl}");
-        return Results.Ok(new { url = phoneUrl, folder = PhotoBoxCamera.LibraryFolder, source = "phone" });
-    }
+    // The phone is the camera. Nothing downstream — the Photo Library, the AI Listing hand-off —
+    // knows or cares which device took the frame; it lands in the same folder either way.
+    if (phone.Snapshot() is not { Running: true, PhoneConnected: true })
+        return Results.BadRequest(new
+        {
+            error = "No camera is connected.",
+            detail = "Press 📱 Use my phone, scan the code, and leave the camera page open on the phone. "
+                   + "The shutter stays here."
+        });
 
-    var zoom = req?.Zoom is > 1.0 and <= 8.0 ? req.Zoom.Value : 1.0;
-    var (url, error) = await box.SnapAsync(photos, zoom, ct);
+    var (url, error) = await phone.ShootAsync(ct);
     if (error is not null) return Results.BadRequest(new { error });
-    log.Add("Info", "Photo Box snap", zoom > 1.0 ? $"saved {url} at {zoom:0.0}x zoom" : $"saved {url}");
-    return Results.Ok(new { url, folder = PhotoBoxCamera.LibraryFolder, source = "board" });
+    log.Add("Info", "Phone camera snap", $"saved {url}");
+    return Results.Ok(new { url, folder = PhotoLibrary.PhotoBoxFolder, source = "phone" });
 });
 
 // ── The phone as the camera ───────────────────────────────────────────────────

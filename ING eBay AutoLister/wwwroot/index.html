@@ -2869,76 +2869,11 @@
         </div>
 
         <div class="opportunity-overlay-body">
-          <!-- Step one: the USB conversation. Plug the camera in, find its port, hand it
-               the WiFi. After a successful send this card is done and stays only as the
-               way to move the camera to a new network. -->
-          <div class="pb-card">
-            <!-- Step zero, before any port is opened: is the camera even on the USB? Three desks
-                 produce the same empty port list — nothing plugged in, a charge-only cable, a
-                 serial chip with no driver — and only one of them is fixed by a download. This
-                 row names which desk this is, and carries the driver link when that is the fix. -->
-            <div class="wn-read-row">
-              <button id="pb-usb-check" class="btn btn-ghost" type="button"
-                      title="Ask Windows what is on the USB, before any port is opened">🔌 Check USB</button>
-              <div id="pb-usb-status" class="wn-video-status" role="status" aria-live="polite">Checking the USB for the camera…</div>
-              <a id="pb-usb-driver" class="btn btn-primary hidden" href="#" target="_blank" rel="noopener">Install the driver ↗</a>
-            </div>
-            <div class="wn-read-row">
-              <label class="wn-field">
-                <span>Camera port</span>
-                <select id="pb-port"></select>
-              </label>
-              <button id="pb-scan" class="btn btn-ghost" type="button"
-                      title="Look on every serial port for the camera's heartbeat">↻ Find camera</button>
-              <label class="wn-field">
-                <span>WiFi network</span>
-                <input id="pb-ssid" type="text" spellcheck="false" autocomplete="off" placeholder="your 2.4GHz network" />
-              </label>
-              <label class="wn-field">
-                <span>Password</span>
-                <input id="pb-pass" type="password" autocomplete="off" />
-              </label>
-              <button id="pb-provision" class="btn btn-primary" type="button">📶 Send WiFi to camera</button>
-              <!-- The new-customer button. A factory-fresh board has no firmware and answers
-                   nothing; this writes the version bundled with this very build of the app —
-                   esptool and the binaries ship in the installer, so there is no toolchain to
-                   install and nothing to download. Also the update path for older cameras. -->
-              <button id="pb-flash" class="btn btn-ghost" type="button"
-                      title="Write the latest camera firmware over USB — needed once for a brand-new camera, or to update an old one">⚡ Flash firmware</button>
-            </div>
-            <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
-            <details class="wn-help">
-              <summary>How this works</summary>
-              <p class="opp-hint">
-                The camera is set up <strong>through the USB cable</strong> — no hotspot to join, no
-                password typed on a phone. Plug the board in (use the port on it labelled
-                <strong>UART/COM</strong>), press <strong>↻ Find camera</strong>, type the WiFi it
-                should live on — <strong>2.4GHz networks only</strong>, this chip doesn't do 5GHz —
-                and send. The board remembers the network on its own flash, so from then on it just
-                needs power: unplug it from the computer and put it in the photo box. Snapped frames
-                land in the Photo Library under <strong>photo-box</strong>.
-              </p>
-            </details>
-          </div>
-
-          <!-- Step two, and every day after: the live view. -->
+          <!-- The phone is the camera; the shutter stays here. -->
           <div class="pb-card">
             <div class="pb-live-head">
-              <div id="pb-cam-status" class="wn-video-status">Checking for the camera…</div>
+              <div id="pb-cam-status" class="wn-video-status">No camera yet.</div>
               <div class="pb-live-actions">
-                <!-- Digital zoom — the lens is fixed, so this is a centred crop, and the snap
-                     crops the SAME window server-side: what you frame is what you get. -->
-                <div class="pb-zoom" title="Zoom — a centred crop; the snap saves exactly what you see">
-                  <button id="pb-zoom-out" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom out">−</button>
-                  <input id="pb-zoom" type="range" min="1" max="4" step="0.1" value="1" aria-label="Zoom level" />
-                  <button id="pb-zoom-in" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom in">+</button>
-                  <span id="pb-zoom-val" class="pb-zoom-val">1.0×</span>
-                </div>
-                <!-- One radio, one slow software encoder, two honest choices: full frames every
-                     ~10s, or a small preview that actually moves. Full size is the default —
-                     a product shot is about detail, not motion. -->
-                <button id="pb-size-toggle" class="btn btn-ghost" type="button" disabled
-                        title="Switch between full-size slow frames and a small fast preview"></button>
                 <button id="pb-snap" class="btn btn-primary" type="button" disabled>📸 Snap to Photo Library</button>
                 <!-- The shortcut this camera exists for: snap the product, press this, and the
                      AI Listing screen opens already filled — title, specifics, description,
@@ -2946,18 +2881,19 @@
                      photo snapped this session rides along on the listing. -->
                 <button id="pb-ai" class="btn btn-ghost" type="button" disabled
                         title="Send this session's snaps to the AI Listing screen — it fills out everything and prices it from sold comps">✨ AI Listing</button>
-                <!-- The phone is a far better sensor than the board camera. Turned on here, it
-                   takes over the Snap button entirely: the shutter stays on this screen. -->
-              <button id="pb-phone" class="btn btn-ghost" type="button"
-                      title="Use your phone's camera instead — scan a code, leave the page open, and Snap still fires from here">📱 Use my phone</button>
-              <button id="pb-open" class="btn btn-ghost" type="button" disabled title="Open the raw stream in your browser">Open stream ↗</button>
-                <button id="pb-forget" class="btn btn-ghost" type="button" disabled title="Forget this camera's address">Forget</button>
+                <!-- The camera. Scan the code once, leave the page open on the phone, and the
+                     shutter stays here on the desktop. -->
+                <button id="pb-phone" class="btn btn-primary" type="button"
+                        title="Use your phone as the camera — scan a code, leave the page open, and Snap fires from here">📱 Use my phone</button>
               </div>
             </div>
             <div class="pb-stream-wrap">
-              <img id="pb-stream" alt="Live view from the Photo Box camera" />
-              <div id="pb-stream-empty" class="pb-stream-empty">No camera on the network yet — set it up above.</div>
+              <img id="pb-stream" alt="Live view from the phone camera" />
+              <div id="pb-stream-empty" class="pb-stream-empty">No camera yet — press 📱 Use my phone and scan the code.</div>
             </div>
+            <!-- Where a phone-camera failure is reported. Kept out of the snap note: one is about
+                 the camera, the other about the photo it just took. -->
+            <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
             <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
             <!-- Shown only while the phone camera is on: the code to scan, and what the phone is
                  doing right now. The QR is drawn by the app itself — no internet, no third party. -->

@@ -270,7 +270,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             await req.Body.CopyToAsync(ms);
             var bytes = ms.ToArray();
             if (bytes.Length < 2000) return Results.BadRequest(new { error = "empty frame" });
-            var url = await photos.SavePhotoAsync(PhotoBoxCamera.LibraryFolder, bytes, "jpg");
+            var url = await photos.SavePhotoAsync(PhotoLibrary.PhotoBoxFolder, bytes, "jpg");
             _shots.Add(url);
             log.Add("Info", "Phone camera photo", url);
             return Results.Ok(new { url });

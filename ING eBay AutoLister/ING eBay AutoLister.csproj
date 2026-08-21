@@ -54,26 +54,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="Stripe.net" Version="51.2.0" />
-    <!-- The Photo Box camera is provisioned over its USB serial port (PhotoBoxCamera.cs).
-         Referenced in both builds so the code compiles once; the hosted endpoints refuse
-         before any port is touched, because a server has no camera on its USB. -->
-    <PackageReference Include="System.IO.Ports" Version="9.0.0" />
-    <!-- Crops the Photo Box camera's zoomed snaps (PhotoBoxCamera.CropCenter). Windows-only
-         at runtime, guarded by OperatingSystem.IsWindows(); the hosted build never reaches it. -->
-    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
-    <!-- The Photo Box screen's "is the camera even on USB?" check reads Windows' own device
-         list (PhotoBoxUsb.Diagnose) to tell a charge-only cable from a missing serial driver.
-         Windows-only at runtime; the hosted endpoints refuse before it is ever touched. -->
-    <PackageReference Include="System.Management" Version="9.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- The Photo Box camera's firmware bundle: the compiled binaries plus Espressif's
-         signed esptool.exe, copied beside the exe so the app's Flash button can write a
-         customer's factory-fresh board with zero toolchain installed. See
-         PhotoBoxCamera.FlashAsync. Refresh the .bin files (and version.txt, and the
-         FW_VERSION in photobox.ino) whenever firmware/photobox changes. -->
-    <Content Include="firmware-dist\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

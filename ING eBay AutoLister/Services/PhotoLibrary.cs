@@ -18,6 +18,12 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
     // Appended to a used-item description when the listing uses library photos rather than a
     // per-unit shoot. eBay expects the actual item represented; a DISCLOSED representative photo of
     // identical, individually-tested stock is the accepted practice for high-volume used inventory.
+    /// <summary>
+    /// Where Photo Box snaps land. It outlived the ESP32 board that named it (removed 2026-08-21)
+    /// because the seller's existing photos are in this folder — renaming it would orphan them.
+    /// </summary>
+    public const string PhotoBoxFolder = "photo-box";
+
     public const string RepresentativeDisclosure =
         "Photos are representative of the unit you will receive. Every unit is individually tested; " +
         "see the condition notes and description for the exact grade and specifications of your item.";
