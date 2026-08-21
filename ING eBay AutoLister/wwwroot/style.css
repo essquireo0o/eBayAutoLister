@@ -2517,15 +2517,43 @@ textarea {
 .nl-action-how    { font-size: var(--fs-xs); color: var(--muted); margin: 0; }
 .nl-action-why    { font-size: var(--fs-sm); font-weight: 700; margin: 2px 0 8px; color: var(--brand-ink-2); }
 .nl-action-row    { display: flex; align-items: center; gap: 8px; margin-top: auto; }
-.nl-action-card--assistant .nl-action-why { color: var(--accent-600); }
 .nl-action-card--hero      .nl-action-why { color: var(--gold-ink); }
-/* Hero card (AI Product Research) — the headline feature, made impossible to miss */
+/* The one way in. It used to wear a 4px glow ring and a badge because it was competing with three
+   cards beside it; with those folded away it is the only thing on the screen and does not need to
+   shout to be found. A quiet border and the one gold button are enough. */
 .nl-action-card--hero {
-  background: linear-gradient(135deg, var(--warning-tint) 0%, var(--warning-tint) 100%);
-  border: 2px solid var(--gold);
-  box-shadow: 0 0 0 4px rgba(199,154,54,.12), 0 10px 26px rgba(199,154,54,.2);
-  padding: 20px 22px 18px;
+  background: var(--warning-tint);
+  border: 1.5px solid var(--gold);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  padding: 22px 24px 20px;
 }
+.nl-action-card--hero .nl-action-why { font-weight: 500; color: var(--muted); max-width: 62ch; }
+
+/* ── The ways in that are not the usual way in ──────────────────────────────
+   Present, one click away, and silent until asked for. Remembered open for whoever lives in them. */
+.nl-more { margin-top: 14px; }
+.nl-more-summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--muted);
+  padding: 6px 2px;
+  transition: color var(--dur-1);
+}
+.nl-more-summary::-webkit-details-marker { display: none; }
+.nl-more-summary::before {
+  content: '›';
+  font-size: var(--fs-md);
+  line-height: 1;
+  transition: transform var(--dur-1);
+}
+.nl-more[open] .nl-more-summary::before { transform: rotate(90deg); }
+.nl-more-summary:hover { color: var(--ink); }
+.nl-more[open] .nl-action-grid { margin-top: 10px; }
 .nl-action-card--hero .nl-action-icon  { font-size: var(--fs-3xl); }
 .nl-action-card--hero .nl-action-title { font-size: var(--fs-xl); }
 .nl-action-card--hero .nl-action-how   { font-size: var(--fs-base); color: var(--ink); font-weight: 600; margin-top: 2px; }
@@ -2575,7 +2603,9 @@ textarea {
 }
 .nl-url-go:hover    { opacity: .85; }
 .nl-url-go:disabled { opacity: .5; cursor: default; }
-.nl-bulk-go  { background: var(--teal-700) !important; }
+/* Every start button is the same colour on purpose. Gold, teal and purple side by side made three
+   equal claims on the eye and none of them won — colour here should say "this is the action", not
+   "this is a different feature". The one gold button is the hero's. */
 .nl-quickfill-go   { background: var(--gold) !important; color: var(--on-gold) !important; }
 .nl-quickfill-go:hover   { opacity: .88; }
 .nl-quickfill-go.loading { opacity: .6; cursor: wait; }
@@ -2779,10 +2809,6 @@ textarea {
 }
 .nl-ai-modify-input:focus { border-color: var(--accent-600) !important; }
 .nl-ai-modify-input::placeholder { color: var(--pale-accent); }
-.nl-ai-modify-go {
-  background: var(--accent-600) !important;
-  color: var(--on-solid) !important;
-}
 .nl-ai-modify-go:hover   { opacity: .88; }
 .nl-ai-modify-go.loading { opacity: .6; cursor: wait; }
 /* The modal's one scroller: everything between the pinned header and the pinned footer.

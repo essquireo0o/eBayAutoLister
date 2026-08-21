@@ -715,24 +715,32 @@
           <div id="nl-recover-panel" class="recovery-banner nl-recover-panel hidden" role="region"
                aria-label="Unfinished listings"></div>
 
-          <!-- Action cards — outcome-driven, not generic form fields -->
+          <!-- One way in.
+               This screen used to open with four entry points side by side — research a name,
+               import a URL, bulk-import a catalog, and ask AI to edit — in four different button
+               colours, each announcing itself before the seller had done anything. A badge reading
+               "Try this first" sat on one of them, which is what a screen says when it knows it is
+               asking too much.
+               Now there is one box. It takes a product name OR a pasted link and works out which it
+               was given, so the commonest two ways in are the same way in. The other two are real
+               and stay one click away, folded, remembered open for whoever uses them. -->
           <div class="nl-url-section">
 
             <div class="nl-action-card nl-action-card--hero">
-              <span class="nl-action-badge">Try this first</span>
               <div class="nl-action-head">
-                <span class="nl-action-icon">🧠</span>
-                <span class="nl-action-title">AI Product Research</span>
+                <span class="nl-action-title">Start a listing</span>
               </div>
-              <p class="nl-action-how">Type a product name</p>
-              <p class="nl-action-why">→ AI finds photos, specs, sold prices, and creates a complete listing</p>
+              <p class="nl-action-why">Type what it is, or paste a link. The AI finds the photos, the
+                specs and what it actually sells for, then writes the listing.</p>
               <div class="nl-action-row">
                 <input id="nl-quickfill-input" type="text" class="nl-url-input"
-                  placeholder="e.g. &quot;RTX 6000 Ada 48GB&quot;" />
-                <button id="nl-quickfill-go" class="nl-url-go nl-quickfill-go" type="button">Auto-Fill</button>
+                  placeholder="&quot;RTX 6000 Ada 48GB&quot; — or paste a product link" />
+                <button id="nl-quickfill-go" class="nl-url-go nl-quickfill-go" type="button">Start</button>
               </div>
             </div>
 
+            <details id="nl-more-ways" class="nl-more">
+              <summary class="nl-more-summary">Other ways to start</summary>
             <div class="nl-action-grid">
               <div class="nl-action-card nl-action-card--url">
                 <div class="nl-action-head">
@@ -774,6 +782,7 @@
                 </div>
               </div>
             </div>
+            </details>
           </div>
 
           <div id="nl-sold-comps-strip" class="nl-sold-comps-strip">

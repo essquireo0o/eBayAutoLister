@@ -22803,6 +22803,16 @@
     });
     on('nl-quickfill-go', 'click', nlQuickFillByName);
     on('nl-quickfill-input', 'keydown', e => { if (e.key === 'Enter') nlQuickFillByName(); });
+
+    // Simple by default, but it must not fight the person who uses the folded ways in every day:
+    // once they open it, it stays open.
+    const moreWays = $('nl-more-ways');
+    if (moreWays) {
+      try { if (localStorage.getItem('nlMoreWays') === 'open') moreWays.open = true; } catch { /* private mode */ }
+      moreWays.addEventListener('toggle', () => {
+        try { localStorage.setItem('nlMoreWays', moreWays.open ? 'open' : 'shut'); } catch { /* fine */ }
+      });
+    }
     on('nl-sold-comps-close', 'click', () => $('nl-sold-comps-strip')?.classList.add('hidden'));
     on('nl-sold-comps-connect-btn', 'click', nlSoldCompsConnect);
     on('nl-bulk-go', 'click', nlBulkImport);
@@ -23523,11 +23533,31 @@
     }
   }
 
+  /// Does this look like a link rather than the name of a thing? Deliberately narrow: a bare
+  /// "sony wh-1000xm5" must never be mistaken for a URL, so a scheme or a leading www. is required.
+  /// "Bose QC45 vs Sony XM5" has a dot in it and is a product question, not an address.
+  function nlLooksLikeUrl(text) {
+    return /^https?:\/\/\S+$/i.test(text) || /^www\.\S+\.\S+$/i.test(text);
+  }
+
   async function nlQuickFillByName() {
     const input    = $('nl-quickfill-input');
     const btn      = $('nl-quickfill-go');
     const itemName = input?.value.trim();
     if (!itemName) return;
+
+    // One box, two things people arrive with. Asking a seller to notice they pasted a link into the
+    // "name" field — and to go and find the other field — is the kind of small tax that makes an app
+    // feel like paperwork. Work out which it was and run the right one.
+    if (nlLooksLikeUrl(itemName)) {
+      const urlBox = $('nl-url-input');
+      if (urlBox) {
+        urlBox.value = itemName;
+        input.value = '';
+        nlAnalyzeUrl();
+        return;
+      }
+    }
 
     input?.classList.add('loading');
     if (btn) { btn.disabled = true; btn.textContent = 'Researching…'; }
