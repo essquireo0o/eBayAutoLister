@@ -2946,7 +2946,11 @@
                      photo snapped this session rides along on the listing. -->
                 <button id="pb-ai" class="btn btn-ghost" type="button" disabled
                         title="Send this session's snaps to the AI Listing screen — it fills out everything and prices it from sold comps">✨ AI Listing</button>
-                <button id="pb-open" class="btn btn-ghost" type="button" disabled title="Open the raw stream in your browser">Open stream ↗</button>
+                <!-- The phone is a far better sensor than the board camera. Turned on here, it
+                   takes over the Snap button entirely: the shutter stays on this screen. -->
+              <button id="pb-phone" class="btn btn-ghost" type="button"
+                      title="Use your phone's camera instead — scan a code, leave the page open, and Snap still fires from here">📱 Use my phone</button>
+              <button id="pb-open" class="btn btn-ghost" type="button" disabled title="Open the raw stream in your browser">Open stream ↗</button>
                 <button id="pb-forget" class="btn btn-ghost" type="button" disabled title="Forget this camera's address">Forget</button>
               </div>
             </div>
@@ -2955,6 +2959,24 @@
               <div id="pb-stream-empty" class="pb-stream-empty">No camera on the network yet — set it up above.</div>
             </div>
             <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
+            <!-- Shown only while the phone camera is on: the code to scan, and what the phone is
+                 doing right now. The QR is drawn by the app itself — no internet, no third party. -->
+            <div id="pb-phone-panel" class="pb-phone-panel hidden">
+              <div class="pb-phone-qr" id="pb-phone-qr"></div>
+              <div class="pb-phone-words">
+                <h3>Scan this with your iPhone</h3>
+                <ol>
+                  <li>Point the phone's camera at the code and open the link.</li>
+                  <li>Safari will warn that the connection is not private — it is your own computer,
+                      with a certificate it made for itself. Tap <b>Show details</b>, then
+                      <b>visit this website</b>.</li>
+                  <li>Tap <b>Allow camera</b>, aim the phone at the item, and leave that page open.</li>
+                  <li>Press <b>📸 Snap</b> here. The phone takes the photo.</li>
+                </ol>
+                <div class="pb-phone-link" id="pb-phone-url"></div>
+                <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

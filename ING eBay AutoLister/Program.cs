@@ -275,6 +275,9 @@ builder.Services.AddSingleton<PhotoLibrary>();
 // The desk-side ESP32-S3 product camera and its USB-cable WiFi setup. See PhotoBoxCamera.cs
 // for why provisioning goes over the serial port instead of a hotspot dance.
 builder.Services.AddSingleton<PhotoBoxCamera>();
+// The seller's phone as the photo-box camera, with the shutter still on this screen.
+// Its own listener on its own port — see PhoneCapture for why it is not a route here.
+builder.Services.AddSingleton<PhoneCapture>();
 builder.Services.AddSingleton<ActionLog>();
 builder.Services.AddSingleton<DraftStore>();
 // Crash recovery and duplicate-publish protection. Singletons, and PublishGuard must be one:
@@ -9523,14 +9526,46 @@ app.MapPost("/api/photobox/forget", (PhotoBoxCamera box) =>
     return Results.Ok(new { ok = true });
 });
 
-app.MapPost("/api/photobox/snap", async (PhotoBoxSnapRequest? req, PhotoBoxCamera box, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
+app.MapPost("/api/photobox/snap", async (PhotoBoxSnapRequest? req, PhotoBoxCamera box, PhoneCapture phone, PhotoLibrary photos, ActionLog log, CancellationToken ct) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+
+    // One shutter, two cameras. When a phone is holding the capture page open it is the better
+    // sensor by two orders of magnitude, so it wins — and the rest of this screen, including the
+    // AI Listing hand-off, never learns which camera took the picture.
+    if (phone.Snapshot() is { Running: true, PhoneConnected: true })
+    {
+        var (phoneUrl, phoneError) = await phone.ShootAsync(ct);
+        if (phoneError is not null) return Results.BadRequest(new { error = phoneError });
+        log.Add("Info", "Phone camera snap", $"saved {phoneUrl}");
+        return Results.Ok(new { url = phoneUrl, folder = PhotoBoxCamera.LibraryFolder, source = "phone" });
+    }
+
     var zoom = req?.Zoom is > 1.0 and <= 8.0 ? req.Zoom.Value : 1.0;
     var (url, error) = await box.SnapAsync(photos, zoom, ct);
     if (error is not null) return Results.BadRequest(new { error });
     log.Add("Info", "Photo Box snap", zoom > 1.0 ? $"saved {url} at {zoom:0.0}x zoom" : $"saved {url}");
-    return Results.Ok(new { url, folder = PhotoBoxCamera.LibraryFolder });
+    return Results.Ok(new { url, folder = PhotoBoxCamera.LibraryFolder, source = "board" });
+});
+
+// ── The phone as the camera ───────────────────────────────────────────────────
+app.MapPost("/api/photobox/phone/start", async (PhoneCapture phone, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(await phone.StartAsync(ct));
+});
+
+app.MapGet("/api/photobox/phone/status", (PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(phone.Snapshot());
+});
+
+app.MapPost("/api/photobox/phone/stop", async (PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    await phone.StopAsync();
+    return Results.Ok(new { ok = true });
 });
 
 // Create an empty model folder (e.g. when the seller starts a new model's photo set).

@@ -182,9 +182,34 @@
                   Impersonate="no"
                   Return="ignore" />
 
+    <!--
+      Let a phone on the same wifi reach the photo-capture page (PhoneCapture.cs, port 9443).
+      Windows blocks inbound by default and classifies most home wifi as Public, so without this
+      the seller scans the code and their phone simply times out with nothing to explain it.
+      Scoped to the local subnet, and the listener only runs while the seller has switched the
+      phone camera on — the port is closed the rest of the time whatever the firewall says.
+      Return="ignore" for the same reason as the port reservation above: a machine with unusual
+      firewall policy must still finish installing.
+    -->
+    <CustomAction Id="AllowPhoneCameraPort"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; &amp; netsh advfirewall firewall add rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; dir=in action=allow protocol=TCP localport=9443 remoteip=localsubnet&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <CustomAction Id="RemovePhoneCameraPort"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot;&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
     <InstallExecuteSequence>
       <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="AllowPhoneCameraPort" After="ReservePort9332" Condition="NOT REMOVE" />
       <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemovePhoneCameraPort" Before="UnreservePort9332" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <!-- Finish screen: a checked-by-default "Open ING AutoLister now" checkbox so the

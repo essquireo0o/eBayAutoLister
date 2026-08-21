@@ -7700,6 +7700,81 @@
     }
   }
 
+  // ── The phone as the camera ──────────────────────────────────────────────────
+  // Turned on here, the phone takes over the Snap button: the server sends the shutter
+  // to whichever camera is actually holding a page open, so nothing downstream — the
+  // photo library, the AI Listing hand-off — knows or cares which one took the frame.
+  let pbPhonePoll = null;
+
+  function pbRenderPhone(st) {
+    const panel = $('pb-phone-panel');
+    if (!panel) return;
+    if (!st || !st.running) {
+      panel.classList.add('hidden');
+      const b = $('pb-phone'); if (b) b.textContent = '📱 Use my phone';
+      return;
+    }
+    panel.classList.remove('hidden');
+    const b = $('pb-phone'); if (b) b.textContent = '📱 Stop using my phone';
+    // The SVG comes from the app's own encoder, so it is assigned as markup rather than
+    // fetched — there is nothing to fetch and nowhere to fetch it from.
+    const qr = $('pb-phone-qr');
+    if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url; }
+    const link = $('pb-phone-url'); if (link) link.textContent = st.url || '';
+    const state = $('pb-phone-state');
+    if (state) {
+      state.textContent = st.phoneConnected
+        ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
+        : 'Waiting for the phone to open the page…';
+      state.className = 'pb-phone-state ' + (st.phoneConnected ? 'wn-video-ok' : 'wn-video-busy');
+    }
+    // Photos the phone sent join the session, so ✨ AI Listing carries them like any other snap.
+    for (const u of st.shots || []) {
+      if (!pbSessionSnaps.includes(u)) {
+        pbSessionSnaps.push(u);
+        const ai = $('pb-ai');
+        if (ai) {
+          ai.disabled = false;
+          ai.textContent = pbSessionSnaps.length > 1
+            ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing';
+        }
+      }
+    }
+  }
+
+  async function pbPhoneRefresh() {
+    try {
+      const r = await fetch('/api/photobox/phone/status');
+      if (r.ok) pbRenderPhone(await r.json());
+    } catch { /* the app going away is handled everywhere else */ }
+  }
+
+  async function pbTogglePhone() {
+    const btn = $('pb-phone');
+    const running = $('pb-phone-panel') && !$('pb-phone-panel').classList.contains('hidden');
+    if (btn) btn.disabled = true;
+    try {
+      if (running) {
+        await fetch('/api/photobox/phone/stop', { method: 'POST' });
+        if (pbPhonePoll) { clearInterval(pbPhonePoll); pbPhonePoll = null; }
+        pbRenderPhone(null);
+      } else {
+        const r = await fetch('/api/photobox/phone/start', { method: 'POST' });
+        const st = await r.json();
+        if (!st.running) {
+          pbSetupStatus(st.detail || 'The phone camera could not start.', 'bad');
+          return;
+        }
+        pbRenderPhone(st);
+        if (!pbPhonePoll) pbPhonePoll = setInterval(pbPhoneRefresh, 2000);
+      }
+    } catch (err) {
+      pbSetupStatus('The phone camera failed. ' + errorText(err, 'Try again.'), 'bad');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // The one-button firmware write. A brand-new camera answers nothing on its port —
   // this is what makes it a camera. It is also the update path: the binaries ship
   // inside the installer, so "latest" means "what this build of the app was tested
@@ -7782,6 +7857,7 @@
     $('pb-snap')?.addEventListener('click', pbSnap);
     $('pb-ai')?.addEventListener('click', pbAiListing);
     $('pb-flash')?.addEventListener('click', pbFlash);
+    $('pb-phone')?.addEventListener('click', pbTogglePhone);
     $('pb-zoom')?.addEventListener('input', e => pbApplyZoom(parseFloat(e.target.value) || 1));
     $('pb-zoom-in')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel + 0.5));
     $('pb-zoom-out')?.addEventListener('click', () => pbApplyZoom(pbZoomLevel - 0.5));
