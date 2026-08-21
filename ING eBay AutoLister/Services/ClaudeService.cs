@@ -308,6 +308,14 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
     private static string TextOf(MessageResponse response, string fallback) =>
         response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? fallback;
 
+    /// <summary>
+    /// The LAST thing the model said, for replies that ran a server tool first. A web search
+    /// answers in several blocks — what it looked for, what it found, then the conclusion — and
+    /// <see cref="TextOf"/> would hand back the narration instead of the answer.
+    /// </summary>
+    private static string LastTextOf(MessageResponse response, string fallback) =>
+        response.Content.OfType<TextContent>().LastOrDefault(t => !string.IsNullOrWhiteSpace(t.Text))?.Text ?? fallback;
+
     // ── URL / web-page analysis → full listing ───────────────────────────────
 
     public Task<ListingData> AnalyzeUrlAsync(string pageText, string? imageBase64, string? imageMimeType)
@@ -1173,6 +1181,14 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
             Reply with ONLY a JSON array, one object per item, no prose and no code fences:
             [{"itemId":"<the id>","low":<number>,"high":<number>,"basis":"<8 words or fewer>"}]
 
+            You may use the web search tool up to five times. Spend those searches on the items you
+            cannot price confidently from memory — an unusual model number, a collectible whose
+            value has moved, anything where a real sold listing would change your answer. Search
+            for what the thing SOLD for, not what someone is asking. Price the rest from your own
+            knowledge of the second-hand market; do not burn a search on an ordinary used tool.
+
+            Whatever you search, your final message must be the JSON array and nothing else.
+
             Rules:
             - low and high are US dollars for the WHOLE item as described, already used/second-hand.
               Keep the range honest: wide when the name is vague, tight when the model is exact.
@@ -1186,21 +1202,43 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
             - Never return 0. If it is worth almost nothing, say so with a low range like 5 to 15.
             """;
 
-        var estimates = await CallModelAsync(
-            () => new MessageParameters
-            {
-                Model     = "claude-fable-5",
-                MaxTokens = 4096,
-                Messages  = [new() { Role = RoleType.User, Content = [new TextContent { Text = prompt }] }],
-                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
-            },
-            response =>
-            {
-                var json = ExtractJsonArray(TextOf(response, "[]"));
-                return JsonSerializer.Deserialize<List<AiResaleEstimate>>(json, JsonOptions) ?? [];
-            },
-            "AI resale estimate",
-            ct);
+        // The web, for the handful it cannot price from memory. Bounded on purpose: a board of
+        // forty is mostly ordinary goods the model already knows, and an unbounded search budget
+        // would turn a two-second answer into a minute of lookups and a real bill. Five searches
+        // buys the hard ones — an obscure model number, a collectible whose value moved — and the
+        // prompt tells it to spend them there. Legacy tool version: the newer one needs the code
+        // execution tool alongside it, which this call has no use for.
+        List<AiResaleEstimate> Parse(MessageResponse response)
+        {
+            var json = ExtractJsonArray(LastTextOf(response, "[]"));
+            return JsonSerializer.Deserialize<List<AiResaleEstimate>>(json, JsonOptions) ?? [];
+        }
+
+        MessageParameters Request(bool withWeb) => new()
+        {
+            Model     = "claude-fable-5",
+            MaxTokens = 4096,
+            Messages  = [new() { Role = RoleType.User, Content = [new TextContent { Text = prompt }] }],
+            Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low },
+            Tools     = withWeb
+                ? [ServerTools.GetWebSearchTool(5, null, null, null, ServerTools.WebSearchVersionLegacy)]
+                : null,
+        };
+
+        List<AiResaleEstimate> estimates;
+        try
+        {
+            estimates = await CallModelAsync(() => Request(true), Parse, "AI resale estimate", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A deployment whose key cannot use server tools must still get its numbers. The
+            // seller has already been charged for the generation, so the retry is unmetered.
+            log.Add("Warning", "AI resale estimate — web search unavailable",
+                $"Falling back to the model's own knowledge of the resale market. {ex.Message}");
+            estimates = await CallModelAsync(() => Request(false), Parse, "AI resale estimate (no web)",
+                                             ct, metered: false);
+        }
 
         // A range that arrived backwards, negative or zero is a model slip, not a price. Drop it
         // rather than put it on a card the seller might act on.
