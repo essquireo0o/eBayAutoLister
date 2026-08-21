@@ -7551,6 +7551,10 @@
   }
 
   function pbNoStream(message) {
+    // The board camera has nothing to show. That says nothing about the phone, which may be
+    // sitting there ready to shoot — so this must not touch the viewfinder or the shutter
+    // when the phone owns them.
+    if (pbPhoneLive) { $('pb-open')?.setAttribute('disabled', ''); return; }
     pbStopStream();
     const img = $('pb-stream');
     const empty = $('pb-stream-empty');
@@ -7561,10 +7565,18 @@
   }
 
   async function pbRefreshStatus() {
+    // While the phone is the camera it owns the viewfinder and the status line; a board that
+    // is unplugged in the drawer has no business overwriting either.
+    if (pbPhoneLive) return;
     const status = $('pb-cam-status');
     try {
       const res = await fetch('/api/photobox/status');
       const s = await res.json();
+      // Checked again on the way out, not only on the way in: this request can take the four
+      // seconds an absent board takes to time out, and the phone can go live inside that
+      // window. Answering then would overwrite a working viewfinder with a stale complaint
+      // about a camera nobody is using.
+      if (pbPhoneLive) return;
       if (!res.ok) { if (status) status.textContent = s.error || 'Unavailable.'; return; }
       if (!s.configured) {
         if (status) status.textContent = 'No camera set up yet.';
@@ -7705,6 +7717,33 @@
   // to whichever camera is actually holding a page open, so nothing downstream — the
   // photo library, the AI Listing hand-off — knows or cares which one took the frame.
   let pbPhonePoll = null;
+  let pbPhonePreview = null;   // the viewfinder ticker while the phone is the camera
+  let pbPhoneLive = false;     // a phone is holding its camera open right now
+
+  // While the phone is the camera the viewfinder is the phone's own frames, pulled once a
+  // second. Kept separate from the board camera's MJPEG so neither can disable the other:
+  // before this, the board being unplugged left Snap greyed out with a phone sitting there
+  // ready to shoot, which is the one thing this screen must never do.
+  function pbShowPhonePreview() {
+    if (pbPhonePreview) return;
+    const img = $('pb-stream'), empty = $('pb-stream-empty');
+    const tick = () => {
+      if (!img) return;
+      const probe = new Image();
+      probe.onload = () => {
+        img.src = probe.src;
+        img.style.display = 'block';
+        if (empty) empty.style.display = 'none';
+      };
+      probe.src = '/api/photobox/phone/preview?t=' + Date.now();
+    };
+    tick();
+    pbPhonePreview = setInterval(tick, 1000);
+  }
+
+  function pbStopPhonePreview() {
+    if (pbPhonePreview) { clearInterval(pbPhonePreview); pbPhonePreview = null; }
+  }
 
   function pbRenderPhone(st) {
     const panel = $('pb-phone-panel');
@@ -7712,6 +7751,9 @@
     if (!st || !st.running) {
       panel.classList.add('hidden');
       const b = $('pb-phone'); if (b) b.textContent = '📱 Use my phone';
+      pbPhoneLive = false;
+      pbStopPhonePreview();
+      pbRefreshStatus();   // hand the viewfinder back to the board camera
       return;
     }
     panel.classList.remove('hidden');
@@ -7727,6 +7769,19 @@
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
         : 'Waiting for the phone to open the page…';
       state.className = 'pb-phone-state ' + (st.phoneConnected ? 'wn-video-ok' : 'wn-video-busy');
+    }
+
+    // A connected phone IS a working camera, whatever the board is doing.
+    pbPhoneLive = !!st.phoneConnected;
+    if (pbPhoneLive) {
+      $('pb-snap')?.removeAttribute('disabled');
+      const cam = $('pb-cam-status');
+      if (cam) cam.textContent = st.hasPreview
+        ? 'Live from your phone — press 📸 Snap to take the picture.'
+        : 'Phone connected — waiting for its first viewfinder frame…';
+      pbShowPhonePreview();
+    } else {
+      pbStopPhonePreview();
     }
     // Photos the phone sent join the session, so ✨ AI Listing carries them like any other snap.
     for (const u of st.shots || []) {

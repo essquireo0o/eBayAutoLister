@@ -9561,6 +9561,16 @@ app.MapGet("/api/photobox/phone/status", (PhoneCapture phone) =>
     return Results.Ok(phone.Snapshot());
 });
 
+// The desktop's viewfinder while the phone is the camera: the last frame the phone sent.
+app.MapGet("/api/photobox/phone/preview", (PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    var frame = phone.LatestPreview();
+    return frame is null
+        ? Results.NoContent()
+        : Results.File(frame, "image/jpeg");
+});
+
 app.MapPost("/api/photobox/phone/stop", async (PhoneCapture phone) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;

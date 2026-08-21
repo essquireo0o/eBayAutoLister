@@ -50,15 +50,27 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     private readonly List<string> _shots = [];      // photo-library urls, oldest first
     private bool _phoneEverConnected;
 
+    // The viewfinder. The phone sends a small frame about once a second so the person at the
+    // desk can see what they are about to photograph — without it the shutter is on one device
+    // and the picture is on another, which is not a camera, it is a guess. Held in memory only:
+    // a preview is not a photograph and has no business in the photo library.
+    private byte[]? _preview;
+    private DateTimeOffset _previewAt;
+
     public sealed record Status(
-        bool Running, string? Url, bool PhoneConnected, int ShotCount, string[] Shots, string? QrSvg, string? Detail);
+        bool Running, string? Url, bool PhoneConnected, int ShotCount, string[] Shots, string? QrSvg, string? Detail,
+        bool HasPreview = false);
+
+    /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
+    public byte[]? LatestPreview() =>
+        _preview is { } p && DateTimeOffset.UtcNow - _previewAt < TimeSpan.FromSeconds(15) ? p : null;
 
     public Status Snapshot()
     {
         if (_app is null) return new(false, null, false, 0, [], null, null);
         var url = PublicUrl;
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
-                   _shots.Count, [.. _shots], QrCode.ToSvg(url), null);
+                   _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -221,6 +233,18 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             return Results.Ok(new { shoot = false });
         });
 
+        // Viewfinder frames. Small, frequent, and never written to disk.
+        web.MapPost("/p/{token}/preview", async (string token, HttpRequest req) =>
+        {
+            if (!Ok(token)) return Results.NotFound();
+            _lastSeen = DateTimeOffset.UtcNow;
+            _phoneEverConnected = true;
+            using var ms = new MemoryStream();
+            await req.Body.CopyToAsync(ms);
+            if (ms.Length > 500) { _preview = ms.ToArray(); _previewAt = DateTimeOffset.UtcNow; }
+            return Results.Ok();
+        });
+
         web.MapPost("/p/{token}/photo", async (string token, HttpRequest req) =>
         {
             if (!Ok(token)) return Results.NotFound();
@@ -326,6 +350,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             running = true;
             say('Ready — press Snap on your computer.', 'ok');
             poll();
+            preview();
           } catch (e) {
             say('The camera was not allowed: ' + e.message, 'bad');
             startBtn.style.display = '';
@@ -341,6 +366,26 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: blob });
           if (res.ok) { taken++; c.textContent = taken + (taken === 1 ? ' photo sent' : ' photos sent'); say('Ready — press Snap on your computer.', 'ok'); }
           else say('The computer would not take that photo.', 'bad');
+        }
+
+        // The desktop's viewfinder. Small and cheap on purpose — this runs once a second all the
+        // time the page is open, and it is only there so the person at the computer can see what
+        // they are about to photograph. The real frame, at full sensor resolution, is taken by
+        // shoot() and never goes through here.
+        const pv = document.createElement('canvas');
+        async function preview() {
+          while (running) {
+            try {
+              if (v.videoWidth) {
+                const w = 640, h = Math.round(v.videoHeight * (640 / v.videoWidth));
+                pv.width = w; pv.height = h;
+                pv.getContext('2d').drawImage(v, 0, 0, w, h);
+                const b = await new Promise(r => pv.toBlob(r, 'image/jpeg', 0.55));
+                if (b) await fetch('/p/' + TOKEN + '/preview', { method: 'POST', body: b });
+              }
+            } catch (e) { /* a dropped preview frame is not worth a message */ }
+            await new Promise(r => setTimeout(r, 1000));
+          }
         }
 
         async function poll() {
