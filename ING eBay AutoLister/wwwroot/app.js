@@ -1122,7 +1122,6 @@
     bindSniper();
     bindEarnings();
     bindTax();
-    bindStorePlan();
     bindPricePosition();
     bindPipeline();
     bindHomeButtons();
@@ -1400,7 +1399,6 @@
     // Not refreshed on every return: the listing count behind it is an eBay round trip, and this
     // screen's answer moves on a scale of months, not minutes. "Recount my listings" is the button
     // that goes back to eBay, and it is in the header where the seller can see it.
-    storeplan:   { section: 'storeplan-section',     open: showStorePlanSection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
@@ -1435,10 +1433,10 @@
     promoted:    { section: 'promoted-section',      open: showPromotedSection },
     copilot:     { section: 'copilot-section',       open: showCopilotSection },
     shipping:    { section: 'shipping-section',      open: showShippingSection },
-    // Leaving the tab parks the stream: an MJPEG <img> holds an open connection to the
-    // camera, and the little board serves one viewer well, two poorly.
+    // Leaving the tab parks the viewfinder: it pulls a frame a second from the phone, and
+    // a screen nobody is looking at has no business asking for pictures.
     photobox:    { section: 'photobox-section',      open: showPhotoBoxSection,
-                   onHide: () => pbStopStream() },
+                   onHide: () => pbStopPhonePreview() },
     whatsnot:    { section: 'whatsnot-section',      open: showWhatsNotSection,
                    // Switching tabs holds the screen in the DOM, so the video read would keep its
                    // screen-share and its AI spend on a screen nobody is looking at. Stop it on hide.
@@ -1814,7 +1812,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -7406,11 +7404,19 @@
   let budgetPlan = null;
 
   // ── Photo Box Camera ──────────────────────────────────────────────────────
-  // The seller's phone is the camera (PhoneCapture.cs): it holds a page open on its own
-  // camera, the shutter stays on this screen, and every snap lands in the Photo Library's
-  // photo-box folder. The ESP32 board that used to live here — USB provisioning, driver
-  // checks, firmware flashing, MJPEG streaming — was removed 2026-08-21: a phone is two
-  // orders of magnitude the better sensor and needs no hardware at all.
+  // The seller's phone is the camera (PhoneCapture.cs): it holds a page open on its own camera,
+  // the shutter stays on this screen, and every snap lands in the Photo Library's photo-box
+  // folder. This screen is a studio around that: a viewfinder big enough to judge a photograph
+  // by, zoom that the phone actually applies, a countdown for when both hands are on the item,
+  // and a filmstrip of the session — because a listing needs six angles, not one.
+  let pbPhonePoll = null;      // status ticker while the phone is connected
+  let pbPhonePreview = null;   // viewfinder ticker
+  let pbPhoneLive = false;     // a phone is holding its camera open right now
+  let pbSessionSnaps = [];     // photo-library urls from this session, oldest first
+  let pbZoom = 1;              // what the phone has been told to do
+  let pbZoomSend = null;       // debounce for the slider
+  let pbShooting = false;      // one shutter at a time — burst and space bar share it
+  let pbCountdown = null;
 
   function showPhotoBoxSection() {
     hideOverlaySections();
@@ -7420,18 +7426,13 @@
     // A phone left connected from earlier keeps working across a tab switch, so the screen asks
     // what is actually happening rather than assuming it starts cold.
     pbPhoneRefresh();
+    if (!pbPhonePoll) pbPhonePoll = setInterval(pbPhoneRefresh, 2000);
   }
 
-  // The viewfinder with no camera behind it. One place, so "the phone stopped" and "the phone was
-  // never started" cannot drift into saying different things about the same empty box.
-  function pbNoCamera(message) {
-    const img = $('pb-stream');
-    const empty = $('pb-stream-empty');
-    if (img) { img.src = ''; img.style.display = 'none'; }
-    if (empty) { empty.style.display = ''; empty.textContent = message; }
-    $('pb-snap')?.setAttribute('disabled', '');
-    const status = $('pb-cam-status');
-    if (status) status.textContent = 'No camera yet.';
+  // Buttons here carry a keyboard hint in a child span; writing textContent would eat it.
+  function pbBtnLabel(id, text) {
+    const b = $(id);
+    if (b && b.firstChild) b.firstChild.nodeValue = text;
   }
 
   function pbSetupStatus(text, kind) {
@@ -7441,51 +7442,22 @@
     box.textContent = text || '';
   }
 
-  // The snaps taken since this screen opened, oldest first. The AI Listing button
-  // reads the newest and carries the whole set onto the listing's photo grid.
-  let pbSessionSnaps = [];
-
-  async function pbSnap() {
-    const note = $('pb-snap-note');
-    const btn = $('pb-snap');
-    if (btn) btn.disabled = true;
-    try {
-      const res = await fetch('/api/photobox/snap', { method: 'POST' });
-      const r = await res.json();
-      if (res.ok && r.url) {
-        pbSessionSnaps.push(r.url);
-        const ai = $('pb-ai');
-        if (ai) {
-          ai.disabled = false;
-          ai.textContent = pbSessionSnaps.length > 1
-            ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing';
-        }
-      }
-      if (note) {
-        note.classList.remove('hidden');
-        note.textContent = res.ok
-          ? `Saved to the Photo Library (${r.folder}). Snap more angles, or press ✨ AI Listing to have the AI write and price the listing from ${pbSessionSnaps.length > 1 ? 'these photos' : 'this photo'}.`
-          : (r.error || 'The snap failed.');
-      }
-    } catch (err) {
-      if (note) { note.classList.remove('hidden'); note.textContent = 'Snap failed: ' + err; }
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+  // The viewfinder with no camera behind it. One place, so "the phone stopped" and "the phone was
+  // never started" cannot drift into saying different things about the same empty box.
+  function pbNoCamera(message) {
+    const img = $('pb-stream');
+    const empty = $('pb-stream-empty');
+    if (img) { img.src = ''; img.style.display = 'none'; }
+    if (empty) { empty.style.display = ''; empty.textContent = message; }
+    ['pb-snap', 'pb-burst'].forEach(id => $(id)?.setAttribute('disabled', ''));
+    ['pb-live-chip', 'pb-res-chip', 'pb-zoom-chip'].forEach(id => $(id)?.classList.add('hidden'));
+    const status = $('pb-cam-status');
+    if (status) status.textContent = 'No camera yet.';
   }
 
-  // ── The phone as the camera ──────────────────────────────────────────────────
-  // Turned on here, the phone takes over the Snap button: the server sends the shutter
-  // to whichever camera is actually holding a page open, so nothing downstream — the
-  // photo library, the AI Listing hand-off — knows or cares which one took the frame.
-  let pbPhonePoll = null;
-  let pbPhonePreview = null;   // the viewfinder ticker while the phone is the camera
-  let pbPhoneLive = false;     // a phone is holding its camera open right now
-
-  // While the phone is the camera the viewfinder is the phone's own frames, pulled once a
-  // second. Kept separate from the board camera's MJPEG so neither can disable the other:
-  // before this, the board being unplugged left Snap greyed out with a phone sitting there
-  // ready to shoot, which is the one thing this screen must never do.
+  // While the phone is the camera the viewfinder is the phone's own frames, pulled once a second.
+  // A frame is loaded into a probe image first so a slow or failed fetch never blanks the picture
+  // already on screen — a viewfinder that flickers is a viewfinder nobody trusts.
   function pbShowPhonePreview() {
     if (pbPhonePreview) return;
     const img = $('pb-stream'), empty = $('pb-stream-empty');
@@ -7510,21 +7482,22 @@
   function pbRenderPhone(st) {
     const panel = $('pb-phone-panel');
     if (!panel) return;
+
     if (!st || !st.running) {
       panel.classList.add('hidden');
-      const b = $('pb-phone'); if (b) b.textContent = '📱 Use my phone';
+      pbBtnLabel('pb-phone', '📱 Use my phone');
       pbPhoneLive = false;
       pbStopPhonePreview();
       pbNoCamera('No camera yet — press 📱 Use my phone and scan the code.');
       return;
     }
+
     panel.classList.remove('hidden');
-    const b = $('pb-phone'); if (b) b.textContent = '📱 Stop using my phone';
-    // The SVG comes from the app's own encoder, so it is assigned as markup rather than
-    // fetched — there is nothing to fetch and nowhere to fetch it from.
+    pbBtnLabel('pb-phone', '📱 Stop using my phone');
     const qr = $('pb-phone-qr');
-    if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url; }
+    if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url || ''; }
     const link = $('pb-phone-url'); if (link) link.textContent = st.url || '';
+
     const state = $('pb-phone-state');
     if (state) {
       // "Waiting" and "it stopped answering" are different problems with different fixes,
@@ -7537,29 +7510,32 @@
       state.className = 'pb-phone-state ' + (st.phoneConnected ? 'wn-video-ok' : 'wn-video-busy');
     }
 
-    // A connected phone IS a working camera, whatever the board is doing.
     pbPhoneLive = !!st.phoneConnected;
-    if (pbPhoneLive) {
-      $('pb-snap')?.removeAttribute('disabled');
-      const cam = $('pb-cam-status');
-      if (cam) cam.textContent = st.hasPreview
-        ? 'Live from your phone — press 📸 Snap to take the picture.'
-        : 'Phone connected — waiting for its first viewfinder frame…';
+    const status = $('pb-cam-status');
+
+    if (st.phoneConnected) {
+      if (status) status.textContent = 'Your phone is the camera.';
+      ['pb-snap', 'pb-burst'].forEach(id => $(id)?.removeAttribute('disabled'));
+      $('pb-live-chip')?.classList.remove('hidden');
+      // What the phone is actually capturing, not what the viewfinder shows: the preview is a
+      // 640px thumbnail on purpose, and a seller judging sharpness deserves the real number.
+      const res = $('pb-res-chip');
+      if (res && st.captureWidth > 0) {
+        res.textContent = `${st.captureWidth}×${st.captureHeight}`;
+        res.classList.remove('hidden');
+      }
+      // The torch is the one control that genuinely does not exist on every phone (iOS gives a
+      // web page no way to it), so the button appears only where it can work.
+      $('pb-torch')?.classList.toggle('hidden', !st.canTorch);
+      $('pb-torch')?.classList.toggle('is-on', !!st.torch);
+      if (typeof st.zoom === 'number' && Math.abs(st.zoom - pbZoom) > 0.05 && !pbZoomSend) pbApplyZoomUi(st.zoom);
       pbShowPhonePreview();
     } else {
+      if (status) status.textContent = 'Waiting for the phone…';
       pbStopPhonePreview();
-    }
-    // Photos the phone sent join the session, so ✨ AI Listing carries them like any other snap.
-    for (const u of st.shots || []) {
-      if (!pbSessionSnaps.includes(u)) {
-        pbSessionSnaps.push(u);
-        const ai = $('pb-ai');
-        if (ai) {
-          ai.disabled = false;
-          ai.textContent = pbSessionSnaps.length > 1
-            ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing';
-        }
-      }
+      pbNoCamera(st.phoneWasConnected
+        ? 'The phone stopped sending — wake its screen and the picture comes back.'
+        : 'Scan the code with your phone, allow the camera, and leave that page open.');
     }
   }
 
@@ -7586,6 +7562,7 @@
           pbSetupStatus(st.detail || 'The phone camera could not start.', 'bad');
           return;
         }
+        pbSetupStatus('', '');
         pbRenderPhone(st);
         if (!pbPhonePoll) pbPhonePoll = setInterval(pbPhoneRefresh, 2000);
       }
@@ -7596,18 +7573,214 @@
     }
   }
 
-  // Snap → finished draft, one press. The newest snap is what the AI reads (title,
-  // item specifics, description, category, and NEW vs USED off the photo itself);
-  // every snap from this session rides along on the listing's photo grid; and the
-  // price comes from the same sold-comps blend every listing here is priced with —
-  // stored history plus the live OpenWebNinja sold feed. Nothing bespoke: this walks
-  // through the AI Listing screen's own front door so every rule that screen
-  // enforces (used-item real-photo gate, quotas, autosave) applies unchanged.
+  // ── Zoom ─────────────────────────────────────────────────────────────────────
+  // Sent to the phone, which moves its lens where the lens will move and crops its own
+  // full-resolution frame where it will not. Debounced because a slider drag is thirty events
+  // and the phone only needs the one it ended on.
+  function pbApplyZoomUi(z) {
+    pbZoom = Math.min(8, Math.max(1, z));
+    const slider = $('pb-zoom');
+    if (slider && Math.abs(parseFloat(slider.value) - pbZoom) > 0.01) slider.value = pbZoom;
+    const chip = $('pb-zoom-chip');
+    if (chip) { chip.textContent = pbZoom.toFixed(1) + '×'; chip.classList.toggle('hidden', !pbPhoneLive); }
+    document.querySelectorAll('.pb-preset').forEach(b =>
+      b.classList.toggle('is-on', Math.abs(parseFloat(b.dataset.zoom) - pbZoom) < 0.05));
+  }
+
+  function pbSetZoom(z) {
+    pbApplyZoomUi(z);
+    if (pbZoomSend) clearTimeout(pbZoomSend);
+    pbZoomSend = setTimeout(async () => {
+      pbZoomSend = null;
+      try {
+        await fetch('/api/photobox/phone/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ zoom: pbZoom })
+        });
+      } catch { /* the next status tick re-syncs whatever stuck */ }
+    }, 180);
+  }
+
+  async function pbToggleTorch() {
+    const btn = $('pb-torch');
+    const on = !btn?.classList.contains('is-on');
+    btn?.classList.toggle('is-on', on);
+    try {
+      await fetch('/api/photobox/phone/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ torch: on })
+      });
+    } catch { /* the status tick puts the button back if the phone refused */ }
+  }
+
+  // ── The shutter ──────────────────────────────────────────────────────────────
+  async function pbSnap() {
+    if (pbShooting) return;
+    const secs = parseInt($('pb-timer')?.value || '0', 10);
+    if (secs > 0 && !(await pbRunCountdown(secs))) return;
+    await pbShoot();
+  }
+
+  // Hands-free. The number owns the frame while it counts, because at three seconds the seller
+  // is holding the item, not watching a corner of the screen.
+  function pbRunCountdown(secs) {
+    return new Promise(resolve => {
+      const el = $('pb-countdown');
+      if (!el) return resolve(true);
+      let left = secs;
+      el.textContent = left;
+      el.classList.remove('hidden');
+      pbCountdown = setInterval(() => {
+        left--;
+        if (left <= 0) {
+          clearInterval(pbCountdown); pbCountdown = null;
+          el.classList.add('hidden');
+          resolve(true);
+        } else {
+          el.textContent = left;
+        }
+      }, 1000);
+    });
+  }
+
+  async function pbShoot() {
+    const note = $('pb-snap-note');
+    if (pbShooting) return false;
+    pbShooting = true;
+    pbBtnLabel('pb-snap', '📸 Taking…');
+    ['pb-snap', 'pb-burst'].forEach(id => $(id)?.setAttribute('disabled', ''));
+    try {
+      const res = await fetch('/api/photobox/snap', { method: 'POST' });
+      const r = await res.json();
+      if (res.ok && r.url) {
+        pbSessionSnaps.push(r.url);
+        pbRenderFilmstrip();
+        if (note) {
+          note.classList.remove('hidden');
+          note.textContent = `Saved to the Photo Library (${r.folder}). ${pbSessionSnaps.length > 1
+            ? `${pbSessionSnaps.length} photos this session — press ✨ AI Listing when you have every angle.`
+            : 'Snap more angles, or press ✨ AI Listing to have the AI write and price the listing.'}`;
+        }
+        return true;
+      }
+      if (note) {
+        note.classList.remove('hidden');
+        note.textContent = [r.error, r.detail].filter(Boolean).join(' ') || 'The snap failed.';
+      }
+      return false;
+    } catch (err) {
+      if (note) { note.classList.remove('hidden'); note.textContent = 'Snap failed: ' + errorText(err, ''); }
+      return false;
+    } finally {
+      pbShooting = false;
+      pbBtnLabel('pb-snap', '📸 Snap');
+      if (pbPhoneLive) ['pb-snap', 'pb-burst'].forEach(id => $(id)?.removeAttribute('disabled'));
+    }
+  }
+
+  // Three in a row, with a breath between them: the seller turns the item, the camera keeps
+  // shooting. Stops early on the first failure rather than firing two more at a dead phone.
+  async function pbBurst() {
+    const note = $('pb-snap-note');
+    for (let i = 0; i < 3; i++) {
+      if (note) { note.classList.remove('hidden'); note.textContent = `Burst — photo ${i + 1} of 3…`; }
+      if (!(await pbShoot())) return;
+      if (i < 2) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  // ── The session's photographs ────────────────────────────────────────────────
+  function pbRenderFilmstrip() {
+    const strip = $('pb-filmstrip');
+    const head = $('pb-strip-head');
+    if (!strip) return;
+    const n = pbSessionSnaps.length;
+    strip.classList.toggle('hidden', n === 0);
+    head?.classList.toggle('hidden', n === 0);
+    $('pb-clear')?.classList.toggle('hidden', n === 0);
+    setText('pb-strip-count', n === 1 ? '1 photo' : `${n} photos`);
+
+    const ai = $('pb-ai');
+    if (ai) {
+      ai.disabled = n === 0;
+      pbBtnLabel('pb-ai', n > 1 ? `✨ AI Listing (${n} photos)` : '✨ AI Listing');
+    }
+
+    strip.innerHTML = pbSessionSnaps.map((u, i) => `
+      <div class="pb-shot" data-url="${esc(u)}">
+        <img src="${esc(u)}" alt="Photo ${i + 1} of this session" />
+        <span class="pb-shot-n">${i + 1}</span>
+        <div class="pb-shot-tools">
+          <button type="button" data-act="open" title="Open the full-size photo">View</button>
+          <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
+          <button type="button" data-act="drop" title="Leave this one off the listing (the file stays in your library)">Drop</button>
+        </div>
+      </div>`).join('');
+
+    strip.querySelectorAll('.pb-shot-tools button').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const shot = btn.closest('.pb-shot');
+        const url = shot?.dataset.url || '';
+        if (btn.dataset.act === 'open') window.open(url, '_blank');
+        else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbRenderFilmstrip(); }
+        else if (btn.dataset.act === 'bg') pbCutOut(url, shot);
+      }));
+  }
+
+  // The white background eBay's gallery wants, from the app's own rembg — the photo never leaves
+  // this machine. The cut-out replaces the original in this session's set; the original stays in
+  // the library, because a background removal that eats the only copy is a photograph destroyed.
+  async function pbCutOut(url, shotEl) {
+    shotEl?.classList.add('is-working');
+    try {
+      const blob = await fetch(url).then(r => { if (!r.ok) throw new Error('could not read the photo'); return r.blob(); });
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => reject(new Error('could not encode the photo'));
+        fr.readAsDataURL(blob);
+      });
+      const res = await fetch('/api/photos/remove-bg', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: b64, mimeType: blob.type || 'image/jpeg' })
+      });
+      const r = await res.json();
+      const out = r.url || r.imageUrl || '';
+      if (!res.ok || !out) throw new Error(r.error || 'the background could not be removed');
+      pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? out : u));
+      pbRenderFilmstrip();
+    } catch (err) {
+      const note = $('pb-snap-note');
+      if (note) { note.classList.remove('hidden'); note.textContent = 'Cut-out failed: ' + errorText(err, 'the photo is untouched.'); }
+      shotEl?.classList.remove('is-working');
+    }
+  }
+
+  // ── The screen's own controls ────────────────────────────────────────────────
+  function pbToggleGrid() {
+    const on = $('pb-grid')?.classList.toggle('hidden') === false;
+    $('pb-grid-btn')?.classList.toggle('is-on', on);
+  }
+
+  async function pbToggleFullscreen() {
+    const stage = $('pb-stage');
+    if (!stage) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await stage.requestFullscreen();
+    } catch { /* a browser that refuses full screen still shows the stage at its normal size */ }
+  }
+
+  // Snap → finished draft, one press. The newest snap is what the AI reads (title, item
+  // specifics, description, category, and NEW vs USED off the photo itself); every snap from this
+  // session rides along on the listing's photo grid; and the price comes from the same sold-comps
+  // blend every listing here is priced with. Nothing bespoke: this walks through the AI Listing
+  // screen's own front door so every rule that screen enforces applies unchanged.
   async function pbAiListing() {
     if (!pbSessionSnaps.length) return;
     const btn = $('pb-ai');
     const note = $('pb-snap-note');
-    if (btn) { btn.disabled = true; btn.textContent = 'Reading the photo…'; }
+    if (btn) { btn.disabled = true; pbBtnLabel('pb-ai', 'Reading the photo…'); }
     try {
       const newest = pbSessionSnaps[pbSessionSnaps.length - 1];
       const blob = await fetch(newest).then(r => { if (!r.ok) throw new Error('could not read the saved photo'); return r.blob(); });
@@ -7618,31 +7791,57 @@
         fr.readAsDataURL(blob);
       });
 
-      // Through the AI Listing door, exactly as an upload arrives there.
       openWorkspaceTab('ai');
       if (typeof nlMarket !== 'undefined' && nlMarket !== 'ebay') nlSetMarket('ebay');
       nlImageBase64 = b64;
       nlMimeType = blob.type || 'image/jpeg';
       await nlAnalyze();
 
-      // The analysis flow saves and places the photo it read; the rest of the
-      // session's angles join it here, after its slot-reset has already run.
+      // The analysis flow saves and places the photo it read; the rest of the session's angles
+      // join it here, after its slot-reset has already run.
       for (const u of pbSessionSnaps.slice(0, -1)) {
         try { nlAddPhotoRow(u); } catch { /* an angle that fails to attach is re-addable from the library */ }
       }
     } catch (err) {
       if (note) { note.classList.remove('hidden'); note.textContent = 'AI Listing hand-off failed. ' + errorText(err, 'The photo could not be handed to the AI Listing screen — it is still in the Photo Library.'); }
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = pbSessionSnaps.length > 1 ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing'; }
+      if (btn) { btn.disabled = false; pbBtnLabel('pb-ai', pbSessionSnaps.length > 1 ? `✨ AI Listing (${pbSessionSnaps.length} photos)` : '✨ AI Listing'); }
     }
   }
 
   function bindPhotoBox() {
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
-    $('pb-snap')?.addEventListener('click', pbSnap);
-    $('pb-ai')?.addEventListener('click', pbAiListing);
     $('pb-phone')?.addEventListener('click', pbTogglePhone);
+    $('pb-snap')?.addEventListener('click', pbSnap);
+    $('pb-burst')?.addEventListener('click', pbBurst);
+    $('pb-ai')?.addEventListener('click', pbAiListing);
+    $('pb-grid-btn')?.addEventListener('click', pbToggleGrid);
+    $('pb-torch')?.addEventListener('click', pbToggleTorch);
+    $('pb-full')?.addEventListener('click', pbToggleFullscreen);
+    $('pb-library')?.addEventListener('click', () => navigateTo('photos'));
+    $('pb-clear')?.addEventListener('click', () => { pbSessionSnaps = []; pbRenderFilmstrip(); pbSetupStatus('', ''); });
+
+    $('pb-zoom')?.addEventListener('input', e => pbSetZoom(parseFloat(e.target.value) || 1));
+    $('pb-zoom-in')?.addEventListener('click', () => pbSetZoom(pbZoom + 0.5));
+    $('pb-zoom-out')?.addEventListener('click', () => pbSetZoom(pbZoom - 0.5));
+    document.querySelectorAll('.pb-preset').forEach(b =>
+      b.addEventListener('click', () => pbSetZoom(parseFloat(b.dataset.zoom) || 1)));
+
+    // The shutter under the thumb. Only while this screen is the one on the page, and never while
+    // the seller is typing somewhere — a space bar that fires a camera from inside a text box is
+    // a bug, not a shortcut.
+    document.addEventListener('keydown', e => {
+      if ($('photobox-section')?.classList.contains('hidden')) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === ' ' || k === 'enter') { e.preventDefault(); pbSnap(); }
+      else if (k === 'b') { e.preventDefault(); pbBurst(); }
+      else if (k === 'g') { e.preventDefault(); pbToggleGrid(); }
+      else if (k === 'f') { e.preventDefault(); pbToggleFullscreen(); }
+      else if (k === 't' && !$('pb-torch')?.classList.contains('hidden')) { e.preventDefault(); pbToggleTorch(); }
+    });
   }
 
   function showBudgetSection() {
@@ -9708,251 +9907,6 @@
     setText('tx-1099-figure', moneyExact(check.expectedGross || 0));
     const el = $('tx-1099');
     if (el) el.innerHTML = (check.notes || []).map(n => `<p>${esc(n)}</p>`).join('');
-  }
-
-  // ── The Store Plan ────────────────────────────────────────────────────────
-  // The third screen built on "what do you actually keep", and the only one whose answer is a single
-  // click on eBay that then pays every month for as long as the seller trades.
-  //
-  // Three rules, all of which are easy to "tidy" into their opposite:
-  //   * The hero is the ANNUAL saving. $17 a month reads as noise; $204 a year is what gets somebody
-  //     to open eBay's subscription page. The monthly figure is on the side, where it belongs.
-  //   * Every row prints its own arithmetic. The rate card lives in code and eBay changes it, so a
-  //     row a seller cannot check against eBay's fee page is a row they are right to distrust.
-  //   * This screen changes nothing on eBay, and says so on the screen rather than in a tooltip. It
-  //     is a recommendation about a subscription, and one that could start a $299/mo commitment on
-  //     its own should not exist.
-  let storePlan = null;
-  let storePlanRates = null;
-
-  function showStorePlanSection() {
-    hideOverlaySections();
-    $('storeplan-section')?.classList.remove('hidden');
-    setActiveNavItem('storeplan');
-    markWorkspaceTabOpen('storeplan');
-    if (!storePlan) loadStorePlan(); else renderStorePlan();
-  }
-
-  function closeStorePlanSection() { closeWorkspacePage('storeplan'); }
-
-  function bindStorePlan() {
-    on('sp-close', 'click', closeStorePlanSection);
-    on('sp-home', 'click', goHome);
-    on('sp-refresh', 'click', () => loadStorePlan());
-    on('sp-save', 'click', saveStorePlanSettings);
-
-    // The plan and the billing cycle are two-option choices; making the seller press Apply after
-    // picking one is a step with nothing in it. The listing box still needs Apply — re-costing on
-    // every keystroke of "1200" would flash three different answers on the way.
-    on('sp-plan', 'change', saveStorePlanSettings);
-    on('sp-billing', 'change', saveStorePlanSettings);
-    on('sp-listings', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveStorePlanSettings(); } });
-
-    on('sp-rates-toggle', 'click', () => {
-      const card = $('sp-rates-card'), btn = $('sp-rates-toggle');
-      if (!card || !btn) return;
-      const shown = !card.classList.toggle('hidden');
-      btn.textContent = shown ? 'Hide eBay\'s rate card' : 'Show eBay\'s rate card';
-      btn.setAttribute('aria-expanded', shown ? 'true' : 'false');
-      if (shown) loadStorePlanRates();
-    });
-  }
-
-  async function loadStorePlan() {
-    // The only path that asks eBay for the listing count. Everything else on this screen re-costs
-    // from the count already in hand, so changing a plan is instant and eBay is asked once.
-    try {
-      const res = await fetch('/api/store-plan');
-      if (!res.ok) throw new Error('Could not work out your store plan.');
-      storePlan = await res.json();
-      renderStorePlan();
-    } catch (err) {
-      setStorePlanNote(errorText(err, 'Could not work out your store plan.'), true);
-    }
-  }
-
-  async function loadStorePlanRates() {
-    if (storePlanRates) return;
-    try {
-      const res = await fetch('/api/store-plan/rates');
-      if (!res.ok) return;
-      storePlanRates = await res.json();
-      renderStorePlanRates();
-    } catch { /* the card is a cross-check, not the feature — a failed fetch stays quiet */ }
-  }
-
-  async function saveStorePlanSettings() {
-    const typed = num('sp-listings');
-    const body = {
-      planKey: $('sp-plan')?.value || 'none',
-      annualBilling: ($('sp-billing')?.value || 'annual') === 'annual',
-      // Zero and empty are the same gesture — "stop planning against a number I made up".
-      listingsOverride: typed !== null && typed > 0 ? Math.round(typed) : 0,
-      // What the screen already knows, so eBay is not asked again for a figure nothing changed.
-      // Null when eBay never answered: sending a 0 would have the server report a count it never
-      // measured as measured, and put the wrong footnote under the whole screen.
-      activeListings: storePlan?.listingCountMeasured ? (storePlan.activeListings ?? 0) : null,
-    };
-
-    try {
-      const res = await fetch('/api/store-plan/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(await res.text() || 'That could not be saved.');
-      storePlan = await res.json();
-      renderStorePlan();
-    } catch (err) {
-      setStorePlanNote(errorText(err, 'That could not be saved.'), true);
-    }
-  }
-
-  function setStorePlanNote(text, isError) {
-    const el = $('sp-controls-note');
-    if (!el) return;
-    el.textContent = text;
-    el.classList.toggle('sp-note-error', !!isError);
-  }
-
-  function renderStorePlan() {
-    if (!storePlan) return;
-    const p = storePlan;
-    const known = p.listingsPerMonth > 0;
-
-    $('sp-results')?.classList.toggle('hidden', known);
-    $('sp-plans-card')?.classList.toggle('hidden', !known);
-    $('sp-detail')?.classList.toggle('hidden', !known);
-    $('sp-honesty')?.classList.toggle('hidden', !(p.honesty || []).length);
-
-    renderStorePlanControls(p);
-    renderStorePlanHero(p, known);
-
-    setText('sp-next', known ? (p.nextStep || '') : '');
-    const detail = $('sp-detail');
-    if (detail) detail.textContent = p.detail || '';
-
-    renderStorePlanBillingWin(p, known);
-
-    const honesty = $('sp-honesty');
-    if (honesty) honesty.innerHTML = (p.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
-
-    if (!known) { const host = $('sp-plans'); if (host) host.innerHTML = ''; return; }
-    renderStorePlanRows(p);
-  }
-
-  function renderStorePlanControls(p) {
-    const select = $('sp-plan');
-    if (select && !select.options.length) {
-      // Built from the options the server costed, so the picker can never offer a tier the
-      // comparison below does not have a row for.
-      select.innerHTML = (p.options || [])
-        .map(o => `<option value="${esc(o.key)}">${esc(o.name)}</option>`).join('');
-    }
-    if (select && document.activeElement !== select) select.value = p.currentPlanKey || 'none';
-
-    const billing = $('sp-billing');
-    if (billing && document.activeElement !== billing) billing.value = p.billingCycle || 'annual';
-
-    const listings = $('sp-listings');
-    if (listings && document.activeElement !== listings)
-      listings.value = p.usingOverride ? p.listingsPerMonth : '';
-
-    if (p.status === 'ebay_unavailable') {
-      setStorePlanNote('eBay could not be reached, so the listing count could not be read. '
-        + 'Type how many listings you keep live and everything on this screen works from that.', true);
-      return;
-    }
-
-    setStorePlanNote('Nothing here changes anything on eBay. Switching plans is done on eBay\'s own '
-      + 'Store page — this only tells you which one to be on.', false);
-  }
-
-  function renderStorePlanHero(p, known) {
-    const worth = p.totalAnnualSaving || 0;
-
-    setText('sp-hero-label', worth > 0 ? 'Worth switching, over a year' : 'You are on the right plan');
-    setText('sp-hero-figure', moneyExact(worth));
-    setText('sp-hero-sub', p.headline || '');
-    setText('sp-hero-listings', known ? p.listingsPerMonth.toLocaleString() : '—');
-    setText('sp-hero-now', known ? `${moneyExact(p.currentMonthlyCost || 0)}/mo` : '—');
-    setText('sp-hero-best', known ? p.bestPlanName || '—' : '—');
-
-    // Gold when there is money on the table, plain when there is not. A hero that always looks
-    // urgent is one a seller stops reading.
-    $('storeplan-section')?.querySelector('.sp-hero')?.classList.toggle('sp-hero-win', worth > 0);
-  }
-
-  function renderStorePlanBillingWin(p, known) {
-    const el = $('sp-billing-win');
-    if (!el) return;
-    const show = known && (p.billingMonthlySaving || 0) > 0 && !!p.billingNote;
-    el.classList.toggle('hidden', !show);
-    if (show) el.textContent = p.billingNote;
-  }
-
-  function renderStorePlanRows(p) {
-    const host = $('sp-plans');
-    if (!host) return;
-
-    host.innerHTML = (p.options || []).map(o => {
-      const tags = [
-        o.isCurrent ? '<span class="sp-tag sp-tag-current">You are here</span>' : '',
-        o.isBest ? '<span class="sp-tag sp-tag-best">Cheapest for you</span>' : '',
-        o.annualBillingOnly ? '<span class="sp-tag sp-tag-note">Annual only</span>' : '',
-      ].join('');
-
-      // The delta is the number the seller acts on, so it is signed and stated in plain words
-      // rather than left as a bare figure they have to work out the direction of.
-      const delta = o.isCurrent
-        ? '<span class="sp-delta sp-delta-flat">what you pay today</span>'
-        : (o.monthlyDelta < 0
-          ? `<span class="sp-delta sp-delta-down">${moneyExact(Math.abs(o.monthlyDelta))} a month less</span>`
-          : (o.monthlyDelta > 0
-            ? `<span class="sp-delta sp-delta-up">${moneyExact(o.monthlyDelta)} a month more</span>`
-            : '<span class="sp-delta sp-delta-flat">the same as today</span>'));
-
-      return `
-        <div class="sp-plan${o.isCurrent ? ' is-current' : ''}${o.isBest ? ' is-best' : ''}">
-          <div class="sp-plan-head">
-            <span class="sp-plan-name">${esc(o.name)}</span>
-            ${tags}
-          </div>
-          <div class="sp-plan-cost">${moneyExact(o.monthlyCost)}<span class="sp-plan-per">/mo</span></div>
-          <div class="sp-plan-year">${moneyExact(o.annualCost)} a year</div>
-          ${delta}
-          <p class="sp-basis">${esc(o.basis)}</p>
-          <p class="sp-band">${esc(storePlanBand(o))}</p>
-          <p class="sp-unlocks">${esc(o.unlocks)}</p>
-        </div>`;
-    }).join('');
-  }
-
-  // The band is the half of this screen that keeps working after the switch: it says where the next
-  // change lands, so a seller grows into a new tier on purpose rather than finding it in a statement.
-  function storePlanBand(o) {
-    if (o.neverCheapest)
-      return 'Never the cheapest plan at any listing count — something else always beats it.';
-    if (o.cheapestTo === null || o.cheapestTo === undefined)
-      return `Cheapest from ${o.cheapestFrom.toLocaleString()} listings up, with nothing above it.`;
-    return `Cheapest between ${o.cheapestFrom.toLocaleString()} and ${o.cheapestTo.toLocaleString()} listings.`;
-  }
-
-  function renderStorePlanRates() {
-    const host = $('sp-rates');
-    if (!host || !storePlanRates) return;
-
-    host.innerHTML = (storePlanRates.tiers || []).map(t => `
-      <div class="sp-rate">
-        <span class="sp-rate-name">${esc(t.name)}</span>
-        <span class="sp-rate-cell">${t.annualBilling > 0 ? `${moneyExact(t.annualBilling)}/mo billed annually` : 'free'}</span>
-        <span class="sp-rate-cell">${t.monthlyBilling === null || t.monthlyBilling === undefined
-          ? 'annual commitment only'
-          : (t.monthlyBilling > 0 ? `${moneyExact(t.monthlyBilling)}/mo billed monthly` : 'free')}</span>
-        <span class="sp-rate-cell">${t.freeListings.toLocaleString()} free listings a month</span>
-        <span class="sp-rate-cell">${moneyExact(t.insertionFeeAfter)} each after that</span>
-      </div>`).join('')
-      + `<p class="sp-rates-note">${esc(storePlanRates.note || '')}</p>`;
   }
 
   // ── Price Position ────────────────────────────────────────────────────────

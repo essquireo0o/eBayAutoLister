@@ -535,10 +535,6 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<EarningsAutoImport
 // much of it the seller keeps. It reads the same flips and deliberately reaches a different net
 // profit — see TaxPackCalculator for why both numbers are right.
 builder.Services.AddSingleton<TaxPackCalculator>();
-// The Store Plan. Every other money service in this app prices a decision about an item; this one
-// prices the only eBay bill that arrives whether anything sells or not — the Store subscription.
-// Stateless arithmetic over a published rate card, so it is a singleton with nothing in it.
-builder.Services.AddSingleton<StorePlanOptimizer>();
 // The Deal Pipeline — the thread that joins all of the above. Every other money service answers
 // one question about one moment; this one carries a single flip from the sourcing forecast that
 // justified the buy, through the cash that left the bank, to the sale in EarningsStore that
@@ -691,6 +687,22 @@ HostedAuth.UseSignedInUser(app);
     {
         FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(libDir),
         RequestPath  = "/photos"
+    });
+}
+
+// Phone-camera recordings. A sibling of the photo library, deliberately not inside it: every
+// caller of the library assumes it can render what it is handed, and a video is not an image.
+{
+    var vidDir = Path.Combine(app.Environment.ContentRootPath, "photos", "photo-box-video");
+    Directory.CreateDirectory(vidDir);
+    var types = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+    types.Mappings[".mp4"]  = "video/mp4";
+    types.Mappings[".webm"] = "video/webm";
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(vidDir),
+        RequestPath  = "/photo-box-video",
+        ContentTypeProvider = types
     });
 }
 
@@ -5223,105 +5235,6 @@ static TaxPackResult BuildTaxPack(
     return tax.Build(computed, feeProfile, incomeRatePercent, year, DateTimeOffset.Now);
 }
 
-// ── The Store Plan — the one eBay bill that arrives whether you sell anything or not ───────────
-// Every other money screen in this app prices a decision about an item. This one prices the
-// subscription, and it is the cheapest money in the app to find: the seller changes no listing,
-// takes no risk and does nothing except click a different radio button on eBay.
-//
-// The whole feature turns on a number no competitor can see — how many listings this account keeps
-// live. A fixed-price listing renews every 30 days and each renewal spends one of the month's free
-// listings, so that count IS the monthly bill. Nine hundred live listings with no Store subscription
-// is about $227 a month in insertion fees against a $21.95 Basic Store that covers a thousand.
-//
-// Reads eBay listings and the app's own database. Writes nothing to eBay and changes no plan — eBay
-// has no API for that, and a screen that could silently start a $299 subscription should not exist.
-
-// The only route that asks eBay how many listings are live. Everything else re-costs from a count
-// already in hand, so switching a plan on this screen is instant and eBay is called once a visit.
-app.MapGet("/api/store-plan", async (EbayService ebay, EarningsStore earnings,
-    FeeProfileStore feeStore, StorePlanOptimizer optimizer, ActionLog log) =>
-{
-    var settings = feeStore.LoadStorePlan();
-
-    try
-    {
-        var live = await ebay.GetListingsAsync();
-        var active = live.Count(l =>
-            (l.Status is "ACTIVE" or "PUBLISHED" || string.IsNullOrWhiteSpace(l.Status))
-            && !string.IsNullOrWhiteSpace(l.Title));
-
-        return Results.Ok(optimizer.Evaluate(BuildStorePlanInputs(settings, active, true, earnings)));
-    }
-    catch (Exception ex)
-    {
-        // Same contract as every other inventory-wide board: reported, never silently retried. The
-        // screen still works — it asks for the count instead of counting it.
-        log.Add("Warning", "Store plan check could not read eBay listings", ex.Message);
-        var result = optimizer.Evaluate(BuildStorePlanInputs(settings, 0, false, earnings));
-        result.Status = "ebay_unavailable";
-        result.Error = ex.Message;
-        return Results.Ok(result);
-    }
-});
-
-// Which tier the seller is on, how they pay for it, and any count they want to plan against. None
-// of the three can be derived — eBay's APIs do not report an account's own subscription — and a
-// screen that asked for them on every visit would be a form rather than a glance.
-app.MapPost("/api/store-plan/settings", (
-    StorePlanSettingsRequest body, EarningsStore earnings, FeeProfileStore feeStore,
-    StorePlanOptimizer optimizer, ActionLog log) =>
-{
-    if (body.PlanKey is not null && StorePlanCatalog.Find(body.PlanKey) is null)
-        return Results.BadRequest("That is not one of eBay's Store tiers.");
-    if (body.ListingsOverride is int typed && (typed < 0 || typed > StorePlanCatalog.LadderCeiling))
-        return Results.BadRequest($"Enter a listing count between 0 and {StorePlanCatalog.LadderCeiling:N0}.");
-
-    var existing = feeStore.LoadStorePlan();
-    var saved = feeStore.SaveStorePlan(new StorePlanSettings
-    {
-        PlanKey = body.PlanKey ?? existing.PlanKey,
-        AnnualBilling = body.AnnualBilling ?? existing.AnnualBilling,
-        ListingsOverride = body.ListingsOverride ?? existing.ListingsOverride,
-    });
-
-    log.Add("Info", "Store plan updated",
-        $"{StorePlanCatalog.Resolve(saved.PlanKey).Name}, billed {(saved.AnnualBilling ? "annually" : "monthly")}");
-
-    // Costed against whatever count the screen already had, so saving a plan never re-hits eBay.
-    // A count that is absent is a count eBay never gave up — not a zero, and not a measured one:
-    // reporting it as measured would put "eBay counted this" under a figure the seller typed.
-    return Results.Ok(optimizer.Evaluate(BuildStorePlanInputs(
-        saved, Math.Max(0, body.ActiveListings ?? 0), body.ActiveListings is not null, earnings)));
-});
-
-// The rate card itself, so the recommendation is checkable rather than magic — the same contract as
-// /api/shipping/services. eBay changes these prices and this app cannot read them, so the seller has
-// to be able to see every number a recommendation was made from.
-app.MapGet("/api/store-plan/rates", () => Results.Ok(StorePlanCatalog.Describe()));
-
-static StorePlanInputs BuildStorePlanInputs(
-    StorePlanSettings settings, int activeListings, bool measured, EarningsStore earnings) => new()
-{
-    ActiveListings = activeListings,
-    ListingCountMeasured = measured,
-    ListingsOverride = settings.ListingsOverride,
-    CurrentPlanKey = settings.PlanKey,
-    AnnualBilling = settings.AnnualBilling,
-    MonthlySales = StorePlanMonthlySales(earnings, DateTimeOffset.UtcNow),
-};
-
-// Scale, not arithmetic: a $21.95 store bill reads very differently against $400 of sales a month
-// and against $9,000. Ninety days rather than a year, because a seller who started in March should
-// not have their store bill judged against the ten months they were not selling.
-static decimal StorePlanMonthlySales(EarningsStore earnings, DateTimeOffset now)
-{
-    var since = now.AddDays(-90);
-    var gross = earnings.GetAll()
-        .Where(f => f.SoldUtc >= since && EarningsStore.NormalizeStatus(f.Status) == "paid")
-        .Sum(f => f.SalePrice * Math.Max(1, f.Quantity) + f.ShippingCharged);
-
-    return Math.Round(gross / 3m, 2, MidpointRounding.AwayFromZero);
-}
 
 // ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────
 // Everything above answers one question about one moment. This carries a single flip end to end:
@@ -9515,6 +9428,30 @@ app.MapGet("/api/photobox/phone/preview", (PhoneCapture phone) =>
     return frame is null
         ? Results.NoContent()
         : Results.File(frame, "image/jpeg");
+});
+
+// Recording is driven from this screen, like the shutter. The phone stops itself at the cap
+// whatever happens here, so a browser closed mid-recording cannot leave it running.
+app.MapPost("/api/photobox/phone/record/start", (PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    var error = phone.StartRecording();
+    return error is null ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error });
+});
+
+app.MapPost("/api/photobox/phone/record/stop", (PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    phone.StopRecording();
+    return Results.Ok(new { ok = true });
+});
+
+// Zoom and the phone's light. The phone is the camera, so the desktop asks rather than does —
+// and the whole status comes back, so the screen never has to guess what actually stuck.
+app.MapPost("/api/photobox/phone/settings", (PhoneSettingsRequest req, PhoneCapture phone) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    return Results.Ok(phone.Apply(req.Zoom, req.Torch));
 });
 
 app.MapPost("/api/photobox/phone/stop", async (PhoneCapture phone) =>

@@ -134,7 +134,6 @@
              Pack rather than under the sourcing tools because it is not a tool — it is a bill, it
              arrives every month, and most sellers chose their tier once at a listing count they no
              longer have. Nothing else on this list can be fixed in one click and never revisited. -->
-        <button class="nav-item" type="button" data-page="storeplan"><svg class="nav-icon" aria-hidden="true"><use href="#i-money"/></svg>Store Plan</button>
         <!-- The thread between every other screen: one flip from the forecast that justified it to
              the sale that settled it. Next to Money Made because between them they answer "what
              have I made" and "what's still out there" — the two halves of the same question. -->
@@ -2868,51 +2867,113 @@
           </div>
         </div>
 
-        <div class="opportunity-overlay-body">
-          <!-- The phone is the camera; the shutter stays here. -->
-          <div class="pb-card">
-            <div class="pb-live-head">
-              <div id="pb-cam-status" class="wn-video-status">No camera yet.</div>
-              <div class="pb-live-actions">
-                <button id="pb-snap" class="btn btn-primary" type="button" disabled>📸 Snap to Photo Library</button>
-                <!-- The shortcut this camera exists for: snap the product, press this, and the
-                     AI Listing screen opens already filled — title, specifics, description,
-                     category, NEW-or-USED read off the photo, priced against sold comps. Every
-                     photo snapped this session rides along on the listing. -->
-                <button id="pb-ai" class="btn btn-ghost" type="button" disabled
-                        title="Send this session's snaps to the AI Listing screen — it fills out everything and prices it from sold comps">✨ AI Listing</button>
-                <!-- The camera. Scan the code once, leave the page open on the phone, and the
-                     shutter stays here on the desktop. -->
-                <button id="pb-phone" class="btn btn-primary" type="button"
-                        title="Use your phone as the camera — scan a code, leave the page open, and Snap fires from here">📱 Use my phone</button>
+        <div class="opportunity-overlay-body pb-body">
+          <div class="pb-studio">
+            <div class="pb-stage-col">
+
+              <!-- The viewfinder, given the room a viewfinder needs. Everything that describes
+                   the shot sits ON it — live dot, capture size, zoom — so the eye never leaves
+                   the picture to find out what it is about to save. -->
+              <div class="pb-stage" id="pb-stage">
+                <img id="pb-stream" alt="Live view from the phone camera" />
+                <!-- Thirds, for putting the product where a buyer's eye already looks. Drawn over
+                     the frame and never baked into it. -->
+                <div class="pb-grid hidden" id="pb-grid" aria-hidden="true"></div>
+                <div class="pb-stage-chips">
+                  <span class="pb-chip pb-chip-live hidden" id="pb-live-chip">● Live</span>
+                  <span class="pb-chip hidden" id="pb-res-chip"></span>
+                  <span class="pb-chip pb-chip-zoom hidden" id="pb-zoom-chip">1.0×</span>
+                </div>
+                <div class="pb-countdown hidden" id="pb-countdown" aria-live="assertive"></div>
+                <div class="pb-stream-empty" id="pb-stream-empty">No camera yet — press 📱 Use my phone and scan the code.</div>
+              </div>
+
+              <!-- Zoom. The phone does it: its lens where the lens will move, a crop of a
+                   twelve-megapixel frame where it will not — either way the viewfinder and the
+                   saved photo are the same picture. -->
+              <div class="pb-zoombar" id="pb-zoombar">
+                <button id="pb-zoom-out" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom out">−</button>
+                <input id="pb-zoom" type="range" min="1" max="8" step="0.1" value="1" aria-label="Zoom" />
+                <button id="pb-zoom-in" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom in">+</button>
+                <div class="pb-zoom-presets">
+                  <button type="button" class="pb-preset is-on" data-zoom="1">1×</button>
+                  <button type="button" class="pb-preset" data-zoom="2">2×</button>
+                  <button type="button" class="pb-preset" data-zoom="4">4×</button>
+                  <button type="button" class="pb-preset" data-zoom="8">8×</button>
+                </div>
+              </div>
+
+              <div class="pb-shutter-row">
+                <button id="pb-snap" class="btn btn-primary pb-shutter" type="button" disabled>📸 Snap<span class="pb-key">space</span></button>
+                <button id="pb-burst" class="btn btn-secondary" type="button" disabled
+                        title="Three photos in a row — move the item between them and you have three angles">⚡ Burst ×3</button>
+                <label class="pb-select" title="Hands-free: the countdown runs here, the phone takes the photo at zero">
+                  <span>Timer</span>
+                  <select id="pb-timer">
+                    <option value="0" selected>Off</option>
+                    <option value="3">3s</option>
+                    <option value="10">10s</option>
+                  </select>
+                </label>
+                <button id="pb-grid-btn" class="btn btn-ghost" type="button" title="Rule-of-thirds grid over the viewfinder">▦ Grid<span class="pb-key">g</span></button>
+                <button id="pb-torch" class="btn btn-ghost hidden" type="button" title="The phone's own light">🔦 Light<span class="pb-key">t</span></button>
+                <button id="pb-full" class="btn btn-ghost" type="button" title="Fill the screen with the viewfinder">⛶ Full screen<span class="pb-key">f</span></button>
+              </div>
+
+              <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
+              <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
+
+              <!-- Everything shot this session, newest last. This is also the set the AI Listing
+                   button hands over, which is why a bad frame can be dropped here: the photo stays
+                   in the library, it just stops riding along to the listing. -->
+              <div class="pb-strip-head hidden" id="pb-strip-head">
+                <strong id="pb-strip-count">0 photos</strong>
+                <span class="pb-strip-hint">Newest last. Drop the ones you don't want on the listing.</span>
+              </div>
+              <div class="pb-filmstrip hidden" id="pb-filmstrip"></div>
+
+              <div class="pb-actions">
+                <button id="pb-ai" class="btn btn-primary" type="button" disabled
+                        title="Send this session's photos to the AI Listing screen — it writes the listing and prices it from sold comps">✨ AI Listing</button>
+                <button id="pb-library" class="btn btn-ghost" type="button">🖼 Photo Library</button>
+                <button id="pb-clear" class="btn btn-ghost hidden" type="button" title="Start a new item — the photos stay in the library">Start a new item</button>
               </div>
             </div>
-            <div class="pb-stream-wrap">
-              <img id="pb-stream" alt="Live view from the phone camera" />
-              <div id="pb-stream-empty" class="pb-stream-empty">No camera yet — press 📱 Use my phone and scan the code.</div>
-            </div>
-            <!-- Where a phone-camera failure is reported. Kept out of the snap note: one is about
-                 the camera, the other about the photo it just took. -->
-            <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
-            <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
-            <!-- Shown only while the phone camera is on: the code to scan, and what the phone is
-                 doing right now. The QR is drawn by the app itself — no internet, no third party. -->
-            <div id="pb-phone-panel" class="pb-phone-panel hidden">
-              <div class="pb-phone-qr" id="pb-phone-qr"></div>
-              <div class="pb-phone-words">
-                <h3>Scan this with your iPhone</h3>
-                <ol>
-                  <li>Point the phone's camera at the code and open the link.</li>
-                  <li>Safari will warn that the connection is not private — it is your own computer,
-                      with a certificate it made for itself. Tap <b>Show details</b>, then
-                      <b>visit this website</b>.</li>
-                  <li>Tap <b>Allow camera</b>, aim the phone at the item, and leave that page open.</li>
-                  <li>Press <b>📸 Snap</b> here. The phone takes the photo.</li>
-                </ol>
-                <div class="pb-phone-link" id="pb-phone-url"></div>
-                <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
+
+            <!-- The camera itself: how to connect it, and what it is doing. -->
+            <aside class="pb-rail">
+              <div class="pb-rail-card">
+                <div id="pb-cam-status" class="pb-rail-status">No camera yet.</div>
+                <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Use my phone</button>
+                <div id="pb-phone-panel" class="pb-phone-panel hidden">
+                  <div class="pb-phone-qr" id="pb-phone-qr"></div>
+                  <div class="pb-phone-words">
+                    <h3>Scan this with your iPhone</h3>
+                    <ol>
+                      <li>Point the phone's camera at the code and open the link.</li>
+                      <li>Safari will warn that the connection is not private — it is your own computer,
+                          with a certificate it made for itself. Tap <b>Show details</b>, then
+                          <b>visit this website</b>.</li>
+                      <li>Tap <b>Allow camera</b>, aim the phone at the item, and leave that page open.</li>
+                      <li>Press <b>📸 Snap</b> here. The phone takes the photo.</li>
+                    </ol>
+                    <div class="pb-phone-link" id="pb-phone-url"></div>
+                    <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
+                  </div>
+                </div>
               </div>
-            </div>
+
+              <div class="pb-rail-card pb-tips">
+                <h3>Photographs that sell</h3>
+                <ul>
+                  <li><b>Light on the item, never in the lens.</b> A lamp behind the phone, not behind the product.</li>
+                  <li><b>Fill the frame.</b> Zoom until the item touches the edges — eBay's thumbnail is small.</li>
+                  <li><b>Shoot the flaws too.</b> A photographed scratch is a returned item that never happens.</li>
+                  <li><b>Six angles beats one hero shot:</b> front, back, both sides, the label, the wear.</li>
+                </ul>
+                <p class="pb-shortcuts"><b>Keys:</b> space snap · b burst · g grid · f full screen · t light · esc leave full screen</p>
+              </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -4420,131 +4481,6 @@
           </div>
 
           <div id="tx-honesty" class="inv-footnote hidden"></div>
-        </div>
-      </section>
-
-      <!-- The Store Plan. The third screen built on "what do you actually keep", and the only one
-           whose answer is a single click on eBay that then pays every month for as long as the
-           seller trades.
-
-           The number the whole screen turns on is how many listings the account keeps live — which
-           this app can count and no crosslisting tool can. A fixed-price listing renews every 30
-           days and each renewal spends one of the month's zero-insertion-fee listings, so that count
-           IS the monthly bill.
-
-           Two rules the design keeps:
-             * The hero is the ANNUAL saving, not the monthly bill. A $17 monthly figure reads as
-               noise; the $204 it is worth over a year is the number that gets somebody to act.
-             * Every row shows its arithmetic. The rate card is in code and eBay changes it, so a
-               row a seller cannot check is a row they are right not to trust. -->
-      <section id="storeplan-section" class="opportunity-overlay hidden">
-        <div class="opportunity-overlay-header">
-          <div class="opportunity-overlay-header-left">
-            <button id="sp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
-              <div class="eyebrow">The eBay bill that arrives whether you sell or not</div>
-              <h2>🏪 Store Plan</h2>
-            </div>
-          </div>
-          <div class="opportunity-overlay-header-actions">
-            <button id="sp-refresh" class="btn btn-secondary" type="button">Recount my listings</button>
-            <button id="sp-close" class="nl-close-btn" type="button" title="Close this tab">✕</button>
-          </div>
-        </div>
-
-        <div class="opportunity-overlay-body">
-
-          <!-- The saving over a year, because that is the size of the decision. The sub-line carries
-               the instruction; the side stats carry the three facts it was worked out from. -->
-          <div class="er-hero sp-hero">
-            <div class="er-hero-main">
-              <p id="sp-hero-label" class="er-hero-label">Worth switching, over a year</p>
-              <p id="sp-hero-figure" class="er-hero-figure">$0</p>
-              <p id="sp-hero-sub" class="er-hero-sub">counting the listings you keep live…</p>
-            </div>
-            <div class="er-hero-side">
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">Listings you keep live</span>
-                <span id="sp-hero-listings" class="er-hero-stat-value">—</span>
-              </div>
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">You pay now</span>
-                <span id="sp-hero-now" class="er-hero-stat-value">—</span>
-              </div>
-              <div class="er-hero-stat">
-                <span class="er-hero-stat-label">Cheapest plan</span>
-                <span id="sp-hero-best" class="er-hero-stat-value">—</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- eBay publishes no API for an account's own subscription, so these three are the only
-               things on the screen the seller has to supply — and they are supplied inline, next to
-               what they change, rather than on a settings page nobody would find. -->
-          <div class="sp-controls">
-            <div class="sp-field">
-              <label for="sp-plan">The plan you are on today</label>
-              <select id="sp-plan" class="sp-select"></select>
-            </div>
-            <div class="sp-field">
-              <label for="sp-billing">How you pay for it</label>
-              <select id="sp-billing" class="sp-select">
-                <option value="annual">Billed annually</option>
-                <option value="monthly">Billed monthly</option>
-              </select>
-            </div>
-            <div class="sp-field">
-              <label for="sp-listings">Plan against a different count</label>
-              <input id="sp-listings" type="number" min="0" step="10" placeholder="live count" />
-            </div>
-            <button id="sp-save" class="btn btn-primary small" type="button">Apply</button>
-          </div>
-          <p id="sp-controls-note" class="sp-note">Nothing here changes anything on eBay. Switching plans is done on eBay's own Store page — this only tells you which one to be on.</p>
-
-          <!-- The arithmetic of both sides in one paragraph, before any table. A seller who reads
-               only this line has enough to act on. -->
-          <div id="sp-detail" class="sp-detail hidden"></div>
-
-          <!-- The one saving with no trade-off attached: the same tier, billed annually. -->
-          <div id="sp-billing-win" class="sp-billing-win hidden"></div>
-
-          <div id="sp-plans-card" class="er-chart-card hidden">
-            <div class="er-chart-head">
-              <div>
-                <p class="eyebrow">Every tier, costed against your listings</p>
-                <h3 id="sp-plans-title">What each plan would cost you a month</h3>
-              </div>
-              <button id="sp-rates-toggle" class="btn btn-ghost small" type="button" aria-expanded="false">Show eBay's rate card</button>
-            </div>
-            <div id="sp-plans" class="sp-plans"></div>
-            <p id="sp-next" class="sp-next"></p>
-          </div>
-
-          <!-- The published rates on their own, with nothing computed from them, so the seller can
-               check the card against eBay's fee page in ten seconds. -->
-          <div id="sp-rates-card" class="viz-panel hidden">
-            <div class="viz-panel-head">
-              <div>
-                <p class="eyebrow">eBay's published US Store rates</p>
-                <h3>The numbers every figure above came from</h3>
-              </div>
-            </div>
-            <div id="sp-rates" class="sp-rates"></div>
-          </div>
-
-          <div id="sp-results" class="inv-results">
-            <div class="state">
-              <div class="state-icon"><svg aria-hidden="true"><use href="#i-money"/></svg></div>
-              <div class="state-title">The one eBay bill you can cut without selling anything.</div>
-              <p class="state-body">Every fixed-price listing renews every 30 days, and each renewal spends one of that month's free listings. So the number of listings you keep live decides your store bill — and most sellers picked their tier once, at a listing count they no longer have. Connect eBay and this counts them for you, then prices all six tiers against that count.</p>
-              <div class="state-actions">
-                <button class="btn btn-secondary" type="button" onclick="document.querySelector('.nav-item[data-page=&quot;settings&quot;]')?.click()">Connect eBay in Settings</button>
-              </div>
-              <p class="state-hint">Or type the number of listings you keep live in the box above — everything on this screen works from that one figure.</p>
-            </div>
-          </div>
-
-          <div id="sp-honesty" class="inv-footnote hidden"></div>
         </div>
       </section>
 
