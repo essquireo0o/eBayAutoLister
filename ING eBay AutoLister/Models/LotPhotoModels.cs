@@ -41,6 +41,13 @@ public sealed class LiveWatchRequest
 
     /// <summary>The frame's media type, e.g. <c>image/jpeg</c>. Defaults to JPEG when absent.</summary>
     public string? MediaType { get; set; }
+
+    /// <summary>
+    /// What the host was heard saying around the time this frame was captured, already transcribed
+    /// by <c>/api/whatsnot/listen</c>. Empty when the seller shared their tab without audio, or when
+    /// no speech-to-text key is configured — the read still works, it just goes on the picture alone.
+    /// </summary>
+    public string? Heard { get; set; }
 }
 
 /// <summary>The answers a look can give. Spelled once so the endpoint, the screen and the tests agree.</summary>

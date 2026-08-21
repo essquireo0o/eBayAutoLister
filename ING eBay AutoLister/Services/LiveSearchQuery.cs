@@ -212,17 +212,49 @@ public static partial class LiveSearchQuery
     /// no word appears in the query that the seller did not type.
     /// </para>
     /// </remarks>
-    public static LiveSearchTerms? Widen(LiveSearchTerms terms)
+    public static LiveSearchTerms? Widen(LiveSearchTerms terms) => WidenTo(terms, WidenToWords);
+
+    /// <summary>
+    /// Every rung of the widening, broadest last: the whole name minus one identifying word, then
+    /// minus two, down to <see cref="MinImportantWords"/>. The caller walks it and stops at the
+    /// first rung with enough sold history to price on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a ladder and not the one jump.</b> <see cref="Widen"/> goes straight to three words,
+    /// which for "1884 CC Morgan Silver Dollar GSA Holder Uncirculated Carson City" is
+    /// "1884 CC Morgan" — and steps clean over "1884 CC Morgan Silver Dollar", which is the exact
+    /// title that coin sells under on eBay every week. Jumping to the bottom of the ladder finds
+    /// either nothing or the wrong thing; walking down it finds the closest sold history there is,
+    /// which is what a price is supposed to be made of (owner, 2026-08-21: "the sold comps need to
+    /// look harder … it should find the closest one").
+    /// </para>
+    /// <para>
+    /// Each rung is still a cut of the seller's own words, in their own order — nothing is added,
+    /// nothing is reordered, and every rung says on the card what it gave up to find a price.
+    /// </para>
+    /// </remarks>
+    public static IEnumerable<LiveSearchTerms> Ladder(LiveSearchTerms terms)
+    {
+        var count = Important((terms.Query ?? "").Trim()).Count;
+        for (var keep = count - 1; keep >= MinImportantWords; keep--)
+            if (WidenTo(terms, keep) is { } rung)
+                yield return rung;
+    }
+
+    /// <summary>The widening itself, cut to <paramref name="keepWords"/> identifying words.</summary>
+    private static LiveSearchTerms? WidenTo(LiveSearchTerms terms, int keepWords)
     {
         var query = (terms.Query ?? "").Trim();
         if (query.Length == 0 || terms.Widened) return null;
-        if (Important(query).Count <= WidenToWords) return null;
+        if (keepWords < MinImportantWords) return null;
+        if (Important(query).Count <= keepWords) return null;
 
         var kept = new StringBuilder();
         var seen = 0;
         foreach (var word in query.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (seen >= WidenToWords) break;
+            if (seen >= keepWords) break;
             if (kept.Length > 0) kept.Append(' ');
             kept.Append(word);
             if (Important(word).Count > 0) seen++;

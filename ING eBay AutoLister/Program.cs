@@ -271,6 +271,7 @@ builder.Services.AddSingleton<AmazonProductTypeService>();
 builder.Services.AddSingleton<AmazonListingSubmitService>();
 builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
+builder.Services.AddSingleton<TranscriptionService>();
 builder.Services.AddSingleton<PhotoLibrary>();
 // The seller's phone as the photo-box camera, with the shutter still on this screen.
 // Its own listener on its own port — see PhoneCapture for why it is not a route here.
@@ -3536,25 +3537,37 @@ app.MapPost("/api/whatsnot/bid", async (
             normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
             opportunityScorer, confidenceScorer, log, ct);
 
-        // Still nothing worth pricing on. One shorter search — the first few identifying words —
-        // before giving up, because "no comps" and "no comps for that exact wording" are different
-        // answers and only one of them is true often enough to show. It costs a second lookup on
-        // the thin path only, and it is kept only if it actually found more; a widening that found
-        // nothing extra is not reported as having happened.
-        if (LiveBidAdvisor.CompCountOf(analysis) < LiveBidAdvisor.MinCompsToBid
-            && LiveSearchQuery.Widen(terms) is { } wider)
+        // Still nothing worth pricing on. Now the search looks harder instead of giving up: the
+        // whole name minus one identifying word, then minus two, down to the two-word core —
+        // stopping at the first rung with enough sold history to price on. "No comps" and "no
+        // comps under that exact wording" are different answers, and only one of them is true
+        // often enough to show a CAN'T PRICE IT card.
+        //
+        // Each rung is a stored-comps read, not an eBay call, so walking a few of them costs
+        // milliseconds — and the walk only happens on the thin path, where the alternative was a
+        // card with no price on it at all. The best rung wins rather than the last: a broader
+        // search that found FEWER comps has found something less like the item, not more.
+        if (LiveBidAdvisor.CompCountOf(analysis) < LiveBidAdvisor.MinCompsToBid)
         {
-            var widened = await AnalyzeProductAsync(
-                wider.Query, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
-                activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
-                allowRealTerapeakScrape: false,
-                normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
-                opportunityScorer, confidenceScorer, log, ct);
-
-            if (LiveBidAdvisor.CompCountOf(widened) > LiveBidAdvisor.CompCountOf(analysis))
+            foreach (var rung in LiveSearchQuery.Ladder(terms))
             {
-                analysis = widened;
-                terms = wider;
+                ct.ThrowIfCancellationRequested();
+                var widened = await AnalyzeProductAsync(
+                    rung.Query, supplierUnitCost: null, quantity: 1, listingType: "FIXED_PRICE",
+                    activeListingsAlreadyFetched: null, ebayForCompetitionFallback: null,
+                    allowRealTerapeakScrape: false,
+                    normalizer, marketplace, matcher, priceEstimator, sellThroughCalc, profitCalc, feeProfile,
+                    opportunityScorer, confidenceScorer, log, ct);
+
+                if (LiveBidAdvisor.CompCountOf(widened) > LiveBidAdvisor.CompCountOf(analysis))
+                {
+                    analysis = widened;
+                    terms = rung;
+                }
+
+                // Enough to stand a ceiling on. Going broader from here would only trade the
+                // closest sold history for a vaguer one.
+                if (LiveBidAdvisor.CompCountOf(analysis) >= LiveBidAdvisor.MinCompsToBid) break;
             }
         }
     }
@@ -4188,7 +4201,13 @@ app.MapPost("/api/whatsnot/photo", async (
 // Whatnot refuses embedding and a browser cannot read a cross-origin video — so the seller shares
 // their own tab, their browser samples a frame, and it comes here. The server never reaches Whatnot.
 //
-// It identifies and nothing else — the same IdentifyItemAsync the photo check and Snap & Source use.
+// The frame is not read as a photograph of an object. It is read as a screenshot of a selling app,
+// which means two things the yard-sale read would throw away: the overlay Whatnot prints over the
+// video carries the seller's own lot title and condition, and — when the tab was shared WITH audio —
+// `Heard` carries what the host was saying while that frame was on screen. Claude cannot process
+// audio (the Messages API takes text, images and PDFs, and nothing else), so the voice arrives here
+// already transcribed by /api/whatsnot/listen and goes to the model as words.
+//
 // The screen takes the name it returns and runs it through the very same ⚡ Price it as a typed one,
 // so the sold-comps path is not duplicated here: one place decides what an item is worth.
 app.MapPost("/api/whatsnot/watch", async (
@@ -4209,11 +4228,16 @@ app.MapPost("/api/whatsnot/watch", async (
 
     var mediaType = string.IsNullOrWhiteSpace(req.MediaType) ? "image/jpeg" : req.MediaType!.Trim();
 
+    // Cap what a caller can put in front of the model's instructions. A show's audio is transcribed
+    // speech, not a trusted field, and only the last few sentences are worth anything anyway.
+    var heard = (req.Heard ?? "").Trim();
+    if (heard.Length > 1200) heard = heard[^1200..];
+
     var sw = System.Diagnostics.Stopwatch.StartNew();
     SnapIdentity identity;
     try
     {
-        identity = await claude.IdentifyItemAsync(base64, mediaType, ct);
+        identity = await claude.IdentifyLiveLotAsync(base64, mediaType, heard, ct);
     }
     catch (OperationCanceledException) { throw; }
     catch (Exception ex)
@@ -4224,9 +4248,10 @@ app.MapPost("/api/whatsnot/watch", async (
     }
 
     var seen = (identity.Title ?? "").Trim();
+    var withVoice = heard.Length > 0 ? " (screen + voice)" : " (screen only)";
     log.Add(seen.Length > 0 ? "Research" : "Info", "Read the live video",
-        seen.Length > 0 ? $"\"{seen}\" ({identity.Certainty}); {sw.ElapsedMilliseconds}ms"
-                        : $"nothing nameable on screen; {sw.ElapsedMilliseconds}ms");
+        seen.Length > 0 ? $"\"{seen}\" ({identity.Certainty}){withVoice}; {sw.ElapsedMilliseconds}ms"
+                        : $"nothing nameable on screen{withVoice}; {sw.ElapsedMilliseconds}ms");
 
     // The screen prices this by feeding `seen` into /api/whatsnot/bid, exactly as a typed name goes.
     return Results.Ok(new
@@ -4237,8 +4262,50 @@ app.MapPost("/api/whatsnot/watch", async (
         identity.Condition,
         identity.Certainty,
         identity.CheckThis,
+        heardVoice = heard.Length > 0,
         elapsedMs = sw.ElapsedMilliseconds,
     });
+});
+
+// ── AI HEARS the show ─────────────────────────────────────────────────────────────────────────
+// Claude has no ears. The Messages API accepts text, images and PDFs — there is no audio content
+// block — so "analyse the voice" cannot mean handing Claude the sound. It means turning the sound
+// into words here and handing those to the same read that looks at the frame.
+//
+// The browser records the shared tab's audio track in short clips and posts them here. Each clip
+// answers for itself: a failure returns 200 with ok:false and a sentence the screen can show,
+// because losing one clip of a two-hour show is not an error worth stopping the watch over.
+app.MapPost("/api/whatsnot/listen", async (
+    HttpRequest http, TranscriptionService transcriber,
+    CredentialsStore store, LicenseService license, ActionLog log, CancellationToken ct) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+
+    if (!http.HasFormContentType)
+        return BadInputJson("No clip arrived",
+            "The audio did not come through as a file.",
+            "Reload the WhatsNot screen and start watching again.");
+
+    var form = await http.ReadFormAsync(ct);
+    var file = form.Files["clip"] ?? form.Files.FirstOrDefault();
+    if (file is null || file.Length == 0)
+        return Results.Ok(new { ok = false, text = "", detail = "That clip was empty — no sound reached the app." });
+
+    using var buffer = new MemoryStream();
+    await file.CopyToAsync(buffer, ct);
+
+    var result = await transcriber.TranscribeAsync(
+        buffer.ToArray(),
+        string.IsNullOrWhiteSpace(file.FileName) ? "clip.webm" : file.FileName,
+        file.ContentType,
+        store.Get(),
+        ct);
+
+    if (result.Ok && result.Text.Length > 0)
+        log.Add("Research", "Heard the show",
+            result.Text.Length > 140 ? result.Text[..140] + "…" : result.Text);
+
+    return Results.Ok(new { ok = result.Ok, text = result.Text, detail = result.Detail });
 });
 
 // One GET for one page the seller pasted. Shaped like a browser asking for a document, because the

@@ -38,17 +38,27 @@ public class WhatsNotSearchAssetTests
     }
 
     [Fact]
-    public void The_widening_happens_at_most_once_and_only_when_there_was_nothing_to_price_on()
+    public void The_widening_only_happens_when_there_was_nothing_to_price_on_and_stops_the_moment_there_is()
     {
         var bid = Section(Program, "app.MapPost(\"/api/whatsnot/bid\"", "app.MapPost(\"/api/whatsnot/rebid\"");
 
         // A second lookup on every lot would double the wait on the screen whose whole promise is
-        // an answer in seconds.
+        // an answer in seconds — so the ladder is still only ever walked on the thin path.
         Assert.Contains("LiveBidAdvisor.CompCountOf(analysis) < LiveBidAdvisor.MinCompsToBid", bid,
             StringComparison.Ordinal);
-        Assert.Contains("LiveSearchQuery.Widen(terms) is { } wider", bid, StringComparison.Ordinal);
 
-        // And it is kept only if it actually found more, so a widening that changed nothing is
+        // It walks OUTWARD one identifying word at a time (2026-08-21) rather than jumping straight
+        // to three words: "1884 CC Morgan Silver Dollar GSA Holder Uncirculated Carson City" priced
+        // off nothing because the one jump stepped over "1884 CC Morgan Silver Dollar", the title
+        // that coin actually sells under. See LiveSearchQuery.Ladder and CompsLadderTests.
+        Assert.Contains("foreach (var rung in LiveSearchQuery.Ladder(terms))", bid, StringComparison.Ordinal);
+
+        // And it stops at the first rung that can carry a ceiling: going broader from there trades
+        // the closest sold history for a vaguer one.
+        Assert.Contains("if (LiveBidAdvisor.CompCountOf(analysis) >= LiveBidAdvisor.MinCompsToBid) break;", bid,
+            StringComparison.Ordinal);
+
+        // Each rung is kept only if it actually found more, so a widening that changed nothing is
         // never reported as having happened.
         Assert.Contains("LiveBidAdvisor.CompCountOf(widened) > LiveBidAdvisor.CompCountOf(analysis)", bid,
             StringComparison.Ordinal);

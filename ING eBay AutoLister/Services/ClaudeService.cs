@@ -753,40 +753,108 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
     /// product, and the one thing to physically check before handing over money.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The same read as <see cref="IdentifyItemAsync"/>, but for a frame of a LIVE SELLING SHOW
+    /// rather than a photograph of an object — and, when the seller's computer could transcribe it,
+    /// what the host was saying while that frame was on screen.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two sources of truth arrive with this frame that a yard-sale photo does not have, and both
+    /// beat naming the object from its pixels:
+    /// </para>
+    /// <para>
+    /// <b>The overlay.</b> A live-selling app prints the lot the seller typed — title, condition,
+    /// current bid, shipping — over the video. That text is the seller's own description of the
+    /// thing being auctioned. Reading it is not image recognition, it is reading, and it is right
+    /// far more often than a guess from a hand holding a box at arm's length.
+    /// </para>
+    /// <para>
+    /// <b>The voice.</b> The host says what the overlay cannot fit: the retail price, whether it is
+    /// sealed, the flaw on the corner. Claude cannot hear — the Messages API takes text, images and
+    /// PDFs, and no audio — so the audio is transcribed elsewhere and arrives here as text.
+    /// </para>
+    /// </remarks>
+    public Task<SnapIdentity> IdentifyLiveLotAsync(string base64Image, string mimeType,
+        string? spokenTranscript, CancellationToken cancellationToken = default)
+    {
+        var heard = string.IsNullOrWhiteSpace(spokenTranscript)
+            ? "Nothing was transcribed for this moment — go on the screen alone."
+            : $"What the host was SAYING while this frame was on screen:\n\"\"\"\n{spokenTranscript.Trim()}\n\"\"\"";
+
+        var prompt = $$"""
+            This is a frame of a LIVE SELLING SHOW, not a photograph of an object. Somebody is holding
+            an item up to a camera and auctioning it right now, and a reseller is deciding in seconds
+            whether to bid.
+
+            READ THE SCREEN BEFORE YOU JUDGE THE OBJECT. These apps print the seller's own lot
+            information over the video — a title like "5. APPLE IPAD #23", a condition like
+            "Refurbished - Excellent", a current bid, a shipping line. That text is the seller's
+            description of the exact thing being sold. When it is legible it OUTRANKS anything you
+            infer from the picture: a blurry hand-held box that the overlay calls an iPad is an iPad.
+            Ignore the chat messages, the giveaway banners, the viewer counts and the other lots
+            listed down the side — only the lot being sold right now matters.
+
+            {{heard}}
+
+            The voice carries what the overlay cannot fit — "brand new in box", "retails for four
+            hundred", "there's a scratch on the back". Use it for the condition and for the specs.
+            Where the spoken word and the overlay disagree about WHAT the item is, trust the overlay;
+            where they disagree about its CONDITION, trust the more specific of the two and say so
+            in ConditionNote.
+
+            Be fast and be specific.
+
+            {{IdentitySchema}}
+            """;
+
+        return RunIdentifyAsync(prompt, base64Image, mimeType, "Identify live lot", cancellationToken);
+    }
+
     public Task<SnapIdentity> IdentifyItemAsync(string base64Image, string mimeType,
         CancellationToken cancellationToken = default)
     {
-        var prompt = """
+        var prompt = $$"""
             You are a reseller standing in front of this item at a yard sale, deciding in seconds
             whether to buy it. Identify the product in the photo. Be fast and be specific.
 
-            Return ONLY a valid JSON object — no markdown, no code fences, no commentary:
-
-            {
-              "Title": "the eBay search you would type to find what this sold for. Brand + model + the
-                        one or two specs that distinguish it. Example: 'Bitmain Antminer S19j Pro 104TH'
-                        or 'DeWalt DCD771 20V Cordless Drill'. NOT a marketing sentence, NOT a listing
-                        title, max 12 words. If you cannot tell the brand or model, describe the item
-                        as specifically as the photo allows — a searchable description beats a guess
-                        at a model number.",
-              "Brand": "brand name, or empty string if you cannot read one",
-              "Model": "model or part number if legible, else empty string",
-              "Condition": "one of exactly: NEW, LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD,
-                            USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING — judged from visible wear only",
-              "ConditionNote": "the visible wear in under 12 words, or empty string if it looks clean",
-              "Certainty": "one of exactly: high, medium, low — how sure you are you named the RIGHT
-                            product. 'high' only when you can read a brand and model, or the item is
-                            unmistakable. If you are inferring the model from the shape, that is 'low'.",
-              "CheckThis": "the ONE thing to physically check before paying that a photo cannot answer,
-                            in under 12 words. Examples: 'Power it on before you pay', 'Ask if the
-                            charger is included', 'Check the heels for cracks'. Empty string if there
-                            is genuinely nothing."
-            }
-
-            Be honest in Certainty. A confident name for the wrong product costs the seller real money;
-            'low' costs them ten seconds of reading.
+            {{IdentitySchema}}
             """;
 
+        return RunIdentifyAsync(prompt, base64Image, mimeType, "Identify item from photo", cancellationToken);
+    }
+
+    /// <summary>The JSON contract every identify prompt ends with — one shape, so callers can share a parser.</summary>
+    private const string IdentitySchema = """
+        Return ONLY a valid JSON object — no markdown, no code fences, no commentary:
+
+        {
+          "Title": "the eBay search you would type to find what this sold for. Brand + model + the
+                    one or two specs that distinguish it. Example: 'Bitmain Antminer S19j Pro 104TH'
+                    or 'DeWalt DCD771 20V Cordless Drill'. NOT a marketing sentence, NOT a listing
+                    title, max 12 words. If you cannot tell the brand or model, describe the item
+                    as specifically as the source allows — a searchable description beats a guess
+                    at a model number.",
+          "Brand": "brand name, or empty string if you cannot read one",
+          "Model": "model or part number if legible, else empty string",
+          "Condition": "one of exactly: NEW, LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD,
+                        USED_ACCEPTABLE, FOR_PARTS_OR_NOT_WORKING",
+          "ConditionNote": "the wear or the stated condition in under 12 words, or empty string if clean",
+          "Certainty": "one of exactly: high, medium, low — how sure you are you named the RIGHT
+                        product. 'high' only when you can read a brand and model, or the item is
+                        unmistakable. If you are inferring the model from the shape, that is 'low'.",
+          "CheckThis": "the ONE thing to check before paying that the source cannot answer, in under
+                        12 words. Examples: 'Power it on before you pay', 'Ask if the charger is
+                        included', 'Check the heels for cracks'. Empty string if genuinely nothing."
+        }
+
+        Be honest in Certainty. A confident name for the wrong product costs the seller real money;
+        'low' costs them ten seconds of reading.
+        """;
+
+    private Task<SnapIdentity> RunIdentifyAsync(string prompt, string base64Image, string mimeType,
+        string label, CancellationToken cancellationToken)
+    {
         var messages = new List<Message>
         {
             new()
@@ -814,7 +882,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
             response => NormalizeIdentity(
                 JsonSerializer.Deserialize<SnapIdentity>(
                     ExtractJsonObject(TextOf(response, "{}")), JsonOptions) ?? new SnapIdentity()),
-            "Identify item from photo",
+            label,
             cancellationToken);
     }
 
