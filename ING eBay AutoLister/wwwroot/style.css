@@ -18383,3 +18383,99 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-tips li { font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; margin-bottom: 5px; }
 .pb-tips b { color: var(--ink); }
 .pb-shortcuts { font-size: var(--fs-xs); color: var(--muted); line-height: 1.7; }
+
+/* ── Overlay screens: one column, one left edge ────────────────────────────────
+   `.opportunity-overlay-body > *` centres every child in a 1320px column. A card that then
+   sets a `margin: 10px 0 14px` shorthand silently resets its inline margins to 0 and falls
+   out of that column — which is why WhatsNot drew its cards on two different left edges,
+   118px apart, and read as a broken page rather than a designed one. Same specificity as the
+   rules that broke it and later in the file, so the column wins without an !important. */
+.opportunity-overlay-body > * { margin-inline: auto; }
+
+/* ── WhatsNot: the live screen, composed ───────────────────────────────────────
+   One surface treatment for every block on the screen, one rhythm between them, and the
+   frame area given the presence of a stage rather than the look of a failed image. */
+#whatsnot-section .opportunity-overlay-body { padding-bottom: var(--s7, 28px); }
+
+#whatsnot-section .wn-read,
+#whatsnot-section .wn-ask,
+#whatsnot-section .wn-queue,
+#whatsnot-section .wn-sheet,
+#whatsnot-section .wn-frame-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 14px);
+  background: var(--panel);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .02) inset;
+}
+
+#whatsnot-section .wn-read,
+#whatsnot-section .wn-ask { padding: 16px 18px; }
+#whatsnot-section .wn-read { margin-bottom: 12px; }
+#whatsnot-section .wn-ask { margin-bottom: 18px; }
+
+/* The three folded panels — what is coming up, what was bought, what the room paid. Closed
+   they are a row of quiet headings; open they are cards. Either way they line up with
+   everything above them, which is the whole complaint this fixes. */
+#whatsnot-section .wn-queue,
+#whatsnot-section .wn-sheet {
+  margin-block: 0 10px;
+  overflow: hidden;
+  transition: border-color .15s ease, background .15s ease;
+}
+#whatsnot-section .wn-queue:hover,
+#whatsnot-section .wn-sheet:hover { border-color: color-mix(in srgb, var(--gold) 35%, var(--line)); }
+#whatsnot-section .wn-queue > summary,
+#whatsnot-section .wn-sheet > summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  list-style: none;
+}
+#whatsnot-section .wn-queue > summary::-webkit-details-marker,
+#whatsnot-section .wn-sheet > summary::-webkit-details-marker { display: none; }
+
+/* The browser's own controls. Given the same surface as everything else so the row stops
+   floating between two cards with nothing under it, and sat directly above the stage it
+   drives — a back button with no visible relationship to the frame it moves is furniture. */
+#whatsnot-section .wn-bar {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 14px);
+  background: var(--panel);
+  padding: 10px 12px;
+  margin-block: 18px 10px;
+  gap: 8px;
+}
+
+/* The status strip and the help toggle are notes about the screen, not blocks on it. */
+#whatsnot-section .wn-status { margin-block: 14px 8px; }
+#whatsnot-section .wn-help { margin-block: 14px 6px; padding-inline: 2px; }
+
+/* The frame is the stage: it gets the height and the presence of one, and when a site
+   refuses to be embedded the refusal is centred in it like a poster on an empty theatre
+   rather than stacked on top of a black rectangle. */
+#whatsnot-section .wn-frame-wrap {
+  position: relative;
+  min-height: 520px;
+  padding: 0;
+  overflow: hidden;
+  /* Tokens only: a hardcoded dark end-stop here would paint a black band across the stage the
+     moment somebody opens this screen in the light theme. */
+  background: linear-gradient(180deg, var(--panel) 0%, color-mix(in srgb, var(--panel) 82%, var(--bg, transparent)) 100%);
+}
+#whatsnot-section .wn-frame { display: block; width: 100%; height: 100%; min-height: 520px; border: 0; }
+#whatsnot-section .wn-blocked {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; text-align: center; padding: 32px 28px;
+  background: transparent;
+  border: 0;
+}
+#whatsnot-section .wn-blocked-title { font-size: var(--fs-md); color: var(--gold); font-weight: var(--fw-semibold); }
+#whatsnot-section .wn-blocked-detail,
+#whatsnot-section .wn-blocked-note { max-width: 54ch; color: var(--muted); line-height: 1.65; }
+#whatsnot-section .wn-blocked-header {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-xs); color: var(--muted); opacity: .8;
+}
+#whatsnot-section .wn-blocked-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }

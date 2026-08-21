@@ -11003,6 +11003,10 @@
     $('wn-blocked-retry')?.classList.toggle('hidden', !overridable);
 
     panel.classList.remove('hidden');
+    // Said once. This panel carries the same sentence as the status strip AND the way out of
+    // it, so leaving both on screen printed "Whatnot refuses to be embedded" twice, one above
+    // the other, which reads as the app stuttering rather than explaining.
+    wnStatus(null, '');
   }
 
   // Asks the site — via the app, which is not a frame and so is not refused on those
