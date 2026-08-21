@@ -2488,6 +2488,34 @@ app.MapGet("/api/fb-photo", async (string? u, string? s, HttpContext httpCtx, Ca
 // question a reseller actually has is "is $600 a buy", and answering it meant leaving the app. This
 // runs the same feed down the same pipeline the scan boards use, so every card can carry what it
 // sells for, how many sold, the profit after fees and the ROI.
+// What the AI thinks the rest are worth. The board asks for this only for the items its sold
+// comps could not price at all — "No sold data" is true but useless to somebody deciding whether
+// to drive across town, and a rough number they can argue with beats no number (owner,
+// 2026-08-21). One call for the whole board, and never evidence: see ClaudeService.EstimateResaleAsync.
+app.MapPost("/api/local/ai-estimate", async (AiEstimateRequest req, ClaudeService claude, ActionLog log,
+                                             CancellationToken ct) =>
+{
+    var items = req?.Items ?? [];
+    if (items.Count == 0) return Results.Ok(new { estimates = Array.Empty<AiResaleEstimate>() });
+
+    try
+    {
+        var estimates = await claude.EstimateResaleAsync(items, ct);
+        log.Add("Research", "AI resale estimates",
+            $"{estimates.Count} of {items.Count} item(s) estimated from the wider resale market (no matching sold comps).");
+        return Results.Ok(new { estimates });
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        // A board that cannot reach the model is a board with fewer numbers on it, not a broken
+        // one — the comp-priced cards are unaffected, so this answers empty rather than failing.
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
+        log.Add("Warning", "AI resale estimate failed", failure.Technical ?? failure.Headline);
+        return Results.Ok(new { estimates = Array.Empty<AiResaleEstimate>(), note = failure.WhatToDo ?? "" });
+    }
+});
+
 app.MapPost("/api/local/price-these", async (
     LocalSupplySearchResult picks, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,

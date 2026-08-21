@@ -386,3 +386,19 @@ public class RepriceRowRequest
     // /api/comps/live/start). Preferred over PricedAs/Title when present.
     public string? Query { get; set; }
 }
+
+/// <summary>One item handed to <see cref="Services.ClaudeService.EstimateResaleAsync"/>.</summary>
+public sealed record AiEstimateItem(string ItemId, string? Title, decimal? AskingPrice, string? Condition);
+
+/// <summary>
+/// What the AI thinks something sells for when no sold comp could price it. Never evidence: it
+/// cannot raise a row's grade, and any comp-backed figure outranks it.
+/// </summary>
+public sealed record AiResaleEstimate(string ItemId, decimal Low, decimal High, string? Basis)
+{
+    /// <summary>The single number a card shows — the middle of the range.</summary>
+    public decimal Mid => Math.Round((Low + High) / 2m, 2);
+}
+
+/// <summary>The board asking for estimates for everything its comps could not price.</summary>
+public sealed record AiEstimateRequest(List<AiEstimateItem>? Items);

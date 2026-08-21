@@ -1120,6 +1120,101 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
         return answer;
     }
 
+    // ── What is it worth, when nothing has sold under that name ─────────────
+
+    /// <summary>
+    /// A resale estimate for items no sold comp could price, made in ONE call for the whole board.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists.</b> Most of a Marketplace feed has no eBay sold history under the name
+    /// the seller typed — "LOTS of keys!!", "Vintage prison Radio", a go-kart nobody listed twice.
+    /// The board answered those with "No sold data", which is true and useless: the seller still
+    /// has to decide whether to drive across town, and a rough number they can argue with beats no
+    /// number at all (owner, 2026-08-21: "AI has to give an estimated cost — guess — it does not
+    /// have to be perfect").
+    /// </para>
+    /// <para>
+    /// <b>What it is allowed to claim.</b> The model has no live web access here, so this is
+    /// knowledge of the second-hand market — eBay sold, Mercari, OfferUp, auction results, what
+    /// the thing cost new and how those hold value — not a lookup. Everything it produces is
+    /// labelled an AI estimate on the card and never counted as evidence: it cannot lift a row's
+    /// grade, and a comp-backed price always wins over it. That is the whole safety of it.
+    /// </para>
+    /// <para>
+    /// <b>One call for forty items.</b> Forty calls would be forty times the money and a minute of
+    /// waiting; a single prompt carrying the whole board costs one generation and comes back in
+    /// seconds. A model that returns fewer rows than it was given is fine — the missing ones simply
+    /// stay unpriced.
+    /// </para>
+    /// </remarks>
+    public async Task<List<AiResaleEstimate>> EstimateResaleAsync(
+        IReadOnlyList<AiEstimateItem> items, CancellationToken ct = default)
+    {
+        var asked = (items ?? []).Where(i => !string.IsNullOrWhiteSpace(i.Title)).Take(60).ToList();
+        if (asked.Count == 0) return [];
+
+        var lines = string.Join("\n", asked.Select(i =>
+            $"- id={i.ItemId} | {TrimTo(i.Title!.Trim(), 160)}"
+            + (i.AskingPrice is > 0 ? $" | asking ${i.AskingPrice:0.##}" : "")
+            + (string.IsNullOrWhiteSpace(i.Condition) ? "" : $" | {i.Condition}")));
+
+        // $$ so a single brace is literal JSON and {{ }} is the interpolation — the reply format
+        // below is full of braces the model must copy exactly.
+        var prompt = $$"""
+            You are pricing second-hand goods for a reseller. For each item below, estimate what it
+            realistically SELLS for used, today, on the general resale market — eBay sold listings,
+            Mercari, OfferUp, Facebook Marketplace, and auction results taken together. Not the
+            asking price, not retail: what a buyer actually pays.
+
+            ITEMS:
+            {{lines}}
+
+            Reply with ONLY a JSON array, one object per item, no prose and no code fences:
+            [{"itemId":"<the id>","low":<number>,"high":<number>,"basis":"<8 words or fewer>"}]
+
+            Rules:
+            - low and high are US dollars for the WHOLE item as described, already used/second-hand.
+              Keep the range honest: wide when the name is vague, tight when the model is exact.
+            - "basis" says what you priced it as, in a few words: "used 2019 model, common" or
+              "scrap metal weight" or "collectible, condition-dependent".
+            - Price what is actually described. A lot of assorted keys is scrap brass, not keys.
+              A t-shirt is a t-shirt even if the band is famous. Read quantities: "6 acres" is land.
+            - OMIT the item entirely — do not guess — when it is not a resellable good (real estate,
+              vehicles requiring title transfer, services, adult content) or when the name is too
+              vague to price at all. A missing row is a correct answer; an invented one is not.
+            - Never return 0. If it is worth almost nothing, say so with a low range like 5 to 15.
+            """;
+
+        var estimates = await CallModelAsync(
+            () => new MessageParameters
+            {
+                Model     = "claude-fable-5",
+                MaxTokens = 4096,
+                Messages  = [new() { Role = RoleType.User, Content = [new TextContent { Text = prompt }] }],
+                Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low }
+            },
+            response =>
+            {
+                var json = ExtractJsonArray(TextOf(response, "[]"));
+                return JsonSerializer.Deserialize<List<AiResaleEstimate>>(json, JsonOptions) ?? [];
+            },
+            "AI resale estimate",
+            ct);
+
+        // A range that arrived backwards, negative or zero is a model slip, not a price. Drop it
+        // rather than put it on a card the seller might act on.
+        return estimates
+            .Where(e => !string.IsNullOrWhiteSpace(e.ItemId) && e.Low > 0 && e.High > 0)
+            .Select(e => e with
+            {
+                Low   = Math.Min(e.Low, e.High),
+                High  = Math.Max(e.Low, e.High),
+                Basis = TrimTo((e.Basis ?? "").Trim(), 80),
+            })
+            .ToList();
+    }
+
     // ── Natural language modification of current listing ────────────────────
 
     public async Task<ListingData> ModifyListingAsync(ModifyListingRequest req)
