@@ -3282,22 +3282,17 @@
     }
 
     fbPicksLoaded = true;
-    if (status) status.textContent = '';
     const sub = $('fb-picks-sub');
     if (sub) sub.textContent = `${data.items.length} listings — ${data.scopeLabel || 'your Marketplace feed'}. Click one to open it on Marketplace.`;
 
-    grid.innerHTML = data.items.map(item => `
-      <a class="fb-pick-card" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="${esc(item.title)}">
-        ${item.imageUrl
-          ? `<img class="fb-pick-img" src="${esc(item.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
-          : '<div class="fb-pick-img fb-pick-img-empty">📦</div>'}
-        <span class="fb-pick-price">${item.isFree ? 'Free' : (item.price != null ? money(item.price) : esc(item.priceText || ''))}</span>
-        <span class="fb-pick-title">${esc(item.title)}</span>
-        <span class="fb-pick-loc">${esc(item.location || '')}</span>
-        <span class="fb-pick-money" data-pick-money="${esc(item.itemId || '')}"></span>
-      </a>`).join('');
-
-    priceFacebookPicks(data);
+    // The board is drawn ONCE, and only when it is finished. It used to appear the moment
+    // Facebook answered and then sit there for up to four minutes with every card blank while
+    // the comps ran — forty listings with no prices on them, which reads as a broken panel
+    // rather than a busy one, and then rearranged itself under the seller's cursor when the
+    // numbers landed. The placeholder tiles stay up instead, and what replaces them is the
+    // finished thing: priced, graded and already in its final order.
+    const rows = await priceFacebookPicks(data);
+    renderFacebookPicks(data.items, rows);
   }
 
   /**
@@ -3365,17 +3360,24 @@
       // Said once, in the evidence line's own voice, with the lookup that can change it underneath.
       return `<span class="fb-pick-evidence fb-pick-ev-none" title="${esc(row.evidenceNote || '')}">${esc(ev.word)}${source ? ` · ${source}` : ''}</span>` +
         liveBtn + liveNote;
+      // (the chip below carries the same three states; this branch has no price to caveat)
     }
 
     const profit = row.netProfit;
     const roi = row.roiPercent;
     const good = profit != null && profit > 0;
+    // One quiet line of evidence, not three loud ones. It used to print an orange italic
+    // "rough estimate — tap to see why", then the comps, then a bold "Estimate · sold-comps DB ·
+    // Insufficient Evidence" — three warnings for one fact, in the colours of a broken form, on
+    // every card at once. It read as an app in trouble rather than a market that is thin. The
+    // grade is now a single chip with a coloured dot, the words that explained it live in the
+    // tooltip where they were already, and nothing about a normal thin market is painted red.
+    const why = [ev.why, row.evidenceNote, row.confidenceLevel].filter(Boolean).join(' — ');
     return `<span class="fb-pick-profit ${good ? 'is-good' : 'is-bad'}${ev.guess ? ' is-guess' : ''}">` +
         `${profit != null ? `${good ? '+' : ''}${money(profit)}` : '—'}${roi != null ? ` · ${Math.round(roi)}%` : ''}</span>` +
-      (ev.guess ? `<span class="fb-pick-guess" title="${esc(ev.why)}">rough estimate — tap to see why</span>` : '') +
       `<span class="fb-pick-comp">sells ~${money(ev.sale)} · ${compsCell(row)}</span>` +
-      `<span class="fb-pick-evidence fb-pick-ev-${esc(ev.tier)}" title="${esc(row.evidenceNote || '')}">${esc(ev.word)}` +
-        `${source ? ` · ${source}` : ''}${row.confidenceLevel ? ` · ${esc(row.confidenceLevel)}` : ''}</span>` +
+      `<span class="fb-pick-evidence fb-pick-ev-${esc(ev.tier)}" title="${esc(why)}">${esc(ev.word)}` +
+        `${source ? ` · ${source}` : ''}</span>` +
       liveBtn + liveNote;
   }
 
@@ -3453,7 +3455,7 @@
 
     if (!data || !(data.items || []).length) {
       if (note) note.textContent = data && data.liveLookupNote ? data.liveLookupNote : '';
-      return;
+      return [];
     }
 
     fbPickRows = new Map();
@@ -3461,8 +3463,6 @@
     for (const row of data.items) {
       const id = String(row.itemId || '');
       if (id) fbPickRows.set(id, row);
-      const slot = document.querySelector(`[data-pick-money="${CSS.escape(id)}"]`);
-      if (!slot) continue;
 
       // How far to believe the figures, graded server-side by LocalArbitrageAnalyzer.GradeEvidence
       // — the same grade the deals board dims its rows on, now printed on the card in the board's
@@ -3471,18 +3471,15 @@
       // are Saab ECU modules at $75, so the car was priced as a car part and the loss was
       // arithmetic on the wrong product. The server already knew — it graded that row "low" and
       // wrote the reason — and the card threw it away.
-      slot.innerHTML = facebookPickMoneyHtml(row);
-      bindFacebookPickLive(slot);
-
       const ev = facebookPickEvidence(row);
       if (!ev.priceable) continue;
       priced++;
       if (ev.guess) estimates++; else solid++;
     }
 
-    // The numbers are on the cards; now put the best one first. Only worth doing — and only
-    // honest to announce — if something could actually be ranked.
-    if (priced) reorderFacebookPicks(data.items);
+    // Whether anything could be ranked at all decides whether the sort line is true.
+    const order = $('fb-picks-order');
+    if (order) order.hidden = !priced;
 
     if (note) {
       // What the panel found, split the way it matters. "5 of 30 priced" read as five answers when
@@ -3509,6 +3506,40 @@
             data.liveLookupNote || '',
           ].filter(Boolean).join(' ');
     }
+
+    return data.items;
+  }
+
+  /**
+   * Draw the finished board: every card already carrying its price, its evidence and its grade,
+   * in the order the seller wants to read them. Built as one string and handed to the grid in a
+   * single assignment — the cards never appear before the numbers that justify them, and never
+   * rearrange themselves once they are on screen.
+   */
+  function renderFacebookPicks(items, pricedRows) {
+    const grid = $('fb-picks-grid');
+    if (!grid) return;
+
+    const byId = new Map();
+    for (const row of pricedRows || []) if (row && row.itemId) byId.set(String(row.itemId), row);
+
+    // Facebook's own order is the tiebreak, so equally-good picks don't shuffle on every refresh.
+    const ordered = items
+      .map((item, index) => ({ item, index, row: byId.get(String(item.itemId || '')) || null }))
+      .sort((x, y) => compareFacebookPicks(x.row, y.row) || x.index - y.index);
+
+    grid.innerHTML = ordered.map(({ item, row }) => `
+      <a class="fb-pick-card" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="${esc(item.title)}">
+        ${item.imageUrl
+          ? `<img class="fb-pick-img" src="${esc(item.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+          : '<div class="fb-pick-img fb-pick-img-empty">📦</div>'}
+        <span class="fb-pick-price">${item.isFree ? 'Free' : (item.price != null ? money(item.price) : esc(item.priceText || ''))}</span>
+        <span class="fb-pick-title">${esc(item.title)}</span>
+        <span class="fb-pick-loc">${esc(item.location || '')}</span>
+        <span class="fb-pick-money" data-pick-money="${esc(item.itemId || '')}">${row ? facebookPickMoneyHtml(row) : ''}</span>
+      </a>`).join('');
+
+    grid.querySelectorAll('.fb-pick-money').forEach(bindFacebookPickLive);
   }
 
   /**

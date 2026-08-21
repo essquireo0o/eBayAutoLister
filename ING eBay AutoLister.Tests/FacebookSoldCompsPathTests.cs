@@ -98,10 +98,24 @@ public class FacebookSoldCompsPathTests
         var pricing = FunctionBody("priceFacebookPicks");
         Assert.Contains("/api/local/price-these?", pricing, StringComparison.Ordinal);
         Assert.Contains("liveBudget=3", pricing, StringComparison.Ordinal);
-        // Every card is filled from the same function, and that function reads the grade.
-        Assert.Contains("facebookPickMoneyHtml(row)", pricing, StringComparison.Ordinal);
         Assert.Contains("liveLookupsRefreshed", pricing, StringComparison.Ordinal);
         Assert.Contains("liveLookupNote", pricing, StringComparison.Ordinal);
+
+        // The board is drawn ONCE, and only when the prices are in (2026-08-21, the owner:
+        // "don't load until all items have comps"). It used to appear the moment Facebook
+        // answered and then sit for up to four minutes with forty blank cards while the comps
+        // ran — which reads as a broken panel rather than a busy one — and then rearrange
+        // itself under the cursor when the numbers landed.
+        var load = FunctionBody("loadFacebookPicks");
+        Assert.Contains("const rows = await priceFacebookPicks(data);", load, StringComparison.Ordinal);
+        Assert.Contains("renderFacebookPicks(data.items, rows);", load, StringComparison.Ordinal);
+        Assert.DoesNotContain("grid.innerHTML = data.items.map", load, StringComparison.Ordinal);
+
+        // Every card is still filled from the one function that reads the grade — it just runs
+        // where the board is drawn now rather than where the prices arrive.
+        var render = FunctionBody("renderFacebookPicks");
+        Assert.Contains("facebookPickMoneyHtml(row)", render, StringComparison.Ordinal);
+        Assert.Contains("compareFacebookPicks(x.row, y.row)", render, StringComparison.Ordinal);
     }
 
     [Fact]

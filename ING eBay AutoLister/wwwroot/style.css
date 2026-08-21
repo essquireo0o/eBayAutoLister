@@ -18575,3 +18575,46 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 #photobox-section .pb-rail-card { background: var(--panel); }
 #photobox-section .pb-rail-status { font-size: var(--fs-sm); color: var(--muted); }
 #photobox-section .pb-tips li { margin-bottom: 7px; }
+
+/* ── Marketplace picks: the grade, said quietly ────────────────────────────────
+   Every card carried an orange italic hedge, then the comps, then a bold orange or green
+   verdict — three lines of warning colour for one ordinary fact, on forty cards at once. A
+   thin market is normal; an app that paints it in the colours of a failed form is telling the
+   seller something is broken when nothing is. The grade is now one chip: muted text, a small
+   coloured dot, and the whole explanation still one hover away in the tooltip. */
+.fb-pick-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  font-size: 10.5px;
+  font-weight: var(--fw-medium, 500);
+  letter-spacing: 0;
+  line-height: 1.5;
+  color: var(--muted);
+  cursor: help;
+}
+.fb-pick-evidence::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  opacity: .9;
+  flex: 0 0 auto;
+}
+/* The dot carries the grade; the words stay readable rather than shouting it. */
+.fb-pick-ev-confident { color: var(--muted); }
+.fb-pick-ev-confident::before { background: #3fa96a; opacity: 1; }
+.fb-pick-ev-low { color: var(--muted); }
+.fb-pick-ev-low::before { background: #c79a36; opacity: 1; }
+.fb-pick-ev-none { color: var(--muted); font-weight: var(--fw-medium, 500); }
+.fb-pick-ev-none::before { background: var(--muted); opacity: .55; }
+
+/* Profit keeps the only strong colour on the card, because it is the only number being claimed. */
+.fb-pick-profit.is-good { color: #3fa96a; }
+.fb-pick-profit.is-guess { opacity: .85; }
+.fb-pick-comp { margin-top: 2px; }
+.fb-pick-live-note { font-style: normal; }
