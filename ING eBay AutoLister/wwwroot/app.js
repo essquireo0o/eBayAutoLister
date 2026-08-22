@@ -7528,6 +7528,16 @@
     // The picture itself is the button. A photograph you have just taken and are looking at is the
     // one thing on this screen you obviously want to open, and asking somebody to find the word
     // "Edit" under it to do that is a step that did not need to exist.
+    //
+    // Removing one is the same argument. It used to be the word "Drop" in a row of three small
+    // words under the thumbnail — a fourth of the strip's width, sharing it with Edit, Cut out and
+    // Portrait, and reading as one more thing to do TO the photo rather than the way to get rid of
+    // it. The X sits on the corner of the picture instead, which is where every photo grid ever
+    // built puts it, and the row underneath is left to the three that really are edits.
+    //
+    // It removes the photo from THIS LISTING, not from the disk. The file stays in the Photo
+    // Library, which is why there is no confirmation on it: nothing here is destroyed, and a
+    // confirm dialog on a reversible action just teaches people to click through dialogs.
     strip.innerHTML = pbSessionSnaps.map((u, i) => `
       <div class="pb-shot" data-url="${esc(u)}">
         <button type="button" class="pb-shot-open" data-act="edit"
@@ -7536,11 +7546,13 @@
           <span class="pb-shot-hint">✎ Edit</span>
         </button>
         <span class="pb-shot-n">${i + 1}</span>
+        <button type="button" class="pb-shot-x" data-act="drop"
+                title="Remove Photo ${i + 1} from this listing. The file stays in your Photo Library."
+                aria-label="Remove photo ${i + 1} from this listing">&times;</button>
         <div class="pb-shot-tools">
           <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
           <button type="button" data-act="portrait" title="Portrait — the product stays sharp and the room behind it goes soft. Done on this machine, no upload">Portrait</button>
-          <button type="button" data-act="drop" title="Leave this one off the listing (the file stays in your library)">Drop</button>
         </div>
       </div>`).join('');
 

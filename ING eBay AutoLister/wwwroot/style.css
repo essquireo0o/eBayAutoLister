@@ -18172,9 +18172,12 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
       rgba(255,255,255,.28) calc(66.66% - 1px), rgba(255,255,255,.28) 66.66%, transparent 66.66%);
 }
 .pb-stage-chips { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+/* Same as .pb-shot-n: a dark chip over the viewfinder in both themes, so the text is written
+   down rather than inherited from --ink — which in light theme is near-black on near-black,
+   and made the capture size and the zoom read as two empty pills. */
 .pb-chip {
-  background: rgba(3, 18, 21, .72); border: 1px solid var(--line);
-  color: var(--ink); font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  background: rgba(3, 18, 21, .72); border: 1px solid rgba(255, 255, 255, .18);
+  color: #f6fbfb; font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
   padding: 5px 12px; border-radius: 999px; backdrop-filter: blur(4px);
 }
 .pb-chip-live { color: #7ddba0; }
@@ -18269,11 +18272,35 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-shot-open:hover .pb-shot-hint,
 .pb-shot-open:focus-visible .pb-shot-hint { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .pb-shot-hint { transition: none; } }
+/* The chip is a dark disc over a photograph in BOTH themes, so its text cannot come from
+   --ink: in light theme that is #131c20 on rgba(3,18,21,.85), which is near-black on
+   near-black, and the photo numbers have simply not been there. A colour that is fixed
+   relative to a fixed background belongs written down, not inherited. */
 .pb-shot-n {
-  position: absolute; top: 6px; left: 6px; background: rgba(3,18,21,.85); color: var(--ink);
+  position: absolute; top: 6px; left: 6px; background: rgba(3,18,21,.85); color: #f6fbfb;
   border-radius: 999px; font-size: var(--fs-2xs); font-weight: 700; padding: 2px 9px;
   pointer-events: none;   /* the badge sits over the button — it must not swallow the click */
 }
+/* ── Take this one off the listing ────────────────────────────────────────────
+   On the corner of the picture, where every photo grid ever built puts it, and visible
+   without hovering: a control that only appears under the mouse is a control nobody knows
+   is there. Dark and quiet until it is approached, then red — this is the one button in the
+   strip that takes something away, and it should not look like the ones that don't. */
+.pb-shot-x {
+  position: absolute; top: 6px; right: 6px;
+  width: 30px; height: 30px; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 50%;
+  background: rgba(3, 18, 21, .82);
+  color: #fff; font-size: 19px; line-height: 1; font-weight: 400;
+  cursor: pointer; backdrop-filter: blur(4px);
+  transition: background var(--dur-1), border-color var(--dur-1), transform var(--dur-1);
+}
+.pb-shot-x:hover { background: #b4463c; border-color: #b4463c; transform: scale(1.08); }
+.pb-shot-x:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .pb-shot-x { transition: none; } .pb-shot-x:hover { transform: none; } }
+
 .pb-shot-tools { display: flex; gap: 4px; margin-top: 4px; }
 .pb-shot-tools button {
   flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted);
