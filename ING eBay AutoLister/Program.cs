@@ -9405,7 +9405,7 @@ app.MapPost("/api/photobox/phone/settings", (PhoneSettingsRequest req, PhoneCapt
 app.MapPost("/api/photobox/phone/stop", async (PhoneCapture phone) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    await phone.StopAsync();
+    await phone.DisableAsync();
     return Results.Ok(new { ok = true });
 });
 
@@ -10859,6 +10859,11 @@ if (binding.Problem is { } bindingProblem)
     _mutex?.Dispose();
     return;
 }
+
+// A QR scan pairs Chrome with this installation, not with one particular process. Resume the
+// small phone-only HTTPS listener after an update so the open camera page merely reconnects.
+await app.Services.GetRequiredService<PhoneCapture>()
+    .ResumeIfEnabledAsync(CancellationToken.None);
 
 // ── Service mode: headless web server, lifecycle managed by Windows SCM ──────
 if (isWindowsService)

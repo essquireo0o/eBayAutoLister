@@ -71,12 +71,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// <summary>Where the phone connects. Deliberately not 9332: that port is the app's alone.</summary>
     public const int Port = 9443;
 
-    /// <summary>
-    /// A session that has heard nothing from a phone in this long has been abandoned, and the
-    /// port closes. A phone that is actually there says something every second, so this can only
-    /// fire on a session the seller has walked away from — never on one in use.
-    /// </summary>
-    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
+    // Pairing is a relationship, not a server session. The QR secret lives in the seller's fixed
+    // data home so a Chrome tab that was paired yesterday still has the right address after an
+    // update restarts the executable today. It is disabled only by the explicit Disconnect
+    // endpoint; ordinary shutdown leaves it ready to resume.
+    private sealed record Pairing(string Token, bool Enabled);
+    private static string PairingPath => Path.Combine(AppPaths.DataHome, "phone-camera-pairing.json");
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private WebApplication? _app;
@@ -160,9 +160,6 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     // Woken when a photograph lands, so the desktop's Snap returns on the upload rather than on
     // the next tick of a poll.
     private readonly Signal _shotArrived = new();
-    // Qualified: the desktop build also has WinForms in scope, and its Timer is a different animal.
-    private System.Threading.Timer? _idleSweep;
-
     // ── Video ────────────────────────────────────────────────────────────────────
     // A recording is not a photograph: it never goes into the photo library, whose callers
     // all assume they can render what they are handed, and it is never offered to the AI
@@ -271,12 +268,44 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
     public async Task<Status> StartAsync(CancellationToken ct)
     {
+        var saved = ReadPairing();
+        var token = saved is not null && ValidToken(saved.Token)
+            ? saved.Token.ToLowerInvariant()
+            : Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        WritePairing(new(token, true));
+        return await StartListenerAsync(token, ct);
+    }
+
+    /// <summary>
+    /// Restores a previously paired phone after an app restart. This never creates a pairing:
+    /// sellers who have never opened the phone camera do not acquire a network listener merely
+    /// by launching the desktop app.
+    /// </summary>
+    public async Task<Status?> ResumeIfEnabledAsync(CancellationToken ct)
+    {
+        var saved = ReadPairing();
+        if (saved is null || !saved.Enabled || !ValidToken(saved.Token)) return null;
+
+        // An updater can start the replacement process at the instant the previous listener is
+        // releasing 9443. A few short retries turn that race into a brief reconnect on the phone.
+        Status status = new(false, null, false, 0, [], null, null);
+        for (var attempt = 0; attempt < 6 && !ct.IsCancellationRequested; attempt++)
+        {
+            status = await StartListenerAsync(saved.Token.ToLowerInvariant(), ct);
+            if (status.Running) return status;
+            await Task.Delay(400, ct);
+        }
+        return status;
+    }
+
+    private async Task<Status> StartListenerAsync(string token, CancellationToken ct)
+    {
         await _gate.WaitAsync(ct);
         try
         {
             if (_app is not null) return Snapshot();
 
-            _token = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+            _token = token;
             _shots.Clear();
             _phoneEverConnected = false;
             _lastSeen = DateTimeOffset.UtcNow;
@@ -294,14 +323,6 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             await web.StartAsync(ct);
             _app = web;
 
-            _idleSweep?.Dispose();
-            _idleSweep = new System.Threading.Timer(_ =>
-            {
-                if (_app is null || DateTimeOffset.UtcNow - _lastSeen <= IdleTimeout) return;
-                log.Add("Info", "Phone camera closed", $"no phone for {IdleTimeout.TotalMinutes:0} minutes");
-                _ = StopAsync();
-            }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
-
             log.Add("Info", "Phone camera ready", PublicUrl);
             return Snapshot();
         }
@@ -315,13 +336,20 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         finally { _gate.Release(); }
     }
 
+    /// <summary>Forgets automatic resume only when the seller explicitly disconnects the phone.</summary>
+    public async Task DisableAsync()
+    {
+        var saved = ReadPairing();
+        var token = ValidToken(_token) ? _token : saved?.Token;
+        if (token is not null && ValidToken(token)) WritePairing(new(token.ToLowerInvariant(), false));
+        await StopAsync();
+    }
+
     public async Task StopAsync()
     {
         await _gate.WaitAsync();
         try
         {
-            _idleSweep?.Dispose();
-            _idleSweep = null;
             if (_app is null) return;
             // Anything still waiting on the shutter is told no, so a phone hung up on mid-poll
             // does not sit there holding a request that will never be answered.
@@ -334,6 +362,42 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         catch { /* a listener that will not stop cleanly is still a listener the app is done with */ }
         finally { _gate.Release(); }
     }
+
+    private Pairing? ReadPairing()
+    {
+        try
+        {
+            if (!File.Exists(PairingPath)) return null;
+            return System.Text.Json.JsonSerializer.Deserialize<Pairing>(
+                File.ReadAllText(PairingPath),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Phone pairing could not be read", ex.Message);
+            return null;
+        }
+    }
+
+    private void WritePairing(Pairing pairing)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataHome);
+            var json = System.Text.Json.JsonSerializer.Serialize(pairing,
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            var temporary = PairingPath + ".new";
+            File.WriteAllText(temporary, json);
+            File.Move(temporary, PairingPath, true);
+        }
+        catch (Exception ex)
+        {
+            log.Add("Warning", "Phone pairing could not be saved", ex.Message);
+        }
+    }
+
+    private static bool ValidToken(string? token) =>
+        token is { Length: >= 16 and <= 64 } && token.All(Uri.IsHexDigit);
 
     /// <summary>
     /// Presses the shutter and waits for the frame. Returns the photo-library url, or a sentence
@@ -1397,10 +1461,19 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         }
 
         async function poll() {
+          let reconnecting = false;
           while (running) {
             try {
               const r = await fetch('/p/' + TOKEN + '/poll?seq=' + settingsSeq);
-              if (!r.ok) { say('This link has expired. Scan the code again.', 'bad'); return; }
+              if (!r.ok) throw new Error('camera listener is restarting');
+              if (reconnecting) {
+                // A new server has no record of this phone's lenses yet. Re-introduce the camera
+                // before applying its settings, then carry on without a new QR scan or camera tap.
+                settingsSeq = -1;
+                await sendCaps();
+                reconnecting = false;
+                say('Reconnected — ready for the next photo.', 'ok');
+              }
               const j = await r.json();
               if (j.maxVideoSeconds) maxSecs = j.maxVideoSeconds;
               if (typeof j.seq === 'number' && j.seq !== settingsSeq) {
@@ -1423,6 +1496,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
               else if (j.command === 'record-stop') stopRecording();
             } catch (e) {
               say('Lost the connection to your computer — retrying…', 'bad');
+              reconnecting = true;
               await new Promise(r => setTimeout(r, 1500));
             }
           }
