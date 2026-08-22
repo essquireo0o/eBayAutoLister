@@ -53,7 +53,7 @@ public sealed record PhoneCaps(
     bool Torch, int Width, int Height,
     bool Exposure = false, bool Focus = false, bool Macro = false,
     bool WhiteBalance = false, bool Tap = false, bool MultiCamera = false,
-    double ZoomMin = 1, double ZoomMax = 1, string? Lenses = null);
+    double ZoomMin = 1, double ZoomMax = 1, string? Lenses = null, bool ZoomOptical = false);
 
 /// <summary>What the desktop's camera controls send. Null means "leave that one alone".</summary>
 /// <remarks>
@@ -114,6 +114,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     private int _capWidth, _capHeight;
     private bool _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera;
     private double _zoomMin = 1, _zoomMax = 1;
+    private bool _zoomOptical;              // the lens moved, rather than the frame being cropped
     private string _lenses = "";            // e.g. "0.5,1,2" — the lens buttons this phone earns
 
     // The viewfinder. The phone sends a small frame about once a second so the person at the
@@ -185,7 +186,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         bool Level = false,
         bool CanExposure = false, bool CanFocus = false, bool CanMacro = false,
         bool CanWhiteBalance = false, bool CanTap = false, bool CanMultiCamera = false,
-        double ZoomMin = 1, double ZoomMax = 1, string Lenses = "");
+        double ZoomMin = 1, double ZoomMax = 1, string Lenses = "",
+        // Whether the zoom on screen is the lens moving or the frame being cropped. The desk
+        // shows it because the two are genuinely different pictures — one keeps every pixel the
+        // sensor has — and because a chip that only ever showed the number the desk asked for is
+        // how a zoom that did nothing went unnoticed.
+        bool ZoomOptical = false);
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -234,7 +240,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                    _zoom, _torch, _canTorch, _capWidth, _capHeight,
                    _flash, _exposure, _focus, _whiteBalance, _lens, _facing, _level,
                    _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
-                   _zoomMin, _zoomMax, _lenses);
+                   _zoomMin, _zoomMax, _lenses, _zoomOptical);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -650,6 +656,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                     _canMultiCamera = caps.MultiCamera;
                     _zoomMin = caps.ZoomMin;
                     _zoomMax = caps.ZoomMax;
+                    _zoomOptical = caps.ZoomOptical;
                     _lenses = caps.Lenses ?? "";
                     // A phone with no lamp cannot be left holding a flash mode it will never fire.
                     if (!_canTorch) { _flash = "off"; _torch = false; }
@@ -967,33 +974,72 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         // so the captured frame is whatever lens is selected right now — the zoom is real,
         // not a crop applied afterwards.
         // ── Zoom ──────────────────────────────────────────────────────────────────
-        // Two ways, and the phone decides which it has. A lens that will move is asked to move
-        // (real optical/sensor zoom, no pixels lost). A lens that will not — every iPhone, to a
-        // web page — is left alone and the frame is cropped instead: at 12 megapixels a 4x centre
-        // crop is still comfortably larger than anything eBay shows. Either way the viewfinder
-        // and the saved photograph are cropped by the same number, so what the desk sees is what
-        // the library gets.
-        let zoom = 1, cropZoom = 1;
+        // Two ways, and the phone decides how much of each. A lens that will move is asked to
+        // move (real optical zoom, no pixels lost); whatever it will not do is done to the
+        // pixels instead, because at twelve megapixels a 4x centre crop is still comfortably
+        // larger than anything eBay shows. The viewfinder and the saved photograph are cropped
+        // by the same number, so what the desk sees is what the library gets.
+        //
+        // WHY IT IS A BLEND AND NOT A CHOICE (2026-08-22, "the zoom isn't working").
+        // It used to be a choice, and it decided by whether applyConstraints THREW. That was
+        // written when no iPhone reported a zoom capability to a web page at all, so the throw
+        // was reliable and every iPhone landed on the crop. iOS then started reporting one — and
+        // `advanced` constraints are best-effort by specification: a lens that cannot or will not
+        // move satisfies them by ignoring them, and the promise resolves exactly as it does on a
+        // lens that moved. So the code took the optical branch, switched the crop OFF for a zoom
+        // that never happened, and the slider read 1.9x over a picture that had not changed.
+        //
+        // The second half of the same bug: the old mapping was linear across the lens's reported
+        // range (lo + (hi-lo)*(z-1)/7), which is not what a number followed by an x means. On a
+        // phone reporting 1-2x, asking for 1.9x moved the lens to 1.13x — technically honoured,
+        // visually nothing, and the crop was off.
+        //
+        // So: ask the lens for the whole thing in its own units, MEASURE what it actually did,
+        // and crop away the difference. The total magnification is then exactly what was asked
+        // for on every phone, whether its lens moves, moves partway, or does not move at all.
+        let zoom = 1, cropZoom = 1, zoomOptical = false;
 
         function track() { return v.srcObject && v.srcObject.getVideoTracks ? v.srcObject.getVideoTracks()[0] : null; }
 
         async function applyZoom(z) {
           zoom = Math.max(1, Math.min(8, Number(z) || 1));
+          cropZoom = zoom;          // the answer if the lens does nothing, set before it is asked
+          zoomOptical = false;
+
           const t = track();
           const caps = (t && t.getCapabilities) ? (t.getCapabilities() || {}) : {};
-          if (caps.zoom && caps.zoom.max > (caps.zoom.min || 1)) {
-            // Our 1–8 onto whatever range this lens actually has.
+          if (t && caps.zoom && caps.zoom.max > (caps.zoom.min || 1)) {
+            // In the lens's own units. Our 1x is the lens at its widest (goWidest put it there),
+            // so 3x is three times that — capped at what the lens actually has.
             const lo = caps.zoom.min || 1, hi = caps.zoom.max;
-            const target = lo + (hi - lo) * ((zoom - 1) / 7);
-            try { await t.applyConstraints({ advanced: [{ zoom: target }] }); cropZoom = 1; zoomNote(zoom, true); return; }
-            catch (e) { /* the lens refused; the crop below still zooms */ }
+            const target = Math.min(hi, lo * zoom);
+            try {
+              await t.applyConstraints({ advanced: [{ zoom: target }] });
+              // MEASURED, never assumed. This one line is the fix: a resolved promise says the
+              // request was accepted, not that the lens moved.
+              const got = (t.getSettings && t.getSettings().zoom);
+              const lensFactor = typeof got === 'number' && got > 0 ? got / lo : 1;
+              cropZoom = Math.max(1, zoom / lensFactor);
+              zoomOptical = lensFactor > 1.01 && cropZoom < 1.01;
+            } catch (e) { /* refused outright; cropZoom above already covers the whole zoom */ }
           }
-          cropZoom = zoom;
-          zoomNote(zoom, false);
+          zoomNote(zoom, zoomOptical);
+          reportZoom();
         }
 
         function zoomNote(z, optical) {
           zEl.textContent = z > 1.01 ? (z.toFixed(1) + '× ' + (optical ? 'lens' : 'crop')) : '';
+        }
+
+        // The desktop's zoom chip used to print the number the desktop had asked for, which is
+        // how "1.9x" sat over a picture at 1x for as long as it did. Now it prints what the phone
+        // actually did. Sent only when the KIND changes — lens to crop or back — because that is
+        // the only part the desk does not already know.
+        let zoomReported = null;
+        function reportZoom() {
+          if (zoomReported === zoomOptical) return;
+          zoomReported = zoomOptical;
+          try { sendCaps(); } catch (e) { /* the picture is right either way */ }
         }
 
         async function applyTorch(on) {
@@ -1066,6 +1112,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                 tap: !!c.pointsOfInterest,
                 multiCamera: cameras > 1,
                 zoomMin: zmin, zoomMax: zmax,
+                zoomOptical: zoomOptical,
                 lenses: lenses.join(',')
               })
             });
@@ -1217,8 +1264,15 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           if (!t || !c.zoom || typeof c.zoom.min !== 'number') return;
           const lo = c.zoom.min, hi = c.zoom.max;
           const target = which === 'ultra' ? lo : which === 'tele' ? clamp(2, lo, hi) : clamp(1, lo, hi);
-          try { await t.applyConstraints({ advanced: [{ zoom: target }] }); cropZoom = 1; }
-          catch (e) { /* the lens stays where it was */ }
+          try {
+            await t.applyConstraints({ advanced: [{ zoom: target }] });
+            // Same measurement, same reason: a lens button that silently did nothing must not
+            // also turn off the crop that was standing in for it. See applyZoom.
+            const got = (t.getSettings && t.getSettings().zoom);
+            const moved = typeof got === 'number' && Math.abs(got - target) < Math.max(0.05, (hi - lo) * 0.02);
+            if (moved) { cropZoom = 1; zoomOptical = true; reportZoom(); }
+          }
+          catch (e) { /* the lens stays where it was, and so does the crop */ }
           paintLenses();
         }
 

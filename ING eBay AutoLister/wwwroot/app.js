@@ -7201,6 +7201,7 @@
   let pbPhoneLive = false;     // a phone is holding its camera open right now
   let pbSessionSnaps = [];     // photo-library urls from this session, oldest first
   let pbZoom = 1;              // what the phone has been told to do
+  let pbZoomOptical = false;   // and which way it did it — the lens, or a crop of the frame
   let pbZoomSend = null;       // debounce for the slider
   // What the phone said it can do, and what it has been asked to do. Both come back from every
   // status tick, so this screen never holds an opinion the phone has not agreed to.
@@ -7384,6 +7385,7 @@
       // web page no way to it), so the button appears only where it can work.
       $('pb-torch')?.classList.toggle('hidden', !st.canTorch);
       $('pb-torch')?.classList.toggle('is-on', !!st.torch);
+      if (pbZoomOptical !== !!st.zoomOptical) { pbZoomOptical = !!st.zoomOptical; pbApplyZoomUi(pbZoom); }
       if (typeof st.zoom === 'number' && Math.abs(st.zoom - pbZoom) > 0.05 && !pbZoomSend) pbApplyZoomUi(st.zoom);
       pbRenderCamera(st);
       pbShowPhonePreview();
@@ -7560,7 +7562,15 @@
     const slider = $('pb-zoom');
     if (slider && Math.abs(parseFloat(slider.value) - pbZoom) > 0.01) slider.value = pbZoom;
     const chip = $('pb-zoom-chip');
-    if (chip) { chip.textContent = pbZoom.toFixed(1) + '×'; chip.classList.toggle('hidden', !pbPhoneLive); }
+    if (chip) {
+      // What the phone did, not what this slider asked for. "1.9×" over an unchanged picture is
+      // the exact shape the zoom bug took, and a chip that cannot tell the two apart cannot help
+      // anyone notice it. Lens or crop, said plainly — they are different pictures.
+      chip.textContent = pbZoom > 1.01
+        ? `${pbZoom.toFixed(1)}× ${pbZoomOptical ? 'lens' : 'crop'}`
+        : `${pbZoom.toFixed(1)}×`;
+      chip.classList.toggle('hidden', !pbPhoneLive);
+    }
     document.querySelectorAll('.pb-preset').forEach(b =>
       b.classList.toggle('is-on', Math.abs(parseFloat(b.dataset.zoom) - pbZoom) < 0.05));
   }
