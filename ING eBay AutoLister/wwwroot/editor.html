@@ -151,7 +151,8 @@ select:focus{border-color:var(--gold)}
 #pe-wrap{position:relative;display:inline-flex;line-height:0;transform-origin:center center;
   transition:transform .08s;box-shadow:0 8px 48px rgba(0,0,0,.8)}
 #pe-canvas{display:block;background:#fff}
-#pe-ov{position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none}
+#pe-ov{position:absolute;top:0;left:0;width:100%;height:100%;display:block;
+  pointer-events:none;touch-action:none}
 #pe-text-input{position:absolute;background:transparent;border:1.5px dashed var(--gold);
   outline:none;padding:2px 4px;min-width:60px;resize:none;display:none;z-index:20;line-height:1.2}
 
@@ -251,6 +252,7 @@ let adj={brightness:100,contrast:100,saturation:100};
 let liveFilter='';
 let shapeTool='rect', shapeColor='#c79a36', strokeWidth=3, shapeFill=false, shapeDrag=null;
 let textColor='#ffffff', textSize=36, textFont='Arial', textBold=true, textItalic=false, textPlacing=false;
+let imageRequested=false,readyTimer=null;
 
 window.addEventListener('DOMContentLoaded', ()=>{
   canvas=document.getElementById('pe-canvas');
@@ -269,10 +271,12 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('btn-zoom-fit').addEventListener('click',resetZoom);
   document.getElementById('pe-zoom-pct').addEventListener('click',()=>setZoom(1));
 
-  ov.addEventListener('mousedown',onDown);
-  ov.addEventListener('mousemove',onMove);
-  ov.addEventListener('mouseup',onUp);
-  ov.addEventListener('mouseleave',onUp);
+  // Pointer events cover a mouse, pen and touch with one path. Capturing the pointer on press is
+  // important: a crop that leaves the image for one pixel must still receive its final release.
+  ov.addEventListener('pointerdown',onDown);
+  ov.addEventListener('pointermove',onMove);
+  ov.addEventListener('pointerup',onUp);
+  ov.addEventListener('pointercancel',onUp);
   ov.addEventListener('wheel',e=>{e.preventDefault();setZoom(zoom*(e.deltaY<0?1.1:0.9));},{passive:false});
 
   document.addEventListener('keydown',e=>{
@@ -282,10 +286,22 @@ window.addEventListener('DOMContentLoaded', ()=>{
     if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();doSave();}
   });
 
-  hostMsg({type:'editor-ready'});
   window.addEventListener('message',e=>{
-    if(e.data?.type==='load-image')loadImg(e.data.url,e.data.slotIndex,e.data.label);
+    if(e.data?.type==='load-image'){
+      imageRequested=true;clearInterval(readyTimer);
+      loadImg(e.data.url,e.data.slotIndex,e.data.label);
+    }
   });
+  hostMsg({type:'editor-ready'});
+  // A cached iframe can finish before its parent has attached the ready listener. Keep announcing
+  // until an image arrives; this is a handshake, not a one-shot race.
+  readyTimer=setInterval(()=>{if(!imageRequested)hostMsg({type:'editor-ready'});},250);
+
+  // Normal app openings carry the image in the iframe URL. That removes the race where a cached
+  // editor could announce "ready" before its parent installed the reply listener. Message loading
+  // remains for large data URLs and old callers.
+  const q=new URLSearchParams(location.search),direct=q.get('image');
+  if(direct){imageRequested=true;clearInterval(readyTimer);loadImg(direct,-1,q.get('label')||'Photo');}
 });
 
 async function loadImg(url,slot,label){
@@ -354,11 +370,16 @@ function renderOptions(){
   const p=document.getElementById('pe-options');
 
   if(tool==='crop'){
-    p.innerHTML=`<span class="opt-hint">Drag to select area to keep — rule-of-thirds grid shown</span>
+    p.innerHTML=`<span class="opt-hint">Drag on the photo to select what to keep</span>
+      <button class="tbtn-icon" data-crop-preset="square">Square</button>
+      <button class="tbtn-icon" data-crop-preset="four-three">4:3</button>
+      <button class="tbtn-icon" data-crop-preset="portrait">Portrait</button>
       <div class="spacer"></div>
       <button class="tbtn" id="t-crop-ok" disabled>Apply Crop</button>
       <button class="tbtn-ghost" id="t-crop-rst">Reset</button>`;
     p.querySelector('#t-crop-ok').addEventListener('click',applyCrop);
+    p.querySelectorAll('[data-crop-preset]').forEach(b=>
+      b.addEventListener('click',()=>setCropPreset(b.dataset.cropPreset)));
     p.querySelector('#t-crop-rst').addEventListener('click',()=>{
       cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
       p.querySelector('#t-crop-ok').disabled=true;
@@ -389,7 +410,8 @@ function renderOptions(){
     });
 
   } else if(tool==='adjustment'){
-    p.innerHTML=sliderRow('br','Brightness',adj.brightness,0,200)+
+    p.innerHTML=`<button class="tbtn-icon" id="adj-auto">✨ Auto Brighten</button>`+
+      sliderRow('br','Brightness',adj.brightness,0,200)+
       sliderRow('cr','Contrast',adj.contrast,0,200)+
       sliderRow('sa','Saturation',adj.saturation,0,200)+
       `<button class="tbtn" id="adj-ok">Apply</button>
@@ -398,10 +420,10 @@ function renderOptions(){
       p.querySelector('#t-'+id).addEventListener('input',e=>{
         adj[prop]=parseInt(e.target.value);
         p.querySelector('#v-'+id).textContent=adj[prop];
-        canvas.style.filter=`brightness(${adj.brightness}%) contrast(${adj.contrast}%) saturate(${adj.saturation}%)`;
-        liveFilter=canvas.style.filter;
+        previewAdjustments();
       });
     });
+    p.querySelector('#adj-auto').addEventListener('click',autoBrighten);
     p.querySelector('#adj-ok').addEventListener('click',burnFilter);
     p.querySelector('#adj-rst').addEventListener('click',()=>{
       adj={brightness:100,contrast:100,saturation:100};
@@ -544,6 +566,34 @@ function sliderRow(id,label,val,mn,mx){
     <span class="opt-val" id="v-${id}">${val}</span></label>`;
 }
 
+function previewAdjustments(){
+  liveFilter=`brightness(${adj.brightness}%) contrast(${adj.contrast}%) saturate(${adj.saturation}%)`;
+  canvas.style.filter=liveFilter;
+}
+
+function autoBrighten(){
+  // Read a small sample rather than guessing from the screen CSS. Product shots from the lightbox
+  // are usually a little grey; lift their average toward a clean catalogue exposure without
+  // blowing the white background out.
+  const sample=document.createElement('canvas');
+  const scale=Math.min(1,320/Math.max(canvas.width,canvas.height));
+  sample.width=Math.max(1,Math.round(canvas.width*scale));
+  sample.height=Math.max(1,Math.round(canvas.height*scale));
+  const sc=sample.getContext('2d',{willReadFrequently:true});
+  sc.drawImage(canvas,0,0,sample.width,sample.height);
+  const px=sc.getImageData(0,0,sample.width,sample.height).data;
+  let total=0,count=0;
+  for(let i=0;i<px.length;i+=16){total+=(px[i]*.2126+px[i+1]*.7152+px[i+2]*.0722);count++;}
+  const average=count?total/count:128;
+  adj.brightness=Math.round(Math.max(100,Math.min(155,100*(158/Math.max(70,average)))));
+  adj.contrast=108;adj.saturation=106;
+  [['br',adj.brightness],['cr',adj.contrast],['sa',adj.saturation]].forEach(([id,v])=>{
+    const slider=document.querySelector('#t-'+id),value=document.querySelector('#v-'+id);
+    if(slider)slider.value=v;if(value)value.textContent=v;
+  });
+  previewAdjustments();toast('Auto Brighten preview — press Apply to keep it');
+}
+
 // Filter burn
 function burnFilter(){
   if(!liveFilter)return;
@@ -555,6 +605,7 @@ function burnFilter(){
   adj={brightness:100,contrast:100,saturation:100};
   document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));
   const ab=document.querySelector('#flt-ok');if(ab)ab.disabled=true;
+  renderOptions();
   toast('Filter applied');
 }
 
@@ -592,9 +643,20 @@ function doStraighten(deg){
 // Crop
 function calcCropRect(){
   if(!cropDrag)return null;
-  const x=Math.min(cropDrag.sx,cropDrag.ex),y=Math.min(cropDrag.sy,cropDrag.ey);
-  const w=Math.abs(cropDrag.ex-cropDrag.sx),h=Math.abs(cropDrag.ey-cropDrag.sy);
-  return(w<4||h<4)?null:{x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
+  const x1=Math.max(0,Math.min(canvas.width,Math.min(cropDrag.sx,cropDrag.ex)));
+  const y1=Math.max(0,Math.min(canvas.height,Math.min(cropDrag.sy,cropDrag.ey)));
+  const x2=Math.max(0,Math.min(canvas.width,Math.max(cropDrag.sx,cropDrag.ex)));
+  const y2=Math.max(0,Math.min(canvas.height,Math.max(cropDrag.sy,cropDrag.ey)));
+  const x=Math.round(x1),y=Math.round(y1),w=Math.round(x2-x1),h=Math.round(y2-y1);
+  return(w<4||h<4)?null:{x,y,w,h};
+}
+function setCropPreset(kind){
+  const ratio=kind==='square'?1:kind==='four-three'?4/3:4/5;
+  let w=canvas.width,h=Math.round(w/ratio);
+  if(h>canvas.height){h=canvas.height;w=Math.round(h*ratio);}
+  const x=Math.round((canvas.width-w)/2),y=Math.round((canvas.height-h)/2);
+  cropDrag={sx:x,sy:y,ex:x+w,ey:y+h};cropRect=calcCropRect();drawCropUi();
+  const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!cropRect;
 }
 function drawCropUi(){
   oCtx.clearRect(0,0,ov.width,ov.height);
@@ -616,9 +678,10 @@ function drawCropUi(){
 function applyCrop(){
   const r=cropRect||calcCropRect();if(!r)return;
   pushUndo();
-  const data=ctx.getImageData(r.x,r.y,r.w,r.h);
+  const tmp=document.createElement('canvas');tmp.width=r.w;tmp.height=r.h;
+  tmp.getContext('2d').drawImage(canvas,r.x,r.y,r.w,r.h,0,0,r.w,r.h);
   canvas.width=r.w;canvas.height=r.h;ov.width=r.w;ov.height=r.h;
-  ctx.putImageData(data,0,0);cropDrag=null;cropRect=null;
+  ctx.drawImage(tmp,0,0);cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
   const b=document.querySelector('#t-crop-ok');if(b)b.disabled=true;
   resetZoom();toast(`Cropped to ${r.w}×${r.h}`);
 }
@@ -694,6 +757,8 @@ function toCanvas(e){
 }
 
 function onDown(e){
+  e.preventDefault();
+  if(typeof e.pointerId==='number')ov.setPointerCapture(e.pointerId);
   const pt=toCanvas(e);
   if(tool==='crop'){cropDrag={sx:pt.x,sy:pt.y,ex:pt.x,ey:pt.y};const b=document.querySelector('#t-crop-ok');if(b)b.disabled=true;}
   else if(tool==='text'){if(textPlacing)commitText();else placeTextInput(pt.x,pt.y);}
@@ -703,6 +768,8 @@ function onDown(e){
   else if(tool==='shape'){shapeDrag={sx:pt.x,sy:pt.y,ex:pt.x,ey:pt.y};}
 }
 function onMove(e){
+  if(!cropDrag&&!drawing&&!shapeDrag)return;
+  e.preventDefault();
   const pt=toCanvas(e);
   if(tool==='crop'&&cropDrag){cropDrag.ex=pt.x;cropDrag.ey=pt.y;drawCropUi();const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!calcCropRect();}
   else if(tool==='markup'&&drawing){line(lastPt,pt,drawColor,drawSize,'source-over');lastPt=pt;}
@@ -714,6 +781,7 @@ function onMove(e){
   }
 }
 function onUp(e){
+  if(typeof e.pointerId==='number'&&ov.hasPointerCapture(e.pointerId))ov.releasePointerCapture(e.pointerId);
   const pt=toCanvas(e);
   if(tool==='crop'&&cropDrag){cropDrag.ex=pt.x;cropDrag.ey=pt.y;drawCropUi();cropRect=calcCropRect();const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!cropRect;}
   else if(tool==='shape'&&shapeDrag){shapeDrag.ex=pt.x;shapeDrag.ey=pt.y;pushUndo();drawShapeOv(shapeDrag,ctx);oCtx.clearRect(0,0,ov.width,ov.height);shapeDrag=null;}
