@@ -2898,7 +2898,7 @@ app.MapGet("/api/ebay/scan", async (
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, CouponService couponService, ClaudeService claude,
-    AiEstimateStore aiEstimates, ActionLog log, CancellationToken ct) =>
+    AiEstimateStore aiEstimates, AiQuotaGate aiQuota, ActionLog log, CancellationToken ct) =>
 {
     // Whitelisted rather than passed through: these reach eBay's own filter syntax, and an
     // unrecognised value there is an error on the whole search rather than an ignored parameter.
@@ -2941,7 +2941,8 @@ app.MapGet("/api/ebay/scan", async (
             // The third tier. This board is where it matters most: a keyword search returns two
             // hundred listings of things the comps database has never seen, and until this ran
             // most of them arrived as a dash and a link. See the AI pass in FindLocalArbitrageAsync.
-            ai: claude, aiEstimates: aiEstimates, aiBudget: AiEstimateStore.PerScanCap);
+            ai: claude, aiEstimates: aiEstimates, aiBudget: AiEstimateStore.PerScanCap,
+            aiQuota: aiQuota);
 
         var result = await Scan(q ?? "");
 
@@ -6615,7 +6616,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     LiveCompsLookup? live = null, int liveBudget = 0,
     // The third and last pricing tier. Defaulted off so every caller that doesn't pass a model is
     // costed exactly as it was — the pass is skipped entirely when either of these is absent.
-    ClaudeService? ai = null, AiEstimateStore? aiEstimates = null, int aiBudget = 0)
+    ClaudeService? ai = null, AiEstimateStore? aiEstimates = null, int aiBudget = 0,
+    // Whose allowance the AI pass spends from. Null, and on the desktop build unenforced, means
+    // nothing is metered — the seller is spending their own key. On the hosted build it is the
+    // OWNER's key paying for every user, which is the whole reason this argument exists.
+    AiQuotaGate? aiQuota = null)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var wanted = category ?? ResaleCategoryCatalog.Anything;
@@ -6846,10 +6851,34 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
                     var known = aiEstimates.Known(askedFor, askedAt);
                     var missing = askedFor.Where(i => !known.ContainsKey(i.ItemId)).ToList();
 
-                    var fresh = missing.Count > 0
-                        ? await ai.EstimateResaleAsync(missing, ct)
-                        : [];
-                    if (fresh.Count > 0) aiEstimates.Save(missing, fresh, askedAt);
+                    // ── What this costs, and who pays ───────────────────────────────────────
+                    // Only a real generation is charged. Everything the database already knew is
+                    // free and stays free — a market scanned twice in a week must not cost a
+                    // second day's allowance to be told the same thing.
+                    //
+                    // On the hosted build the key belongs to the owner and pays for every user, so
+                    // an unmetered pricing pass would let one seller's afternoon of keyword
+                    // searches run up the owner's bill. Refused is not failed: the estimates the
+                    // database already holds are still applied below, the comp-priced rows are
+                    // untouched, and the board says the allowance is what stopped it.
+                    var fresh = new List<AiResaleEstimate>();
+                    var quotaNote = "";
+                    if (missing.Count > 0)
+                    {
+                        try
+                        {
+                            aiQuota?.Reserve("AI resale estimates");
+                            fresh = await ai.EstimateResaleAsync(missing, ct);
+                            if (fresh.Count > 0) aiEstimates.Save(missing, fresh, askedAt);
+                        }
+                        catch (AiQuotaExceededException quota)
+                        {
+                            quotaNote = quota.Failure.WhatToDo is { Length: > 0 } what
+                                ? $"Today's AI allowance is used up, so {missing.Count} product(s) no sold comp could price were left unpriced. {what}"
+                                : $"Today's AI allowance is used up, so {missing.Count} product(s) no sold comp could price were left unpriced.";
+                            log.Add("Info", "AI resale estimates skipped", quotaNote);
+                        }
+                    }
 
                     var byKeyAi = groups.ToDictionary(g => g.Key);
                     foreach (var estimate in known.Values.Concat(fresh))
@@ -6867,7 +6896,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
                         + $"{known.Count} from the app's own database, {fresh.Count} newly asked. "
                         + $"{result.AiUnpricedRemaining} left for a hand search.");
 
-                    result.AiEstimateNote = result.AiEstimatedCount == 0 ? "" :
+                    // The allowance has the last word when it is what stopped the pass: it is the
+                    // one note the seller can act on, and "3 more need a hand search" would read
+                    // as a limit of the data rather than of the day.
+                    result.AiEstimateNote = quotaNote.Length > 0 ? quotaNote :
+                        result.AiEstimatedCount == 0 ? "" :
                         $"{result.AiEstimatedCount} product{(result.AiEstimatedCount == 1 ? "" : "s")} no sold comp could price "
                         + $"{(result.AiEstimatedCount == 1 ? "was" : "were")} estimated by AI against the wider resale market"
                         + (result.AiUnpricedRemaining > 0
