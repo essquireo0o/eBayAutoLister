@@ -71,6 +71,11 @@ public class RemoveBgRequest
     public string MimeType    { get; set; } = "image/jpeg";
 }
 
+public class PhotoEnhanceRequest
+{
+    public string Url { get; set; } = "";
+}
+
 public class SaveUploadedPhotoRequest
 {
     public string ImageBase64 { get; set; } = "";

@@ -9,6 +9,8 @@ public class PhotoBoxWorkflowAssetTests
     private static readonly string Html = ReadAsset("index.html");
     private static readonly string Js = ReadAsset("app.js");
     private static readonly string Css = ReadAsset("style.css");
+    private static readonly string Program = ReadProjectFile("Program.cs");
+    private static readonly string Enhancer = ReadProjectFile("Services", "PhotoEnhancer.cs");
 
     [Fact]
     public void StudioExplainsTheSixShotWorkflow()
@@ -39,6 +41,29 @@ public class PhotoBoxWorkflowAssetTests
         Assert.Contains("details.pb-tips", Css);
     }
 
+    [Fact]
+    public void AiEnhanceIsOnByDefaultAndRunsAfterEverySnap()
+    {
+        Assert.Contains("AI Enhance after every snap", Html);
+        Assert.Contains("id=\"pb-auto-enhance\"", Html);
+        Assert.Contains("let pbAutoEnhance = true", Js);
+        Assert.Contains("await pbEnhancePhoto(r.url)", Js);
+        Assert.Contains("/api/photos/enhance", Js);
+        Assert.Contains("pbEnhancedSnaps.add(listingUrl)", Js);
+    }
+
+    [Fact]
+    public void EnhancementUsesAiSubjectDetectionWithAnOfflineFallback()
+    {
+        Assert.Contains("MapPost(\"/api/photos/enhance\"", Program);
+        Assert.Contains("new_session('u2netp')", Enhancer);
+        Assert.Contains("mask = np.logical_or(ai_mask, classic)", Enhancer);
+        Assert.Contains("ImageEnhance.Brightness", Enhancer);
+        Assert.Contains("ImageOps.autocontrast", Enhancer);
+        Assert.Contains("ImageEnhance.Sharpness", Enhancer);
+        Assert.Contains("canvas = 1600", Enhancer);
+    }
+
     private static string ReadAsset(string name)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -48,6 +73,18 @@ public class PhotoBoxWorkflowAssetTests
         Assert.True(dir is not null, "could not find the repository root above " + AppContext.BaseDirectory);
         var path = Path.Combine(dir!.FullName, "ING eBay AutoLister", "wwwroot", name);
         Assert.True(File.Exists(path), "missing web asset: " + path);
+        return File.ReadAllText(path);
+    }
+
+    private static string ReadProjectFile(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ING eBay AutoLister.slnx")))
+            dir = dir.Parent;
+
+        Assert.True(dir is not null, "could not find the repository root above " + AppContext.BaseDirectory);
+        var path = Path.Combine([dir!.FullName, "ING eBay AutoLister", .. parts]);
+        Assert.True(File.Exists(path), "missing project file: " + path);
         return File.ReadAllText(path);
     }
 }

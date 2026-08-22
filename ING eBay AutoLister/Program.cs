@@ -273,6 +273,7 @@ builder.Services.AddSingleton<ListingDatabase>();
 builder.Services.AddSingleton<ImageGenerationService>();
 builder.Services.AddSingleton<TranscriptionService>();
 builder.Services.AddSingleton<PhotoLibrary>();
+builder.Services.AddSingleton<PhotoEnhancer>();
 // The seller's phone as the photo-box camera, with the shutter still on this screen.
 // Its own listener on its own port — see PhoneCapture for why it is not a route here.
 builder.Services.AddSingleton<PhoneCapture>();
@@ -9260,6 +9261,37 @@ app.MapPost("/api/photobox/snap", async (PhoneCapture phone, ActionLog log, Canc
     if (error is not null) return Results.BadRequest(new { error });
     log.Add("Info", "Phone camera snap", $"saved {url}");
     return Results.Ok(new { url, folder = PhotoLibrary.PhotoBoxFolder, source = "phone" });
+});
+
+// The shutter deliberately returns the untouched frame first. The desktop then calls this route
+// while showing an honest "AI Enhance" state; if enhancement ever fails, the raw full-resolution
+// photo is still safe in the library and remains usable instead of losing the whole capture.
+app.MapPost("/api/photos/enhance", async (PhotoEnhanceRequest req, PhotoEnhancer enhancer, ActionLog log, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    if (string.IsNullOrWhiteSpace(req.Url)) return Results.BadRequest(new { error = "A saved photo URL is required." });
+
+    try
+    {
+        var result = await enhancer.EnhanceAsync(req.Url, ct);
+        return Results.Ok(new
+        {
+            result.Url,
+            enhanced = true,
+            result.AiDetected,
+            result.CropPercent,
+            result.Width,
+            result.Height,
+            adjustments = new[] { "auto crop", "exposure", "contrast", "colour", "sharpness" }
+        });
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Photos);
+        log.Add("Warning", "AI photo enhancement failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
 });
 
 // ── The phone as the camera ───────────────────────────────────────────────────

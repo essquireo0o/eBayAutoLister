@@ -2800,6 +2800,7 @@
                   <span class="pb-chip pb-chip-live hidden" id="pb-live-chip">● Live</span>
                   <span class="pb-chip hidden" id="pb-res-chip"></span>
                   <span class="pb-chip pb-chip-guide" id="pb-stage-guide">Next · Hero</span>
+                  <button class="pb-chip pb-chip-enhance is-on" id="pb-auto-enhance-chip" type="button" aria-pressed="true">✨ AI Enhance · On</button>
                   <span class="pb-chip pb-chip-zoom hidden" id="pb-zoom-chip">1.0×</span>
                 </div>
                 <div class="pb-countdown hidden" id="pb-countdown" aria-live="assertive"></div>
@@ -2852,6 +2853,17 @@
                 <button id="pb-grid-btn" class="btn btn-ghost" type="button" title="Rule-of-thirds grid over the viewfinder">▦ Grid<span class="pb-key">g</span></button>
                 <button id="pb-torch" class="btn btn-ghost hidden" type="button" title="The phone's own light">🔦 Light<span class="pb-key">t</span></button>
                 <button id="pb-full" class="btn btn-ghost" type="button" title="Fill the screen with the viewfinder">⛶ Full screen<span class="pb-key">f</span></button>
+              </div>
+
+              <div class="pb-enhance-bar" id="pb-enhance-bar">
+                <div class="pb-enhance-mark" aria-hidden="true">✨</div>
+                <div class="pb-enhance-copy">
+                  <strong>AI Enhance after every snap</strong>
+                  <span>Finds the item, crops empty space, brightens exposure, balances colour and sharpens the final listing photo.</span>
+                </div>
+                <button id="pb-auto-enhance" class="pb-enhance-toggle is-on" type="button" role="switch" aria-checked="true">
+                  <span class="pb-enhance-toggle-dot"></span><b>On</b>
+                </button>
               </div>
 
               <!-- ── The camera ────────────────────────────────────────────────────────

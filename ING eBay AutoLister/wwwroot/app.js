@@ -7179,6 +7179,8 @@
                 lens: 'wide', facing: 'environment', level: false };
   let pbShooting = false;      // one shutter at a time — burst and space bar share it
   let pbCountdown = null;
+  let pbAutoEnhance = true;     // raw photo remains safe; the enhanced copy goes to the listing
+  const pbEnhancedSnaps = new Set();
   const pbShotPlan = [
     { name: 'Hero', title: 'Hero angle', tip: 'Fill the frame with the item at its most recognizable angle.' },
     { name: 'Back', title: 'Back view', tip: 'Show the full rear clearly, including ports, fasteners, or closures.' },
@@ -7600,13 +7602,39 @@
       const res = await fetch('/api/photobox/snap', { method: 'POST' });
       const r = await res.json();
       if (res.ok && r.url) {
-        pbSessionSnaps.push(r.url);
+        let listingUrl = r.url;
+        let enhanced = null;
+        if (pbAutoEnhance) {
+          pbBtnLabel('pb-snap', '✨ Enhancing…');
+          if (note) {
+            note.classList.remove('hidden');
+            note.classList.add('pb-enhancing');
+            note.textContent = '✨ AI Enhance — finding the item, auto-cropping, brightening and sharpening…';
+          }
+          try {
+            enhanced = await pbEnhancePhoto(r.url);
+            listingUrl = enhanced.url;
+            pbEnhancedSnaps.add(listingUrl);
+          } catch (enhanceError) {
+            // A treatment can fail; a shutter press cannot be allowed to disappear with it. The
+            // untouched full-resolution frame is already safe in the library and becomes the
+            // session photo when the optional enhancement layer cannot finish.
+            if (note) note.textContent = 'The original photo was saved. AI Enhance could not finish this one: ' + errorText(enhanceError, 'you can retry from the photo below.');
+          } finally {
+            note?.classList.remove('pb-enhancing');
+          }
+        }
+
+        pbSessionSnaps.push(listingUrl);
         pbRenderFilmstrip();
         if (note) {
           note.classList.remove('hidden');
-          note.textContent = `Saved to the Photo Library (${r.folder}). ${pbSessionSnaps.length > 1
-            ? `${pbSessionSnaps.length} photos this session — press ✨ AI Listing when you have every angle.`
-            : 'Snap more angles, or press ✨ AI Listing to have the AI write and price the listing.'}`;
+          if (enhanced) {
+            note.className = 'wn-video-status wn-video-ok';
+            note.textContent = `✨ Enhanced automatically — cropped ${enhanced.cropPercent || 0}% of empty space, brightened, colour-balanced and sharpened. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`;
+          } else if (!pbAutoEnhance) {
+            note.textContent = `Original saved to the Photo Library (${r.folder}). AI Enhance is off.`;
+          }
         }
         return true;
       }
@@ -7666,6 +7694,60 @@
     }).join('');
   }
 
+  async function pbEnhancePhoto(url) {
+    const res = await fetch('/api/photos/enhance', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    let body = {};
+    try { body = await res.json(); } catch { /* the status below still explains the failure */ }
+    if (!res.ok || !body.url) throw new Error(body.error || body.detail || 'AI Enhance did not return a photo.');
+    return body;
+  }
+
+  function pbToggleAutoEnhance() {
+    pbAutoEnhance = !pbAutoEnhance;
+    const btn = $('pb-auto-enhance');
+    btn?.classList.toggle('is-on', pbAutoEnhance);
+    btn?.setAttribute('aria-checked', String(pbAutoEnhance));
+    const label = btn?.querySelector('b');
+    if (label) label.textContent = pbAutoEnhance ? 'On' : 'Off';
+    const chip = $('pb-auto-enhance-chip');
+    chip?.classList.toggle('is-on', pbAutoEnhance);
+    chip?.setAttribute('aria-pressed', String(pbAutoEnhance));
+    if (chip) chip.textContent = `✨ AI Enhance · ${pbAutoEnhance ? 'On' : 'Off'}`;
+    pbSetupStatus(pbAutoEnhance
+      ? 'AI Enhance is on — every new shot will be cropped, brightened, colour-balanced and sharpened automatically.'
+      : 'AI Enhance is off — new shots will stay exactly as the phone captured them.', '');
+  }
+
+  async function pbEnhanceShot(url, shot) {
+    if (!url || shot?.classList.contains('is-working')) return;
+    const note = $('pb-snap-note');
+    shot?.classList.add('is-working');
+    if (note) {
+      note.className = 'wn-video-status pb-enhancing';
+      note.textContent = '✨ AI Enhance — finding the item, auto-cropping, brightening and sharpening…';
+    }
+    try {
+      const result = await pbEnhancePhoto(url);
+      pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? result.url : u));
+      pbEnhancedSnaps.delete(url);
+      pbEnhancedSnaps.add(result.url);
+      pbRenderFilmstrip();
+      if (note) {
+        note.className = 'wn-video-status wn-video-ok';
+        note.textContent = `✨ Photo enhanced — cropped ${result.cropPercent || 0}% of empty space, brightened, colour-balanced and sharpened.`;
+      }
+    } catch (err) {
+      shot?.classList.remove('is-working');
+      if (note) {
+        note.className = 'wn-video-status wn-video-bad';
+        note.textContent = 'AI Enhance failed; the original photo is unchanged. ' + errorText(err, 'Try again.');
+      }
+    }
+  }
+
   function pbRenderFilmstrip() {
     const strip = $('pb-filmstrip');
     const head = $('pb-strip-head');
@@ -7704,11 +7786,13 @@
           <span class="pb-shot-hint">✎ Edit</span>
         </button>
         <span class="pb-shot-n">${i + 1} · ${esc(pbShotPlan[i]?.name || 'Extra')}</span>
+        ${pbEnhancedSnaps.has(u) ? '<span class="pb-shot-enhanced">✨ Enhanced</span>' : ''}
         <button type="button" class="pb-shot-x" data-act="drop"
                 title="Remove Photo ${i + 1} from this listing. The file stays in your Photo Library."
                 aria-label="Remove photo ${i + 1} from this listing">&times;</button>
         <div class="pb-shot-tools">
           <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
+          <button type="button" data-act="enhance" ${pbEnhancedSnaps.has(u) ? 'disabled' : ''} title="Automatically crop, brighten, colour-balance and sharpen">${pbEnhancedSnaps.has(u) ? 'Enhanced' : '✨ Enhance'}</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
           <button type="button" data-act="portrait" title="Portrait — the product stays sharp and the room behind it goes soft. Done on this machine, no upload">Portrait</button>
         </div>
@@ -7719,7 +7803,8 @@
         const shot = btn.closest('.pb-shot');
         const url = shot?.dataset.url || '';
         if (btn.dataset.act === 'edit') pbEditShot(url);
-        else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbRenderFilmstrip(); }
+        else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbEnhancedSnaps.delete(url); pbRenderFilmstrip(); }
+        else if (btn.dataset.act === 'enhance') pbEnhanceShot(url, shot);
         else if (btn.dataset.act === 'bg') pbRework(url, shot, 'remove-bg', 'Cut-out');
         else if (btn.dataset.act === 'portrait') pbRework(url, shot, 'portrait', 'Portrait');
       }));
@@ -7733,7 +7818,10 @@
     const i = pbSessionSnaps.indexOf(url);
     openImageEditor(url, i >= 0 ? `Photo ${i + 1}` : 'Photo', saved => {
       if (!saved) return;
+      const wasEnhanced = pbEnhancedSnaps.has(url);
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? saved : u));
+      pbEnhancedSnaps.delete(url);
+      if (wasEnhanced) pbEnhancedSnaps.add(saved);
       pbRenderFilmstrip();
       addActivity('Photo edited', i >= 0 ? `Photo Box picture ${i + 1}` : 'Photo Box picture');
     });
@@ -7773,7 +7861,10 @@
       const r = await res.json();
       const out = r.url || r.imageUrl || '';
       if (!res.ok || !out) throw new Error(r.error || 'the photo could not be changed');
+      const wasEnhanced = pbEnhancedSnaps.has(url);
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? out : u));
+      pbEnhancedSnaps.delete(url);
+      if (wasEnhanced) pbEnhancedSnaps.add(out);
       pbRenderFilmstrip();
       if (note) note.classList.add('hidden');
       addActivity(label + ' applied', 'Photo Box picture');
@@ -7846,6 +7937,8 @@
     $('pb-ai')?.addEventListener('click', pbAiListing);
     $('pb-grid-btn')?.addEventListener('click', pbToggleGrid);
     $('pb-torch')?.addEventListener('click', pbToggleTorch);
+    $('pb-auto-enhance')?.addEventListener('click', pbToggleAutoEnhance);
+    $('pb-auto-enhance-chip')?.addEventListener('click', pbToggleAutoEnhance);
 
     // One listener for the whole camera panel. The lens row is rebuilt whenever the phone reports
     // a different set of lenses, so per-button listeners would have to be re-attached every time —
