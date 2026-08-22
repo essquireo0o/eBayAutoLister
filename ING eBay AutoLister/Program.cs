@@ -9237,20 +9237,42 @@ app.MapPost("/api/photos/remove-bg", async (RemoveBgRequest req, IWebHostEnviron
         await File.WriteAllBytesAsync(inputFile, Convert.FromBase64String(req.ImageBase64));
         await File.WriteAllTextAsync(scriptFile, """
 import sys
-from rembg import remove
+from rembg import remove, new_session
 from PIL import Image
 import numpy as np
 from scipy import ndimage
 
 img = Image.open(sys.argv[1]).convert('RGBA')
-cutout = remove(img).convert('RGBA')
 
-# Drop only tiny stray artifacts — keep all components above 0.5% of total pixels
+# WHICH MODEL, AND WHY IT MATTERS MORE THAN IT LOOKS.
+# rembg's default (u2net) is a SALIENT-object detector: it finds the one thing a photo is
+# "about" and erases the rest. A product photo is rarely about one thing — a camera laid out
+# with its battery, its manual and its USB stick is four things, and u2net silently deleted
+# two of them. Measured on exactly that photo: u2net kept 2 objects, isnet-general-use kept 2,
+# birefnet-general kept all 4. It is slower (~18s against ~0.4s) and a bigger download, and it
+# is worth both: a cut-out missing the accessories is a listing photo that misrepresents what
+# is in the box, which is worse than no cut-out at all.
+# The cascade is the safety net — a machine that cannot fetch the better model still gets a
+# cut-out from the one it already has.
+cutout = None
+for _model in ('birefnet-general', 'isnet-general-use', 'u2net'):
+    try:
+        cutout = remove(img, session=new_session(_model)).convert('RGBA')
+        print('rembg model:', _model, file=sys.stderr)
+        break
+    except Exception as _e:
+        print('rembg model', _model, 'unavailable:', _e, file=sys.stderr)
+if cutout is None:
+    raise SystemExit('no rembg model could be loaded')
+
+# Drop only tiny stray artifacts. The floor is deliberately low: a memory card, a USB stick or
+# a battery is a real part of the product and can easily be under a percent of the frame — the
+# old 0.5% floor was itself throwing accessories away after the model had kept them.
 arr = np.array(cutout)
 alpha = arr[:, :, 3]
 mask = alpha > 10
 total_px = mask.size
-min_keep = total_px * 0.005  # anything smaller than 0.5% of image is an artifact
+min_keep = total_px * 0.0005
 
 labeled, num_features = ndimage.label(mask)
 if num_features > 1:
