@@ -271,6 +271,16 @@ public class LocalArbitrageResult
     public int LiveLookupsUsed { get; set; }
     public int LiveLookupsRefreshed { get; set; }
     public string LiveLookupNote { get; set; } = "";
+
+    // ── The third tier: what the model priced when nothing sold-based could ──
+    // How many distinct products came back from the pricing passes with no price at all and were
+    // estimated by the model instead, and how many were left over when the per-scan cap ran out.
+    // Both are said on the board: a seller reading a number has to know which of the three tiers
+    // produced it, and a scan that could only estimate is a different answer from one that could
+    // not price anything at all. See the AI pass in FindLocalArbitrageAsync.
+    public int AiEstimatedCount { get; set; }
+    public int AiUnpricedRemaining { get; set; }
+    public string AiEstimateNote { get; set; } = "";
     public bool SoldCompsConfigured { get; set; }
     // Set when neither pricing source can answer — the table would otherwise be
     // a column of dashes with no explanation.

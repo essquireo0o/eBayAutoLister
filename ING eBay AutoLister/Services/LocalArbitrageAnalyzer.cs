@@ -51,6 +51,45 @@ public sealed class ResalePricing
 
     public bool HasPrice => ExpectedSale is > 0 || Median is > 0;
 
+    // ── The third tier ───────────────────────────────────────────────────────────────────────
+    // True when nothing sold-based could price this and the model priced it instead. It is carried
+    // on the pricing object rather than decided later because every reader of this class has to
+    // know: the evidence grader must not call a priced row "no sold comps matched", the valuation
+    // providers must not label it "eBay sold comps", and the board must not let it wear a green
+    // badge. See LocalArbitrageEvidence.Ai.
+    public bool IsAiEstimate { get; set; }
+    /// <summary>The model's own few words for what it priced this AS — "used 2019 model, common".</summary>
+    public string? AiBasis { get; set; }
+    /// <summary>The ends of the model's range, kept so the row can show the spread it really has.</summary>
+    public decimal AiLow { get; set; }
+    public decimal AiHigh { get; set; }
+
+    /// <summary>
+    /// A resale price built from the model's estimate, for a product no sold comp could answer.
+    /// </summary>
+    /// <remarks>
+    /// The middle of the range is the price, and the LOW end is the quick-sale figure — the same
+    /// shape a comps-priced product has, so everything downstream (the profit maths, the max-to-pay,
+    /// the offer ladder) works on it unchanged and no caller has to learn a second kind of price.
+    /// Every evidence count stays at zero, which is the truth: this rests on no sold listing at all.
+    /// </remarks>
+    public static ResalePricing FromAi(string lookupTitle, decimal low, decimal high, string? basis) =>
+        new()
+        {
+            LookupTitle = lookupTitle,
+            Median = Math.Round((low + high) / 2m, 2),
+            ExpectedSale = Math.Round((low + high) / 2m, 2),
+            QuickSale = low > 0 ? low : null,
+            IsAiEstimate = true,
+            AiBasis = basis,
+            AiLow = low,
+            AiHigh = high,
+            // Not "insufficient evidence" — that is the sentence for a comps lookup that came back
+            // thin, and this never ran one. Saying which of the three tiers answered is the whole
+            // point of the row.
+            ConfidenceLevel = "AI estimate",
+        };
+
     public static ResalePricing From(MarketAnalysisResult analysis, string lookupTitle)
     {
         var comps = analysis.TopSoldComparables;
@@ -231,6 +270,22 @@ public sealed class LocalArbitrageAnalyzer(
     // is capped at "thin" — the arithmetic still shows, labelled as the estimate it is.
     private static void ApplyEvidence(LocalArbitrageOpportunity row, ResalePricing resale)
     {
+        // A model estimate is graded by where it came from, not by counting comps it never had.
+        // Sent through GradeEvidence it would come back "no sold comps matched this item — there is
+        // no resale price to check the ask against", which is a sentence about a row with no price
+        // printed beside a row that has one.
+        if (resale.IsAiEstimate)
+        {
+            row.EvidenceTier = LocalArbitrageEvidence.Ai;
+            row.EvidenceNote =
+                "No sold listing matched this item, so this is the model's estimate of what things like it "
+                + "fetch across eBay, Mercari, Marketplace and auction results"
+                + (string.IsNullOrWhiteSpace(resale.AiBasis) ? "" : $" — priced as {resale.AiBasis}")
+                + ". A starting point, not a price.";
+            if (row.Valuation is { } aiValuation) aiValuation.Confidence = LocalArbitrageEvidence.Ai;
+            return;
+        }
+
         var (tier, note) = GradeEvidence(
             resale.PricedCompCount > 0 ? resale.PricedCompCount : resale.SoldCompCount,
             resale.TerapeakCompCount, resale.IdentityVerified, resale.ConfidenceScore);

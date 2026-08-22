@@ -8,6 +8,8 @@ public static class ResaleValuationProviders
     public const string EbayComps = "ebay_comps";
     public const string EbayMotors = "ebay_motors";
     public const string BulkyLocal = "bulky_local";
+    /// <summary>Not a provider in the list — the third tier, which answers before they are asked.</summary>
+    public const string AiEstimate = "ai_estimate";
 }
 
 /// <summary>A valuation: the price, when there is one, and always the sentence explaining it.</summary>
@@ -280,6 +282,34 @@ public sealed class ResaleValuationRegistry(IEnumerable<IResaleValuationProvider
 
     public ValuationOutcome Value(ResaleCategory category, LocalSupplyListing listing, ResalePricing? comps)
     {
+        // ── The model's estimate goes past the providers, not through them ───────────────────────
+        // Every provider here exists to answer one question: does this sold-comps lookup describe
+        // THIS kind of thing? A model estimate has no lookup behind it — it was asked about this
+        // exact item, by name, precisely because no comp matched — so there is nothing for a guard
+        // to check and a guard that ran would refuse the one price the row has. The vehicle and
+        // bulky guards are the reason this matters: a truck and a chest freezer are exactly the
+        // rows that reach the third tier, and they are the rows worth the most money.
+        //
+        // It is labelled as what it is, and its status is its own — never Comps — so nothing
+        // downstream can mistake it for sold history.
+        if (comps is { IsAiEstimate: true, HasPrice: true })
+        {
+            return new ValuationOutcome(new ResaleValuation
+            {
+                Status = ValuationStatuses.AiEstimate,
+                ProviderId = ResaleValuationProviders.AiEstimate,
+                SourceLabel = "AI estimate",
+                Note = string.IsNullOrWhiteSpace(comps.AiBasis)
+                    ? "No sold comp matched this item, so the model priced it against the wider resale market."
+                    : $"No sold comp matched this item. The model priced it as {comps.AiBasis}, against the wider resale market.",
+                LookupQuery = listing.Title,
+                // The search link stays. An estimate the seller can check by hand in one click is a
+                // different thing from one they have to take on faith.
+                LookupUrl = ResaleValuationLinks.SoldSearchUrl(category, listing.Title),
+                Confidence = LocalArbitrageEvidence.Ai,
+            }, comps);
+        }
+
         var provider = All.FirstOrDefault(p => p.Handles(category))
                     ?? All.FirstOrDefault(p => p.Id == ResaleValuationProviders.EbayComps);
 

@@ -5235,6 +5235,13 @@ textarea {
   border: 1px dashed var(--border);
   color: var(--muted);
 }
+/* The third pricing tier: no sold history at all, priced by the model. Its own colour rather than
+   the warning orange of a thin comp, because it is a different fact about the row — not "the
+   evidence is weak" but "there is none, and this is what the wider market says instead". */
+.val-src-ai {
+  border: 1px dashed rgba(91, 108, 214, 0.55);
+  color: var(--accent, #5b6cd6);
+}
 /* A row the app refused to price. Deliberately not styled as a failure — it is an answer, and the
    link beside it is what the row has instead of a number. */
 .val-manual {
@@ -5720,6 +5727,9 @@ textarea {
   letter-spacing: 0.02em;
   cursor: help;
 }
+/* Same badge, different fact — see .val-src-ai. A board can carry both kinds of guess at once and
+   the seller has to be able to tell them apart across a whole column at a glance. */
+.fb-arb-estimate-flag.is-ai { color: var(--accent, #5b6cd6); }
 .fb-arb-footnote {
   font-size: var(--fs-2xs);
   color: var(--muted);

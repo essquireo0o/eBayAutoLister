@@ -33,6 +33,20 @@ public sealed class AiEstimateStore
     /// <summary>How long an estimate is trusted before it is asked again.</summary>
     public static readonly TimeSpan GoodFor = TimeSpan.FromDays(30);
 
+    /// <summary>
+    /// The most products one scan will ask the model about — the third pricing tier's budget.
+    /// </summary>
+    /// <remarks>
+    /// One call, not one per row: the model is handed the whole list at once, so this is the size
+    /// of a single request rather than a count of them. Sixty is what
+    /// <see cref="ClaudeService.EstimateResaleAsync"/> itself accepts, and a 120-row scan that
+    /// leaves a hundred products unpriced is answered for the sixty carrying the most money while
+    /// the rest keep their hand-search link — with the board saying how many those are. Anything
+    /// asked once is cached for <see cref="GoodFor"/>, so scanning the same market again fills in
+    /// free.
+    /// </remarks>
+    public const int PerScanCap = 60;
+
     private readonly string _databasePath;
 
     public AiEstimateStore(ListingDatabase database) : this(database.DatabasePath) { }

@@ -104,6 +104,12 @@ public static class DealRadarMatcher
         // A refused valuation has no resale price by design, and no threshold can be applied to a
         // dash. The board shows these with a sold-listings link; the radar stays quiet about them.
         if (row.Valuation is { Status: ValuationStatuses.Manual }) return false;
+        // And a price the model guessed is not a number to wake somebody up for. It is a fine
+        // answer on a board the seller is reading — it is badged, dimmed and filterable there —
+        // but a push notification saying "$400 profit, three miles away" carries none of that, so
+        // the radar only ever fires on sold history. See the AI pass in FindLocalArbitrageAsync.
+        if (row.Valuation is { Status: ValuationStatuses.AiEstimate }
+            || row.EvidenceTier == LocalArbitrageEvidence.Ai) return false;
         if (row.NetProfit is not { } profit) return false;
         if (row.EbayExpectedSale is not > 0 && row.EbayResaleMedian is not > 0) return false;
 

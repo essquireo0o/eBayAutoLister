@@ -2898,7 +2898,7 @@ app.MapGet("/api/ebay/scan", async (
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, CouponService couponService, ClaudeService claude,
-    ActionLog log, CancellationToken ct) =>
+    AiEstimateStore aiEstimates, ActionLog log, CancellationToken ct) =>
 {
     // Whitelisted rather than passed through: these reach eBay's own filter syntax, and an
     // unrecognised value there is an error on the whole search rather than an ignored parameter.
@@ -2937,7 +2937,11 @@ app.MapGet("/api/ebay/scan", async (
             marketplace, normalizer, matcher, priceEstimator, sellThroughCalc,
             profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket, terapeak, analyzer, log, ct,
             couponService,
-            ResaleCategoryCatalog.Resolve(category));
+            ResaleCategoryCatalog.Resolve(category),
+            // The third tier. This board is where it matters most: a keyword search returns two
+            // hundred listings of things the comps database has never seen, and until this ran
+            // most of them arrived as a dash and a link. See the AI pass in FindLocalArbitrageAsync.
+            ai: claude, aiEstimates: aiEstimates, aiBudget: AiEstimateStore.PerScanCap);
 
         var result = await Scan(q ?? "");
 
@@ -2955,8 +2959,14 @@ app.MapGet("/api/ebay/scan", async (
         // so a scan where EVERY row is "low" has found nothing it can stand behind. That is the
         // same dead end as zero rows, and it deserves the same second look. A scan with even one
         // confident row is left alone — correcting a search that worked is the opposite failure.
-        var nothingTrustworthy = result.Items.Count == 0
-            || result.Items.All(i => string.Equals(i.EvidenceTier, "low", StringComparison.OrdinalIgnoreCase));
+        // "ai" counts as untrustworthy here for the same reason "low" does, and more so: a board
+        // where every row is the model's estimate is a board where the sold-comps database matched
+        // nothing at all, which is exactly the shape a misspelt brand makes.
+        static bool Unproven(LocalArbitrageOpportunity i) =>
+            string.Equals(i.EvidenceTier, LocalArbitrageEvidence.Low, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(i.EvidenceTier, LocalArbitrageEvidence.Ai, StringComparison.OrdinalIgnoreCase);
+
+        var nothingTrustworthy = result.Items.Count == 0 || result.Items.All(Unproven);
 
         if (nothingTrustworthy && !string.IsNullOrWhiteSpace(q))
         {
@@ -2979,7 +2989,7 @@ app.MapGet("/api/ebay/scan", async (
                 // changes the seller's search without improving the answer. Swap when the retry is
                 // actually better: it has a row the board would stand behind, or the original had
                 // literally nothing and anything beats it.
-                var retryHasConfident = retry.Items.Any(i => !string.Equals(i.EvidenceTier, "low", StringComparison.OrdinalIgnoreCase));
+                var retryHasConfident = retry.Items.Any(i => !Unproven(i));
                 if (retryHasConfident || (result.Items.Count == 0 && retry.Items.Count > 0))
                 {
                     retry.CorrectedFrom = q;
@@ -6602,7 +6612,10 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     // liveBudget products are looked up live on eBay and re-priced (see LiveCompsPass). Defaulted
     // off so the eBay scanner — whose browser already fetched live comps for its search term
     // before calling here — is costed exactly as it always was.
-    LiveCompsLookup? live = null, int liveBudget = 0)
+    LiveCompsLookup? live = null, int liveBudget = 0,
+    // The third and last pricing tier. Defaulted off so every caller that doesn't pass a model is
+    // costed exactly as it was — the pass is skipped entirely when either of these is absent.
+    ClaudeService? ai = null, AiEstimateStore? aiEstimates = null, int aiBudget = 0)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var wanted = category ?? ResaleCategoryCatalog.Anything;
@@ -6779,6 +6792,100 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             {
                 pricing[key] = await PriceAsync(byKey[key], allowScrape: true);
                 result.TerapeakScrapesUsed++;
+            }
+        }
+
+        // ── Pass 3: the model prices what nothing sold-based could ──────────────────────────────────
+        //
+        // The order the owner asked for, in the order it runs: live sold comps, then the stored
+        // comps database, then this (2026-08-21: "calculate products using scraper first then AI …
+        // you save everything to the database"; 2026-08-22: "#1 scraper bot, #2 database, #3 ai
+        // searches all other locations"). It exists because of what the first two tiers leave
+        // behind — measured on a "1oz gold" scan the same morning: 120 products priced, the live
+        // lookups all returning HTTP 503, and 106 of the 120 arriving with no resale figure at all.
+        // A hundred rows of dashes is a true statement about this app's database and a useless one
+        // about the market, and the seller still has to decide whether any of it is worth buying.
+        //
+        // Three things keep it honest, and all three are load-bearing:
+        //   * It only ever answers where the other tiers did not. A comp-backed price, however
+        //     thin, is never replaced by a guess.
+        //   * It is never evidence. The rows it prices are graded LocalArbitrageEvidence.Ai — they
+        //     cannot wear a green badge, cannot be called confident, and are removed by the board's
+        //     "only prices backed by real sold comps" filter, which ships ticked.
+        //   * Every number derived from it — profit, ROI, max-to-pay, days-to-cash — is computed by
+        //     the same analyzer that costs a comp-priced row, so there is one set of money rules in
+        //     this app and not a friendlier second one for the rows that could not be checked.
+        //
+        // Cost: one call for the whole scan, and the answers are saved by product name for thirty
+        // days (AiEstimateStore), so the second scan of the same market spends nothing. The cap is
+        // per scan rather than per row for the same reason — see AiEstimateStore.PerScanCap.
+        if (ai is not null && aiEstimates is not null && aiBudget > 0)
+        {
+            try
+            {
+                var unpriced = groups
+                    .Where(g => !pricing[g.Key].HasPrice)
+                    // Biggest asks first: on a board the model can only partly answer, the rows
+                    // worth the most money are the ones worth spending the answer on.
+                    .OrderByDescending(g => g.LowestAsk)
+                    .ToList();
+
+                if (unpriced.Count > 0)
+                {
+                    var asking = unpriced.Take(aiBudget).ToList();
+                    result.AiUnpricedRemaining = unpriced.Count - asking.Count;
+
+                    var askedFor = asking
+                        .Select(g => new AiEstimateItem(g.Key, g.LookupTitle,
+                            g.LowestAsk > 0 ? g.LowestAsk : null, null))
+                        .ToList();
+
+                    // The database answers first, exactly as the picks board does: a market scanned
+                    // twice in a week costs one generation, not two, and comes back instantly.
+                    var askedAt = DateTimeOffset.UtcNow;
+                    var known = aiEstimates.Known(askedFor, askedAt);
+                    var missing = askedFor.Where(i => !known.ContainsKey(i.ItemId)).ToList();
+
+                    var fresh = missing.Count > 0
+                        ? await ai.EstimateResaleAsync(missing, ct)
+                        : [];
+                    if (fresh.Count > 0) aiEstimates.Save(missing, fresh, askedAt);
+
+                    var byKeyAi = groups.ToDictionary(g => g.Key);
+                    foreach (var estimate in known.Values.Concat(fresh))
+                    {
+                        // The model is told it may omit anything genuinely unpriceable, and a zero
+                        // or a negative range is not a price — both are dropped rather than shown.
+                        if (estimate.Mid <= 0 || !byKeyAi.TryGetValue(estimate.ItemId, out var group)) continue;
+                        pricing[group.Key] = ResalePricing.FromAi(
+                            group.LookupTitle, estimate.Low, estimate.High, estimate.Basis);
+                        result.AiEstimatedCount++;
+                    }
+
+                    log.Add("Research", "AI resale estimates (third pricing tier)",
+                        $"{result.AiEstimatedCount} of {unpriced.Count} unpriced product(s) estimated — "
+                        + $"{known.Count} from the app's own database, {fresh.Count} newly asked. "
+                        + $"{result.AiUnpricedRemaining} left for a hand search.");
+
+                    result.AiEstimateNote = result.AiEstimatedCount == 0 ? "" :
+                        $"{result.AiEstimatedCount} product{(result.AiEstimatedCount == 1 ? "" : "s")} no sold comp could price "
+                        + $"{(result.AiEstimatedCount == 1 ? "was" : "were")} estimated by AI against the wider resale market"
+                        + (result.AiUnpricedRemaining > 0
+                            ? $", and {result.AiUnpricedRemaining} more still need a search by hand."
+                            : ".");
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // A board with fewer numbers on it, not a broken one — every comp-priced row is
+                // untouched, and the rows this would have answered keep the search link they had.
+                log.Add("Warning", "AI resale estimate pass failed", ex.Message);
+                result.AiEstimateNote =
+                    "The AI estimates didn't run, so the products no sold comp could price are still unpriced.";
             }
         }
 

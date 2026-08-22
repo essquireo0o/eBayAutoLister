@@ -4022,6 +4022,9 @@
     // a board where most of the percentages are estimates is a different board from one where two
     // of them are — and that is not visible from any single row.
     const estimates = (data.items || []).filter(r => r.evidenceTier === 'low' && r.netProfit != null).length;
+    // The third tier's share of the board, counted separately: "priced off thin comps" and "priced
+    // with no comps at all" are different warnings and a seller has to be able to tell them apart.
+    const aiPriced = (data.items || []).filter(r => r.evidenceTier === 'ai' && r.netProfit != null).length;
     // The live half, said out loud: which of those prices were fetched from eBay moments ago rather
     // than read from the database — and, when the daily allowance ran out mid-scan, that it did.
     const refreshed = data.liveLookupsRefreshed || 0;
@@ -4030,6 +4033,10 @@
       : '';
     const liveNote = data.liveLookupNote
       ? ` <span class="fb-arb-live-summary-note">${esc(data.liveLookupNote)}</span>` : '';
+    // What the AI pass did, or why it didn't. Shown only when it has something the row counts
+    // above don't already say — the leftovers it couldn't reach, or a failure.
+    const aiNote = data.aiEstimateNote && (data.aiUnpricedRemaining > 0 || !data.aiEstimatedCount)
+      ? ` <span class="fb-arb-live-summary-note">${esc(data.aiEstimateNote)}</span>` : '';
 
     $('fb-arb-summary').innerHTML =
       scanned +
@@ -4037,7 +4044,11 @@
       `.` +
       `${estimates ? ` <strong class="fb-arb-estimate-flag">${estimates} row${estimates === 1 ? ' is an estimate' : 's are estimates'}</strong>` +
         ` — too few matching sold comps to trust, so the ROI and margin on ${estimates === 1 ? 'it' : 'them'} are dimmed rather than shown as real rates.` : ''}` +
-      `${live}${liveNote}</div>`;
+      `${aiPriced ? ` <strong class="fb-arb-estimate-flag is-ai">${aiPriced} more ${aiPriced === 1 ? 'was' : 'were'} priced by AI</strong>` +
+        ` — no sold comp matched ${aiPriced === 1 ? 'it' : 'them'}, so ${aiPriced === 1 ? 'that figure is' : 'those figures are'} the model's read of ` +
+        `what things like this fetch across eBay, Mercari, Marketplace and auctions. ` +
+        `"Only prices backed by real sold comps" hides ${aiPriced === 1 ? 'it' : 'them'}.` : ''}` +
+      `${aiNote}${live}${liveNote}</div>`;
 
     const warn = $('fb-arb-warning');
     if (warn) {
@@ -4102,10 +4113,13 @@
            + `after fees. That is the answer: there is nothing here worth the drive, the listing and the packing. `
            + `Untick "Only deals that clear $${WORTH_DOING_NET}" to see the small stuff anyway.`;
     }
+    const ai = clearsBar.filter(r => r.evidenceTier === 'ai').length;
     return `${clearsBar.length} deal${clearsBar.length === 1 ? '' : 's'} clear $${WORTH_DOING_NET}, but `
          + `${proven.length === 0 ? 'none of them are' : 'only ' + proven.length + ' of them are'} `
-         + `priced off sold comps that actually match the item - the rest rest on one loose comp or on `
-         + `another product's price. Untick "Only prices backed by real sold comps" to see them, knowing `
+         + `priced off sold comps that actually match the item - the rest rest on one loose comp, on `
+         + `another product's price`
+         + (ai ? `, or on the AI's estimate where no sold comp matched at all (${ai} of them)` : '')
+         + `. Untick "Only prices backed by real sold comps" to see them, knowing `
          + `the resale figures on those rows are guesses.`;
   }
 
@@ -4330,7 +4344,11 @@
     //                   so a fantasy profit never opens the board at #1.
     //   3 ai-rejected — the AI read the item and said the comps describe something else.
     const confidenceTier = r => {
-      if (aiRejects(r)) return 3;
+      if (aiRejects(r)) return 4;
+      // Priced by the model because nothing sold-based could. Below every row with any sold
+      // history behind it, and above nothing — it is still a real answer, and it is the only
+      // answer these rows have.
+      if (r.evidenceTier === 'ai') return 3;
       const thin = r.evidenceTier !== 'confident';
       if (thin && (r.roiPercent ?? 0) >= 200 && (r.soldCompCount ?? 0) < 4) return 2;
       return thin ? 1 : 0;
@@ -4883,7 +4901,10 @@
     // be read the same way as one backed by twenty. See LocalArbitrageAnalyzer.GradeEvidence.
     // Only ever applied to a figure that exists — a dash has nothing to hedge, and hedging it
     // would put a warning on the one row that already says plainly it couldn't be priced.
-    const guessed = row.evidenceTier === 'low' && row.ebayExpectedSale != null;
+    // Two different unproven prices, dimmed the same way and labelled differently: 'low' is a
+    // price off comps too thin to trust, 'ai' is a price with no comps behind it at all. Both are
+    // guesses; only one of them has sold listings underneath it.
+    const guessed = (row.evidenceTier === 'low' || row.evidenceTier === 'ai') && row.ebayExpectedSale != null;
 
     // ROI lost its column but not its place: the board is ranked by it, and a ranking key nobody
     // can see is a ranking nobody can check. It rides under the net profit it is derived from,
@@ -5056,7 +5077,10 @@
   function valuationSourceLabel(row) {
     const val = row.valuation;
     if (!val || !val.sourceLabel) return '';
-    const tier = val.confidence === 'confident' ? 'ok' : val.confidence === 'low' ? 'weak' : 'none';
+    const tier = val.confidence === 'confident' ? 'ok'
+      : val.confidence === 'low' ? 'weak'
+      : val.confidence === 'ai' ? 'ai'
+      : 'none';
     return `<span class="val-src val-src-${tier}" title="${esc(val.note || '')}">${esc(val.sourceLabel)}</span>`;
   }
 
@@ -5173,7 +5197,14 @@
   // fault; with it, it reads as the warning it is. Returns the chip alone — the caller decides
   // whether it goes on its own line under a figure or into the stack beside the title.
   function estimateFlag(row) {
-    if (row.evidenceTier !== 'low' || row.ebayExpectedSale == null) return '';
+    if (row.ebayExpectedSale == null) return '';
+    // The third pricing tier, named rather than lumped in with thin comps. A seller who reads
+    // "estimate — too few comps" goes looking for more sold listings; a seller who reads this one
+    // knows there were none, and that the number is the model's read of the wider market.
+    if (row.evidenceTier === 'ai') {
+      return `<span class="fb-arb-estimate-flag is-ai" title="${esc(row.evidenceNote)}">AI estimate — no sold comps</span>`;
+    }
+    if (row.evidenceTier !== 'low') return '';
     const why = row.identityVerified === false
       ? 'no comp matches this model'
       : `too few comps (${(row.pricedCompCount || 0) + (row.terapeakCompCount || 0)})`;

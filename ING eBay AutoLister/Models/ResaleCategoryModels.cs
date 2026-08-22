@@ -117,7 +117,7 @@ public class ResaleValuation
     /// <summary>What that search asks for — "2011 Toyota Tundra", not the seller's ad copy.</summary>
     public string LookupQuery { get; set; } = "";
 
-    public bool HasPrice => Status == ValuationStatuses.Comps;
+    public bool HasPrice => Status is ValuationStatuses.Comps or ValuationStatuses.AiEstimate;
 }
 
 public static class ValuationStatuses
@@ -126,6 +126,13 @@ public static class ValuationStatuses
     public const string Comps = "comps";
     /// <summary>No usable comps for this KIND of thing. The row shows dashes and a search link.</summary>
     public const string Manual = "manual";
+    /// <summary>
+    /// Priced by the model, because nothing else could. The third and last tier of the pricing
+    /// chain — live sold comps, then the stored comps database, then this. It is a real number and
+    /// it is not evidence: it can never carry a green badge and it is filtered out by "only prices
+    /// backed by real sold comps". A number the seller can argue with beats a dash.
+    /// </summary>
+    public const string AiEstimate = "ai";
 }
 
 /// <summary>
@@ -139,6 +146,13 @@ public static class LocalArbitrageEvidence
     public const string Confident = "confident";
     public const string Low = "low";
     public const string None = "none";
+    /// <summary>
+    /// Priced by the model, off the wider resale market, because no sold comp matched at all.
+    /// Its own tier rather than <see cref="Low"/> so the board can say WHICH kind of guess it is:
+    /// "thin comps" and "no comps, the AI's read of what this fetches" send a seller to do
+    /// completely different things next.
+    /// </summary>
+    public const string Ai = "ai";
 }
 
 /// <summary>One category as the picker sees it.</summary>
