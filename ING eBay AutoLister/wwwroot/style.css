@@ -18124,6 +18124,33 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   text-align: center; padding: 24px;
   color: var(--muted); font-size: var(--fs-sm); line-height: 1.6;
 }
+/* ── The viewfinder with nothing in it yet ──────────────────────────────────
+   A 4:3 stage is right once a picture is arriving; before that it is 700px of black with a
+   sentence adrift in the middle of it. When the invitation is showing, the stage drops to a calm
+   band and the invitation is a real block — glyph, heading, one line, and the button that fixes
+   it — stacked on the centre line. */
+.pb-stage:has(> .pb-stream-empty:not([style*="display: none"])) {
+  aspect-ratio: auto;
+  min-height: 0;
+  height: clamp(260px, 34vh, 360px);
+}
+.pb-empty-inner {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; max-width: 44ch;
+}
+.pb-empty-glyph {
+  width: 44px; height: 44px;
+  fill: none; stroke: var(--gold); stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .9;
+}
+.pb-empty-title {
+  margin: 0;
+  font-size: var(--fs-lg); font-weight: 800; letter-spacing: -.01em;
+  color: var(--on-dark, #ecf5f5);
+}
+.pb-empty-line { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+.pb-empty-btn { margin-top: 4px; }
 /* Rule of thirds. Two gradients rather than four elements — the lines have to sit over a
    photograph without ever being mistaken for part of it. */
 .pb-grid {
@@ -18354,13 +18381,9 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   line-height: 1.6;
   padding: 32px;
 }
-#photobox-section .pb-stream-empty::before {
-  content: "📷";
-  font-size: 42px;
-  line-height: 1;
-  opacity: .4;
-  filter: grayscale(1);
-}
+/* The emoji camera that used to stand in for an icon here is gone: .pb-empty-glyph is a real
+   stroked SVG on the same grid as the rest of the icon set, and the two of them together drew
+   two cameras stacked on top of each other. */
 
 /* Zoom and the shutter are one instrument, so they read as two halves of a deck under the
    stage rather than two rows of loose controls on the page background. */

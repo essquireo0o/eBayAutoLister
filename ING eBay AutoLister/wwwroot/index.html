@@ -2801,7 +2801,23 @@
                   <span class="pb-chip pb-chip-zoom hidden" id="pb-zoom-chip">1.0×</span>
                 </div>
                 <div class="pb-countdown hidden" id="pb-countdown" aria-live="assertive"></div>
-                <div class="pb-stream-empty" id="pb-stream-empty">No camera yet — press 📱 Use my phone and scan the code.</div>
+                <!-- The empty viewfinder. It used to be one dim line of 13px text floating in a
+                     700px black rectangle, which is a lot of screen spent saying "nothing here".
+                     It is a centred invitation now, with the action on it rather than only over in
+                     the rail — the middle of the picture is where somebody is already looking.
+                     #pb-stream-empty keeps its id: app.js writes the state line into
+                     #pb-empty-line and toggles this whole block, as it always did. -->
+                <div class="pb-stream-empty" id="pb-stream-empty">
+                  <div class="pb-empty-inner">
+                    <svg class="pb-empty-glyph" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 8.5h3.1l1.5-2.2h6.8l1.5 2.2H20a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1v-8a1 1 0 011-1z"/>
+                      <circle cx="12" cy="13.5" r="3.4"/>
+                    </svg>
+                    <p class="pb-empty-title">Your phone is the camera</p>
+                    <p class="pb-empty-line" id="pb-empty-line">Scan the code with your phone, allow the camera, and leave that page open.</p>
+                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">📱 Use my phone</button>
+                  </div>
+                </div>
               </div>
 
               <!-- Zoom. The phone does it: its lens where the lens will move, a crop of a

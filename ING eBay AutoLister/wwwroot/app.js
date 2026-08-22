@@ -7069,6 +7069,10 @@
   function pbBtnLabel(id, text) {
     const b = $(id);
     if (b && b.firstChild) b.firstChild.nodeValue = text;
+    // The viewfinder carries its own copy of the phone button, because the middle of the picture is
+    // where somebody is already looking. Two buttons that do one thing must never disagree about
+    // what that thing currently is.
+    if (id === 'pb-phone') pbBtnLabel('pb-phone-stage', text);
   }
 
   function pbSetupStatus(text, kind) {
@@ -7084,7 +7088,13 @@
     const img = $('pb-stream');
     const empty = $('pb-stream-empty');
     if (img) { img.src = ''; img.style.display = 'none'; }
-    if (empty) { empty.style.display = ''; empty.textContent = message; }
+    // The message goes in the line INSIDE the invitation. Writing it to the block's textContent —
+    // which is what this did — replaced the icon, the heading and the button with a sentence.
+    if (empty) {
+      empty.style.display = '';
+      const line = $('pb-empty-line');
+      if (line) line.textContent = message; else empty.textContent = message;
+    }
     ['pb-snap', 'pb-burst'].forEach(id => $(id)?.setAttribute('disabled', ''));
     ['pb-live-chip', 'pb-res-chip', 'pb-zoom-chip'].forEach(id => $(id)?.classList.add('hidden'));
     const status = $('pb-cam-status');
@@ -7124,7 +7134,7 @@
       pbBtnLabel('pb-phone', '📱 Use my phone');
       pbPhoneLive = false;
       pbStopPhonePreview();
-      pbNoCamera('No camera yet — press 📱 Use my phone and scan the code.');
+      pbNoCamera('Scan the code with your phone, allow the camera, and leave that page open.');
       return;
     }
 
@@ -7470,6 +7480,7 @@
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
     $('pb-phone')?.addEventListener('click', pbTogglePhone);
+    $('pb-phone-stage')?.addEventListener('click', pbTogglePhone);
     $('pb-snap')?.addEventListener('click', pbSnap);
     $('pb-burst')?.addEventListener('click', pbBurst);
     $('pb-ai')?.addEventListener('click', pbAiListing);
