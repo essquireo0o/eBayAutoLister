@@ -7179,6 +7179,14 @@
                 lens: 'wide', facing: 'environment', level: false };
   let pbShooting = false;      // one shutter at a time — burst and space bar share it
   let pbCountdown = null;
+  const pbShotPlan = [
+    { name: 'Hero', title: 'Hero angle', tip: 'Fill the frame with the item at its most recognizable angle.' },
+    { name: 'Back', title: 'Back view', tip: 'Show the full rear clearly, including ports, fasteners, or closures.' },
+    { name: 'Left', title: 'Left side', tip: 'Keep the item square and show its full depth from the left.' },
+    { name: 'Right', title: 'Right side', tip: 'Match the opposite angle so buyers can inspect both sides.' },
+    { name: 'Label', title: 'Label or ID', tip: 'Move close enough to make the model, size, serial, or hallmark readable.' },
+    { name: 'Detail', title: 'Condition detail', tip: 'Show wear, damage, texture, and everything a buyer should know.' }
+  ];
 
   function showPhotoBoxSection() {
     hideOverlaySections();
@@ -7187,6 +7195,7 @@
     markWorkspaceTabOpen('photobox');
     // A phone left connected from earlier keeps working across a tab switch, so the screen asks
     // what is actually happening rather than assuming it starts cold.
+    pbRenderShotPlan();
     pbPhoneRefresh();
     if (!pbPhonePoll) pbPhonePoll = setInterval(pbPhoneRefresh, 2000);
   }
@@ -7223,6 +7232,7 @@
     }
     ['pb-snap', 'pb-burst'].forEach(id => $(id)?.setAttribute('disabled', ''));
     ['pb-live-chip', 'pb-res-chip', 'pb-zoom-chip'].forEach(id => $(id)?.classList.add('hidden'));
+    $('pb-connect-dot')?.classList.remove('is-live');
     const status = $('pb-cam-status');
     if (status) status.textContent = 'No camera yet.';
   }
@@ -7287,6 +7297,7 @@
 
     if (st.phoneConnected) {
       if (status) status.textContent = 'Your phone is the camera.';
+      $('pb-connect-dot')?.classList.add('is-live');
       ['pb-snap', 'pb-burst'].forEach(id => $(id)?.removeAttribute('disabled'));
       $('pb-live-chip')?.classList.remove('hidden');
       // What the phone is actually capturing, not what the viewfinder shows: the preview is a
@@ -7305,6 +7316,7 @@
       pbShowPhonePreview();
     } else {
       if (status) status.textContent = 'Waiting for the phone…';
+      $('pb-connect-dot')?.classList.remove('is-live');
       $('pb-camera')?.classList.add('hidden');
       pbStopPhonePreview();
       pbNoCamera(st.phoneWasConnected
@@ -7583,11 +7595,41 @@
   }
 
   // ── The session's photographs ────────────────────────────────────────────────
+  function pbRenderShotPlan() {
+    const count = pbSessionSnaps.length;
+    const complete = Math.min(count, pbShotPlan.length);
+    const next = pbShotPlan[Math.min(complete, pbShotPlan.length - 1)];
+    const done = complete >= pbShotPlan.length;
+
+    setText('pb-plan-score', `${complete}/${pbShotPlan.length}`);
+    const progress = $('pb-plan-progress');
+    if (progress) progress.setAttribute('aria-valuenow', String(complete));
+    const fill = $('pb-plan-progress-fill');
+    if (fill) fill.style.width = `${(complete / pbShotPlan.length) * 100}%`;
+
+    setText('pb-next-icon', done ? '✓' : String(complete + 1).padStart(2, '0'));
+    setText('pb-next-shot', done ? 'Coverage complete' : next.title);
+    setText('pb-next-tip', done
+      ? 'You have the core angles buyers expect. Add extras for accessories or more condition detail.'
+      : next.tip);
+    setText('pb-stage-guide', done ? '✓ Core set complete' : `Next · ${next.name}`);
+    setText('pb-plan-note', done
+      ? `${count} photo${count === 1 ? '' : 's'} ready for AI Listing${count > pbShotPlan.length ? ` · ${count - pbShotPlan.length} extra` : ''}.`
+      : `${pbShotPlan.length - complete} recommended shot${pbShotPlan.length - complete === 1 ? '' : 's'} left. Each capture checks off the next angle.`);
+
+    const grid = $('pb-plan-grid');
+    if (grid) grid.innerHTML = pbShotPlan.map((shot, i) => {
+      const state = i < complete ? ' is-done' : i === complete ? ' is-next' : '';
+      return `<div class="pb-plan-step${state}"><span>${i < complete ? '✓' : i + 1}</span><b>${esc(shot.name)}</b></div>`;
+    }).join('');
+  }
+
   function pbRenderFilmstrip() {
     const strip = $('pb-filmstrip');
     const head = $('pb-strip-head');
     if (!strip) return;
     const n = pbSessionSnaps.length;
+    pbRenderShotPlan();
     strip.classList.toggle('hidden', n === 0);
     head?.classList.toggle('hidden', n === 0);
     $('pb-clear')?.classList.toggle('hidden', n === 0);
@@ -7619,7 +7661,7 @@
           <img src="${esc(u)}" alt="Photo ${i + 1} of this session" />
           <span class="pb-shot-hint">✎ Edit</span>
         </button>
-        <span class="pb-shot-n">${i + 1}</span>
+        <span class="pb-shot-n">${i + 1} · ${esc(pbShotPlan[i]?.name || 'Extra')}</span>
         <button type="button" class="pb-shot-x" data-act="drop"
                 title="Remove Photo ${i + 1} from this listing. The file stays in your Photo Library."
                 aria-label="Remove photo ${i + 1} from this listing">&times;</button>

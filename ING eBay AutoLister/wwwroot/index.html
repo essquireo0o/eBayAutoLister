@@ -2775,7 +2775,8 @@
             <button id="pb-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Photo Box</div>
-              <h2>📷 Photo Box Camera</h2>
+              <h2>Capture studio</h2>
+              <p class="pb-header-sub">Build a complete, buyer-ready photo set without leaving your listing workflow.</p>
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
@@ -2798,6 +2799,7 @@
                 <div class="pb-stage-chips">
                   <span class="pb-chip pb-chip-live hidden" id="pb-live-chip">● Live</span>
                   <span class="pb-chip hidden" id="pb-res-chip"></span>
+                  <span class="pb-chip pb-chip-guide" id="pb-stage-guide">Next · Hero</span>
                   <span class="pb-chip pb-chip-zoom hidden" id="pb-zoom-chip">1.0×</span>
                 </div>
                 <div class="pb-countdown hidden" id="pb-countdown" aria-live="assertive"></div>
@@ -2964,8 +2966,37 @@
 
             <!-- The camera itself: how to connect it, and what it is doing. -->
             <aside class="pb-rail">
+              <div class="pb-rail-card pb-shot-plan" aria-labelledby="pb-plan-title">
+                <div class="pb-plan-head">
+                  <div>
+                    <div class="pb-card-eyebrow">Listing photo set</div>
+                    <h3 id="pb-plan-title">Six shots. Zero guesswork.</h3>
+                  </div>
+                  <strong class="pb-plan-score" id="pb-plan-score">0/6</strong>
+                </div>
+                <div class="pb-plan-progress" role="progressbar" aria-label="Recommended photo coverage" aria-valuemin="0" aria-valuemax="6" aria-valuenow="0" id="pb-plan-progress">
+                  <span id="pb-plan-progress-fill"></span>
+                </div>
+                <div class="pb-next-shot">
+                  <span class="pb-next-icon" id="pb-next-icon">01</span>
+                  <div>
+                    <span>Up next</span>
+                    <strong id="pb-next-shot">Hero angle</strong>
+                    <small id="pb-next-tip">Fill the frame with the item at its most recognizable angle.</small>
+                  </div>
+                </div>
+                <div class="pb-plan-grid" id="pb-plan-grid" aria-label="Recommended shot sequence"></div>
+                <p class="pb-plan-note" id="pb-plan-note">Each photo you take checks off the next angle automatically.</p>
+              </div>
+
               <div class="pb-rail-card">
-                <div id="pb-cam-status" class="pb-rail-status">No camera yet.</div>
+                <div class="pb-connect-head">
+                  <span class="pb-connect-dot" id="pb-connect-dot" aria-hidden="true"></span>
+                  <div>
+                    <span class="pb-card-eyebrow">Camera connection</span>
+                    <div id="pb-cam-status" class="pb-rail-status">No camera yet.</div>
+                  </div>
+                </div>
                 <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Use my phone</button>
                 <div id="pb-phone-panel" class="pb-phone-panel hidden">
                   <div class="pb-phone-qr" id="pb-phone-qr"></div>
@@ -2985,24 +3016,23 @@
                 </div>
               </div>
 
-              <div class="pb-rail-card pb-tips">
-                <h3>Photographs that sell</h3>
-                <ul>
-                  <li><b>Light on the item, never in the lens.</b> A lamp behind the phone, not behind the product.</li>
-                  <li><b>Fill the frame.</b> Zoom until the item touches the edges — eBay's thumbnail is small.</li>
-                  <li><b>Shoot the flaws too.</b> A photographed scratch is a returned item that never happens.</li>
-                  <li><b>Six angles beats one hero shot:</b> front, back, both sides, the label, the wear.</li>
-                  <li><b>Portrait is for the first photo only.</b> It blurs the room behind the product.
-                      The other five should show the item plainly — a buyer inspecting a scratch does
-                      not want depth of field.</li>
-                </ul>
-                <p class="pb-shortcuts"><b>Keyboard shortcuts</b><br>
-                  <kbd>space</kbd> take the photo<br>
-                  <kbd>b</kbd> burst of three<br>
-                  <kbd>g</kbd> grid on or off<br>
-                  <kbd>f</kbd> full screen &nbsp;<kbd>esc</kbd> leave it<br>
-                  <kbd>t</kbd> the phone’s light</p>
-              </div>
+              <details class="pb-rail-card pb-tips">
+                <summary><span>Pro photo playbook</span><small>Lighting, framing & shortcuts</small></summary>
+                <div class="pb-tips-body">
+                  <ul>
+                    <li><b>Light the item, never the lens.</b> Put the lamp behind the phone.</li>
+                    <li><b>Fill the frame.</b> eBay thumbnails are small, so make the item unmistakable.</li>
+                    <li><b>Show every flaw.</b> Honest detail shots prevent avoidable returns.</li>
+                    <li><b>Use Portrait once.</b> Style the hero image; keep inspection angles crisp and plain.</li>
+                  </ul>
+                  <p class="pb-shortcuts"><b>Keyboard shortcuts</b><br>
+                    <kbd>space</kbd> take the photo<br>
+                    <kbd>b</kbd> burst of three<br>
+                    <kbd>g</kbd> grid on or off<br>
+                    <kbd>f</kbd> full screen &nbsp;<kbd>esc</kbd> leave it<br>
+                    <kbd>t</kbd> the phone’s light</p>
+                </div>
+              </details>
             </aside>
           </div>
         </div>
