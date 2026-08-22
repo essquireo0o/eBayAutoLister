@@ -7237,14 +7237,47 @@
     if (status) status.textContent = 'No camera yet.';
   }
 
-  // While the phone is the camera the viewfinder is the phone's own frames, pulled once a second.
-  // A frame is loaded into a probe image first so a slow or failed fetch never blanks the picture
-  // already on screen — a viewfinder that flickers is a viewfinder nobody trusts.
+  // While the phone is the camera the viewfinder is the phone's own frames, pushed down one open
+  // connection: /api/photobox/phone/stream is multipart/x-mixed-replace, so this <img> repaints
+  // itself every time a frame lands and no JavaScript runs per frame at all.
+  //
+  // It used to be a setInterval fetching a JPEG once a second into a probe image. That cost a
+  // request per frame, re-downloaded bytes the browser often already had, and — the part that
+  // mattered — added its own second of delay on top of the second the phone was already waiting.
+  // Aiming a camera through two unsynchronised one-second timers is not possible, and that is
+  // what "really really slow" was.
+  //
+  // The fallback is the old path, not an error message: if the stream cannot be opened (an
+  // <img> is the only place multipart is still supported, and a browser could drop it), a
+  // once-a-second poll is a poor viewfinder and an infinitely better one than a blank box.
   function pbShowPhonePreview() {
     if (pbPhonePreview) return;
     const img = $('pb-stream'), empty = $('pb-stream-empty');
+    if (!img) return;
+
+    const show = () => {
+      img.style.display = 'block';
+      if (empty) empty.style.display = 'none';
+    };
+
+    // A stream that never delivers a first frame has to fall back, and the only signal for that
+    // is silence — so the fallback is armed on a timer and disarmed by the first repaint.
+    let started = false;
+    img.onload = () => { started = true; show(); };
+    img.onerror = () => { if (!started) pbPollPhonePreview(); };
+    img.src = '/api/photobox/phone/stream?t=' + Date.now();
+    pbPhonePreview = { stream: img, guard: setTimeout(() => { if (!started) pbPollPhonePreview(); }, 6000) };
+  }
+
+  // The old once-a-second path, kept for when the stream cannot run. A frame is loaded into a
+  // probe image first so a slow or failed fetch never blanks the picture already on screen — a
+  // viewfinder that flickers is a viewfinder nobody trusts.
+  function pbPollPhonePreview() {
+    const img = $('pb-stream'), empty = $('pb-stream-empty');
+    if (!img || pbPhonePreview?.timer) return;
+    if (pbPhonePreview?.guard) clearTimeout(pbPhonePreview.guard);
+
     const tick = () => {
-      if (!img) return;
       const probe = new Image();
       probe.onload = () => {
         img.src = probe.src;
@@ -7254,11 +7287,20 @@
       probe.src = '/api/photobox/phone/preview?t=' + Date.now();
     };
     tick();
-    pbPhonePreview = setInterval(tick, 1000);
+    pbPhonePreview = { timer: setInterval(tick, 1000) };
   }
 
   function pbStopPhonePreview() {
-    if (pbPhonePreview) { clearInterval(pbPhonePreview); pbPhonePreview = null; }
+    if (!pbPhonePreview) return;
+    if (pbPhonePreview.timer) clearInterval(pbPhonePreview.timer);
+    if (pbPhonePreview.guard) clearTimeout(pbPhonePreview.guard);
+    // The connection is only closed by the <img> letting go of it. Left as it was, the server
+    // would keep a request open and keep writing frames into a picture nobody is looking at.
+    if (pbPhonePreview.stream) {
+      pbPhonePreview.stream.onload = pbPhonePreview.stream.onerror = null;
+      pbPhonePreview.stream.removeAttribute('src');
+    }
+    pbPhonePreview = null;
   }
 
   function pbRenderPhone(st) {

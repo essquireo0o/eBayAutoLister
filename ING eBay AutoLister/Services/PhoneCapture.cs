@@ -122,6 +122,44 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     // a preview is not a photograph and has no business in the photo library.
     private byte[]? _preview;
     private DateTimeOffset _previewAt;
+    // Which frame this is. A viewfinder reader holds the number of the frame it already drew, so
+    // it can be handed the NEXT one the moment it exists instead of asking whether there is one.
+    private long _previewSeq;
+    private readonly Signal _previewReady = new();
+
+    // ── Why anything here waits on a signal rather than a timer ──────────────────────────────
+    //
+    // Every wait in this file used to be a sleep: the phone's command poll woke every 150ms to
+    // ask whether the shutter had been pressed, the shutter woke every 120ms to ask whether a
+    // photograph had arrived, and the viewfinder was two independent one-second timers — one on
+    // the phone deciding when to send a frame, one on the desktop deciding when to ask for one.
+    // Those numbers are not the cost of the network; they are the cost of asking. Stacked, they
+    // put a viewfinder frame on the screen up to two seconds after the lens saw it, which is not
+    // a slow camera, it is a camera you cannot aim.
+    //
+    // A signal costs nothing while nothing is happening and returns in microseconds when it is.
+    // The rule for using one correctly: take the waiter BEFORE reading the state you are waiting
+    // on. Take it after and a change that lands in between is a change you wait a full timeout to
+    // hear about — the bug this shape exists to prevent.
+    private sealed class Signal
+    {
+        private TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The task to await. Take this before checking what you are waiting for.</summary>
+        public Task Waiter => Volatile.Read(ref _tcs).Task;
+
+        /// <summary>Releases everyone waiting, and arms the next wait.</summary>
+        public void Set() =>
+            Interlocked.Exchange(ref _tcs, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                       .TrySetResult();
+    }
+
+    // Woken by anything the phone's command poll is sitting there waiting for: the shutter, a
+    // recording, a zoom nudge, a change of lens.
+    private readonly Signal _commandReady = new();
+    // Woken when a photograph lands, so the desktop's Snap returns on the upload rather than on
+    // the next tick of a poll.
+    private readonly Signal _shotArrived = new();
     // Qualified: the desktop build also has WinForms in scope, and its Timer is a different animal.
     private System.Threading.Timer? _idleSweep;
 
@@ -155,6 +193,39 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
         _preview is { } p && DateTimeOffset.UtcNow - _previewAt < TimeSpan.FromSeconds(15) ? p : null;
+
+    /// <summary>
+    /// The first viewfinder frame newer than <paramref name="afterSeq"/>, waited for rather than
+    /// polled for. Null when none arrives inside <paramref name="timeout"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets the desktop hold one open connection and be written to at the phone's
+    /// own frame rate. The timeout exists only so a stream over a phone that has been put in a
+    /// pocket can notice and say so; it is not a polling interval, and nothing is lost by making
+    /// it long.
+    /// </remarks>
+    public async Task<(byte[] Frame, long Seq)?> NextPreviewAsync(
+        long afterSeq, TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!ct.IsCancellationRequested)
+        {
+            // Before the read, always — see Signal.
+            var waiter = _previewReady.Waiter;
+
+            var seq = Interlocked.Read(ref _previewSeq);
+            if (seq != afterSeq && LatestPreview() is { } frame) return (frame, seq);
+
+            var left = deadline - DateTimeOffset.UtcNow;
+            if (left <= TimeSpan.Zero) return null;
+
+            using var wake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var slept = Task.Delay(left, wake.Token);
+            await Task.WhenAny(waiter, slept).ConfigureAwait(false);
+            wake.Cancel();   // stops the timer the moment the signal won the race
+        }
+        return null;
+    }
 
     public Status Snapshot()
     {
@@ -277,6 +348,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         var before = _shots.Count;
         var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _shutter = pending;
+        _commandReady.Set();   // the phone is holding a poll open; this is what it was waiting for
 
         // The phone's poll completes the shutter task; the upload that follows adds to _shots.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -287,8 +359,17 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             while (_shots.Count == before)
             {
                 deadline.Token.ThrowIfCancellationRequested();
-                await Task.Delay(120, deadline.Token);
-                if (DateTimeOffset.UtcNow - start > TimeSpan.FromSeconds(28)) break;
+                // Taken before the count is re-read at the top of the loop, so an upload that
+                // lands mid-iteration is not one this wait sleeps through. See Signal.
+                var landed = _shotArrived.Waiter;
+                if (_shots.Count != before) break;
+
+                var left = TimeSpan.FromSeconds(28) - (DateTimeOffset.UtcNow - start);
+                if (left <= TimeSpan.Zero) break;
+
+                using var wake = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+                await Task.WhenAny(landed, Task.Delay(left, wake.Token)).ConfigureAwait(false);
+                wake.Cancel();
             }
         }
         catch (OperationCanceledException)
@@ -310,6 +391,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             return "No phone is holding the camera page open.";
         if (_recording) return null;
         _command = "record-start";
+        _commandReady.Set();
         _recording = true;
         return null;
     }
@@ -319,6 +401,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     {
         if (!_recording) return;
         _command = "record-stop";
+        _commandReady.Set();
         _recording = false;
     }
 
@@ -360,6 +443,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         if (req.Level is { } lv) _level = lv;
 
         _settingsSeq++;
+        // A zoom nudge, a lens change or a torch has to reach the lens now. The poll is already
+        // open and waiting; this is what ends its wait.
+        _commandReady.Set();
         return Snapshot();
 
         // A value the desktop invented is dropped rather than stored: the phone would not know
@@ -412,9 +498,16 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             if (!Ok(token)) return Results.NotFound();
             _lastSeen = DateTimeOffset.UtcNow;
             _phoneEverConnected = true;
-            var waited = 0;
-            while (waited < 8000)
+            // Held open until there is something to say, then answered at once. It used to wake
+            // ten times a second to ask itself the same three questions, which put up to 150ms
+            // between a press of Snap and the phone hearing about it — on top of the round trip.
+            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(25);
+            while (!ct.IsCancellationRequested)
             {
+                // Before the reads below, always — a command that lands between the read and the
+                // wait must not be one this poll sleeps through. See Signal.
+                var waiter = _commandReady.Waiter;
+
                 if (_shutter is { Task.IsCompleted: false } s)
                 {
                     s.TrySetResult(true);
@@ -432,8 +525,15 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                 // out. The phone tells us which settings it is already using.
                 if (seq is { } known && known != _settingsSeq)
                     return Results.Ok(Payload(false, ""));
-                await Task.Delay(150, ct);
-                waited += 150;
+
+                var left = deadline - DateTimeOffset.UtcNow;
+                if (left <= TimeSpan.Zero) break;
+
+                // The timeout is not a polling interval — it exists so the phone re-announces
+                // itself now and then, which is how _lastSeen knows the page is still open.
+                using var wake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                await Task.WhenAny(waiter, Task.Delay(left, wake.Token)).ConfigureAwait(false);
+                wake.Cancel();
             }
             return Results.Ok(Payload(false, ""));
         });
@@ -504,7 +604,16 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             _phoneEverConnected = true;
             using var ms = new MemoryStream();
             await req.Body.CopyToAsync(ms);
-            if (ms.Length > 500) { _preview = ms.ToArray(); _previewAt = DateTimeOffset.UtcNow; }
+            if (ms.Length > 500)
+            {
+                _preview = ms.ToArray();
+                _previewAt = DateTimeOffset.UtcNow;
+                Interlocked.Increment(ref _previewSeq);
+                // Straight out to whoever is watching. This is the whole viewfinder path now:
+                // lens -> phone POST -> this line -> the desktop's open stream, with no timer
+                // anywhere between them.
+                _previewReady.Set();
+            }
             return Results.Ok();
         });
 
@@ -518,6 +627,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             if (bytes.Length < 2000) return Results.BadRequest(new { error = "empty frame" });
             var url = await photos.SavePhotoAsync(PhotoLibrary.PhotoBoxFolder, bytes, "jpg");
             _shots.Add(url);
+            _shotArrived.Set();
             log.Add("Info", "Phone camera photo", url);
             return Results.Ok(new { url });
         });
@@ -1187,24 +1297,49 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           } catch (e) { /* a frame that will not develop is still a photograph */ }
         }
 
-        // The desktop's viewfinder. Small and cheap on purpose — this runs once a second all the
-        // time the page is open, and it is only there so the person at the computer can see what
-        // they are about to photograph. The real frame, at full sensor resolution, is taken by
-        // shoot() and never goes through here.
+        // The desktop's viewfinder — the picture the person at the computer aims by. The real
+        // frame, at full sensor resolution, is taken by shoot() and never goes through here.
+        //
+        // WHY THIS IS NOT ON A TIMER. It used to sleep a flat second between frames, and the
+        // desktop asked for a frame on its own unsynchronised second, so a picture reached the
+        // screen up to two seconds after the lens saw it and moved once a second when it got
+        // there. Nobody can aim a camera through that: you move the phone, wait, and discover
+        // where it was pointing a moment ago.
+        //
+        // So the loop is paced by the link itself. Send a frame, wait for the send to finish,
+        // send the next one. On a phone and a desk on the same wifi that settles at 15-25 frames
+        // a second; on a slow link it settles wherever the link can carry, which is the right
+        // answer at both ends and needs no number chosen in advance. The only fixed figure is a
+        // floor between frames, so a fast link cannot spend the phone's battery encoding frames
+        // faster than a screen can show them.
+        //
+        // requestAnimationFrame is deliberately not used: it stops in a backgrounded tab, and a
+        // phone propped up as a camera is very often a phone the person is not looking at.
+        const MIN_FRAME_MS = 40;              // 25fps ceiling — past this is heat, not smoothness
         const pv = document.createElement('canvas');
+        const pctx = pv.getContext('2d', { alpha: false, desynchronized: true });
         async function preview() {
+          let lastFrame = -1;
           while (running) {
+            const began = performance.now();
             try {
-              if (v.videoWidth) {
+              // A frame the camera has not redrawn yet is the frame already on the desktop's
+              // screen. Encoding and sending it again costs a JPEG and a request to say nothing.
+              const stamp = (v.currentTime * 1000) | 0;
+              if (v.videoWidth && stamp !== lastFrame) {
+                lastFrame = stamp;
                 const q = window_();
                 const w = 640, h = Math.round(q.sh * (640 / q.sw));
-                pv.width = w; pv.height = h;
-                pv.getContext('2d').drawImage(v, q.sx, q.sy, q.sw, q.sh, 0, 0, w, h);
-                const b = await new Promise(r => pv.toBlob(r, 'image/jpeg', 0.55));
+                if (pv.width !== w || pv.height !== h) { pv.width = w; pv.height = h; }
+                pctx.drawImage(v, q.sx, q.sy, q.sw, q.sh, 0, 0, w, h);
+                const b = await new Promise(r => pv.toBlob(r, 'image/jpeg', 0.5));
+                // Awaited, so the next frame is not encoded until this one is off the phone:
+                // frames queued behind a slow link are frames that arrive already wrong.
                 if (b) await fetch('/p/' + TOKEN + '/preview', { method: 'POST', body: b });
               }
             } catch (e) { /* a dropped preview frame is not worth a message */ }
-            await new Promise(r => setTimeout(r, 1000));
+            const spent = performance.now() - began;
+            if (spent < MIN_FRAME_MS) await new Promise(r => setTimeout(r, MIN_FRAME_MS - spent));
           }
         }
 

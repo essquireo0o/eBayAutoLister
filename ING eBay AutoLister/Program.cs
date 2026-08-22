@@ -9285,6 +9285,65 @@ app.MapGet("/api/photobox/phone/preview", (PhoneCapture phone) =>
         : Results.File(frame, "image/jpeg");
 });
 
+// The viewfinder, pushed rather than asked for.
+//
+// One request, held open, written to every time the phone sends a frame — the oldest trick in the
+// IP-camera book (multipart/x-mixed-replace) and the right one here, because an <img> pointed at
+// it renders each part as it lands with no JavaScript in the path at all. What it replaces was a
+// setInterval asking "is there a new frame" once a second: a request per frame, a fresh JPEG
+// decode of bytes the browser very often already had, and a whole second of latency added to
+// whatever the phone's own timer had already cost.
+//
+// The single-viewer assumption is deliberate. This is a desktop app with one window on one
+// machine; a second reader would be a second copy of the same frames, and there is no second
+// reader to be had.
+app.MapGet("/api/photobox/phone/stream", async (PhoneCapture phone, HttpContext http, CancellationToken ct) =>
+{
+    if (PhotoBoxHostedRefusal() is not null) { http.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+
+    const string boundary = "ingframe";
+    http.Response.ContentType = $"multipart/x-mixed-replace; boundary={boundary}";
+    // A viewfinder is the one thing on this machine that must never be served from a cache, and
+    // a proxy that buffered it would turn a live picture into a slideshow delivered in batches.
+    http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+
+    var body = http.Response.Body;
+    var seq = 0L;
+    var sinceFrame = System.Diagnostics.Stopwatch.StartNew();
+
+    try
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            // Long, because it is not a poll: it only decides how quickly a phone that has been
+            // put in a pocket is noticed. A part is written the instant a frame arrives.
+            var next = await phone.NextPreviewAsync(seq, TimeSpan.FromSeconds(10), ct);
+            if (next is not { } shot)
+            {
+                // Nothing for ten seconds. The stream stays open — the phone locking its screen
+                // for a moment must not tear the viewfinder down — but if it has been quiet long
+                // enough that the picture on screen is a lie, stop claiming otherwise.
+                if (sinceFrame.Elapsed > TimeSpan.FromSeconds(30)) break;
+                continue;
+            }
+
+            seq = shot.Seq;
+            sinceFrame.Restart();
+
+            var header = System.Text.Encoding.ASCII.GetBytes(
+                $"\r\n--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {shot.Frame.Length}\r\n\r\n");
+            await body.WriteAsync(header, ct);
+            await body.WriteAsync(shot.Frame, ct);
+            // Every frame, explicitly: a frame sitting in a write buffer is a frame that has not
+            // been delivered, and this whole endpoint exists to remove exactly that kind of wait.
+            await body.FlushAsync(ct);
+        }
+    }
+    catch (OperationCanceledException) { /* the window closed or the tab moved on */ }
+    catch (IOException) { /* the browser hung up mid-frame, which is how these end */ }
+});
+
 // Recording is driven from this screen, like the shutter. The phone stops itself at the cap
 // whatever happens here, so a browser closed mid-recording cannot leave it running.
 app.MapPost("/api/photobox/phone/record/start", (PhoneCapture phone) =>
