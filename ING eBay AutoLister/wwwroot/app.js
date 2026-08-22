@@ -7342,25 +7342,46 @@
       pbBtnLabel('pb-ai', n > 1 ? `✨ AI Listing (${n} photos)` : '✨ AI Listing');
     }
 
+    // The picture itself is the button. A photograph you have just taken and are looking at is the
+    // one thing on this screen you obviously want to open, and asking somebody to find the word
+    // "Edit" under it to do that is a step that did not need to exist.
     strip.innerHTML = pbSessionSnaps.map((u, i) => `
       <div class="pb-shot" data-url="${esc(u)}">
-        <img src="${esc(u)}" alt="Photo ${i + 1} of this session" />
+        <button type="button" class="pb-shot-open" data-act="edit"
+                title="Open Photo ${i + 1} in the editor — crop, rotate, adjust, draw, remove the background">
+          <img src="${esc(u)}" alt="Photo ${i + 1} of this session" />
+          <span class="pb-shot-hint">✎ Edit</span>
+        </button>
         <span class="pb-shot-n">${i + 1}</span>
         <div class="pb-shot-tools">
-          <button type="button" data-act="open" title="Open the full-size photo">View</button>
+          <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
           <button type="button" data-act="drop" title="Leave this one off the listing (the file stays in your library)">Drop</button>
         </div>
       </div>`).join('');
 
-    strip.querySelectorAll('.pb-shot-tools button').forEach(btn =>
+    strip.querySelectorAll('[data-act]').forEach(btn =>
       btn.addEventListener('click', () => {
         const shot = btn.closest('.pb-shot');
         const url = shot?.dataset.url || '';
-        if (btn.dataset.act === 'open') window.open(url, '_blank');
+        if (btn.dataset.act === 'edit') pbEditShot(url);
         else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbRenderFilmstrip(); }
         else if (btn.dataset.act === 'bg') pbCutOut(url, shot);
       }));
+  }
+
+  // The edit replaces this photo in the set that goes to the listing. The original is untouched in
+  // the photo library — the editor saves a new file rather than overwriting, for the same reason
+  // Cut out does: a crop that eats the only copy is a photograph destroyed.
+  function pbEditShot(url) {
+    if (!url) return;
+    const i = pbSessionSnaps.indexOf(url);
+    openImageEditor(url, i >= 0 ? `Photo ${i + 1}` : 'Photo', saved => {
+      if (!saved) return;
+      pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? saved : u));
+      pbRenderFilmstrip();
+      addActivity('Photo edited', i >= 0 ? `Photo Box picture ${i + 1}` : 'Photo Box picture');
+    });
   }
 
   // The white background eBay's gallery wants, from the app's own rembg — the photo never leaves
@@ -27598,11 +27619,23 @@
     });
   }
 
-  function openPhotoEditor(slotIndex) {
-    const slot = getPhotoSlot(slotIndex);
-    if (!slot?.classList.contains('has-image')) return;
-    const imgUrl = slot.dataset.url;
-    const label  = `Picture ${slotIndex + 1}`;
+  /**
+   * Opens the full photo editor on any picture in the app, whoever owns it.
+   *
+   * The editor — crop, rotate, adjust, filters, text, shapes, draw, erase, blur, background — has
+   * always been here, but it was reachable from exactly one place: a filled slot on the listing
+   * photo grid. Every other picture in the app was a thumbnail you could look at and delete. This
+   * takes the "which listing slot?" question out of the opener so any screen can hand it a URL and
+   * say what to do with the result.
+   *
+   * @param imgUrl  the picture to edit
+   * @param label   what the editor calls it in its own chrome
+   * @param onSave  given the saved URL. The editor writes the edit to the photo library first and
+   *                only falls back to a data URL if that write fails, so what arrives here is
+   *                normally a real, permanent URL.
+   */
+  function openImageEditor(imgUrl, label, onSave) {
+    if (!imgUrl) return;
 
     // Full-screen iframe overlay — no popup blocker issues
     const overlay = document.createElement('div');
@@ -27614,24 +27647,28 @@
     overlay.appendChild(iframe);
     document.body.appendChild(overlay);
 
+    const close = () => { window.removeEventListener('message', handler); overlay.remove(); };
     const handler = e => {
       if (e.data?.type === 'editor-ready') {
+        // slotIndex is echoed back untouched by the editor; callers that have no slot pass -1 and
+        // read the url instead.
         iframe.contentWindow?.postMessage(
-          { type: 'load-image', url: imgUrl, slotIndex, label }, '*'
+          { type: 'load-image', url: imgUrl, slotIndex: -1, label }, '*'
         );
       }
-      if (e.data?.type === 'photo-editor-save') {
-        window.removeEventListener('message', handler);
-        setPhotoSlotUrl(e.data.slotIndex, e.data.url);
-        addActivity('Photo edited', `Picture ${e.data.slotIndex + 1}`);
-        overlay.remove();
-      }
-      if (e.data?.type === 'photo-editor-cancel') {
-        window.removeEventListener('message', handler);
-        overlay.remove();
-      }
+      if (e.data?.type === 'photo-editor-save') { close(); onSave?.(e.data.url); }
+      if (e.data?.type === 'photo-editor-cancel') close();
     };
     window.addEventListener('message', handler);
+  }
+
+  function openPhotoEditor(slotIndex) {
+    const slot = getPhotoSlot(slotIndex);
+    if (!slot?.classList.contains('has-image')) return;
+    openImageEditor(slot.dataset.url, `Picture ${slotIndex + 1}`, url => {
+      setPhotoSlotUrl(slotIndex, url);
+      addActivity('Photo edited', `Picture ${slotIndex + 1}`);
+    });
   }
 
 })();

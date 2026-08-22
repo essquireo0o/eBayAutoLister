@@ -18180,9 +18180,27 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   width: 132px; height: 100px; object-fit: cover; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: #05171a; display: block;
 }
+/* The thumbnail is a button that opens the editor. It has to look pressable without becoming a
+   second frame around the photograph, so the affordance is a hover overlay rather than a border. */
+.pb-shot-open {
+  display: block; position: relative; padding: 0; border: none;
+  background: none; cursor: zoom-in; width: 132px; border-radius: var(--r-sm);
+}
+.pb-shot-open:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.pb-shot-hint {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: rgba(3, 18, 21, .58); color: #fff;
+  font-size: var(--fs-xs); font-weight: 700; letter-spacing: .02em;
+  border-radius: var(--r-sm);
+  opacity: 0; transition: opacity var(--dur-1);
+}
+.pb-shot-open:hover .pb-shot-hint,
+.pb-shot-open:focus-visible .pb-shot-hint { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .pb-shot-hint { transition: none; } }
 .pb-shot-n {
   position: absolute; top: 4px; left: 4px; background: rgba(3,18,21,.8); color: var(--ink);
   border-radius: 999px; font-size: 10px; padding: 1px 6px;
+  pointer-events: none;   /* the badge sits over the button — it must not swallow the click */
 }
 .pb-shot-tools { display: flex; gap: 4px; margin-top: 4px; }
 .pb-shot-tools button {
