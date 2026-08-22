@@ -9130,12 +9130,14 @@ app.MapPost("/api/photobox/phone/record/stop", (PhoneCapture phone) =>
     return Results.Ok(new { ok = true });
 });
 
-// Zoom and the phone's light. The phone is the camera, so the desktop asks rather than does —
-// and the whole status comes back, so the screen never has to guess what actually stuck.
+// The camera controls: flash, brightness, focus, white balance, lens, front/back, the level.
+// The phone is the camera, so the desktop asks rather than does — and the whole status comes back,
+// so the screen never has to guess what actually stuck. Anything the phone said it cannot do is
+// dropped inside Apply rather than here, in one place, so the two ends cannot disagree about it.
 app.MapPost("/api/photobox/phone/settings", (PhoneSettingsRequest req, PhoneCapture phone) =>
 {
     if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
-    return Results.Ok(phone.Apply(req.Zoom, req.Torch));
+    return Results.Ok(phone.Apply(req));
 });
 
 app.MapPost("/api/photobox/phone/stop", async (PhoneCapture phone) =>
@@ -9366,6 +9368,119 @@ result.save(sys.argv[2], 'PNG')
         // listing is broken.
         var failure = FailureTranslator.Translate(ex, FailureDomain.Photos);
         log.Add("Warning", "Background removal failed", $"{failure.Kind} — {failure.Technical}");
+        return FailureJson(failure);
+    }
+    finally
+    {
+        if (File.Exists(inputFile))  File.Delete(inputFile);
+        if (File.Exists(scriptFile)) File.Delete(scriptFile);
+    }
+});
+
+// ── Portrait mode ────────────────────────────────────────────────────────────────────────────
+// The one iPhone feature a web page genuinely cannot ask the camera for. Portrait on a phone is
+// built from a depth map — two lenses, or a lidar dot projector, disagreeing about how far away
+// each pixel is — and no browser API exposes depth to a web page on any platform. There is no
+// version of this that runs on the phone.
+//
+// So it runs here instead, on the machine that already has a segmentation model: the same rembg
+// cascade the white-background cut-out uses finds the product, and the ORIGINAL frame is blurred
+// and put back behind it. That is what a portrait photograph is — subject sharp, background
+// thrown out of focus — arrived at from a mask rather than from parallax, on the full-resolution
+// frame the phone sent.
+//
+// Deliberately NOT the white-background treatment. That one deletes the room and centres the
+// product on a 1000px square, which is the right photo for the eBay gallery and the wrong one for
+// a hero shot: the blur keeps the desk, the scale and the light, and only stops them competing.
+app.MapPost("/api/photos/portrait", async (RemoveBgRequest req, IWebHostEnvironment env, ActionLog log) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ImageBase64))
+        return Results.BadRequest("ImageBase64 is required");
+
+    var photosDir = Path.Combine(env.ContentRootPath, "generated-photos");
+    Directory.CreateDirectory(photosDir);
+
+    var ext        = (req.MimeType ?? "").Contains("png") ? "png" : "jpg";
+    var inputFile  = Path.Combine(Path.GetTempPath(), $"portrait_in_{Guid.NewGuid():N}.{ext}");
+    var outputFile = Path.Combine(photosDir, $"portrait_{Guid.NewGuid():N}.jpg");
+    var scriptFile = Path.Combine(Path.GetTempPath(), $"portrait_script_{Guid.NewGuid():N}.py");
+
+    try
+    {
+        await File.WriteAllBytesAsync(inputFile, Convert.FromBase64String(req.ImageBase64));
+        await File.WriteAllTextAsync(scriptFile, """
+import sys
+from rembg import remove, new_session
+from PIL import Image, ImageFilter
+
+img = Image.open(sys.argv[1]).convert('RGB')
+
+# The same cascade, and the same reason, as the white-background cut-out: u2net finds the ONE
+# thing a photo is about, and a product laid out with its charger and its manual is three things.
+# birefnet keeps all of them; the two behind it are the safety net for a machine that cannot
+# fetch it. A portrait that blurred the accessories into the background would be worse than no
+# portrait at all — it would be a photograph that hides half of what is in the box.
+cut = None
+for _model in ('birefnet-general', 'isnet-general-use', 'u2net'):
+    try:
+        cut = remove(img.convert('RGBA'), session=new_session(_model)).convert('RGBA')
+        print('rembg model:', _model, file=sys.stderr)
+        break
+    except Exception as _e:
+        print('rembg model', _model, 'unavailable:', _e, file=sys.stderr)
+if cut is None:
+    raise SystemExit('no rembg model could be loaded')
+
+alpha = cut.split()[3]
+
+# A blur radius in pixels means nothing on its own: the same 8px that dissolves a phone snap
+# leaves a 12-megapixel frame looking merely smudged. Scaling it to the short edge makes the
+# effect the same photograph at every resolution.
+short = min(img.size)
+radius = max(6.0, short / 42.0)
+bg = img.filter(ImageFilter.GaussianBlur(radius))
+
+# A real wide aperture darkens the background as well as softening it, because it is further from
+# the light. Without this the blur reads as a mistake; with it, it reads as depth. Kept gentle:
+# the background is context the buyer still wants to see.
+bg = bg.point(lambda p: int(p * 0.90))
+
+# Feather the mask. A segmentation edge is one pixel wide and perfectly hard, and a perfectly
+# hard edge against a soft background is the single thing that makes a fake portrait look fake.
+alpha = alpha.filter(ImageFilter.GaussianBlur(max(1.0, short / 900.0)))
+
+out = Image.composite(img, bg, alpha)
+out.save(sys.argv[2], 'JPEG', quality=94)
+""");
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName               = "python",
+            ArgumentList           = { scriptFile, inputFile, outputFile },
+            RedirectStandardError  = true,
+            UseShellExecute        = false,
+            CreateNoWindow         = true
+        };
+
+        using var proc = System.Diagnostics.Process.Start(psi)!;
+        var stderr     = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        if (proc.ExitCode != 0 || !File.Exists(outputFile))
+            throw new Exception($"portrait failed (exit {proc.ExitCode}): {stderr[..Math.Min(300, stderr.Length)]}");
+
+        var url = $"/generated-photos/{Path.GetFileName(outputFile)}";
+        log.Add("Info", "Portrait blur applied", Path.GetFileName(outputFile));
+        return Results.Ok(new { url });
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        // Same posture as the cut-out: this is a nicety on top of a photograph that is already
+        // good enough to list. A seller whose machine has no Python is told their photo is fine,
+        // not left thinking the camera is broken.
+        var failure = FailureTranslator.Translate(ex, FailureDomain.Photos);
+        log.Add("Warning", "Portrait blur failed", $"{failure.Kind} — {failure.Technical}");
         return FailureJson(failure);
     }
     finally

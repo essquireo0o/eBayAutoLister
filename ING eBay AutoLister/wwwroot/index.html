@@ -2852,6 +2852,96 @@
                 <button id="pb-full" class="btn btn-ghost" type="button" title="Fill the screen with the viewfinder">⛶ Full screen<span class="pb-key">f</span></button>
               </div>
 
+              <!-- ── The camera ────────────────────────────────────────────────────────
+                   Everything a phone camera app puts on its screen, as far as a web page is
+                   allowed to reach the lens. Which is not the same distance on every phone: the
+                   phone reads its own getCapabilities() on arrival and says what it has, and a
+                   row here appears only when it will do something. A dial that does nothing is
+                   worse than a missing dial — the seller turns it, the picture does not change,
+                   and they stop believing the rest of the panel.
+
+                   Brightness and Colour are always here, because when the lens refuses them the
+                   phone applies them to the captured frame instead. The note under each says
+                   which of the two happened, so "the lens did it" and "the pixels were changed"
+                   are never confused — they are not the same photograph. -->
+              <div class="pb-camera hidden" id="pb-camera">
+                <div class="pb-camera-head">
+                  <h3>Camera</h3>
+                  <span class="pb-camera-sub" id="pb-camera-sub"></span>
+                </div>
+
+                <div class="pb-ctl hidden" id="pb-ctl-flash">
+                  <span class="pb-ctl-label">Flash</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-flash="off">Off</button>
+                    <button type="button" class="pb-opt" data-flash="auto"
+                            title="Fires only when the phone can see the shot is dark">Auto</button>
+                    <button type="button" class="pb-opt" data-flash="on">On</button>
+                  </div>
+                  <span class="pb-ctl-why" id="pb-flash-why"></span>
+                </div>
+
+                <div class="pb-ctl" id="pb-ctl-exposure">
+                  <span class="pb-ctl-label">Brightness</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-exposure="-2">−2</button>
+                    <button type="button" class="pb-opt" data-exposure="-1">−1</button>
+                    <button type="button" class="pb-opt" data-exposure="0">Normal</button>
+                    <button type="button" class="pb-opt" data-exposure="1">+1</button>
+                    <button type="button" class="pb-opt" data-exposure="2">+2</button>
+                  </div>
+                  <span class="pb-ctl-why" id="pb-exposure-why"></span>
+                </div>
+
+                <div class="pb-ctl hidden" id="pb-ctl-focus">
+                  <span class="pb-ctl-label">Focus</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-focus="auto">Auto</button>
+                    <button type="button" class="pb-opt" data-focus="macro"
+                            title="Close up — a hallmark, a serial number, a scratch">Macro</button>
+                    <button type="button" class="pb-opt" data-focus="far">Far</button>
+                  </div>
+                  <span class="pb-ctl-why" id="pb-focus-why"></span>
+                </div>
+
+                <div class="pb-ctl" id="pb-ctl-wb">
+                  <span class="pb-ctl-label">Colour</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-wb="auto">Auto</button>
+                    <button type="button" class="pb-opt" data-wb="daylight">Daylight</button>
+                    <button type="button" class="pb-opt" data-wb="tungsten"
+                            title="Under a desk lamp — takes the orange out">Lamp</button>
+                    <button type="button" class="pb-opt" data-wb="cool">Cool</button>
+                    <button type="button" class="pb-opt" data-wb="shade">Shade</button>
+                  </div>
+                  <span class="pb-ctl-why" id="pb-wb-why"></span>
+                </div>
+
+                <div class="pb-ctl hidden" id="pb-ctl-lens">
+                  <span class="pb-ctl-label">Lens</span>
+                  <div class="pb-ctl-opts" id="pb-lens-opts"></div>
+                  <span class="pb-ctl-why">The wide lens sees a whole product from close up.</span>
+                </div>
+
+                <div class="pb-ctl hidden" id="pb-ctl-facing">
+                  <span class="pb-ctl-label">Camera</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-facing="environment">Back</button>
+                    <button type="button" class="pb-opt" data-facing="user">Front</button>
+                  </div>
+                  <span class="pb-ctl-why"></span>
+                </div>
+
+                <div class="pb-ctl" id="pb-ctl-level">
+                  <span class="pb-ctl-label">Level</span>
+                  <div class="pb-ctl-opts">
+                    <button type="button" class="pb-opt" data-level="0">Off</button>
+                    <button type="button" class="pb-opt" data-level="1">On</button>
+                  </div>
+                  <span class="pb-ctl-why">A horizon on the phone's screen. It turns gold when the phone is square to the item.</span>
+                </div>
+              </div>
+
               <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
               <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
 
@@ -2902,6 +2992,9 @@
                   <li><b>Fill the frame.</b> Zoom until the item touches the edges — eBay's thumbnail is small.</li>
                   <li><b>Shoot the flaws too.</b> A photographed scratch is a returned item that never happens.</li>
                   <li><b>Six angles beats one hero shot:</b> front, back, both sides, the label, the wear.</li>
+                  <li><b>Portrait is for the first photo only.</b> It blurs the room behind the product.
+                      The other five should show the item plainly — a buyer inspecting a scratch does
+                      not want depth of field.</li>
                 </ul>
                 <p class="pb-shortcuts"><b>Keyboard shortcuts</b><br>
                   <kbd>space</kbd> take the photo<br>

@@ -7051,6 +7051,10 @@
   let pbSessionSnaps = [];     // photo-library urls from this session, oldest first
   let pbZoom = 1;              // what the phone has been told to do
   let pbZoomSend = null;       // debounce for the slider
+  // What the phone said it can do, and what it has been asked to do. Both come back from every
+  // status tick, so this screen never holds an opinion the phone has not agreed to.
+  let pbCam = { flash: 'off', exposure: 0, focus: 'auto', whiteBalance: 'auto',
+                lens: 'wide', facing: 'environment', level: false };
   let pbShooting = false;      // one shutter at a time — burst and space bar share it
   let pbCountdown = null;
 
@@ -7175,9 +7179,11 @@
       $('pb-torch')?.classList.toggle('hidden', !st.canTorch);
       $('pb-torch')?.classList.toggle('is-on', !!st.torch);
       if (typeof st.zoom === 'number' && Math.abs(st.zoom - pbZoom) > 0.05 && !pbZoomSend) pbApplyZoomUi(st.zoom);
+      pbRenderCamera(st);
       pbShowPhonePreview();
     } else {
       if (status) status.textContent = 'Waiting for the phone…';
+      $('pb-camera')?.classList.add('hidden');
       pbStopPhonePreview();
       pbNoCamera(st.phoneWasConnected
         ? 'The phone stopped sending — wake its screen and the picture comes back.'
@@ -7217,6 +7223,125 @@
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  // ── The camera controls ──────────────────────────────────────────────────────
+  // Drawn from what the phone said it can do, and from nothing else. The phone reads its own
+  // getCapabilities() when it opens the camera and reports it; a row appears here only when the
+  // control on it will do something.
+  //
+  // Two rows are always here — Brightness and Colour — because when the lens refuses them the
+  // phone applies them to the captured frame instead. Which of the two happened is written under
+  // the row every time, because they are not the same photograph: the lens gathers more light,
+  // the canvas only stretches what was already caught, and stretching a dark frame stretches its
+  // noise with it. A seller who is told "the lens did it" can trust the exposure; one who is told
+  // "brightened after the shot" knows to add a lamp.
+  function pbRenderCamera(st) {
+    const panel = $('pb-camera');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+
+    pbCam = {
+      flash: st.flash || 'off',
+      exposure: typeof st.exposure === 'number' ? st.exposure : 0,
+      focus: st.focus || 'auto',
+      whiteBalance: st.whiteBalance || 'auto',
+      lens: st.lens || 'wide',
+      facing: st.facing || 'environment',
+      level: !!st.level
+    };
+
+    // ── Flash ────────────────────────────────────────────────────────────────
+    // The lamp is the one control that genuinely is not there on every phone. Android hands a web
+    // page the LED; iOS Safari does not, and has not for as long as there has been an iOS Safari.
+    // The row still appears on an iPhone with its buttons disabled and the reason written beside
+    // them, because "this phone has no flash a web page can reach" is a fact the seller can act
+    // on — put a lamp behind the phone — and a row that silently vanished tells them nothing.
+    $('pb-ctl-flash')?.classList.remove('hidden');
+    document.querySelectorAll('[data-flash]').forEach(b => {
+      b.disabled = !st.canTorch;
+      b.classList.toggle('is-on', st.canTorch && b.dataset.flash === pbCam.flash);
+    });
+    setText('pb-flash-why', st.canTorch
+      ? (pbCam.flash === 'auto' ? 'Fires only when the phone sees the shot is dark.'
+         : pbCam.flash === 'on' ? 'The lamp fires for every photo, then goes out.'
+         : 'The lamp stays off.')
+      : 'This phone gives a web page no way to its flash — an iPhone never does. Put a lamp behind the phone instead.');
+
+    // ── Brightness ───────────────────────────────────────────────────────────
+    document.querySelectorAll('[data-exposure]').forEach(b =>
+      b.classList.toggle('is-on', Number(b.dataset.exposure) === Math.round(pbCam.exposure)));
+    setText('pb-exposure-why', pbCam.exposure === 0
+      ? 'The camera decides.'
+      : st.canExposure
+        ? 'The lens is exposing for it — a real change in the light it gathers.'
+        : 'This lens will not take an exposure setting, so the phone brightens the photo after the shot. Better light beats this every time.');
+
+    // ── Focus ────────────────────────────────────────────────────────────────
+    $('pb-ctl-focus')?.classList.toggle('hidden', !st.canFocus);
+    document.querySelectorAll('[data-focus]').forEach(b => {
+      b.disabled = b.dataset.focus !== 'auto' && !st.canMacro;
+      b.classList.toggle('is-on', b.dataset.focus === pbCam.focus);
+    });
+    setText('pb-focus-why', st.canTap
+      ? 'Or tap the item on the phone\u2019s own screen to focus there.'
+      : st.canMacro ? 'Macro is for a hallmark, a serial number or a scratch.' : '');
+
+    // ── Colour ───────────────────────────────────────────────────────────────
+    document.querySelectorAll('[data-wb]').forEach(b =>
+      b.classList.toggle('is-on', b.dataset.wb === pbCam.whiteBalance));
+    setText('pb-wb-why', pbCam.whiteBalance === 'auto'
+      ? 'The camera decides. Set it by hand if the photo comes out orange or blue.'
+      : st.canWhiteBalance
+        ? 'The lens is white-balancing for it.'
+        : 'This lens will not take a colour setting, so the phone corrects the photo after the shot.');
+
+    // ── Lens ─────────────────────────────────────────────────────────────────
+    // Only where the phone's zoom range proves it has something to switch between. A single-lens
+    // phone would get one button, which is no button at all.
+    const lenses = (st.lenses || '').split(',').filter(Boolean);
+    const lensRow = $('pb-ctl-lens'), lensOpts = $('pb-lens-opts');
+    if (lensOpts && lenses.length > 1) {
+      lensRow?.classList.remove('hidden');
+      const NAME = { '0.5': ['ultra', '0.5\u00d7'], '1': ['wide', '1\u00d7'], '2': ['tele', '2\u00d7'] };
+      const wanted = lenses.map(k => NAME[k]).filter(Boolean);
+      const signature = wanted.map(w => w[0]).join(',');
+      if (lensOpts.dataset.signature !== signature) {
+        lensOpts.dataset.signature = signature;
+        lensOpts.innerHTML = wanted.map(w =>
+          `<button type="button" class="pb-opt" data-lens="${w[0]}">${w[1]}</button>`).join('');
+      }
+      lensOpts.querySelectorAll('[data-lens]').forEach(b =>
+        b.classList.toggle('is-on', b.dataset.lens === pbCam.lens));
+    } else {
+      lensRow?.classList.add('hidden');
+    }
+
+    // ── Front / back ─────────────────────────────────────────────────────────
+    $('pb-ctl-facing')?.classList.toggle('hidden', !st.canMultiCamera);
+    document.querySelectorAll('[data-facing]').forEach(b =>
+      b.classList.toggle('is-on', b.dataset.facing === pbCam.facing));
+
+    // ── Level ────────────────────────────────────────────────────────────────
+    document.querySelectorAll('[data-level]').forEach(b =>
+      b.classList.toggle('is-on', (b.dataset.level === '1') === pbCam.level));
+
+    setText('pb-camera-sub', st.captureWidth > 0
+      ? `${st.captureWidth}\u00d7${st.captureHeight} \u00b7 controls this phone actually has`
+      : 'Controls this phone actually has');
+  }
+
+  // One way in for every control on the panel. The phone's whole state comes back, so the screen
+  // repaints from what the phone agreed to rather than from what was asked — a setting the phone
+  // refused snaps the button back instead of leaving a lie lit up.
+  async function pbSetCamera(patch) {
+    try {
+      const res = await fetch('/api/photobox/phone/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      if (res.ok) pbRenderCamera(await res.json());
+    } catch { /* the two-second status tick re-syncs whatever stuck */ }
   }
 
   // ── Zoom ─────────────────────────────────────────────────────────────────────
@@ -7366,6 +7491,7 @@
         <div class="pb-shot-tools">
           <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
+          <button type="button" data-act="portrait" title="Portrait — the product stays sharp and the room behind it goes soft. Done on this machine, no upload">Portrait</button>
           <button type="button" data-act="drop" title="Leave this one off the listing (the file stays in your library)">Drop</button>
         </div>
       </div>`).join('');
@@ -7376,7 +7502,8 @@
         const url = shot?.dataset.url || '';
         if (btn.dataset.act === 'edit') pbEditShot(url);
         else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbRenderFilmstrip(); }
-        else if (btn.dataset.act === 'bg') pbCutOut(url, shot);
+        else if (btn.dataset.act === 'bg') pbRework(url, shot, 'remove-bg', 'Cut-out');
+        else if (btn.dataset.act === 'portrait') pbRework(url, shot, 'portrait', 'Portrait');
       }));
   }
 
@@ -7394,11 +7521,25 @@
     });
   }
 
-  // The white background eBay's gallery wants, from the app's own rembg — the photo never leaves
-  // this machine. The cut-out replaces the original in this session's set; the original stays in
-  // the library, because a background removal that eats the only copy is a photograph destroyed.
-  async function pbCutOut(url, shotEl) {
+  // ── The two things worth doing to a product photograph after it is taken ─────
+  // Cut out puts the product on the white background eBay's gallery wants. Portrait keeps the
+  // room and throws it out of focus, which is the iPhone feature no web page can ask a camera
+  // for — portrait on a phone is built from a depth map, and no browser exposes depth on any
+  // platform. Both run on the same local rembg model, so the photo never leaves this machine,
+  // and both take a while: that is a segmentation model, not a filter.
+  //
+  // One function because they differ only in which endpoint they call. Either way the result
+  // REPLACES this photo in the set that goes to the listing while the original stays in the
+  // library — an effect that eats the only copy is a photograph destroyed.
+  const PB_REWORK_WAIT = {
+    'remove-bg': 'Cutting the product out… this takes a few seconds.',
+    'portrait': 'Finding the product and softening the background… this takes a few seconds.'
+  };
+
+  async function pbRework(url, shotEl, endpoint, label) {
     shotEl?.classList.add('is-working');
+    const note = $('pb-snap-note');
+    if (note) { note.classList.remove('hidden'); note.textContent = PB_REWORK_WAIT[endpoint] || 'Working…'; }
     try {
       const blob = await fetch(url).then(r => { if (!r.ok) throw new Error('could not read the photo'); return r.blob(); });
       const b64 = await new Promise((resolve, reject) => {
@@ -7407,18 +7548,19 @@
         fr.onerror = () => reject(new Error('could not encode the photo'));
         fr.readAsDataURL(blob);
       });
-      const res = await fetch('/api/photos/remove-bg', {
+      const res = await fetch('/api/photos/' + endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: b64, mimeType: blob.type || 'image/jpeg' })
       });
       const r = await res.json();
       const out = r.url || r.imageUrl || '';
-      if (!res.ok || !out) throw new Error(r.error || 'the background could not be removed');
+      if (!res.ok || !out) throw new Error(r.error || 'the photo could not be changed');
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? out : u));
       pbRenderFilmstrip();
+      if (note) note.classList.add('hidden');
+      addActivity(label + ' applied', 'Photo Box picture');
     } catch (err) {
-      const note = $('pb-snap-note');
-      if (note) { note.classList.remove('hidden'); note.textContent = 'Cut-out failed: ' + errorText(err, 'the photo is untouched.'); }
+      if (note) { note.classList.remove('hidden'); note.textContent = label + ' failed: ' + errorText(err, 'the photo is untouched.'); }
       shotEl?.classList.remove('is-working');
     }
   }
@@ -7486,6 +7628,22 @@
     $('pb-ai')?.addEventListener('click', pbAiListing);
     $('pb-grid-btn')?.addEventListener('click', pbToggleGrid);
     $('pb-torch')?.addEventListener('click', pbToggleTorch);
+
+    // One listener for the whole camera panel. The lens row is rebuilt whenever the phone reports
+    // a different set of lenses, so per-button listeners would have to be re-attached every time —
+    // delegation is the only version of this that cannot go stale.
+    $('pb-camera')?.addEventListener('click', e => {
+      const b = e.target.closest?.('.pb-opt');
+      if (!b || b.disabled) return;
+      const d = b.dataset;
+      if (d.flash !== undefined) pbSetCamera({ flash: d.flash });
+      else if (d.exposure !== undefined) pbSetCamera({ exposure: Number(d.exposure) });
+      else if (d.focus !== undefined) pbSetCamera({ focus: d.focus });
+      else if (d.wb !== undefined) pbSetCamera({ whiteBalance: d.wb });
+      else if (d.lens !== undefined) pbSetCamera({ lens: d.lens });
+      else if (d.facing !== undefined) pbSetCamera({ facing: d.facing });
+      else if (d.level !== undefined) pbSetCamera({ level: d.level === '1' });
+    });
     $('pb-full')?.addEventListener('click', pbToggleFullscreen);
     $('pb-library')?.addEventListener('click', () => navigateTo('photos'));
     $('pb-clear')?.addEventListener('click', () => { pbSessionSnaps = []; pbRenderFilmstrip(); pbSetupStatus('', ''); });

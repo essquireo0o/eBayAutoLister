@@ -33,11 +33,38 @@ namespace ING_eBay_AutoLister.Services;
 /// camera took the picture, and does not need to.
 /// </para>
 /// </remarks>
-/// <summary>What the phone said its camera can do. Sent once, on arrival.</summary>
-public sealed record PhoneCaps(bool Torch, int Width, int Height);
+/// <summary>
+/// What the phone said its camera can do, asked of the browser rather than assumed.
+/// </summary>
+/// <remarks>
+/// This is the whole design of the camera controls. A web page gets a different camera on every
+/// handset: Android hands over the LED, the exposure and the focus distance; iOS Safari hands over
+/// a zoom range and almost nothing else. So the phone reads <c>getCapabilities()</c> once and says
+/// what it has, and the desktop draws only the controls that will do something. A dial that does
+/// nothing is worse than a missing dial — the seller turns it, the photo does not change, and they
+/// stop trusting every other control on the screen.
+///
+/// Every one of these has a fallback that runs on the phone's own canvas at capture time
+/// (see the phone page), so <i>brightness</i> and <i>warmth</i> always do something even when the
+/// lens will not take the instruction. The flags say whether the LENS is doing it, which is the
+/// difference between a photograph that is correctly exposed and one that has been brightened.
+/// </remarks>
+public sealed record PhoneCaps(
+    bool Torch, int Width, int Height,
+    bool Exposure = false, bool Focus = false, bool Macro = false,
+    bool WhiteBalance = false, bool Tap = false, bool MultiCamera = false,
+    double ZoomMin = 1, double ZoomMax = 1, string? Lenses = null);
 
 /// <summary>What the desktop's camera controls send. Null means "leave that one alone".</summary>
-public sealed record PhoneSettingsRequest(double? Zoom, bool? Torch);
+/// <remarks>
+/// Null-means-unchanged is what lets six controls share one endpoint without any of them
+/// switching another off by omission — nudging the zoom must not turn the flash off.
+/// </remarks>
+public sealed record PhoneSettingsRequest(
+    double? Zoom, bool? Torch,
+    string? Flash = null, double? Exposure = null, string? Focus = null,
+    string? WhiteBalance = null, string? Lens = null, string? Facing = null,
+    bool? Level = null);
 
 public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDisposable
 {
@@ -68,12 +95,26 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     private bool _torch;
     private int _settingsSeq;
 
+    // The rest of the camera. Strings rather than enums because these cross to a browser as JSON
+    // and back, and a value this server does not recognise must reach the phone unharmed rather
+    // than being rounded to the nearest thing a C# enum happens to have.
+    private string _flash = "off";          // off | on | auto
+    private double _exposure;               // -2..+2 stops, 0 = leave it alone
+    private string _focus = "auto";         // auto | macro | far
+    private string _whiteBalance = "auto";  // auto | daylight | tungsten | cool | shade
+    private string _lens = "wide";          // ultra | wide | tele
+    private string _facing = "environment"; // environment | user
+    private bool _level;                    // the horizon indicator, on the phone's own screen
+
     // What this phone said its camera can do, on arrival. The torch is the one that really
     // varies — Android hands a web page the LED, iOS does not — and a button that cannot work
     // must not be on the screen. Zoom is never gated: a crop of a twelve-megapixel frame is a
     // zoom on any phone ever made, whether or not its lens will move.
     private bool _canTorch;
     private int _capWidth, _capHeight;
+    private bool _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera;
+    private double _zoomMin = 1, _zoomMax = 1;
+    private string _lenses = "";            // e.g. "0.5,1,2" — the lens buttons this phone earns
 
     // The viewfinder. The phone sends a small frame about once a second so the person at the
     // desk can see what they are about to photograph — without it the shutter is on one device
@@ -103,7 +144,13 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         bool HasPreview = false, bool PhoneWasConnected = false,
         bool Recording = false, string[]? Videos = null, int MaxVideoSeconds = 0,
         double Zoom = 1.0, bool Torch = false, bool CanTorch = false,
-        int CaptureWidth = 0, int CaptureHeight = 0);
+        int CaptureWidth = 0, int CaptureHeight = 0,
+        string Flash = "off", double Exposure = 0, string Focus = "auto",
+        string WhiteBalance = "auto", string Lens = "wide", string Facing = "environment",
+        bool Level = false,
+        bool CanExposure = false, bool CanFocus = false, bool CanMacro = false,
+        bool CanWhiteBalance = false, bool CanTap = false, bool CanMultiCamera = false,
+        double ZoomMin = 1, double ZoomMax = 1, string Lenses = "");
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -116,7 +163,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
                    _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null,
                    _phoneEverConnected, _recording, [.. _videos], MaxVideoSeconds,
-                   _zoom, _torch, _canTorch, _capWidth, _capHeight);
+                   _zoom, _torch, _canTorch, _capWidth, _capHeight,
+                   _flash, _exposure, _focus, _whiteBalance, _lens, _facing, _level,
+                   _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
+                   _zoomMin, _zoomMax, _lenses);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -280,12 +330,43 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// Clamped to 1–8×: past that a phone is inventing pixels, and a viewfinder that offered 30×
     /// would be promising something no phone in a photo box can deliver.
     /// </remarks>
-    public Status Apply(double? zoom, bool? torch)
+    public Status Apply(double? zoom, bool? torch) => Apply(new PhoneSettingsRequest(zoom, torch));
+
+    /// <summary>
+    /// The whole camera, one control at a time. Anything null is left where it was.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is gated on capability here except the torch, which is a physical lamp that either
+    /// exists or does not. Brightness and warmth are accepted from any phone because the phone page
+    /// falls back to doing them on the captured frame — refusing them here would turn a control
+    /// that works into one that silently does not.
+    /// </remarks>
+    public Status Apply(PhoneSettingsRequest req)
     {
-        if (zoom is { } z) _zoom = Math.Clamp(z, 1.0, 8.0);
-        if (torch is { } t) _torch = t && _canTorch;
+        if (req.Zoom is { } z) _zoom = Math.Clamp(z, 1.0, 8.0);
+        if (req.Torch is { } t) _torch = t && _canTorch;
+
+        // "on" with no lamp is a promise this phone cannot keep, so it is not accepted.
+        if (Pick(req.Flash, "off", "on", "auto") is { } fl)
+            _flash = (fl is "on" or "auto") && !_canTorch ? "off" : fl;
+
+        // Two stops either way. Past that a phone is not exposing, it is destroying a photograph.
+        if (req.Exposure is { } ev) _exposure = Math.Clamp(ev, -2.0, 2.0);
+
+        if (Pick(req.Focus, "auto", "macro", "far") is { } fo) _focus = fo;
+        if (Pick(req.WhiteBalance, "auto", "daylight", "tungsten", "cool", "shade") is { } wb) _whiteBalance = wb;
+        if (Pick(req.Lens, "ultra", "wide", "tele") is { } ln) _lens = ln;
+        if (Pick(req.Facing, "environment", "user") is { } fc) _facing = fc;
+        if (req.Level is { } lv) _level = lv;
+
         _settingsSeq++;
         return Snapshot();
+
+        // A value the desktop invented is dropped rather than stored: the phone would not know
+        // what to do with it, and a camera stuck in a mode nobody can name is unrecoverable
+        // without rescanning the code.
+        static string? Pick(string? value, params string[] allowed) =>
+            value is not null && Array.IndexOf(allowed, value) >= 0 ? value : null;
     }
 
     private void MapRoutes(WebApplication web)
@@ -306,6 +387,26 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
         // The phone asks this over and over. It answers "shoot" the moment the desktop presses
         // Snap, or "wait" after a few seconds so the request never looks hung to a phone browser.
+        // Every answer this endpoint gives carries the whole camera, not just the thing that
+        // changed: the phone applies what it is told and keeps no opinion of its own, so a page
+        // that was asleep through three changes catches up on the first reply it gets.
+        object Payload(bool shoot, string command) => new
+        {
+            shoot,
+            command,
+            maxVideoSeconds = MaxVideoSeconds,
+            seq = _settingsSeq,
+            zoom = _zoom,
+            torch = _torch,
+            flash = _flash,
+            exposure = _exposure,
+            focus = _focus,
+            whiteBalance = _whiteBalance,
+            lens = _lens,
+            facing = _facing,
+            level = _level
+        };
+
         web.MapGet("/p/{token}/poll", async (string token, int? seq, CancellationToken ct) =>
         {
             if (!Ok(token)) return Results.NotFound();
@@ -319,26 +420,22 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                     s.TrySetResult(true);
                     // `shoot` is still sent for a page that predates recording, so an old
                     // tab left open keeps taking photographs instead of going quiet.
-                    return Results.Ok(new { shoot = true, command = "shoot", maxVideoSeconds = MaxVideoSeconds,
-                                            seq = _settingsSeq, zoom = _zoom, torch = _torch });
+                    return Results.Ok(Payload(true, "shoot"));
                 }
                 if (_command.Length > 0)
                 {
                     var cmd = _command;
                     _command = "";
-                    return Results.Ok(new { shoot = false, command = cmd, maxVideoSeconds = MaxVideoSeconds,
-                                            seq = _settingsSeq, zoom = _zoom, torch = _torch });
+                    return Results.Ok(Payload(false, cmd));
                 }
                 // A zoom nudge must reach the lens now, not when this long-poll happens to time
                 // out. The phone tells us which settings it is already using.
                 if (seq is { } known && known != _settingsSeq)
-                    return Results.Ok(new { shoot = false, command = "", maxVideoSeconds = MaxVideoSeconds,
-                                            seq = _settingsSeq, zoom = _zoom, torch = _torch });
+                    return Results.Ok(Payload(false, ""));
                 await Task.Delay(150, ct);
                 waited += 150;
             }
-            return Results.Ok(new { shoot = false, command = "", maxVideoSeconds = MaxVideoSeconds,
-                                    seq = _settingsSeq, zoom = _zoom, torch = _torch });
+            return Results.Ok(Payload(false, ""));
         });
 
         // A finished recording. Saved beside the photos but never IN the photo library:
@@ -363,8 +460,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             return Results.Ok(new { url });
         });
 
-        // What this phone's camera can do, sent once when it starts. Only the torch really
-        // varies; everything else the desktop offers works on any phone.
+        // What this phone's camera can do, sent once when it starts. The desktop draws its
+        // controls from this and nothing else, so a phone that says little gets a small panel
+        // rather than a full one where half the dials are decoration.
         web.MapPost("/p/{token}/caps", async (string token, HttpRequest req) =>
         {
             if (!Ok(token)) return Results.NotFound();
@@ -380,6 +478,18 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                     _canTorch = caps.Torch;
                     _capWidth = caps.Width;
                     _capHeight = caps.Height;
+                    _canExposure = caps.Exposure;
+                    _canFocus = caps.Focus;
+                    _canMacro = caps.Macro;
+                    _canWhiteBalance = caps.WhiteBalance;
+                    _canTap = caps.Tap;
+                    _canMultiCamera = caps.MultiCamera;
+                    _zoomMin = caps.ZoomMin;
+                    _zoomMax = caps.ZoomMax;
+                    _lenses = caps.Lenses ?? "";
+                    // A phone with no lamp cannot be left holding a flash mode it will never fire.
+                    if (!_canTorch) { _flash = "off"; _torch = false; }
+                    _settingsSeq++;   // the desktop's panel redraws off this
                 }
             }
             catch { /* a phone that cannot describe itself still takes photographs */ }
@@ -480,11 +590,55 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           .zoomrow input{flex:1;accent-color:#c79a36}
           .mini{margin:0;padding:6px 14px;font-size:18px;background:#123c42;color:#e8eef0}
           .zoom{margin-top:6px;font-size:13px;color:#9fb9bd;min-height:18px}
+          /* The camera controls the desktop is driving, shown here too. The person holding the
+             phone is often the person who can see that the shot is too dark. */
+          .rig{width:100%;max-width:520px;margin-top:14px;display:flex;flex-direction:column;gap:10px}
+          .rigrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+          .riglab{font-size:12px;color:#9fb9bd;min-width:64px;text-transform:uppercase;letter-spacing:.04em}
+          .pill{padding:9px 14px;font-size:14px;border-radius:999px;background:#123c42;color:#cfe3e6;
+                border:1px solid #1d5760;margin:0}
+          .pill.on{background:#c79a36;color:#241703;border-color:#c79a36;font-weight:700}
+          .pill[disabled]{opacity:.35}
+          .lensrow{display:flex;gap:8px;justify-content:center;width:100%;max-width:520px;margin-top:12px}
+          .lens{width:56px;height:56px;border-radius:50%;background:rgba(9,40,45,.85);color:#cfe3e6;
+                border:1px solid #1d5760;font-size:14px;font-weight:700;margin:0;padding:0}
+          .lens.on{background:#c79a36;color:#241703;border-color:#c79a36}
+          /* The horizon. Two lines: one fixed, one that rolls with the phone. They meet and turn
+             gold when the phone is square to the item, which is the only moment that matters. */
+          .level{position:absolute;left:50%;top:50%;width:120px;height:2px;margin-left:-60px;
+                 background:rgba(255,255,255,.55);pointer-events:none;transform-origin:center}
+          .level.flat{background:#c79a36;height:3px}
+          .levelref{position:absolute;left:50%;top:50%;width:44px;height:2px;margin-left:-22px;
+                    background:rgba(255,255,255,.25);pointer-events:none}
+          .stage{position:relative;width:100%;max-width:520px}
+          .tapdot{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #c79a36;
+                  border-radius:10px;pointer-events:none;opacity:0;transition:opacity .3s}
+          .tapdot.show{opacity:1}
+          .hint{font-size:12px;color:#6f8b90;text-align:center;margin-top:4px}
         </style></head>
         <body>
           <h1>ING Photo Box</h1>
           <div class="sub">Point this phone at the item and leave this page open.<br>Press <b>Snap</b> in the app on your computer.</div>
-          <video id="v" playsinline muted autoplay></video>
+          <div class="stage">
+            <video id="v" playsinline muted autoplay></video>
+            <div class="levelref" id="levelref" style="display:none"></div>
+            <div class="level" id="level" style="display:none"></div>
+            <div class="tapdot" id="tapdot"></div>
+          </div>
+          <div class="lensrow" id="lensrow" style="display:none"></div>
+          <div class="hint" id="taphint" style="display:none">Tap the picture to focus there</div>
+          <div class="rig" id="rig" style="display:none">
+            <div class="rigrow" id="flashrow">
+              <span class="riglab">Flash</span>
+              <button class="pill" type="button" data-flash="off">Off</button>
+              <button class="pill" type="button" data-flash="auto">Auto</button>
+              <button class="pill" type="button" data-flash="on">On</button>
+            </div>
+            <div class="rigrow" id="levelrow">
+              <span class="riglab">Level</span>
+              <button class="pill" type="button" id="levelbtn">Off</button>
+            </div>
+          </div>
           <div class="zoomwrap" id="zoomwrap" style="display:none">
             <span class="zlab">zoom</span>
             <input type="range" id="zoom" min="0.5" max="3" step="0.1" value="0.5">
@@ -583,17 +737,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
             // What this phone can do, so the desk only offers controls that exist here. Sent once;
             // a failure is silent because a camera that cannot describe itself still takes photos.
-            try {
-              const t = track();
-              const caps = (t && t.getCapabilities) ? (t.getCapabilities() || {}) : {};
-              const set = (t && t.getSettings) ? (t.getSettings() || {}) : {};
-              fetch('/p/' + TOKEN + '/caps', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ torch: !!caps.torch,
-                                       width: set.width || v.videoWidth || 0,
-                                       height: set.height || v.videoHeight || 0 })
-              });
-            } catch (e) { /* nothing here is worth interrupting the camera for */ }
+            await sendCaps();
             await keepAwake();
             say('Ready — press Snap on your computer.', 'ok');
             poll();
@@ -685,6 +829,309 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           try { await t.applyConstraints({ advanced: [{ torch: !!on }] }); } catch (e) { /* nothing to do */ }
         }
 
+        // ══ The rest of the camera ═══════════════════════════════════════════════
+        // Everything a phone camera app puts on its screen, as far as a web page is allowed to
+        // reach it — and, where it is not allowed, done to the captured frame instead so the
+        // control still does what it says.
+        //
+        // WHAT A BROWSER ACTUALLY GIVES YOU, because this is the whole reason the code is
+        // shaped like this: Android Chrome exposes torch, exposureCompensation, focusMode,
+        // focusDistance, whiteBalanceMode, colorTemperature and pointsOfInterest through
+        // applyConstraints. iOS Safari exposes a zoom range and, on current versions, very
+        // little else — no torch, no ImageCapture, and no depth map, so no true portrait
+        // blur at the lens. Rather than hide the controls an iPhone cannot drive, the two
+        // that can be honestly done in software — brightness and warmth — are applied to the
+        // pixels at capture, and the app says which of the two happened. Portrait is done
+        // after the fact on the desktop, where there is a real segmentation model.
+        let flashMode = 'off', exposureEv = 0, focusMode = 'auto';
+        let wbMode = 'auto', lensMode = 'wide', facing = 'environment', levelOn = false;
+        // Set when the LENS took the instruction; when it did not, shoot() does it in pixels.
+        let lensExposure = false, lensWhiteBalance = false;
+
+        function caps_() {
+          const t = track();
+          return (t && t.getCapabilities) ? (t.getCapabilities() || {}) : {};
+        }
+        const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+
+        // ── What this phone can do, told to the desktop ──────────────────────────
+        // Sent once on arrival and again whenever the camera is re-opened, because switching to
+        // the front camera changes every answer.
+        async function sendCaps() {
+          try {
+            const t = track(), c = caps_();
+            const set = (t && t.getSettings) ? (t.getSettings() || {}) : {};
+            const zmin = (c.zoom && typeof c.zoom.min === 'number') ? c.zoom.min : 1;
+            const zmax = (c.zoom && typeof c.zoom.max === 'number') ? c.zoom.max : 1;
+
+            // The lens buttons a real camera app shows: 0.5 / 1 / 2. Offered only where the zoom
+            // range proves the phone has something to switch to — a single-lens phone gets one
+            // button, which is no button at all, so it gets none.
+            const lenses = [];
+            if (zmin <= 0.7) lenses.push('0.5');
+            lenses.push('1');
+            if (zmax >= 1.9) lenses.push('2');
+
+            let cameras = 0;
+            try {
+              const devs = await navigator.mediaDevices.enumerateDevices();
+              cameras = devs.filter(d => d.kind === 'videoinput').length;
+            } catch (e) { /* label-less device lists are still countable, but not always present */ }
+
+            await fetch('/p/' + TOKEN + '/caps', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                torch: !!c.torch,
+                width: set.width || v.videoWidth || 0,
+                height: set.height || v.videoHeight || 0,
+                exposure: !!c.exposureCompensation,
+                focus: Array.isArray(c.focusMode) && c.focusMode.length > 0,
+                macro: !!(c.focusDistance && typeof c.focusDistance.min === 'number'),
+                whiteBalance: !!(c.colorTemperature || (Array.isArray(c.whiteBalanceMode) && c.whiteBalanceMode.length)),
+                tap: !!c.pointsOfInterest,
+                multiCamera: cameras > 1,
+                zoomMin: zmin, zoomMax: zmax,
+                lenses: lenses.join(',')
+              })
+            });
+            paintRig(!!c.torch);
+          } catch (e) { /* a camera that cannot describe itself still takes photographs */ }
+        }
+
+        // ── Flash ────────────────────────────────────────────────────────────────
+        // A flash is not a torch. The lamp comes on just before the frame and goes off straight
+        // after, which is what a camera does and what a seller means by "use the flash". The
+        // pause in between is not padding: the sensor is metering, and a frame grabbed the
+        // instant the LED lights is a photograph of a white blur.
+        //
+        // On a phone with no lamp — every iPhone, to a web page — the mode cannot be set: the
+        // desktop refuses it, and the panel there says why rather than offering a dead switch.
+        async function fireFlash() {
+          if (flashMode === 'off' || !caps_().torch) return false;
+          if (flashMode === 'auto' && !sceneIsDark()) return false;
+          await applyTorch(true);
+          await wait(340);
+          return true;
+        }
+
+        // Is this dark enough to need the lamp? Measured off the frame that is already on screen,
+        // at 32 pixels wide, which costs nothing and is plenty for "how bright is this".
+        const lum = document.createElement('canvas');
+        function sceneIsDark() {
+          try {
+            if (!v.videoWidth) return false;
+            lum.width = 32; lum.height = 24;
+            const g = lum.getContext('2d', { willReadFrequently: true });
+            g.drawImage(v, 0, 0, 32, 24);
+            const d = g.getImageData(0, 0, 32, 24).data;
+            let sum = 0;
+            for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+            return (sum / (d.length / 4)) < 72;
+          } catch (e) { return false; }
+        }
+
+        // ── Brightness ───────────────────────────────────────────────────────────
+        // Asked of the lens first, because exposing correctly and brightening afterwards are not
+        // the same thing: the lens gathers more light, the canvas only stretches what it caught,
+        // and stretching a dark frame stretches its noise with it. The fallback is still worth
+        // having — a listing photo two stops too dark does not sell either.
+        async function applyExposure(ev) {
+          exposureEv = clamp(Number(ev) || 0, -2, 2);
+          lensExposure = false;
+          const t = track(), c = caps_();
+          if (!t || !c.exposureCompensation) return;
+          const lo = c.exposureCompensation.min, hi = c.exposureCompensation.max;
+          if (typeof lo !== 'number' || typeof hi !== 'number' || hi <= lo) return;
+          try {
+            // exposureCompensation is in stops on every implementation that has it, so our
+            // -2..+2 is already the right unit — it only has to be brought inside this lens's range.
+            await t.applyConstraints({ advanced: [{ exposureMode: 'continuous',
+                                                    exposureCompensation: clamp(exposureEv, lo, hi) }] });
+            lensExposure = true;
+          } catch (e) { /* the canvas will do it at capture */ }
+        }
+
+        // ── Focus ────────────────────────────────────────────────────────────────
+        // Macro is the one that earns its place in a photo box: the whole job is a hallmark, a
+        // serial number or a scratch photographed from four inches away, and a lens left on
+        // continuous autofocus hunts past all three.
+        async function applyFocus(mode) {
+          focusMode = mode || 'auto';
+          const t = track(), c = caps_();
+          if (!t || !Array.isArray(c.focusMode)) return;
+          const has = m => c.focusMode.indexOf(m) >= 0;
+          try {
+            if (focusMode === 'auto') {
+              if (has('continuous')) await t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+              return;
+            }
+            const fd = c.focusDistance;
+            if (has('manual') && fd && typeof fd.min === 'number') {
+              const near = focusMode === 'macro';
+              await t.applyConstraints({ advanced: [{ focusMode: 'manual',
+                                                      focusDistance: near ? fd.min : fd.max }] });
+            } else if (has('single-shot')) {
+              await t.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+            }
+          } catch (e) { /* the lens stays where it was, which is a working camera */ }
+        }
+
+        // Tap the picture, focus there — the gesture every phone camera has trained everyone to
+        // make. The square is drawn wherever they touched even when the lens will not oblige,
+        // because a tap that draws nothing reads as a broken screen.
+        async function focusAt(nx, ny) {
+          const dot = document.getElementById('tapdot');
+          const box = v.getBoundingClientRect();
+          dot.style.left = (nx * box.width) + 'px';
+          dot.style.top = (ny * box.height) + 'px';
+          dot.classList.add('show');
+          setTimeout(() => dot.classList.remove('show'), 900);
+          const t = track(), c = caps_();
+          if (!t || !c.pointsOfInterest) return;
+          try {
+            const adv = { pointsOfInterest: [{ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) }] };
+            if (Array.isArray(c.focusMode) && c.focusMode.indexOf('single-shot') >= 0) adv.focusMode = 'single-shot';
+            await t.applyConstraints({ advanced: [adv] });
+          } catch (e) { /* the square still told them the tap landed */ }
+        }
+
+        // ── White balance ────────────────────────────────────────────────────────
+        // The one setting a seller can see the effect of without being told what it is. A desk
+        // lamp is orange, a window is blue, and a product shot under either is the wrong colour —
+        // which on eBay is a return, because the buyer ordered the thing in the photograph.
+        const KELVIN = { daylight: 5600, tungsten: 2900, cool: 7200, shade: 8500 };
+        async function applyWhiteBalance(mode) {
+          wbMode = mode || 'auto';
+          lensWhiteBalance = false;
+          const t = track(), c = caps_();
+          if (!t) return;
+          try {
+            if (wbMode === 'auto') {
+              if (Array.isArray(c.whiteBalanceMode) && c.whiteBalanceMode.indexOf('continuous') >= 0) {
+                await t.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] });
+                lensWhiteBalance = true;
+              }
+              return;
+            }
+            const k = KELVIN[wbMode];
+            if (!k || !c.colorTemperature) return;
+            const target = clamp(k, c.colorTemperature.min, c.colorTemperature.max);
+            await t.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual', colorTemperature: target }] });
+            lensWhiteBalance = true;
+          } catch (e) { /* the canvas will do it at capture */ }
+        }
+
+        // The software version: a colour temperature is a red/blue see-saw, so the fallback is
+        // one multiply per channel. Deliberately gentle — this is correcting a lamp, not
+        // applying a filter, and a product photograph that has obviously been tinted is worse
+        // than one that is slightly warm.
+        function wbGains() {
+          if (wbMode === 'auto' || lensWhiteBalance) return null;
+          const g = { daylight: [1.00, 1.00, 1.00], tungsten: [1.14, 1.01, 0.86],
+                      cool: [0.92, 0.99, 1.12], shade: [1.08, 1.00, 0.93] }[wbMode];
+          return g || null;
+        }
+
+        // ── Lens ─────────────────────────────────────────────────────────────────
+        // 0.5 / 1 / 2, the way a camera app labels them, mapped onto whatever range this phone
+        // reports. On iOS these are real lenses behind one virtual device, which is why the
+        // ultra-wide lives at a zoom value below 1 rather than on a camera of its own.
+        async function applyLens(which) {
+          lensMode = which || 'wide';
+          const t = track(), c = caps_();
+          if (!t || !c.zoom || typeof c.zoom.min !== 'number') return;
+          const lo = c.zoom.min, hi = c.zoom.max;
+          const target = which === 'ultra' ? lo : which === 'tele' ? clamp(2, lo, hi) : clamp(1, lo, hi);
+          try { await t.applyConstraints({ advanced: [{ zoom: target }] }); cropZoom = 1; }
+          catch (e) { /* the lens stays where it was */ }
+          paintLenses();
+        }
+
+        // ── Front camera ─────────────────────────────────────────────────────────
+        // Not a photo-box lens, and that is exactly why it is here: the seller checking that the
+        // page is alive, or shooting themselves holding the item for scale, should not have to
+        // rescan a QR code to do it.
+        async function applyFacing(which) {
+          if (which === facing) return;
+          facing = which;
+          try {
+            const old = v.srcObject;
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: facing }, width: { ideal: 4032 }, height: { ideal: 3024 } },
+              audio: false
+            });
+            if (old && old.getTracks) old.getTracks().forEach(x => x.stop());
+            v.srcObject = stream;
+            await v.play();
+            // A different camera answers every capability question differently, so everything is
+            // asked again and every setting re-applied to the new lens.
+            await sendCaps();
+            await applyExposure(exposureEv);
+            await applyFocus(focusMode);
+            await applyWhiteBalance(wbMode);
+          } catch (e) { say('That camera would not open.', 'bad'); }
+        }
+
+        // ── The level ────────────────────────────────────────────────────────────
+        // A phone leaning five degrees makes a product look like it is sliding off the desk, and
+        // it is the one flaw a seller never notices while holding the thing. iOS will not give a
+        // page the motion sensors without a tap, so the tap is asked for here rather than
+        // pretended away.
+        let levelReady = false;
+        async function applyLevel(on) {
+          levelOn = !!on;
+          const bar = document.getElementById('level'), ref = document.getElementById('levelref');
+          const btn = document.getElementById('levelbtn');
+          bar.style.display = ref.style.display = levelOn ? '' : 'none';
+          if (btn) { btn.textContent = levelOn ? 'On' : 'Off'; btn.classList.toggle('on', levelOn); }
+          if (!levelOn || levelReady) return;
+          try {
+            const DOE = window.DeviceOrientationEvent;
+            if (DOE && typeof DOE.requestPermission === 'function') {
+              const granted = await DOE.requestPermission();
+              if (granted !== 'granted') { say('Tap the Level button on this phone to allow it.', 'busy'); return; }
+            }
+            window.addEventListener('deviceorientation', e => {
+              if (!levelOn) return;
+              const roll = Number(e.gamma) || 0;
+              bar.style.transform = 'rotate(' + (-roll) + 'deg)';
+              bar.classList.toggle('flat', Math.abs(roll) < 2);
+            });
+            levelReady = true;
+          } catch (e) { /* no sensors: the bar simply stays level, and lies about nothing */ }
+        }
+
+        // ── The controls on this phone's own screen ──────────────────────────────
+        function paintRig(hasTorch) {
+          const rig = document.getElementById('rig');
+          if (rig) rig.style.display = '';
+          const flashRow = document.getElementById('flashrow');
+          if (flashRow) flashRow.style.display = hasTorch ? '' : 'none';
+          document.querySelectorAll('[data-flash]').forEach(b =>
+            b.classList.toggle('on', b.dataset.flash === flashMode));
+          const hint = document.getElementById('taphint');
+          if (hint) hint.style.display = caps_().pointsOfInterest ? '' : 'none';
+          paintLenses();
+        }
+
+        function paintLenses() {
+          const row = document.getElementById('lensrow');
+          const c = caps_();
+          if (!row) return;
+          const zmin = (c.zoom && typeof c.zoom.min === 'number') ? c.zoom.min : 1;
+          const zmax = (c.zoom && typeof c.zoom.max === 'number') ? c.zoom.max : 1;
+          const opts = [];
+          if (zmin <= 0.7) opts.push(['ultra', '.5\u00d7']);
+          opts.push(['wide', '1\u00d7']);
+          if (zmax >= 1.9) opts.push(['tele', '2\u00d7']);
+          if (opts.length < 2) { row.style.display = 'none'; return; }
+          row.style.display = 'flex';
+          row.innerHTML = opts.map(o =>
+            '<button type="button" class="lens' + (o[0] === lensMode ? ' on' : '') +
+            '" data-lens="' + o[0] + '">' + o[1] + '</button>').join('');
+        }
+
         // The centred window the current zoom is looking at, in source pixels.
         function window_() {
           const w = v.videoWidth / cropZoom, h = v.videoHeight / cropZoom;
@@ -692,15 +1139,52 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         }
 
         async function shoot() {
+          // The lamp, if this phone has one and the mode asked for it. Turned off in the finally
+          // below whatever happens next, because a torch left burning is a flat battery and a
+          // seller who thinks the app broke their phone.
+          const lit = await fireFlash();
+          try {
           const q = window_();
           cv.width = Math.round(q.sw); cv.height = Math.round(q.sh);
-          cv.getContext('2d').drawImage(v, q.sx, q.sy, q.sw, q.sh, 0, 0, cv.width, cv.height);
+          const g = cv.getContext('2d');
+          g.drawImage(v, q.sx, q.sy, q.sw, q.sh, 0, 0, cv.width, cv.height);
+          developFrame(g, cv.width, cv.height);
           fl.style.opacity = '0.85'; setTimeout(() => fl.style.opacity = '0', 120);
-          const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.92));
+          const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.95));
           say('Sending…', 'busy');
           const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: blob });
           if (res.ok) { taken++; c.textContent = taken + (taken === 1 ? ' photo sent' : ' photos sent'); say('Ready — press Snap on your computer.', 'ok'); }
           else say('The computer would not take that photo.', 'bad');
+          } finally { if (lit) await applyTorch(false); }
+        }
+
+        // ── What the lens would not do, done to the pixels ───────────────────────
+        // Only ever the settings the lens refused: when the camera took the instruction this
+        // touches nothing, because a frame that is already correctly exposed and correctly
+        // balanced must not be corrected twice. That is the whole reason lensExposure and
+        // lensWhiteBalance exist.
+        //
+        // Skipped entirely at the default settings, so an untouched camera produces an untouched
+        // photograph — this never runs on a photo nobody asked it to change.
+        function developFrame(g, w, h) {
+          const gain = (!lensExposure && Math.abs(exposureEv) > 0.01) ? Math.pow(2, exposureEv) : 1;
+          const wb = wbGains();
+          if (gain === 1 && !wb) return;
+          try {
+            const img = g.getImageData(0, 0, w, h);
+            const d = img.data;
+            const rg = (wb ? wb[0] : 1) * gain, gg = (wb ? wb[1] : 1) * gain, bg = (wb ? wb[2] : 1) * gain;
+            // A 256-entry table per channel rather than three multiplies per pixel: a 12-megapixel
+            // frame is 48 million channel values and the difference is a second of the seller's time.
+            const tr = new Uint8Array(256), tg = new Uint8Array(256), tb = new Uint8Array(256);
+            for (let i = 0; i < 256; i++) {
+              tr[i] = clamp(Math.round(i * rg), 0, 255);
+              tg[i] = clamp(Math.round(i * gg), 0, 255);
+              tb[i] = clamp(Math.round(i * bg), 0, 255);
+            }
+            for (let i = 0; i < d.length; i += 4) { d[i] = tr[d[i]]; d[i + 1] = tg[d[i + 1]]; d[i + 2] = tb[d[i + 2]]; }
+            g.putImageData(img, 0, 0);
+          } catch (e) { /* a frame that will not develop is still a photograph */ }
         }
 
         // The desktop's viewfinder. Small and cheap on purpose — this runs once a second all the
@@ -787,7 +1271,17 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
               if (typeof j.seq === 'number' && j.seq !== settingsSeq) {
                 settingsSeq = j.seq;
                 if (typeof j.zoom === 'number') await applyZoom(j.zoom);
-                await applyTorch(!!j.torch);
+                // The old torch switch still works: it is a lamp held on, which is a different
+                // thing from a flash and is genuinely useful for lining a shot up in a dim room.
+                if (flashMode === 'off') await applyTorch(!!j.torch);
+                if (typeof j.flash === 'string') flashMode = j.flash;
+                if (typeof j.exposure === 'number' && j.exposure !== exposureEv) await applyExposure(j.exposure);
+                if (typeof j.focus === 'string' && j.focus !== focusMode) await applyFocus(j.focus);
+                if (typeof j.whiteBalance === 'string' && j.whiteBalance !== wbMode) await applyWhiteBalance(j.whiteBalance);
+                if (typeof j.lens === 'string' && j.lens !== lensMode) await applyLens(j.lens);
+                if (typeof j.facing === 'string' && j.facing !== facing) await applyFacing(j.facing);
+                if (typeof j.level === 'boolean' && j.level !== levelOn) await applyLevel(j.level);
+                paintRig(!!caps_().torch);
               }
               if (j.shoot || j.command === 'shoot') await shoot();
               else if (j.command === 'record-start') startRecording();
@@ -805,6 +1299,22 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         document.getElementById('zr').addEventListener('input', e => applyZoom(e.target.value));
         document.getElementById('zin').addEventListener('click', () => { applyZoom(zoom + 0.5); document.getElementById('zr').value = zoom; });
         document.getElementById('zout').addEventListener('click', () => { applyZoom(zoom - 0.5); document.getElementById('zr').value = zoom; });
+
+        // Tap the picture to focus there. Ignored while pinching, which is two fingers and a
+        // different intention entirely.
+        v.addEventListener('click', e => {
+          if (!running) return;
+          const box = v.getBoundingClientRect();
+          focusAt((e.clientX - box.left) / box.width, (e.clientY - box.top) / box.height);
+        });
+
+        document.addEventListener('click', e => {
+          const flashBtn = e.target.closest ? e.target.closest('[data-flash]') : null;
+          if (flashBtn) { flashMode = flashBtn.dataset.flash; paintRig(!!caps_().torch); return; }
+          const lensBtn = e.target.closest ? e.target.closest('[data-lens]') : null;
+          if (lensBtn) { applyLens(lensBtn.dataset.lens); return; }
+        });
+        document.getElementById('levelbtn').addEventListener('click', () => applyLevel(!levelOn));
 
         startBtn.addEventListener('click', begin);
         // Safari needs a tap before it will hand over a camera, so the button is the real entry
