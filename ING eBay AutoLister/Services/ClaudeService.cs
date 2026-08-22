@@ -1181,11 +1181,19 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
             Reply with ONLY a JSON array, one object per item, no prose and no code fences:
             [{"itemId":"<the id>","low":<number>,"high":<number>,"basis":"<8 words or fewer>"}]
 
-            You may use the web search tool up to five times. Spend those searches on the items you
-            cannot price confidently from memory — an unusual model number, a collectible whose
-            value has moved, anything where a real sold listing would change your answer. Search
-            for what the thing SOLD for, not what someone is asking. Price the rest from your own
-            knowledge of the second-hand market; do not burn a search on an ordinary used tool.
+            You may use the web search tool up to eight times. Spend them where a real number
+            changes the answer and where the money is biggest — a car, a boat, an RV, an unusual
+            model number, a collectible whose value has moved. Search for what the thing SOLD for,
+            not what someone is asking. Price ordinary used goods from your own knowledge; do not
+            burn a search on a $20 lot of keys.
+
+            VEHICLES, BOATS, RVs, MOTORCYCLES AND TRAILERS ARE PRICEABLE, and they are usually the
+            most valuable things on the board. Every one of them has published values — Kelley Blue
+            Book and Edmunds for cars, NADA and J.D. Power for boats, RVs and bikes, plus completed
+            auction and dealer listings. Give the PRIVATE-PARTY resale value for that year, make,
+            model and trim in average condition. Mileage is rarely stated: assume typical mileage
+            for the age and widen the range to cover it, rather than refusing to answer. A 2016
+            Ford Fusion SEL is a car with a well-known value, not an unpriceable object.
 
             Whatever you search, your final message must be the JSON array and nothing else.
 
@@ -1196,9 +1204,11 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
               "scrap metal weight" or "collectible, condition-dependent".
             - Price what is actually described. A lot of assorted keys is scrap brass, not keys.
               A t-shirt is a t-shirt even if the band is famous. Read quantities: "6 acres" is land.
-            - OMIT the item entirely — do not guess — when it is not a resellable good (real estate,
-              vehicles requiring title transfer, services, adult content) or when the name is too
-              vague to price at all. A missing row is a correct answer; an invented one is not.
+            - OMIT the item entirely — do not guess — only when there is genuinely nothing to price:
+              real estate and land, services and labour, adult content, or a name so vague that any
+              number would be invented. A missing row is a correct answer; an invented one is not.
+              Being a vehicle is NOT a reason to omit — title transfer is paperwork, not a mystery
+              about value.
             - Never return 0. If it is worth almost nothing, say so with a low range like 5 to 15.
             """;
 
