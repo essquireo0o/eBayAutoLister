@@ -18566,3 +18566,309 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .wn-ai-price { font-size: var(--fs-md); font-weight: var(--fw-bold); color: var(--ink); }
 .wn-ai-range { font-size: var(--fs-xs); color: var(--muted); }
 .wn-ai-note { flex: 1 0 100%; font-size: var(--fs-xs); color: var(--muted); line-height: 1.55; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Cinematic brand finish — 2026-08-22
+
+   The product photography established the visual promise: deep optical
+   teal, a narrow metallic-gold highlight, bright instruments floating on
+   dark glass, and one unmistakable action. This pass carries that promise
+   into the product without changing a single workflow or content layout.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --gold: #d2a33e;
+  --gold-light: #f0cb73;
+  --gold-pale: #ffe3a0;
+  --gold-dark: #936719;
+  --teal-950: #020f12;
+  --teal-900: #041b1f;
+  --teal-850: #07272c;
+  --page: #e9eff0;
+  --card: rgba(255, 255, 255, .96);
+  --grad-gold:
+    linear-gradient(145deg, #fff0b8 0%, #efc86f 18%, #d29d32 54%, #8d6013 100%);
+  --grad-gold-flat:
+    linear-gradient(180deg, #f2d17d 0%, #d7a642 48%, #bd8625 100%);
+  --grad-gold-hot:
+    linear-gradient(180deg, #ffe29b 0%, #e5b756 48%, #c58d29 100%);
+  --grad-brand-deep:
+    radial-gradient(50rem 34rem at 92% -14%, rgba(240, 203, 115, .24), transparent 68%),
+    radial-gradient(42rem 28rem at 4% 110%, rgba(38, 132, 141, .34), transparent 72%),
+    linear-gradient(132deg, #021417 0%, #062b30 54%, #0a454b 100%);
+  --e3: 0 2px 4px rgba(2, 15, 18, .06), 0 16px 34px rgba(2, 22, 25, .11);
+  --e4: 0 5px 12px rgba(2, 15, 18, .08), 0 28px 70px rgba(2, 22, 25, .20);
+  --e5: 0 10px 24px rgba(2, 15, 18, .12), 0 46px 110px rgba(2, 22, 25, .28);
+  --glow-gold: 0 8px 26px rgba(210, 163, 62, .38);
+  --glow-gold-lg: 0 15px 48px rgba(210, 163, 62, .42);
+}
+
+body {
+  background:
+    radial-gradient(70rem 34rem at 88% -8rem, rgba(210, 163, 62, .10), transparent 62%),
+    radial-gradient(62rem 38rem at 6% 92%, rgba(23, 102, 111, .12), transparent 66%),
+    linear-gradient(rgba(7, 39, 44, .025) 1px, transparent 1px) 0 0 / 36px 36px,
+    linear-gradient(90deg, rgba(7, 39, 44, .025) 1px, transparent 1px) 0 0 / 36px 36px,
+    var(--page);
+}
+
+/* A chassis rather than a flat dark rectangle. */
+.sidebar {
+  background:
+    radial-gradient(28rem 22rem at -18% -6%, rgba(240, 203, 115, .16), transparent 64%),
+    radial-gradient(24rem 32rem at 120% 86%, rgba(31, 125, 135, .20), transparent 66%),
+    linear-gradient(165deg, #03171a 0%, #06252a 58%, #041a1e 100%);
+  border-right: 1px solid rgba(240, 203, 115, .18);
+  box-shadow: 18px 0 54px rgba(1, 14, 17, .20), inset -1px 0 rgba(255, 255, 255, .025);
+}
+.brand-lockup { position: relative; }
+.brand-lockup::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -20px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(240, 203, 115, .55), transparent 86%);
+}
+.brand-mark {
+  background: var(--grad-gold);
+  border: 1px solid rgba(255, 238, 180, .54);
+  box-shadow: var(--glow-gold), inset 0 1px rgba(255, 255, 255, .65), inset 0 -1px rgba(72, 41, 0, .34);
+  text-shadow: 0 1px rgba(255, 255, 255, .32);
+}
+.brand-name { color: #ffffff; letter-spacing: -.018em; }
+.brand-sub { color: rgba(246, 251, 251, .56); }
+.nav-group-label { color: rgba(240, 203, 115, .58); }
+.nav-item {
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+}
+.nav-item:hover {
+  border-color: rgba(255, 255, 255, .08);
+  background: linear-gradient(90deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .035));
+  box-shadow: inset 0 1px rgba(255, 255, 255, .04);
+}
+.nav-item.active {
+  border-color: rgba(240, 203, 115, .38);
+  background:
+    radial-gradient(18rem 8rem at 0% 50%, rgba(210, 163, 62, .18), transparent 66%),
+    linear-gradient(90deg, rgba(255, 255, 255, .11), rgba(255, 255, 255, .055));
+  box-shadow: 0 8px 24px rgba(0, 9, 11, .17), inset 0 1px rgba(255, 255, 255, .08);
+}
+.nav-item.active::before { left: -1px; height: 58%; width: 3px; }
+
+/* The workspace rail and top controls share the same polished instrument panel. */
+.ws-tab-bar {
+  background:
+    linear-gradient(90deg, rgba(240, 203, 115, .06), transparent 26%),
+    linear-gradient(180deg, #03191d, #021316);
+  border-bottom-color: rgba(240, 203, 115, .16);
+  box-shadow: 0 8px 30px rgba(2, 16, 19, .20);
+}
+.ws-tab.active {
+  border-color: rgba(240, 203, 115, .22);
+  box-shadow: 0 -1px rgba(255, 255, 255, .75) inset, 0 9px 24px rgba(0, 12, 15, .18);
+}
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  position: relative;
+  z-index: 4;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .48);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  box-shadow: var(--e3), inset 0 1px rgba(255, 255, 255, .72);
+  backdrop-filter: blur(20px) saturate(1.24);
+}
+.topbar .search-wrap { width: 100%; }
+.search-wrap {
+  background: color-mix(in srgb, var(--soft) 88%, transparent);
+  border-color: rgba(7, 39, 44, .10);
+  box-shadow: inset 0 1px 2px rgba(4, 28, 32, .05);
+}
+.search-wrap:focus-within {
+  box-shadow: inset 0 1px 2px rgba(4, 28, 32, .05), 0 0 0 3px rgba(210, 163, 62, .24), var(--glow-gold);
+}
+
+/* The dashboard masthead now catches light like the campaign artwork. */
+.dash-hero {
+  border: 1px solid rgba(240, 203, 115, .20);
+  box-shadow: var(--e5), inset 0 1px rgba(255, 255, 255, .065);
+}
+.dash-hero::before {
+  height: 2px;
+  background: linear-gradient(90deg, transparent 1%, var(--gold-light) 22%, #fff0b5 50%, var(--gold) 78%, transparent 99%);
+  box-shadow: 0 0 24px rgba(210, 163, 62, .42);
+}
+.dash-hero::after {
+  background:
+    radial-gradient(36rem 28rem at 86% -12%, rgba(255, 216, 128, .25), transparent 66%),
+    radial-gradient(30rem 24rem at 4% 118%, rgba(34, 138, 148, .34), transparent 72%),
+    linear-gradient(rgba(246, 251, 251, .038) 1px, transparent 1px) 0 0 / 100% 38px,
+    linear-gradient(90deg, rgba(246, 251, 251, .038) 1px, transparent 1px) 0 0 / 38px 100%;
+}
+.dash-hero h1 {
+  background: linear-gradient(98deg, #ffffff 8%, #fff4ce 34%, #f4cf79 68%, #c68e27 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 10px 28px rgba(0, 0, 0, .26));
+}
+.dash-chip {
+  background: rgba(3, 19, 22, .36);
+  border-color: rgba(255, 255, 255, .17);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .06), 0 6px 20px rgba(0, 9, 11, .12);
+  backdrop-filter: blur(10px);
+}
+.dash-chip--beta {
+  background: linear-gradient(180deg, rgba(240, 203, 115, .18), rgba(147, 103, 25, .10));
+  border-color: rgba(240, 203, 115, .34);
+}
+
+/* Cards read like bright illuminated instruments, with gold reserved for action. */
+.dash-act,
+.stat-card,
+.panel,
+.modal,
+.viz-panel,
+.pb-rail-card,
+.pb-camera {
+  border-color: color-mix(in srgb, var(--line) 82%, var(--gold) 18%);
+  box-shadow: var(--e3), inset 0 1px rgba(255, 255, 255, .78);
+}
+.dash-act {
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(20rem 12rem at 100% 0%, rgba(28, 119, 128, .08), transparent 68%),
+    var(--card);
+}
+.dash-act--gold {
+  background:
+    radial-gradient(24rem 14rem at 0% 0%, rgba(240, 203, 115, .27), transparent 72%),
+    linear-gradient(165deg, var(--gold-tint), var(--card) 56%);
+}
+.dash-act:hover {
+  transform: translateY(-5px) scale(1.008);
+  border-color: rgba(210, 163, 62, .48);
+  box-shadow: var(--e5), 0 0 0 1px rgba(240, 203, 115, .10);
+}
+.dash-act-icon,
+.dash-stats .stat-icon {
+  box-shadow: inset 0 1px rgba(255, 255, 255, .72), 0 8px 18px rgba(5, 43, 48, .10);
+}
+.dash-stats .stat-card {
+  background:
+    radial-gradient(18rem 10rem at 100% 0%, rgba(27, 111, 120, .075), transparent 70%),
+    var(--card);
+}
+.dash-stats .stat-card:nth-child(3) {
+  background: radial-gradient(18rem 10rem at 100% 0%, rgba(210, 163, 62, .13), transparent 72%), var(--card);
+}
+.dash-stats .stat-card strong {
+  background: linear-gradient(115deg, var(--brand-ink-strong), var(--teal-600));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dash-stats .stat-card:nth-child(3) strong {
+  background: linear-gradient(115deg, var(--gold-dark), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.listing-card {
+  border-radius: var(--r-lg);
+  box-shadow: 0 8px 22px rgba(4, 31, 35, .06), inset 0 1px rgba(255, 255, 255, .72);
+}
+.listing-card:hover,
+.listing-card.active {
+  transform: translateY(-2px);
+  border-color: rgba(210, 163, 62, .58);
+  box-shadow: var(--e4), 0 0 0 1px rgba(240, 203, 115, .10);
+}
+
+/* Primary controls get the same metallic face as the campaign headline. */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(112, 72, 8, .72);
+  background: var(--grad-gold-flat);
+  box-shadow: var(--e2), var(--inset-hi-strong), inset 0 -1px rgba(72, 41, 0, .22);
+  text-shadow: 0 1px rgba(255, 255, 255, .32);
+}
+.btn-primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0 34%, rgba(255, 255, 255, .32) 46%, transparent 58% 100%);
+  transform: translateX(-110%);
+  transition: transform .6s var(--ease);
+}
+.btn-primary:hover::before { transform: translateX(110%); }
+.btn-primary:hover:not(:disabled) {
+  filter: saturate(1.08) brightness(1.035);
+  box-shadow: var(--e3), var(--glow-gold-lg), var(--inset-hi-strong);
+}
+
+/* Every full-screen tool opens under the same gold-lit brand canopy. */
+.new-listing-header,
+.opportunity-overlay-header,
+.edit-drawer-header {
+  position: relative;
+  background:
+    radial-gradient(28rem 12rem at 86% -60%, rgba(240, 203, 115, .25), transparent 70%),
+    linear-gradient(102deg, #03191d, #07333a 62%, #0a464c);
+  border-bottom-color: rgba(240, 203, 115, .20);
+  box-shadow: 0 14px 42px rgba(1, 14, 17, .22), inset 0 1px rgba(255, 255, 255, .06);
+}
+.new-listing-header::after,
+.edit-drawer-header::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  pointer-events: none;
+  background: var(--grad-hairline);
+}
+.new-listing-header { color: #ffffff; }
+.new-listing-header h2 { color: #ffffff; }
+.new-listing-header .eyebrow { color: rgba(255, 255, 255, .56); }
+
+/* Dark mode keeps the same materials, with cards becoming smoked glass. */
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(70rem 36rem at 86% -10rem, rgba(210, 163, 62, .085), transparent 64%),
+    radial-gradient(62rem 42rem at 6% 94%, rgba(24, 110, 119, .12), transparent 68%),
+    linear-gradient(rgba(235, 247, 248, .018) 1px, transparent 1px) 0 0 / 36px 36px,
+    linear-gradient(90deg, rgba(235, 247, 248, .018) 1px, transparent 1px) 0 0 / 36px 36px,
+    var(--page);
+}
+:root[data-theme="dark"] .topbar {
+  border-color: rgba(240, 203, 115, .10);
+  background: rgba(7, 31, 35, .76);
+  box-shadow: 0 18px 48px rgba(0, 7, 9, .28), inset 0 1px rgba(255, 255, 255, .045);
+}
+:root[data-theme="dark"] .dash-act,
+:root[data-theme="dark"] .stat-card,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .modal,
+:root[data-theme="dark"] .listing-card {
+  border-color: rgba(240, 203, 115, .10);
+  box-shadow: 0 16px 38px rgba(0, 8, 10, .24), inset 0 1px rgba(255, 255, 255, .035);
+}
+
+@media (max-width: 900px) {
+  .topbar { grid-template-columns: 1fr; align-items: stretch; }
+  .topbar-actions { justify-content: flex-start; }
+}
+
+@media (max-width: 760px) {
+  .topbar { padding: var(--s3); border-radius: var(--r-lg); }
+  .dash-hero { border-radius: var(--r-xl); }
+  .dash-act:hover,
+  .listing-card:hover { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary::before { display: none; }
+  .dash-act:hover,
+  .listing-card:hover { transform: none; }
+}
