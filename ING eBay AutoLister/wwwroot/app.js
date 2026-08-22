@@ -5818,12 +5818,58 @@
   let invSelected = new Set();   // listing IDs ticked for repricing
   let invCosts    = new Map();   // listingId -> CostBasisEntry, so an edit re-renders without a refetch
 
+  // ── Boards that read the seller's own eBay account ───────────────────────────
+  // Six screens in this app are built from listings the app can already see. It is signed into
+  // the account, it holds the token, it imported the listings when the account connected — and
+  // then it drew an empty page with a button in the middle of it. That button is a question with
+  // exactly one possible answer, asked again every single time the screen is opened.
+  //
+  // So they scan themselves. The first time a board is opened in a session it goes and gets its
+  // own data, and the result is kept: coming back to the tab is not asking for another scan, and
+  // the button in the header stays as the way to ask for a fresh one.
+  //
+  // WHY ON OPEN AND NOT AT SIGN-IN, which is the other reading of "it should already be there".
+  // These are not cheap. Every one of them reads the live listings and prices each against sold
+  // comps, and two of them spend a Terapeak lookup budget on top. Running all six the moment a
+  // token arrives would spend that on five boards the seller may never open, and would put it in
+  // front of the one thing they actually came to do. Opening the screen is the signal — it is the
+  // seller saying which board they want, and it arrives before they could have read the page.
+  //
+  // A scan is never started against an account that cannot answer. A board that could only fail
+  // says what is missing instead, which is a more useful screen than a spinner that ends in an
+  // error.
+  const autoScanned = new Set();
+
+  function autoScan(key, resultsId, run) {
+    if (autoScanned.has(key)) return;
+
+    if (!isConnected || ebayLinkIsBroken()) {
+      // The empty state stays — it is a good explanation of what the board is for — but the line
+      // under it stops promising a scan that cannot happen and names the one missing thing.
+      const hint = $(resultsId)?.querySelector('.state-hint');
+      if (hint) {
+        hint.textContent = isConnected
+          ? 'Your eBay sign-in needs attention — fix it in Settings and this board fills itself in.'
+          : 'Connect your eBay account in Settings and this board fills itself in when you open it.';
+      }
+      return;
+    }
+
+    // Marked before the run, not after: a scan that fails has already said why on the screen, and
+    // re-running it on every tab switch would replace that explanation with the same failure.
+    autoScanned.add(key);
+    // After paint. The screen is a screen before the network is touched, so opening the tab never
+    // feels like it hung.
+    setTimeout(run, 0);
+  }
+
   function showInventorySection() {
     hideOverlaySections();
     $('inventory-section')?.classList.remove('hidden');
     setActiveNavItem('inventory');
     markWorkspaceTabOpen('inventory');
     loadCostBasis();
+    autoScan('inventory', 'inv-results', runInventoryScan);
   }
 
   function closeInventorySection() {
@@ -6263,6 +6309,7 @@
     $('offers-section')?.classList.remove('hidden');
     setActiveNavItem('offers');
     markWorkspaceTabOpen('offers');
+    autoScan('offers', 'wo-results', runOfferScan);
   }
 
   function closeOffersSection() {
@@ -6654,6 +6701,7 @@
     $('rescue-section')?.classList.remove('hidden');
     setActiveNavItem('rescue');
     markWorkspaceTabOpen('rescue');
+    autoScan('rescue', 'rsc-results', runRescueScan);
   }
 
   function closeRescueSection() {
@@ -8029,6 +8077,7 @@
     $('relist-section')?.classList.remove('hidden');
     setActiveNavItem('relist');
     markWorkspaceTabOpen('relist');
+    autoScan('relist', 'rl-results', runRelistScan);
   }
 
   function closeRelistSection() {
@@ -10639,6 +10688,10 @@
         if (res.ok) zip.value = (await res.json())?.defaultPostalCode || '';
       } catch { /* the quote still works without it */ }
     }
+
+    // After the ZIP, not before it: the scan prices a real label for every listing, and one
+    // priced from the wrong origin is a scan the seller has to run again.
+    autoScan('shipping', 'ship-results', runShippingLeakScan);
   }
 
   function closeShippingSection() {
@@ -16763,6 +16816,7 @@
     setActiveNavItem('promoted');
     markWorkspaceTabOpen('promoted');
     prefillAdRateFromFeeProfile();
+    autoScan('promoted', 'ad-results', runAdRateScan);
   }
 
   function closePromotedSection() {
