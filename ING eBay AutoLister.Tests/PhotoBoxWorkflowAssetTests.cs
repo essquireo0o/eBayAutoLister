@@ -57,7 +57,11 @@ public class PhotoBoxWorkflowAssetTests
     {
         Assert.Contains("MapPost(\"/api/photos/enhance\"", Program);
         Assert.Contains("new_session('u2netp')", Enhancer);
-        Assert.Contains("mask = np.logical_or(ai_mask, classic)", Enhancer);
+        Assert.Contains("mask = ai_mask if ai_used else classic", Enhancer);
+        Assert.Contains("subject_alpha = ai_alpha", Enhancer);
+        Assert.DoesNotContain("np.maximum(ai_alpha, classic", Enhancer);
+        Assert.Contains("main_size * .008", Enhancer);
+        Assert.Contains("ai_alpha = np.where(ai_mask, ai_alpha, 0)", Enhancer);
         Assert.Contains("ImageEnhance.Brightness", Enhancer);
         Assert.Contains("ImageOps.autocontrast", Enhancer);
         Assert.Contains("ImageEnhance.Sharpness", Enhancer);

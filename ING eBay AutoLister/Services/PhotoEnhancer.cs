@@ -112,9 +112,8 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
 
     private sealed record ScriptResult(bool AiDetected, int CropPercent, int Width, int Height);
 
-    // AI gives us subject location, not permission to delete pixels. The classic border detector
-    // is unioned with its mask so a small charger, strap, memory card, or photographed flaw cannot
-    // disappear merely because a segmentation model thought the main product mattered more.
+    // AI gives us the subject silhouette. The classic border detector is an offline fallback only:
+    // mixing it into successful segmentation can mistake uneven light on a white sheet for product.
     private const string PythonScript = """
 import json, sys
 import numpy as np
@@ -163,13 +162,29 @@ try:
     ai_mask = ai_alpha > 18
     ratio = float(ai_mask.mean())
     ai_used = .002 < ratio < .94
+    if ai_used:
+        # Keep the product and any substantial disconnected accessory, but discard dust, sheet
+        # marks and isolated segmentation flecks. A component under 0.8% of the main subject is
+        # not allowed to become a floating artifact in the gallery image.
+        try:
+            from scipy import ndimage
+            ai_labels, ai_count = ndimage.label(ai_mask)
+            if ai_count > 1:
+                ai_sizes = np.bincount(ai_labels.ravel())
+                main_size = int(ai_sizes[1:].max())
+                ai_keep = ai_sizes >= max(24, int(main_size * .008))
+                ai_keep[0] = False
+                ai_mask = ai_keep[ai_labels]
+                ai_alpha = np.where(ai_mask, ai_alpha, 0).astype(np.uint8)
+        except Exception:
+            pass
 except Exception as ex:
     print('AI subject detector unavailable; using smart border detection: ' + str(ex), file=sys.stderr)
 
-mask = classic
-if ai_used:
-    # Union protects accessories the AI did not call the main subject.
-    mask = np.logical_or(ai_mask, classic)
+# A successful AI mask is authoritative. The classic detector exists only as an offline fallback:
+# merging it into good segmentation reintroduces uneven patches of the photographed white sheet.
+# That produced literal white islands beside dark products—the opposite of background removal.
+mask = ai_mask if ai_used else classic
 
 ys, xs = np.where(mask)
 if len(xs) < max(64, int(w * h * .001)):
@@ -190,10 +205,10 @@ else:
 cropped = img.crop(box)
 crop_percent = max(0, min(99, round(100 * (1 - (cropped.width * cropped.height) / float(w * h)))))
 
-# Keep a soft subject alpha through the same crop. AI supplies the clean silhouette; the classic
-# detector is unioned in so a small strap end, charger, or accessory never vanishes from the photo.
+# Keep a soft subject alpha through the same crop. Never mix a fallback background heuristic into
+# a successful AI silhouette; it cannot distinguish a white accessory from a bright patch of sheet.
 if ai_used:
-    subject_alpha = np.maximum(ai_alpha, classic.astype(np.uint8) * 255)
+    subject_alpha = ai_alpha
 else:
     subject_alpha = classic.astype(np.uint8) * 255
 alpha_img = Image.fromarray(subject_alpha, mode='L').crop(box)
