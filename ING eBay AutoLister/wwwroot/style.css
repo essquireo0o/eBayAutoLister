@@ -9613,6 +9613,32 @@ body.is-hosted #pg-facebook-disconnect { display: none !important; }
   white-space: nowrap;
 }
 .er-row-meta { font-size: var(--fs-xs); color: var(--muted); }
+/* ── The cost, inside the sentence that reports it ────────────────────────────
+   Set as text, not as a button: it lives in the middle of a meta line under a product
+   title, and a real button there would outrank the title it belongs to. The underline and
+   the pencil appear on approach, which is enough to say it can be changed. */
+.er-cost-edit {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit;
+  border-bottom: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+}
+.er-cost-edit:hover { color: var(--ink); border-bottom-color: var(--gold); }
+.er-cost-edit:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 2px; }
+/* A sale with no cost is the one the total is wrong about, so it is the one that gets colour. */
+.er-cost-edit.is-missing { color: var(--gold); font-weight: var(--fw-semibold); }
+.er-cost-pen { margin-left: 5px; opacity: 0; transition: opacity var(--dur-1); }
+.er-cost-edit:hover .er-cost-pen,
+.er-cost-edit:focus-visible .er-cost-pen,
+.er-cost-edit.is-missing .er-cost-pen { opacity: .75; }
+@media (prefers-reduced-motion: reduce) { .er-cost-pen { transition: none; } }
+.er-cost-inline { display: inline-flex; align-items: center; }
+.er-cost-inline .er-cost-cell {
+  width: 8.5em; padding: 3px 8px; font-size: var(--fs-sm);
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--gold); border-radius: var(--r-sm);
+  font-variant-numeric: tabular-nums;
+}
+
 .er-row-value {
   font-size: var(--fs-md);
   font-weight: 700;

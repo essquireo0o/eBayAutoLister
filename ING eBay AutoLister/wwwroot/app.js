@@ -8973,6 +8973,14 @@
         e.preventDefault();
         saveCostCell(e.target);
       }
+      // Esc puts the row back exactly as it was. Without it the only way out of an inline editor
+      // opened by mistake is to save something.
+      if (e.key === 'Escape' && e.target?.classList?.contains('er-cost-cell')
+          && e.target.dataset.original !== undefined) {
+        e.preventDefault();
+        e.target.dataset.cancelled = '1';
+        renderEarnings();
+      }
       if (e.key === 'Escape' && !$('er-log-modal')?.classList.contains('hidden')) closeFlipLogger();
     });
     // Leaving the cell saves it too: a seller who types a figure and clicks the next row has
@@ -8990,6 +8998,13 @@
     const id = input.dataset.id;
     const raw = (input.value || '').trim();
     if (!id || raw === '') return;
+    if (input.dataset.cancelled === '1') return;
+    // An inline editor opened and closed without a change is not a save. Re-saving the same
+    // number works, but it reports "$0.00 of real profit added", which reads like a failure.
+    if (input.dataset.original !== undefined && raw === input.dataset.original) {
+      renderEarnings();
+      return;
+    }
     if (input.dataset.saving === raw) return;   // focusout after Enter would save the same value twice
     input.dataset.saving = raw;
 
@@ -9012,6 +9027,9 @@
   }
 
   function onEarningsClick(e) {
+    const editCost = e.target.closest?.('.er-cost-edit');
+    if (editCost) { openInlineCost(editCost); return; }
+
     const save = e.target.closest?.('.er-cost-save');
     if (save) {
       const input = $('earnings-section').querySelector(`.er-cost-input[data-id="${save.dataset.id}"]`);
@@ -9467,6 +9485,13 @@
       'No sale yet clears $10 profit with a recorded cost — that is the bar for a return worth repeating.');
   }
 
+  // WHY THE COST IS A BUTTON HERE.
+  // A cost typed wrong is only reachable from the every-sale table, which is folded away behind
+  // "Show all sales" — and the awaiting-cost panel above lists only sales with NO cost, so the
+  // moment a wrong number is saved the sale drops off it and there is nothing on screen that
+  // will change it. These leaderboard rows are where a wrong cost actually gets NOTICED: a flip
+  // showing "paid $0.00" at the top of Best flips is the thing that makes somebody look. So the
+  // number they are staring at is the control that fixes it.
   function renderFlipList(hostId, flips, valueOf, emptyText) {
     const el = $(hostId);
     if (!el) return;
@@ -9476,10 +9501,41 @@
       <div class="er-row">
         <div class="er-row-main">
           <span class="er-row-title" title="${esc(f.title)}">${esc(f.title)}</span>
-          <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)}${f.costOfGoods != null ? ` · paid ${moneyExact(f.costOfGoods)}` : ''}${f.source === 'manual' ? ' · logged by you' : ''}</span>
+          <span class="er-row-meta">${esc(shortDate(f.soldUtc))} · sold ${moneyExact(f.grossRevenue || 0)} · ${costButton(f)}${f.source === 'manual' ? ' · logged by you' : ''}</span>
         </div>
         <span class="er-row-value${(f.netProfit || 0) < 0 ? ' er-negative' : ''}">${esc(valueOf(f))}</span>
       </div>`).join('');
+  }
+
+  // Reads as text until you go near it, because it sits inside a sentence and a row of buttons
+  // where the meta line used to be would shout over the titles.
+  function costButton(f) {
+    const has = f.costOfGoods != null;
+    const val = has ? Number(f.costOfGoods).toFixed(2) : '';
+    return `<button type="button" class="er-cost-edit${has ? '' : ' is-missing'}"
+      data-id="${f.id}" data-unitgross="${unitGross(f)}" data-cost="${val}"
+      title="${has ? 'Change what you paid for this' : 'Record what you paid for this'}"
+      aria-label="${has ? 'Change' : 'Record'} what you paid for ${esc(f.title)}"
+      >${has ? `paid ${moneyExact(f.costOfGoods)}` : 'add what you paid'}<span class="er-cost-pen" aria-hidden="true">✎</span></button>`;
+  }
+
+  // Swap the button for the same cost cell the every-sale table uses, so Enter, focus-out and the
+  // "40%" dropshipper form all behave identically without a second code path. data-original is
+  // what stops a click-in-click-out from re-saving an unchanged number and announcing that it
+  // added $0.00 of profit.
+  function openInlineCost(btn) {
+    const current = btn.dataset.cost || '';
+    const slot = document.createElement('span');
+    slot.className = 'er-cost-inline';
+    slot.innerHTML = `<input class="er-cost-cell" data-id="${btn.dataset.id}"
+        data-unitgross="${btn.dataset.unitgross}" data-original="${current}"
+        type="text" inputmode="decimal" value="${current}" placeholder="0.00"
+        aria-label="What you paid, per unit"
+        title="What you paid, per unit. A dollar amount, or a percentage like 40% for the share of the sale you keep. Enter to save, Esc to leave it alone." />`;
+    btn.replaceWith(slot);
+    const input = slot.querySelector('input');
+    input.focus();
+    input.select();
   }
 
   // Every sale, checkable against the seller's own eBay statement. A running total nobody can audit
