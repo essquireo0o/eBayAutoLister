@@ -379,6 +379,8 @@ builder.Services.AddSingleton<HostedMarketplaceRepository>();
 // nothing constructs or calls them. Removing them is a separate reviewed change.
 builder.Services.AddSingleton<OpenWebNinjaClient>();
 builder.Services.AddSingleton<LiveCompsStore>();
+// Every AI resale estimate the app has made, so the same product is never paid for twice.
+builder.Services.AddSingleton<AiEstimateStore>();
 builder.Services.AddSingleton<LiveCompsLookup>();
 // Both databases, merged — NOT one or the other. The live scraper writes into the LOCAL
 // SoldListings table, so selecting the hosted repository alone (the shipped configuration) meant
@@ -2492,18 +2494,36 @@ app.MapGet("/api/fb-photo", async (string? u, string? s, HttpContext httpCtx, Ca
 // comps could not price at all — "No sold data" is true but useless to somebody deciding whether
 // to drive across town, and a rough number they can argue with beats no number (owner,
 // 2026-08-21). One call for the whole board, and never evidence: see ClaudeService.EstimateResaleAsync.
-app.MapPost("/api/local/ai-estimate", async (AiEstimateRequest req, ClaudeService claude, ActionLog log,
+app.MapPost("/api/local/ai-estimate", async (AiEstimateRequest req, ClaudeService claude,
+                                             AiEstimateStore estimateStore, ActionLog log,
                                              CancellationToken ct) =>
 {
     var items = req?.Items ?? [];
     if (items.Count == 0) return Results.Ok(new { estimates = Array.Empty<AiResaleEstimate>() });
 
+    // The database answers first. A board reloaded twice in an afternoon, or two sellers listing
+    // the same moped, costs one generation rather than one per look — and comes back instantly
+    // instead of after fifteen seconds of thinking.
+    var now = DateTimeOffset.UtcNow;
+    var cached = estimateStore.Known(items, now);
+    var missing = items.Where(i => !cached.ContainsKey(i.ItemId ?? "")).ToList();
+
+    if (missing.Count == 0)
+    {
+        log.Add("Research", "AI resale estimates (all remembered)",
+            $"{cached.Count} item(s) answered from the app's own database — nothing asked of the model.");
+        return Results.Ok(new { estimates = cached.Values.ToList(), fromCache = cached.Count, asked = 0 });
+    }
+
     try
     {
-        var estimates = await claude.EstimateResaleAsync(items, ct);
+        var fresh = await claude.EstimateResaleAsync(missing, ct);
+        estimateStore.Save(missing, fresh, now);
+        var all = cached.Values.Concat(fresh).ToList();
         log.Add("Research", "AI resale estimates",
-            $"{estimates.Count} of {items.Count} item(s) estimated from the wider resale market (no matching sold comps).");
-        return Results.Ok(new { estimates });
+            $"{fresh.Count} of {missing.Count} asked item(s) estimated from the wider resale market; "
+            + $"{cached.Count} answered from the database. All of them saved for next time.");
+        return Results.Ok(new { estimates = all, fromCache = cached.Count, asked = missing.Count });
     }
     catch (OperationCanceledException) { throw; }
     catch (Exception ex)
@@ -2512,7 +2532,10 @@ app.MapPost("/api/local/ai-estimate", async (AiEstimateRequest req, ClaudeServic
         // one — the comp-priced cards are unaffected, so this answers empty rather than failing.
         var failure = FailureTranslator.Translate(ex, FailureDomain.Ai);
         log.Add("Warning", "AI resale estimate failed", failure.Technical ?? failure.Headline);
-        return Results.Ok(new { estimates = Array.Empty<AiResaleEstimate>(), note = failure.WhatToDo ?? "" });
+        // Whatever the database already knew still stands — an outage costs the new answers, not
+        // the old ones.
+        return Results.Ok(new { estimates = cached.Values.ToList(), fromCache = cached.Count,
+                                note = failure.WhatToDo ?? "" });
     }
 });
 
