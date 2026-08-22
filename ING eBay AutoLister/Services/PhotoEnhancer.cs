@@ -154,11 +154,13 @@ except Exception:
 
 ai_used = False
 ai_mask = None
+ai_alpha = None
 try:
     from rembg import remove, new_session
     # u2netp is the lightweight subject model: fast enough to run after every shutter press.
     ai = remove(img.convert('RGBA'), session=new_session('u2netp'), only_mask=True)
-    ai_mask = np.asarray(ai.convert('L')) > 18
+    ai_alpha = np.asarray(ai.convert('L'))
+    ai_mask = ai_alpha > 18
     ratio = float(ai_mask.mean())
     ai_used = .002 < ratio < .94
 except Exception as ex:
@@ -188,6 +190,15 @@ else:
 cropped = img.crop(box)
 crop_percent = max(0, min(99, round(100 * (1 - (cropped.width * cropped.height) / float(w * h)))))
 
+# Keep a soft subject alpha through the same crop. AI supplies the clean silhouette; the classic
+# detector is unioned in so a small strap end, charger, or accessory never vanishes from the photo.
+if ai_used:
+    subject_alpha = np.maximum(ai_alpha, classic.astype(np.uint8) * 255)
+else:
+    subject_alpha = classic.astype(np.uint8) * 255
+alpha_img = Image.fromarray(subject_alpha, mode='L').crop(box)
+alpha_img = alpha_img.filter(ImageFilter.MedianFilter(3)).filter(ImageFilter.GaussianBlur(1.15))
+
 # Exposure is deliberately gentle. It lifts a dim phone frame without turning a black product gray.
 lum = np.asarray(cropped.convert('L'))
 mean_lum = float(np.mean(lum))
@@ -198,12 +209,39 @@ enhanced = ImageEnhance.Contrast(enhanced).enhance(1.07)
 enhanced = ImageEnhance.Color(enhanced).enhance(1.06)
 enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.18)
 
-# eBay's gallery is square. Preserve the entire safe crop, then center it with a clean margin.
+# Build a neutral editorial studio—not a white document canvas. The gradient gives a dark product
+# separation at every edge, while the subject mask removes the photographed sheet and its uneven
+# corners completely. A soft shadow grounds the item without inventing any product detail.
 canvas = 1600
-margin = int(canvas * .065)
-enhanced.thumbnail((canvas - margin * 2, canvas - margin * 2), Image.Resampling.LANCZOS)
-result = Image.new('RGB', (canvas, canvas), (255, 255, 255))
-result.paste(enhanced, ((canvas - enhanced.width) // 2, (canvas - enhanced.height) // 2))
+margin = int(canvas * .075)
+scale = min((canvas - margin * 2) / enhanced.width, (canvas - margin * 2) / enhanced.height)
+new_size = (max(1, round(enhanced.width * scale)), max(1, round(enhanced.height * scale)))
+subject = enhanced.resize(new_size, Image.Resampling.LANCZOS).convert('RGBA')
+subject_alpha = alpha_img.resize(new_size, Image.Resampling.LANCZOS)
+subject.putalpha(subject_alpha)
+
+yy, xx = np.mgrid[0:canvas, 0:canvas]
+t = (yy / float(canvas - 1))[..., None]
+top = np.array([220.0, 216.0, 207.0])
+bottom = np.array([166.0, 174.0, 176.0])
+studio = top * (1.0 - t) + bottom * t
+studio = np.broadcast_to(studio, (canvas, canvas, 3)).copy()
+radial = np.sqrt(((xx - canvas * .50) / (canvas * .72)) ** 2 + ((yy - canvas * .40) / (canvas * .66)) ** 2)
+spot = np.clip(1.0 - radial, 0.0, 1.0)[..., None]
+studio += spot * 13.0
+studio -= np.clip(radial - .55, 0.0, .65)[..., None] * 17.0
+studio = np.clip(studio, 0, 255).astype(np.uint8)
+result = Image.fromarray(studio, mode='RGB').convert('RGBA')
+
+x = (canvas - subject.width) // 2
+y = (canvas - subject.height) // 2 - int(canvas * .012)
+shadow_alpha = subject_alpha.filter(ImageFilter.GaussianBlur(max(14, canvas / 70)))
+shadow_alpha = shadow_alpha.point(lambda p: int(p * .28))
+shadow = Image.new('RGBA', subject.size, (25, 30, 31, 0))
+shadow.putalpha(shadow_alpha)
+result.alpha_composite(shadow, (x + int(canvas * .012), y + int(canvas * .025)))
+result.alpha_composite(subject, (x, y))
+result = result.convert('RGB')
 result.save(dst, 'JPEG', quality=95, optimize=True, progressive=True)
 print(json.dumps({'aiDetected': ai_used, 'cropPercent': crop_percent, 'width': canvas, 'height': canvas}))
 """;

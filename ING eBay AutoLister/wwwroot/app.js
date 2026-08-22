@@ -5914,10 +5914,18 @@
   // error.
   const autoScanned = new Set();
 
+  // Boards that asked for their data while the account was not connected. They are not failures
+  // and they are not retried on a timer — they are remembered so that CONNECTING eBay fills the
+  // screen the seller is looking at. Without this, a seller who opens a board, reads "connect
+  // your eBay account", goes and connects it, and comes back is looking at the same empty board
+  // with the same instruction, and the only way out is to close the tab and open it again.
+  const autoScanPending = new Map();   // key -> { resultsId, run }
+
   function autoScan(key, resultsId, run) {
     if (autoScanned.has(key)) return;
 
     if (!isConnected || ebayLinkIsBroken()) {
+      autoScanPending.set(key, { resultsId, run });
       // The empty state stays — it is a good explanation of what the board is for — but the line
       // under it stops promising a scan that cannot happen and names the one missing thing.
       const hint = $(resultsId)?.querySelector('.state-hint');
@@ -5932,9 +5940,30 @@
     // Marked before the run, not after: a scan that fails has already said why on the screen, and
     // re-running it on every tab switch would replace that explanation with the same failure.
     autoScanned.add(key);
+    autoScanPending.delete(key);
     // After paint. The screen is a screen before the network is touched, so opening the tab never
     // feels like it hung.
     setTimeout(run, 0);
+  }
+
+  /**
+   * Called the moment an eBay account finishes connecting.
+   *
+   * Only the board actually on screen. Filling all of them the second a token arrives is the one
+   * thing autoScan exists to avoid — these are not cheap, and it would spend a seller's first
+   * minute on seven boards they have not asked for, in front of the one thing they came to do.
+   * Every other board still fills itself the moment it is opened, which is soon enough, because
+   * opening it is the seller saying which one they want.
+   */
+  function autoScanOnConnect() {
+    if (!isConnected || ebayLinkIsBroken()) return;
+
+    for (const [key, pending] of [...autoScanPending]) {
+      const section = WORKSPACE_PAGES[key]?.section;
+      if (!section || $(section)?.classList.contains('hidden')) continue;
+      autoScanPending.delete(key);
+      autoScan(key, pending.resultsId, pending.run);
+    }
   }
 
   function showInventorySection() {
@@ -7609,7 +7638,7 @@
           if (note) {
             note.classList.remove('hidden');
             note.classList.add('pb-enhancing');
-            note.textContent = '✨ AI Enhance — finding the item, auto-cropping, brightening and sharpening…';
+            note.textContent = '✨ AI Enhance — isolating the item, building the studio background, brightening and sharpening…';
           }
           try {
             enhanced = await pbEnhancePhoto(r.url);
@@ -7631,7 +7660,7 @@
           note.classList.remove('hidden');
           if (enhanced) {
             note.className = 'wn-video-status wn-video-ok';
-            note.textContent = `✨ Enhanced automatically — cropped ${enhanced.cropPercent || 0}% of empty space, brightened, colour-balanced and sharpened. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`;
+            note.textContent = `✨ Studio photo ready — background replaced, ${enhanced.cropPercent || 0}% of empty space removed, then brightened and sharpened. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`;
           } else if (!pbAutoEnhance) {
             note.textContent = `Original saved to the Photo Library (${r.folder}). AI Enhance is off.`;
           }
@@ -7717,7 +7746,7 @@
     chip?.setAttribute('aria-pressed', String(pbAutoEnhance));
     if (chip) chip.textContent = `✨ AI Enhance · ${pbAutoEnhance ? 'On' : 'Off'}`;
     pbSetupStatus(pbAutoEnhance
-      ? 'AI Enhance is on — every new shot will be cropped, brightened, colour-balanced and sharpened automatically.'
+      ? 'AI Enhance is on — every new shot gets a professional studio background, crop, exposure, colour and sharpness automatically.'
       : 'AI Enhance is off — new shots will stay exactly as the phone captured them.', '');
   }
 
@@ -7727,7 +7756,7 @@
     shot?.classList.add('is-working');
     if (note) {
       note.className = 'wn-video-status pb-enhancing';
-      note.textContent = '✨ AI Enhance — finding the item, auto-cropping, brightening and sharpening…';
+      note.textContent = '✨ AI Enhance — isolating the item, building the studio background, brightening and sharpening…';
     }
     try {
       const result = await pbEnhancePhoto(url);
@@ -7737,7 +7766,7 @@
       pbRenderFilmstrip();
       if (note) {
         note.className = 'wn-video-status wn-video-ok';
-        note.textContent = `✨ Photo enhanced — cropped ${result.cropPercent || 0}% of empty space, brightened, colour-balanced and sharpened.`;
+        note.textContent = `✨ Studio photo ready — background replaced, ${result.cropPercent || 0}% of empty space removed, then brightened and sharpened.`;
       }
     } catch (err) {
       shot?.classList.remove('is-working');
@@ -7792,7 +7821,7 @@
                 aria-label="Remove photo ${i + 1} from this listing">&times;</button>
         <div class="pb-shot-tools">
           <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
-          <button type="button" data-act="enhance" ${pbEnhancedSnaps.has(u) ? 'disabled' : ''} title="Automatically crop, brighten, colour-balance and sharpen">${pbEnhancedSnaps.has(u) ? 'Enhanced' : '✨ Enhance'}</button>
+          <button type="button" data-act="enhance" ${pbEnhancedSnaps.has(u) ? 'disabled' : ''} title="Replace the background with a professional studio, then crop, brighten and sharpen">${pbEnhancedSnaps.has(u) ? 'Enhanced' : '✨ Enhance'}</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
           <button type="button" data-act="portrait" title="Portrait — the product stays sharp and the room behind it goes soft. Done on this machine, no upload">Portrait</button>
         </div>
@@ -15513,6 +15542,10 @@
     $('trends-section')?.classList.remove('hidden');
     setActiveNavItem('trends');
     markWorkspaceTabOpen('trends');
+    // The last two boards in the app that opened as a button in the middle of an empty page. The
+    // button asked a question with one possible answer — "yes, show me the thing this screen is
+    // for" — and asked it again every single time the screen was opened.
+    autoScan('trends', 'tr-results', () => runTrendScan({ nextSeed: false }));
   }
 
   function closeTrendsSection() {
@@ -16650,6 +16683,9 @@
     setActiveNavItem('snipe');
     markWorkspaceTabOpen('snipe');
     startSnipeTicker();
+    // With no search terms this scan works out what the seller already sells and searches eBay
+    // for that, which is exactly the answer an empty board should have opened with.
+    autoScan('snipe', 'sn-results', () => runSnipeScan());
   }
 
   // The ticker is stopped by the tab machinery (onHide) whether this screen is closed or merely
@@ -22174,6 +22210,9 @@
     isConnected = connected;
     authUiPainted = true;
     if (justConnected) checkEbayLink({ quiet: true });
+    // A board left open through the sign-in has been sitting there saying it needs an account.
+    // It has one now, so it goes and gets its data rather than waiting to be reopened.
+    if (justConnected) autoScanOnConnect();
     if (connected) {
       $('auth-status')?.classList.remove('hidden');
       $('btn-connect')?.classList.add('hidden');

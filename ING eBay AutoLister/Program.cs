@@ -9282,7 +9282,7 @@ app.MapPost("/api/photos/enhance", async (PhotoEnhanceRequest req, PhotoEnhancer
             result.CropPercent,
             result.Width,
             result.Height,
-            adjustments = new[] { "auto crop", "exposure", "contrast", "colour", "sharpness" }
+            adjustments = new[] { "AI background removal", "studio backdrop", "auto crop", "exposure", "contrast", "colour", "sharpness" }
         });
     }
     catch (OperationCanceledException) { throw; }

@@ -62,6 +62,10 @@ public class PhotoBoxWorkflowAssetTests
         Assert.Contains("ImageOps.autocontrast", Enhancer);
         Assert.Contains("ImageEnhance.Sharpness", Enhancer);
         Assert.Contains("canvas = 1600", Enhancer);
+        Assert.Contains("subject.putalpha(subject_alpha)", Enhancer);
+        Assert.Contains("studio = top * (1.0 - t) + bottom * t", Enhancer);
+        Assert.Contains("result.alpha_composite(shadow", Enhancer);
+        Assert.DoesNotContain("Image.new('RGB', (canvas, canvas), (255, 255, 255))", Enhancer);
     }
 
     private static string ReadAsset(string name)
