@@ -1083,6 +1083,12 @@
     // Not awaited: whether a newer version exists is never worth delaying the dashboard for, and
     // the check answers "no" on every failure anyway.
     checkForUpdate();
+    // Records which build served this page, and re-asks every time the tab is looked at again.
+    checkAppBuild();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') checkAppBuild();
+    });
+    window.addEventListener('focus', checkAppBuild);
 
     initTheme();              // the theme is already ON the page from the head script; this wires the switch to it
     initWorkspaceTabs();      // the Dashboard tab has to exist before any route can open beside it
@@ -3146,6 +3152,43 @@
    * interrupted someone to complain it could not reach GitHub would be worse than one that never
    * checked.
    */
+  // ── The page that outlived its own app ───────────────────────────────────────
+  // This UI is served from inside the executable, so every update to the app is a new app.js at
+  // the same address — and a browser tab is a long-lived thing that happily survives the app
+  // restarting under it. When that happens the seller is looking at the previous build: the
+  // feature they were told about is missing, the button does not do the new thing, and nothing on
+  // screen suggests the cause is the page rather than the app. Caching is fixed at the source (the
+  // UI files now always revalidate), which stops it happening on a reload — this catches the tab
+  // that has not been reloaded at all.
+  //
+  // Asked on focus rather than on a timer: the only moment this matters is when somebody comes
+  // back to the tab, and a poll would be a request every N seconds for a thing that changes about
+  // once a week.
+  let seenBuild = null;
+
+  async function checkAppBuild() {
+    try {
+      const res = await fetch('/api/app/build');
+      if (!res.ok) return;                       // signed out, or mid-restart — neither is news
+      const build = (await res.json())?.build;
+      if (!build) return;
+      if (seenBuild === null) { seenBuild = build; return; }
+      if (build === seenBuild) return;
+
+      // Not dismissible, and it does not reload on its own: a reload throws away whatever is
+      // half-typed on screen, and that is the seller's to decide, not this banner's.
+      const el = $('update-banner');
+      if (!el || el.dataset.stale === '1') return;
+      el.dataset.stale = '1';
+      el.innerHTML =
+        '<strong>This app has been updated.</strong> ' +
+        'You are looking at the version that was running before. ' +
+        '<button type="button" id="stale-reload" class="btn btn-primary small">Reload the page</button>';
+      el.classList.remove('hidden');
+      on('stale-reload', 'click', () => location.reload());
+    } catch { /* offline or restarting: the next focus asks again */ }
+  }
+
   async function checkForUpdate() {
     const el = $('update-banner');
     if (!el) return;

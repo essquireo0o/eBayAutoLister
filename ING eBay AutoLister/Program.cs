@@ -662,13 +662,29 @@ app.UseCors();
 // closed. Must come before them; a no-op in the desktop build.
 HostedAuth.UseSignedInUser(app);
 
-// Serve UI files from embedded resources (bundled inside the exe)
+// Serve UI files from embedded resources (bundled inside the exe).
+//
+// ALWAYS REVALIDATE. The whole UI — index.html, app.js, style.css — lives inside the executable,
+// so every update to this app is a new app.js at the same URL. These responses carried an ETag and
+// a Last-Modified and no Cache-Control at all, which does not mean "do not cache": with no explicit
+// freshness a browser is free to invent one from the Last-Modified date and serve the file without
+// asking. A tab left open across an update then keeps running the PREVIOUS build's JavaScript at
+// the current build's URL, and every symptom of that looks like a broken feature rather than a
+// stale page — a new control that is missing, a screen that does not do the thing it was just
+// taught to do. It is the least debuggable class of bug this app can have, because the code on
+// disk is right and the code running is not.
+//
+// no-cache is not no-store: the browser still keeps the file and still asks "has this changed",
+// and the ETag above answers 304 with an empty body when it has not. The cost of correctness here
+// is one conditional request per asset per load, over a loopback socket.
 {
     var asm = typeof(Program).Assembly;
     var ns  = "ING_eBay_AutoLister.wwwroot";
     var embedded = new Microsoft.Extensions.FileProviders.EmbeddedFileProvider(asm, ns);
+    static void AlwaysRevalidate(Microsoft.AspNetCore.StaticFiles.StaticFileResponseContext ctx) =>
+        ctx.Context.Response.Headers.CacheControl = "no-cache, must-revalidate";
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = embedded, DefaultFileNames = ["index.html"] });
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = embedded });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = embedded, OnPrepareResponse = AlwaysRevalidate });
 }
 
 // Serve generated-photos from the fixed data home
@@ -8701,6 +8717,21 @@ app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest r
 // failure — a version check is never worth interrupting someone's listing session over.
 app.MapGet("/api/update/check", async (UpdateChecker updates, bool? force, CancellationToken ct) =>
     Results.Ok(await updates.CheckAsync(force ?? false, ct)));
+
+// Which build is answering. Not the version number — that only moves on a release, and the UI
+// inside the exe changes on every build — but the timestamp of the executable that is serving this
+// page. The page reads it once on load and again whenever the tab is looked at, and says so when
+// it has moved: a browser tab is a long-lived thing and an app that restarts under it is normal,
+// so "you are looking at the previous version" has to be something the app can say out loud.
+// Cheap enough to ask on every focus: one file timestamp, no I/O beyond the directory entry.
+app.MapGet("/api/app/build", () =>
+{
+    var path = System.Environment.ProcessPath ?? typeof(Program).Assembly.Location;
+    var stamp = path.Length > 0 && File.Exists(path)
+        ? File.GetLastWriteTimeUtc(path).Ticks
+        : 0L;
+    return Results.Ok(new { build = stamp.ToString() });
+});
 
 app.MapGet("/api/ebay/policies", async (EbayService ebay, ActionLog log) =>
 {
