@@ -29,20 +29,28 @@
   /* ── Type scale ───────────────────────────────────────────────────────
      Integer sizes only. Fractional px sizes get rasterised between
      hinting steps, which is the difference between text that looks crisp
-     and text that looks slightly out of focus. */
-  --fs-3xs: 10px;
-  --fs-2xs: 11px;
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-base: 14px;
-  --fs-md: 15px;
-  --fs-lg: 17px;
-  --fs-xl: 20px;
-  --fs-2xl: 24px;
-  --fs-3xl: 28px;
-  --fs-4xl: 34px;
-  --fs-5xl: 42px;
-  --fs-display: 56px;
+     and text that looks slightly out of focus.
+
+     The bottom of this scale used to run 10/11/12/13px, and the app spends
+     most of its words down there — nav labels, tips, hints, chips, every
+     table. On a real monitor at a real desk that is text you lean in to
+     read, and leaning in is the opposite of easy. The small end is now
+     compressed against a 13px floor and everything above it moved up with
+     it; the headline rungs barely move, because they were never the
+     problem. Nothing in this app is smaller than 13px any more. */
+  --fs-3xs: 13px;
+  --fs-2xs: 13px;
+  --fs-xs: 14px;
+  --fs-sm: 15px;
+  --fs-base: 16px;
+  --fs-md: 17px;
+  --fs-lg: 19px;
+  --fs-xl: 22px;
+  --fs-2xl: 26px;
+  --fs-3xl: 30px;
+  --fs-4xl: 36px;
+  --fs-5xl: 44px;
+  --fs-display: 58px;
 
   /* Weights. 550/650 are real weights on a variable face and land between
      the stock steps, which is where UI text wants to sit. */
@@ -205,7 +213,7 @@
      .new-listing-overlay) are position:fixed, so they only stay clear of the
      nav by measuring against the same number the shell grid uses. Two copies
      of "280px" is how the nav ends up buried again. */
-  --sidebar-w: 280px;
+  --sidebar-w: 300px;   /* 280 clipped the nav labels once the type scale grew */
 
   /* ── Radius ───────────────────────────────────────────────────────────
      Corner radius is a strong identity signal and the app had been mixing
@@ -701,8 +709,8 @@ button { cursor: pointer; }
   align-items: center;
   justify-content: center;
   gap: var(--s2);
-  min-height: 36px;
-  padding: 8px var(--s4);
+  min-height: 42px;
+  padding: 10px var(--s4);
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   font-size: var(--fs-sm);
@@ -3191,7 +3199,7 @@ textarea {
   left: 4px;
   background: var(--src-ebay);
   color: #fff;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 900;
   padding: 1px 4px;
   border-radius: var(--r-3xs);
@@ -13610,7 +13618,7 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 }
 .er-pct-hint {
   grid-column: 1 / -1;
-  font-size: 12px;
+  font-size: 14px;
   color: #9fb3ac;
   min-height: 1em;
 }
@@ -13677,14 +13685,14 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .fb-pick-price { font-weight: 700; padding: 6px 9px 0; }
 .fb-pick-title {
   padding: 0 9px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.fb-pick-loc { padding: 0 9px; font-size: 12px; color: #9fb3ac; }
+.fb-pick-loc { padding: 0 9px; font-size: 14px; color: #9fb3ac; }
 /* Placeholder tiles while the Marketplace feed loads. The call drives a real page load and takes
    about thirty seconds; an empty strip for that long reads as broken rather than as busy. */
 .fb-pick-skeleton {
@@ -13848,7 +13856,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .copilot-pick-flag {
-  flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  flex: none; font-size: 13px; padding: 1px 7px; border-radius: 999px;
   background: rgba(245,158,11,.15); color: #f59e0b;
 }
 .copilot-apply-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -13880,7 +13888,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   font-size: var(--fs-2xs, .72rem);
 }
 .copilot-chg-field { flex: none; min-width: 110px; font-weight: 600; }
-.copilot-chg-tag { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px; }
+.copilot-chg-tag { flex: none; font-size: 13px; padding: 0 6px; border-radius: 999px; }
 .copilot-chg-filled  { background: rgba(47,156,59,.15); color: var(--accent, #2f9c3b); }
 .copilot-chg-removed { background: rgba(245,158,11,.15); color: #f59e0b; }
 /* Money on a Today's Picks card. The grid answers "what is near me"; these answer
@@ -13890,9 +13898,9 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .fb-pick-profit.is-good { color: #16a34a; }
 .fb-pick-profit.is-bad  { color: var(--text-muted, #606e74); }
 .fb-pick-comp {
-  display: block; font-size: 11px; color: var(--text-muted, #606e74);
+  display: block; font-size: 13px; color: var(--text-muted, #606e74);
 }
-.fb-pick-nodata { display: block; font-size: 11px; color: var(--text-muted, #606e74); font-style: italic; }
+.fb-pick-nodata { display: block; font-size: 13px; color: var(--text-muted, #606e74); font-style: italic; }
 /* A figure the server graded "low": the arithmetic is right and the price under it is a guess.
    Dimmed rather than hidden — the seller can still use it as a starting point — but it must not
    read like the confident number on the card next to it. Same treatment the deals board gives
@@ -13901,7 +13909,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .fb-pick-profit.is-guess { color: var(--text-muted, #606e74); font-weight: 700; opacity: .85; }
 .fb-pick-guess {
   display: block;
-  font-size: 10.5px;
+  font-size: 13px;
   line-height: 1.3;
   margin-top: 1px;
   color: #b45309;
@@ -13912,7 +13920,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    (Backed / Estimate / No sold data), the comps that priced it, and which database answered. A
    card without this was a number with no way of knowing how far to believe it. */
 .fb-pick-evidence {
-  display: block; font-size: 10.5px; line-height: 1.3; margin-top: 2px;
+  display: block; font-size: 13px; line-height: 1.3; margin-top: 2px;
   font-weight: 700; letter-spacing: .01em;
 }
 .fb-pick-ev-confident { color: #16a34a; }
@@ -13922,9 +13930,9 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    link, so it has to read as a button rather than as more of the link. */
 .fb-pick-live-btn {
   display: inline-block; margin: 4px 0 2px; padding: 2px 8px;
-  font-size: 11px; line-height: 1.4; position: relative; z-index: 1;
+  font-size: 13px; line-height: 1.4; position: relative; z-index: 1;
 }
-.fb-pick-live-note { display: block; font-size: 10.5px; color: var(--text-muted, #606e74); font-style: italic; }
+.fb-pick-live-note { display: block; font-size: 13px; color: var(--text-muted, #606e74); font-style: italic; }
 /* The board summary's note when the live pass stopped early (allowance spent, lookup busy). */
 .fb-arb-live-summary-note { color: #b45309; }
 /* Update banner. Deliberately calm: an update is worth knowing about, not worth alarming
@@ -14790,7 +14798,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-nav-btn {
   min-width: 34px;
   padding: 0 9px;
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1;
 }
 .wn-nav-btn:disabled {
@@ -14806,7 +14814,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   margin: 0 0 10px;
   padding: 7px 10px;
   border-radius: 8px;
-  font-size: 12.5px;
+  font-size: 15px;
   border: 1px solid var(--border, #2a2f3a);
   color: var(--text-dim, #8b93a7);
   background: var(--panel-2, rgba(255, 255, 255, .03));
@@ -14848,21 +14856,21 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   background: linear-gradient(180deg, rgba(18, 20, 26, .96), rgba(10, 11, 15, .98));
 }
 .wn-blocked-title {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   color: var(--warn, #e0a94a);
 }
 .wn-blocked-detail {
   margin: 0;
   max-width: 56ch;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
 .wn-blocked-header {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
   opacity: .8;
 }
@@ -14871,7 +14879,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-blocked-note {
   margin: 0;
   max-width: 56ch;
-  font-size: 12px;
+  font-size: 14px;
   font-style: italic;
   color: var(--text-dim, #8b93a7);
   opacity: .85;
@@ -14924,7 +14932,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   padding: 8px 10px;
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
   cursor: pointer;
   white-space: nowrap;
@@ -14950,7 +14958,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-video-status {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-video-status.hidden { display: none; }
@@ -14963,7 +14971,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-left: 3px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 12.5px;
+  font-size: 15px;
 }
 /* Found it, read the page and there was no lot on it, and couldn't read it at all.
    Three states, three edges — the middle one is the normal state of a live show
@@ -15023,7 +15031,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    read itself. Open it and every field says which key in the page it came from. */
 .wn-read-ev {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-read-ev > summary {
@@ -15052,7 +15060,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-left: 3px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 12.5px;
+  font-size: 15px;
 }
 /* In flight keeps the neutral edge: every look passes through it, including the
    ones that agree. */
@@ -15132,7 +15140,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-photo-ev {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-photo-ev > summary {
@@ -15164,7 +15172,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   min-width: 200px;
 }
 .wn-field > span {
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: .04em;
   text-transform: uppercase;
   color: var(--text-dim, #8b93a7);
@@ -15193,7 +15201,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
   color: var(--text, #e8ecf4);
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1;
   cursor: pointer;
 }
@@ -15281,7 +15289,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-left: 3px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.45;
   font-variant-numeric: tabular-nums;
@@ -15335,7 +15343,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   flex-wrap: wrap;
 }
 .wn-call-badge {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 800;
   letter-spacing: .02em;
   padding: 8px 14px;
@@ -15385,7 +15393,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 .wn-search-wide {
   border-left: 3px solid var(--warn, #e0b44a);
@@ -15401,7 +15409,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   min-width: 0;
 }
 .wn-search-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15411,7 +15419,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
 }
 .wn-search-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -15428,7 +15436,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   gap: 4px 6px;
 }
 .wn-search-drop {
-  font-size: 12px;
+  font-size: 14px;
   padding: 1px 7px;
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 999px;
@@ -15444,7 +15452,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-search-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -15454,7 +15462,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border: 0;
   background: none;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 15px;
   color: var(--accent, #d4a24a);
   text-decoration: underline;
   cursor: pointer;
@@ -15479,7 +15487,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border-left: 3px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 .wn-next-press {
   border-left-color: var(--success, #43c08f);
@@ -15503,7 +15511,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   min-width: 0;
 }
 .wn-next-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15511,7 +15519,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 .wn-next-headline {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 15px;
+  font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
 .wn-next-press .wn-next-headline {
@@ -15532,7 +15540,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--text, #d8dce6);
 }
 .wn-next-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -15543,7 +15551,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 }
 .wn-next-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text, #d8dce6);
 }
@@ -15552,7 +15560,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    correct. */
 .wn-next-assumed {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -15572,7 +15580,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* A slide that moved the money. The one state on this strip the seller has to see
    without reading it, because the ceiling above it is already lower for it. */
@@ -15592,7 +15600,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   min-width: 0;
 }
 .wn-trend-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15612,7 +15620,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--success, #43c08f);
 }
 .wn-trend-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -15631,7 +15639,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    so this is the line that is normally the whole block. */
 .wn-trend-money {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text, #d8dce6);
 }
@@ -15639,7 +15647,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    above it: it is the working, and the working is for the seller who doubts. */
 .wn-trend-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -15662,7 +15670,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* Something the seller has to act on: either the ceiling is already cut for the
    condition, or it is a better-condition price and nothing could correct it. */
@@ -15680,7 +15688,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   min-width: 0;
 }
 .wn-cond-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15694,7 +15702,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--danger, #d46a6a);
 }
 .wn-cond-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -15706,7 +15714,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
 /* Where the band came from — the seller's own eyes, or a word in the lot's name.
    Never louder than the headline: it is provenance, not news. */
 .wn-cond-src {
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 /* The bars. "9 new at $120 · 3 used at $55" is the whole feature in one glance —
@@ -15735,7 +15743,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   background: rgba(110, 168, 254, .1);
 }
 .wn-cond-band-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15744,7 +15752,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   color: var(--accent, #6ea8fe);
 }
 .wn-cond-band-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -15752,7 +15760,7 @@ a.copilot-open-draft:hover { text-decoration: underline; }
    this is the line that is normally the whole block. */
 .wn-cond-money {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text, #d8dce6);
 }
@@ -15787,15 +15795,15 @@ a.copilot-open-draft:hover { text-decoration: underline; }
   flex-wrap: wrap;
   gap: 8px;
   align-items: baseline;
-  font-size: 14px;
+  font-size: 16px;
 }
 .wn-units-src {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-units-note {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -15803,7 +15811,7 @@ p.wn-units-refused {
   margin: 4px 0 0;
   padding: 0;
   border: 0;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--warn, #e0b44a);
 }
@@ -15814,7 +15822,7 @@ p.wn-units-refused {
   flex-wrap: wrap;
   gap: 4px 16px;
   margin-top: 6px;
-  font-size: 13px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--text-dim, #8b93a7);
 }
@@ -15836,7 +15844,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* Months of stock. Real money, parked — an amber sentence, not a red one: every
    unit still makes its profit, it just makes it later. */
@@ -15862,7 +15870,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-stock-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15879,7 +15887,7 @@ p.wn-units-refused {
   color: var(--danger, #d46a6a);
 }
 .wn-stock-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -15894,7 +15902,7 @@ p.wn-units-refused {
 }
 /* That the pile may be somebody else's product. Provenance, never news. */
 .wn-stock-src {
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 /* The bars — the whole feature in one glance. "2 on the shelf · 1 won tonight ·
@@ -15928,7 +15936,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-stock-bar-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -15937,7 +15945,7 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-stock-bar-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -15945,7 +15953,7 @@ p.wn-units-refused {
    whole block. */
 .wn-stock-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -15967,7 +15975,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* A measured slide across a real wait, taken off the ceiling. The one state here
    that is a cut, so the one state that is coloured like one. */
@@ -15998,7 +16006,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-hold-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16019,7 +16027,7 @@ p.wn-units-refused {
    is the opposite of the shipping strip's badge and deliberately so — the two are
    the only tags on this card that move money, in opposite directions. */
 .wn-hold-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -16031,7 +16039,7 @@ p.wn-units-refused {
 /* That the wait ran past what the slide's evidence can be projected across, so
    the figure beside it is knowingly the gentle one. Provenance, never news. */
 .wn-hold-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16059,7 +16067,7 @@ p.wn-units-refused {
   background: rgba(212, 106, 106, .1);
 }
 .wn-hold-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16068,14 +16076,14 @@ p.wn-units-refused {
   color: var(--danger, #d46a6a);
 }
 .wn-hold-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-hold-note,
 .wn-hold-money {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16100,7 +16108,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* The one good edge on this card: the lot rides in a box already going out, so
    the ceiling above is genuinely higher than the one the first lot got. */
@@ -16130,7 +16138,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-ship-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16152,7 +16160,7 @@ p.wn-units-refused {
 /* What combining is worth on this lot, in dollars of extra room under the
    ceiling. The one badge on this card that is good news. */
 .wn-ship-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -16163,7 +16171,7 @@ p.wn-units-refused {
 }
 /* Which show the box belongs to. Provenance, never news. */
 .wn-ship-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16191,7 +16199,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-ship-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16200,13 +16208,13 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-ship-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-ship-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16225,7 +16233,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* Nothing entered, so the ceiling above is costing the lot as though the
    platform collected nothing. Real money, missing — the same red the shipping
@@ -16252,7 +16260,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-tax-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16271,7 +16279,7 @@ p.wn-units-refused {
 /* How much lower the ceiling is for the tax — which is not the rate, because the
    tax multiplies the landed cost and the ceiling divides by it. */
 .wn-tax-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -16284,7 +16292,7 @@ p.wn-units-refused {
    figure nothing was charged at — it exists to say whether filling the box in is
    worth the four seconds. */
 .wn-tax-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16312,7 +16320,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-tax-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16321,13 +16329,13 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-tax-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-tax-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16346,7 +16354,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* No budget set. Not an error — the card is right, and the ceiling above is the
    market's — so this is the quietest edge on the strip even when there is real
@@ -16378,7 +16386,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-budget-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16398,7 +16406,7 @@ p.wn-units-refused {
    tag beside it, and for the same reason: a number that moved the ceiling has to
    say by how much, or the seller cannot check it. */
 .wn-budget-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -16408,7 +16416,7 @@ p.wn-units-refused {
   color: var(--warn, #e0b44a);
 }
 .wn-budget-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16458,7 +16466,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-budget-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16467,13 +16475,13 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-budget-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-budget-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16493,13 +16501,13 @@ p.wn-units-refused {
   border-radius: 8px;
 }
 .wn-rung > span {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
 }
 .wn-rung > strong {
-  font-size: 17px;
+  font-size: 19px;
   font-variant-numeric: tabular-nums;
 }
 .wn-rung-stop > strong {
@@ -16556,7 +16564,7 @@ p.wn-units-refused {
   justify-content: space-between;
   gap: 8px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim, #8b93a7);
   font-variant-numeric: tabular-nums;
 }
@@ -16581,7 +16589,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* Most of the evidence is behind the bid. The only good-news edge on this strip,
    and the one state that needs no explaining. */
@@ -16613,7 +16621,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-odds-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16632,7 +16640,7 @@ p.wn-units-refused {
 /* The share, as a number. Absent on a thin count rather than rounded up out of
    four rows — the strip says the fraction there and refuses the percentage. */
 .wn-odds-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: .04em;
   padding: 1px 6px;
@@ -16650,7 +16658,7 @@ p.wn-units-refused {
   color: var(--warn, #e0b44a);
 }
 .wn-odds-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16700,7 +16708,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-odds-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16709,13 +16717,13 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-odds-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-odds-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16739,7 +16747,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* Daylight between the hammer and the ceiling. The one state on this strip that
    is a reason to stay in the show. */
@@ -16770,7 +16778,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-room-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16789,7 +16797,7 @@ p.wn-units-refused {
 /* The rate, as a number. Absent below three rated lots rather than computed off
    two — the strip says the count there and refuses the share. */
 .wn-room-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: .04em;
   padding: 1px 6px;
@@ -16807,7 +16815,7 @@ p.wn-units-refused {
   color: var(--warn, #e0b44a);
 }
 .wn-room-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
@@ -16866,7 +16874,7 @@ p.wn-units-refused {
   background: rgba(110, 168, 254, .1);
 }
 .wn-room-cell-name {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16875,13 +16883,13 @@ p.wn-units-refused {
   color: var(--accent, #6ea8fe);
 }
 .wn-room-cell-fig {
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .wn-room-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -16889,7 +16897,7 @@ p.wn-units-refused {
    an observation rather than a spend — but the same size, because a button that
    is fiddly to hit mid-show is a button whose data never gets collected. */
 .wn-passed-btn {
-  font-size: 13px;
+  font-size: 15px;
 }
 /* ── The room book ────────────────────────────────────────────────────────────
    The panel under the buy sheet: one line per room, then every lot watched to
@@ -16911,7 +16919,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 6px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 12.5px;
+  font-size: 15px;
 }
 .wn-room-show-name {
   font-weight: 600;
@@ -16924,7 +16932,7 @@ p.wn-units-refused {
   color: var(--text-dim, #8b93a7);
 }
 .wn-room-show-count {
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
   font-variant-numeric: tabular-nums;
 }
@@ -16946,7 +16954,7 @@ p.wn-units-refused {
   border: 1px solid var(--border, #2a2f3a);
   border-radius: 8px;
   background: var(--panel-2, rgba(255, 255, 255, .03));
-  font-size: 13px;
+  font-size: 15px;
 }
 /* eBay refuses it. The only stop on this card that is not about a price. */
 .wn-gate-blocked {
@@ -16977,7 +16985,7 @@ p.wn-units-refused {
   min-width: 0;
 }
 .wn-gate-label {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -16999,7 +17007,7 @@ p.wn-units-refused {
    is nothing to flag, and a badge reading "OK" on every ordinary card is how a
    seller learns to stop reading this strip. */
 .wn-gate-tag {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: .04em;
   padding: 1px 6px;
@@ -17024,13 +17032,13 @@ p.wn-units-refused {
    to see WHY in a glance, because a wrong match is fixed by retyping the name —
    which is the whole reason this is shown rather than just the verdict. */
 .wn-gate-src {
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   color: var(--text-dim, #8b93a7);
 }
 .wn-gate-note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text-dim, #8b93a7);
 }
@@ -17038,7 +17046,7 @@ p.wn-units-refused {
    it is a note about the evidence, not a warning about the number. */
 .wn-held {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-held-stale {
@@ -17057,18 +17065,18 @@ p.wn-units-refused {
   background: var(--panel, rgba(255, 255, 255, .03));
 }
 .wn-stat-label {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
 }
 .wn-stat-value {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .wn-stat-note {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-evidence,
@@ -17076,7 +17084,7 @@ p.wn-units-refused {
 .wn-ceiling-note,
 .wn-foot {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-evidence-confident {
@@ -17088,7 +17096,7 @@ p.wn-units-refused {
 .wn-warnings {
   margin: 8px 0 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--warn, #e0a94a);
 }
 .wn-warnings > li {
@@ -17096,7 +17104,7 @@ p.wn-units-refused {
 }
 .wn-comps {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .wn-comps > summary {
   cursor: pointer;
@@ -17140,7 +17148,7 @@ p.wn-units-refused {
   border-left-color: var(--warn, #e0a94a);
 }
 .wn-own-head {
-  font-size: 12px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
@@ -17148,7 +17156,7 @@ p.wn-units-refused {
 .wn-own-headline {
   text-transform: none;
   letter-spacing: 0;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text, #e7ebf3);
 }
 .wn-own-tiles {
@@ -17164,7 +17172,7 @@ p.wn-units-refused {
    warning every time would train the seller to skip the times it is one. */
 .wn-own-ceiling {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-own-ceiling > strong {
@@ -17179,7 +17187,7 @@ p.wn-units-refused {
 .wn-own-notes {
   margin: 6px 0 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-own-notes > li {
@@ -17188,12 +17196,12 @@ p.wn-units-refused {
 /* Never sold one, never bought one: one line, and it stays a line. */
 .wn-own-empty {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-own-sales {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .wn-own-sales > summary {
   cursor: pointer;
@@ -17235,7 +17243,7 @@ p.wn-units-refused {
   cursor: pointer;
   padding: 9px 12px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 15px;
   list-style: none;
 }
 .wn-queue-summary::-webkit-details-marker { display: none; }
@@ -17249,7 +17257,7 @@ p.wn-units-refused {
 }
 .wn-lots-label {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.7;
@@ -17258,7 +17266,7 @@ p.wn-units-refused {
 /* Border, background and colour come from the app's own textarea rule, so the box is
    whatever a textarea is in whichever theme is on. Only the size is set here. */
 .wn-lots {
-  font-size: 13px;
+  font-size: 15px;
   min-height: 78px;
 }
 .wn-lots-actions {
@@ -17269,7 +17277,7 @@ p.wn-units-refused {
   margin-top: 8px;
 }
 .wn-lots-note {
-  font-size: 12px;
+  font-size: 14px;
   opacity: 0.85;
   flex: 1 1 260px;
 }
@@ -17317,7 +17325,7 @@ p.wn-units-refused {
 }
 .wn-lots-empty {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-lot-pricing {
@@ -17328,7 +17336,7 @@ p.wn-units-refused {
 .wn-lot-call {
   flex: 0 0 66px;
   text-align: center;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.04em;
   padding: 3px 0;
@@ -17352,7 +17360,7 @@ p.wn-units-refused {
   color: var(--danger, #e0796a);
 }
 .wn-lot-call-no_data > .wn-lot-call {
-  font-size: 9px;
+  font-size: 12px;
   opacity: 0.8;
 }
 .wn-lot-main {
@@ -17363,7 +17371,7 @@ p.wn-units-refused {
    phrasing content, and an inline box cannot be given an ellipsis. */
 .wn-lot-title {
   display: block;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -17371,7 +17379,7 @@ p.wn-units-refused {
 }
 .wn-lot-sub {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   opacity: 0.75;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -17384,11 +17392,11 @@ p.wn-units-refused {
 }
 .wn-lot-max > span {
   display: block;
-  font-size: 10px;
+  font-size: 13px;
   opacity: 0.6;
 }
 .wn-lot-max > strong {
-  font-size: 15px;
+  font-size: 17px;
 }
 /* ── Won it, and the buy sheet ───────────────────────────────────────────────
    The button sits inside the card, under the meter, where the decision was just
@@ -17419,7 +17427,7 @@ p.wn-units-refused {
   color: var(--danger, #e0796a);
 }
 .wn-won-note {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim, #8b93a7);
   flex: 1 1 200px;
 }
@@ -17436,7 +17444,7 @@ p.wn-units-refused {
   cursor: pointer;
   padding: 9px 12px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.45;
   list-style: none;
 }
@@ -17475,18 +17483,18 @@ p.wn-units-refused {
   border-color: rgba(224, 121, 106, .45);
 }
 .wn-sheet-tile-label {
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--text-dim, #8b93a7);
 }
 .wn-sheet-tile-value {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .wn-sheet-tile-note {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-sheet-list {
@@ -17515,7 +17523,7 @@ p.wn-units-refused {
 }
 .wn-sheet-row-title {
   display: block;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -17523,7 +17531,7 @@ p.wn-units-refused {
 }
 .wn-sheet-row-sub {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   opacity: 0.75;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -17531,7 +17539,7 @@ p.wn-units-refused {
 }
 .wn-sheet-row-profit {
   flex: 0 0 auto;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -17544,7 +17552,7 @@ p.wn-units-refused {
   background: rgba(74, 143, 231, .12);
   color: var(--text, #e6e9ef);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
   padding: 6px 9px;
@@ -17583,7 +17591,7 @@ p.wn-units-refused {
   background: none;
   color: var(--text-dim, #8b93a7);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
   padding: 4px 6px;
   border-radius: 6px;
@@ -17594,7 +17602,7 @@ p.wn-units-refused {
 }
 .wn-sheet-empty {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
 }
 .wn-sheet-actions {
@@ -17771,7 +17779,7 @@ p.wn-units-refused {
     padding: 7px 9px;
   }
   .wn-say {
-    font-size: 13px;
+    font-size: 15px;
   }
   /* The read row's two buttons and its switch go full width under the address
      rather than being squeezed beside it — this is the row you press first. */
@@ -17796,12 +17804,12 @@ p.wn-units-refused {
     text-align: center;
   }
   .wn-meter-legend {
-    font-size: 10px;
+    font-size: 13px;
   }
   /* Four columns of the seller's own sales is one more than the comp table has, and
      the last of them carries two facts. It wraps rather than pushing the title out. */
   .wn-own-table {
-    font-size: 11px;
+    font-size: 13px;
   }
   .wn-own-cell-age {
     white-space: normal;
@@ -17974,7 +17982,7 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 }
 .wn-help > summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim, #8b93a7);
   list-style: none;
   user-select: none;
@@ -18040,7 +18048,7 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 }
 .pb-stream-empty {
   color: var(--text-dim, #8b93a7);
-  font-size: 13px;
+  font-size: 15px;
   padding: 24px;
   text-align: center;
 }
@@ -18055,8 +18063,8 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   border-radius: 8px;
 }
 .pb-zoom input[type=range] { width: 110px; }
-.pb-zoom-btn { padding: 2px 9px; font-size: 15px; line-height: 1.4; }
-.pb-zoom-val { font-size: 12px; color: var(--text-dim, #8b93a7); min-width: 34px; text-align: right; }
+.pb-zoom-btn { padding: 2px 9px; font-size: 17px; line-height: 1.4; }
+.pb-zoom-val { font-size: 14px; color: var(--text-dim, #8b93a7); min-width: 34px; text-align: right; }
 .pb-stream-wrap img { transform-origin: center center; transition: transform 120ms ease-out; }
 /* The phone-camera panel: the code to scan, and what the phone is doing. */
 .pb-phone-panel {
@@ -18070,21 +18078,21 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-phone-qr { flex: 0 0 auto; background: #fff; padding: 8px; border-radius: 8px; line-height: 0; }
 .pb-phone-qr svg { display: block; width: 190px; height: 190px; }
 .pb-phone-words { flex: 1; min-width: 0; }
-.pb-phone-words h3 { font-size: 14px; margin-bottom: 6px; }
-.pb-phone-words ol { margin: 0 0 8px 18px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim, #8b93a7); }
-.pb-phone-words li { margin-bottom: 3px; }
+.pb-phone-words h3 { font-size: var(--fs-lg); margin-bottom: 10px; }
+.pb-phone-words ol { margin: 0 0 12px 20px; font-size: var(--fs-sm); line-height: 1.7; color: var(--muted); }
+.pb-phone-words li { margin-bottom: 8px; }
 .pb-phone-link {
-  font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace; font-size: 14px;
   color: var(--text-dim, #8b93a7); word-break: break-all; margin-bottom: 6px;
 }
-.pb-phone-state { font-size: 12.5px; }
+.pb-phone-state { font-size: 15px; }
 /* Phone camera: recording state and the session's recordings. */
 .btn.pb-recording { background: #b4463c; border-color: #b4463c; color: #fff; }
 .pb-videos { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .pb-videos.hidden { display: none; }
-.pb-videos-head { width: 100%; font-size: 12px; color: var(--text-dim, #8b93a7); }
+.pb-videos-head { width: 100%; font-size: 14px; color: var(--text-dim, #8b93a7); }
 .pb-video-link {
-  font-size: 12.5px; padding: 5px 10px; border-radius: 7px; text-decoration: none;
+  font-size: 15px; padding: 5px 10px; border-radius: 7px; text-decoration: none;
   border: 1px solid var(--line, var(--border, #2a2f3a)); color: var(--text, inherit);
 }
 .pb-video-link:hover { border-color: var(--accent, #d4a24a); }
@@ -18095,8 +18103,8 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-body { padding-bottom: 28px; }
 .pb-studio {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
   align-items: start;
 }
 /* Under 1200px the rail stops being a column and becomes the row underneath: the stage
@@ -18132,25 +18140,25 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-stage:has(> .pb-stream-empty:not([style*="display: none"])) {
   aspect-ratio: auto;
   min-height: 0;
-  height: clamp(260px, 34vh, 360px);
+  height: clamp(300px, 38vh, 400px);
 }
 .pb-empty-inner {
   display: flex; flex-direction: column; align-items: center;
-  gap: 10px; max-width: 44ch;
+  gap: 14px; max-width: 46ch;
 }
 .pb-empty-glyph {
-  width: 44px; height: 44px;
+  width: 56px; height: 56px;
   fill: none; stroke: var(--gold); stroke-width: 1.4;
   stroke-linecap: round; stroke-linejoin: round;
   opacity: .9;
 }
 .pb-empty-title {
   margin: 0;
-  font-size: var(--fs-lg); font-weight: 800; letter-spacing: -.01em;
+  font-size: var(--fs-2xl); font-weight: 800; letter-spacing: -.01em;
   color: var(--on-dark, #ecf5f5);
 }
-.pb-empty-line { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
-.pb-empty-btn { margin-top: 4px; }
+.pb-empty-line { margin: 0; font-size: var(--fs-md); color: var(--muted); line-height: 1.6; }
+.pb-empty-btn { margin-top: 8px; min-height: 52px; font-size: var(--fs-md); padding: 14px 26px; }
 /* Rule of thirds. Two gradients rather than four elements — the lines have to sit over a
    photograph without ever being mistaken for part of it. */
 .pb-grid {
@@ -18166,8 +18174,8 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-stage-chips { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
 .pb-chip {
   background: rgba(3, 18, 21, .72); border: 1px solid var(--line);
-  color: var(--ink); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
-  padding: 3px 8px; border-radius: 999px; backdrop-filter: blur(4px);
+  color: var(--ink); font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  padding: 5px 12px; border-radius: 999px; backdrop-filter: blur(4px);
 }
 .pb-chip-live { color: #7ddba0; }
 .pb-chip-zoom { margin-left: auto; }
@@ -18179,39 +18187,39 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   text-shadow: 0 4px 40px rgba(0,0,0,.7); background: rgba(3, 18, 21, .35);
 }
 .pb-zoombar { display: flex; align-items: center; gap: 10px; }
-.pb-zoombar input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--gold); }
-.pb-zoom-btn { min-width: 40px; font-size: 18px; line-height: 1; }
+.pb-zoombar input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--gold); height: 26px; }
+.pb-zoom-btn { min-width: 48px; min-height: 44px; font-size: 22px; line-height: 1; }
 .pb-zoom-presets { display: flex; gap: 4px; }
 .pb-preset {
   background: transparent; border: 1px solid var(--line); color: var(--muted);
-  border-radius: 999px; padding: 4px 10px; font-size: var(--fs-xs); cursor: pointer;
-  font-variant-numeric: tabular-nums;
+  border-radius: 999px; padding: 8px 16px; font-size: var(--fs-sm); cursor: pointer;
+  font-variant-numeric: tabular-nums; min-height: 36px;
 }
 .pb-preset:hover { color: var(--ink); }
 .pb-preset.is-on { background: var(--gold); border-color: var(--gold); color: #241703; font-weight: var(--fw-semibold); }
 .pb-shutter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pb-shutter { font-size: var(--fs-md); padding: 12px 22px; }
+.pb-shutter { font-size: var(--fs-lg); padding: 16px 30px; min-height: 54px; }
 .pb-key {
   display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 4px;
-  background: rgba(255,255,255,.14); font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  background: rgba(255,255,255,.14); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .04em;
   vertical-align: middle;
 }
-.pb-select { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
-.pb-select select { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 8px; }
+.pb-select { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
+.pb-select select { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 10px; font-size: var(--fs-sm); min-height: 42px; }
 .btn.is-on { background: var(--gold); border-color: var(--gold); color: #241703; }
 .pb-strip-head { display: flex; align-items: baseline; gap: 10px; }
-.pb-strip-hint { color: var(--muted); font-size: var(--fs-xs); }
+.pb-strip-hint { color: var(--muted); font-size: var(--fs-sm); }
 .pb-filmstrip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; }
-.pb-shot { position: relative; flex: 0 0 auto; width: 132px; }
+.pb-shot { position: relative; flex: 0 0 auto; width: 160px; }
 .pb-shot img {
-  width: 132px; height: 100px; object-fit: cover; border-radius: var(--r-sm);
+  width: 160px; height: 122px; object-fit: cover; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: #05171a; display: block;
 }
 /* The thumbnail is a button that opens the editor. It has to look pressable without becoming a
    second frame around the photograph, so the affordance is a hover overlay rather than a border. */
 .pb-shot-open {
   display: block; position: relative; padding: 0; border: none;
-  background: none; cursor: zoom-in; width: 132px; border-radius: var(--r-sm);
+  background: none; cursor: zoom-in; width: 160px; border-radius: var(--r-sm);
 }
 .pb-shot-open:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .pb-shot-hint {
@@ -18225,27 +18233,35 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-shot-open:focus-visible .pb-shot-hint { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .pb-shot-hint { transition: none; } }
 .pb-shot-n {
-  position: absolute; top: 4px; left: 4px; background: rgba(3,18,21,.8); color: var(--ink);
-  border-radius: 999px; font-size: 10px; padding: 1px 6px;
+  position: absolute; top: 6px; left: 6px; background: rgba(3,18,21,.85); color: var(--ink);
+  border-radius: 999px; font-size: var(--fs-2xs); font-weight: 700; padding: 2px 9px;
   pointer-events: none;   /* the badge sits over the button — it must not swallow the click */
 }
 .pb-shot-tools { display: flex; gap: 4px; margin-top: 4px; }
 .pb-shot-tools button {
   flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted);
-  border-radius: var(--r-sm); font-size: 10px; padding: 3px 0; cursor: pointer;
+  border-radius: var(--r-sm); font-size: var(--fs-2xs); padding: 7px 0; cursor: pointer;
+  min-height: 30px;
 }
 .pb-shot-tools button:hover { color: var(--ink); border-color: var(--gold); }
 .pb-shot.is-working { opacity: .55; }
 .pb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pb-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.pb-rail-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; }
-.pb-rail-status { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 10px; }
-.pb-rail-btn { width: 100%; }
-.pb-tips h3 { font-size: var(--fs-sm); color: var(--ink); margin-bottom: 8px; }
-.pb-tips ul { margin: 0 0 10px 16px; padding: 0; }
-.pb-tips li { font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; margin-bottom: 5px; }
+.pb-rail-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; }
+.pb-rail-status { font-size: var(--fs-md); color: var(--ink); margin-bottom: 12px; }
+.pb-rail-btn { width: 100%; min-height: 50px; font-size: var(--fs-md); }
+.pb-tips h3 { font-size: var(--fs-md); color: var(--ink); margin-bottom: 12px; }
+.pb-tips ul { margin: 0 0 14px 18px; padding: 0; }
+.pb-tips li { font-size: var(--fs-sm); color: var(--muted); line-height: 1.65; margin-bottom: 10px; }
 .pb-tips b { color: var(--ink); }
-.pb-shortcuts { font-size: var(--fs-xs); color: var(--muted); line-height: 1.7; }
+/* The shortcut legend is a list, not a sentence. Run together with middots it read as one
+   long grey line and was skipped; keys in caps are something the eye can pick one out of. */
+.pb-shortcuts { font-size: var(--fs-sm); color: var(--muted); line-height: 2; }
+.pb-shortcuts kbd {
+  display: inline-block; background: rgba(255,255,255,.10); border: 1px solid var(--line);
+  border-radius: var(--r-2xs); padding: 2px 8px; margin-right: 5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--ink);
+}
 
 /* ── Overlay screens: one column, one left edge ────────────────────────────────
    `.opportunity-overlay-body > *` centres every child in a 1320px column. A card that then
@@ -18425,7 +18441,7 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--panel) 60%, transparent);
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: var(--fw-medium, 500);
   letter-spacing: 0;
   line-height: 1.5;
@@ -18470,7 +18486,7 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 }
 .wn-ai-est.is-busy { color: var(--muted); font-size: var(--fs-xs); }
 .wn-ai-tag {
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
   color: #7aa2c8; font-weight: var(--fw-semibold);
 }
 .wn-ai-price { font-size: var(--fs-md); font-weight: var(--fw-bold); color: var(--ink); }

@@ -252,8 +252,8 @@
             <button id="btn-close-token" class="modal-close" type="button">✕</button>
           </div>
           <div style="padding:20px 24px 24px;display:grid;gap:16px">
-            <p style="font-size:13px;color:var(--muted)">eBay sandbox OAuth is currently broken. Paste a User Token directly to connect — no OAuth needed.</p>
-            <div style="background:var(--info-tint);border:1px solid var(--info-line);border-radius:var(--r-sm);padding:14px;font-size:12px;line-height:1.6">
+            <p style="font-size:15px;color:var(--muted)">eBay sandbox OAuth is currently broken. Paste a User Token directly to connect — no OAuth needed.</p>
+            <div style="background:var(--info-tint);border:1px solid var(--info-line);border-radius:var(--r-sm);padding:14px;font-size:14px;line-height:1.6">
               <strong>How to get your token:</strong><br>
               1. <a href="https://developer.ebay.com/my/auth/?env=sandbox&index=0" target="_blank" style="color:var(--src-ebay)">Open eBay Developer Portal → User Tokens</a><br>
               2. Select your app → click <strong>"Get a User Token"</strong><br>
@@ -261,11 +261,11 @@
               4. Copy the token and paste it below
             </div>
             <div>
-              <label style="font-size:12px;font-weight:700;display:block;margin-bottom:6px">eBay User Token</label>
-              <textarea id="token-input" rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;font-family:monospace;resize:vertical" placeholder="AgAAAA..."></textarea>
+              <label style="font-size:14px;font-weight:700;display:block;margin-bottom:6px">eBay User Token</label>
+              <textarea id="token-input" rows="4" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;font-family:monospace;resize:vertical" placeholder="AgAAAA..."></textarea>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-              <span id="token-msg" style="font-size:12px"></span>
+              <span id="token-msg" style="font-size:14px"></span>
               <button id="btn-save-token" class="btn btn-primary" type="button">Save Token</button>
             </div>
           </div>
@@ -672,7 +672,7 @@
           <!-- Chrome-style tab bar embedded in header -->
           <div class="new-listing-header">
             <div class="nl-header-brand">
-              <span class="nl-header-title">ING Listing Engine™ <span style="font-weight:400;opacity:.6;font-size:11px">by ING Mining LLC</span></span>
+              <span class="nl-header-title">ING Listing Engine™ <span style="font-weight:400;opacity:.6;font-size:13px">by ING Mining LLC</span></span>
             </div>
             <div id="nl-tab-bar" class="nl-tab-bar">
               <button id="nl-tab-new-btn" class="nl-tab-new-btn" type="button" title="New draft">+</button>
@@ -2903,7 +2903,12 @@
                   <li><b>Shoot the flaws too.</b> A photographed scratch is a returned item that never happens.</li>
                   <li><b>Six angles beats one hero shot:</b> front, back, both sides, the label, the wear.</li>
                 </ul>
-                <p class="pb-shortcuts"><b>Keys:</b> space snap · b burst · g grid · f full screen · t light · esc leave full screen</p>
+                <p class="pb-shortcuts"><b>Keyboard shortcuts</b><br>
+                  <kbd>space</kbd> take the photo<br>
+                  <kbd>b</kbd> burst of three<br>
+                  <kbd>g</kbd> grid on or off<br>
+                  <kbd>f</kbd> full screen &nbsp;<kbd>esc</kbd> leave it<br>
+                  <kbd>t</kbd> the phone’s light</p>
               </div>
             </aside>
           </div>
@@ -5582,8 +5587,8 @@
         <div id="ebay-oauth-step" class="hidden" style="margin-top:16px;padding:16px;background:var(--teal-900);border:1px solid var(--teal-700);border-radius:var(--r-md)">
           <p style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--gold-light);margin-bottom:8px">Copy the URL and click below</p>
           <p style="font-size:var(--fs-xs);color:var(--on-dark-2);margin-bottom:12px">eBay opened in a new tab. Log in, then eBay will redirect you to inglisting.com. <strong>Copy the URL from that page</strong> (Ctrl+A, Ctrl+C in the address bar), then click the button below.</p>
-          <button id="btn-paste-and-connect" class="btn btn-primary" type="button" style="width:100%;font-size:15px;padding:12px">📋 I've Logged In — Paste &amp; Connect</button>
-          <div id="oauth-redirect-msg" style="margin-top:8px;font-size:12px"></div>
+          <button id="btn-paste-and-connect" class="btn btn-primary" type="button" style="width:100%;font-size:17px;padding:12px">📋 I've Logged In — Paste &amp; Connect</button>
+          <div id="oauth-redirect-msg" style="margin-top:8px;font-size:14px"></div>
           <textarea id="s-oauth-redirect-url" rows="2" placeholder="Or paste the full redirect URL here manually…" autocomplete="off" style="width:100%;margin-top:10px;padding:8px;border:1px solid var(--dark-line);border-radius:var(--r-xs);background:var(--dark-0);color:var(--on-dark);font-size:var(--fs-xs);resize:vertical"></textarea>
         </div>
         <div class="field">
