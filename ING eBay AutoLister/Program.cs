@@ -2145,6 +2145,27 @@ static object CompsRunView(LiveCompsRun r) => new
 app.MapPost("/api/comps/live/start", (string q, LiveCompsLookup live) =>
     Results.Ok(CompsRunView(live.Start(q))));
 
+// Is the live sold-price source actually answering?
+//
+// Asked by the board before it explains its own numbers, and answerable without spending a call.
+// The distinction it exists to draw: "this product has no sales history" and "the price source is
+// refusing calls" produce the same empty row and send a seller to do completely different things.
+// See LiveCompsLookup.Health.
+app.MapGet("/api/comps/live/health", (LiveCompsLookup live) =>
+{
+    var h = live.Health;
+    return Results.Ok(new
+    {
+        configured = h.Configured,
+        answering = h.Answering,
+        consecutiveFailures = h.ConsecutiveFailures,
+        lastError = h.LastError,
+        lastSuccessAt = h.LastSuccessAt,
+        retryDue = h.RetryDue,
+        note = h.Note,
+    });
+});
+
 app.MapGet("/api/comps/live/status", (string id, LiveCompsLookup live) =>
 {
     var run = live.Get(id);
@@ -6737,10 +6758,15 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         {
             try
             {
-                if (!live.IsAvailable)
+                // Configured is not the same as working. The source answered HTTP 503 on every
+                // call for three days in August and nothing above it knew: each product spent an
+                // API call into the outage and the board reported "no sold data", which reads as
+                // "this has never sold" rather than "the price source is down". See
+                // LiveCompsLookup.Health.
+                var health = live.Health;
+                if (!live.ShouldAttempt)
                 {
-                    result.LiveLookupNote =
-                        "Live sold-price lookups aren't available here, so everything is priced from stored comps.";
+                    result.LiveLookupNote = health.Note;
                 }
                 else
                 {
@@ -6764,7 +6790,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
 
                     result.LiveLookupsUsed = pass.LookupsUsed;
                     result.LiveLookupsRefreshed = pass.Refreshed.Count;
-                    result.LiveLookupNote = pass.Note;
+                    // The pass's own sentence unless the source fell over during it — a scan that
+                    // spent its lookups on a source that then went down has to say the second
+                    // thing, because it is the one that explains the prices on screen.
+                    var after = live.Health;
+                    result.LiveLookupNote = after.Answering ? pass.Note : after.Note;
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

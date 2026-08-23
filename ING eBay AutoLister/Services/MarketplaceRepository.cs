@@ -391,13 +391,36 @@ public sealed class MarketplaceRepository(
             ItemUrl    = r.ItemUrl,
             ImageUrl   = r.ImageUrl,
         };
-        ApplyRawJson(result, r.RawJson);
+        // Belt as well as braces. ApplyRawJson is written not to throw, and this is here so that
+        // a future field read that forgets the rule costs one row's decoration rather than every
+        // price in the search — which is exactly what the null feedback count cost.
+        try { ApplyRawJson(result, r.RawJson); }
+        catch { /* the row is already complete; the blob is only ever colour on top of it */ }
         return result;
     }
 
     // RawJson is the SerpApi eBay-scrape blob the external collector stores per row — real per-row
     // condition/format/seller signal, unlike the always-empty Brand/Model/Category columns.
     // Best-effort: a malformed or missing blob just leaves these fields unset, never throws.
+    //
+    // ── Why every read below is guarded on ValueKind (2026-08-23) ────────────────────────────
+    // It did throw, in production, eleven times in eighty log lines:
+    //
+    //     Marketplace lookup failed: The requested operation requires an element of type
+    //     'Number', but the target element has type 'Null'.
+    //
+    // JsonElement.TryGetInt32 is not the safe reader its name suggests. It returns false when a
+    // NUMBER will not fit an int; handed a null it THROWS. The catch below was JsonException only,
+    // so the throw escaped this method, and the search's own catch-all turned the whole result
+    // set into an empty list. One eBay seller with hidden feedback, and every comp for that
+    // product was gone — while the board above said "no sold data" about a product it had prices
+    // for. It cost most of what the Opportunity Finder was showing that week, because the live
+    // sold-comps API had been answering 503 since 2026-08-20 and this database was the only price
+    // source left.
+    //
+    // Two rules, both load-bearing. Read a number only after ValueKind says it is one. And catch
+    // everything, because this is decoration: the price, the title and the date are real columns
+    // and must never depend on a blob parsing.
     private static void ApplyRawJson(MarketplaceComparableResult result, string? rawJson)
     {
         if (string.IsNullOrWhiteSpace(rawJson)) return;
@@ -414,25 +437,38 @@ public sealed class MarketplaceRepository(
 
             if (root.TryGetProperty("seller", out var seller) && seller.ValueKind == JsonValueKind.Object)
             {
-                if (seller.TryGetProperty("reviews", out var reviews) && reviews.TryGetInt32(out var reviewsVal))
-                    result.SellerFeedbackCount = reviewsVal;
-                if (seller.TryGetProperty("positive_feedback_in_percentage", out var pct) && pct.TryGetDouble(out var pctVal))
-                    result.SellerPositiveFeedbackPercent = pctVal;
+                if (Int(seller, "reviews") is { } reviews) result.SellerFeedbackCount = reviews;
+                if (Num(seller, "positive_feedback_in_percentage") is { } pct) result.SellerPositiveFeedbackPercent = pct;
             }
 
             // Rows fetched live since 2026-08-14 come from the OpenWebNinja API, which carries the
             // same two facts as flat fields rather than inside a seller object. Read here rather
             // than reshaped on the way in, so what is stored stays the untouched API item.
-            if (root.TryGetProperty("seller_feedback_count", out var count) && count.TryGetInt32(out var countVal))
-                result.SellerFeedbackCount = countVal;
-            if (root.TryGetProperty("seller_feedback_percentage", out var percent) && percent.TryGetDouble(out var percentVal))
-                result.SellerPositiveFeedbackPercent = percentVal;
+            if (Int(root, "seller_feedback_count") is { } count) result.SellerFeedbackCount = count;
+            if (Num(root, "seller_feedback_percentage") is { } percent) result.SellerPositiveFeedbackPercent = percent;
         }
-        catch (JsonException)
+        catch (Exception)
         {
-            // Malformed blob — nothing to extract, leave the fields at their defaults.
+            // Malformed blob, an unexpected shape, a field that is not what it claims — nothing to
+            // extract, leave the fields at their defaults. Never the caller's problem: this method
+            // adds colour to a row that is already complete without it.
         }
     }
+
+    /// <summary>A whole number, or null when the property is absent, null, or not a number.</summary>
+    /// <remarks>
+    /// Null rather than zero, deliberately. "This seller has no feedback" and "we could not read
+    /// this seller's feedback" are different claims about a seller somebody is deciding whether to
+    /// buy from, and a zero would be the app inventing the first one.
+    /// </remarks>
+    private static int? Int(JsonElement parent, string property) =>
+        parent.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt32(out var whole) ? whole : null;
+
+    /// <summary>A number, or null when the property is absent, null, or not a number.</summary>
+    private static double? Num(JsonElement parent, string property) =>
+        parent.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number
+            && value.TryGetDouble(out var number) ? number : null;
 
     // SoldDate is stored as free-text like "Jul 16, 2026", not ISO — malformed or unexpected
     // formats just come back as null (no comparable date) rather than throwing.

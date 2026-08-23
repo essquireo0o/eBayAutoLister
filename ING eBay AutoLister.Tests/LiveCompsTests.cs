@@ -368,6 +368,115 @@ public class LiveCompsTests
         Assert.Equal(0, world.Handler.Calls);
     }
 
+    // ── Is the source actually answering? ────────────────────────────────────────────────────
+    //
+    // Added 2026-08-23, after the source spent three days returning HTTP 503 ("eBay requires an
+    // authenticated session") to every call while the app happily reported itself "available" —
+    // because available only ever meant a key was configured. Every product in a 120-row scan
+    // spent an allowance call into the outage, and the board said "no sold data", which a seller
+    // reads as "this has never sold".
+
+    [Fact]
+    public void One_bad_call_is_a_bad_minute_and_not_an_outage()
+    {
+        using var world = new World(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("{\"error\":{\"message\":\"eBay requires an authenticated session\"}}"),
+        });
+
+        world.Run("antminer s19");
+
+        // Calling a source down on a single timeout would be its own kind of lie.
+        Assert.True(world.Lookup.Health.Answering);
+        Assert.True(world.Lookup.ShouldAttempt);
+        Assert.Equal("", world.Lookup.Health.Note);
+    }
+
+    [Fact]
+    public void A_source_that_fails_repeatedly_is_reported_down_and_stops_being_paid_for()
+    {
+        using var world = new World(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("{\"error\":{\"message\":\"eBay requires an authenticated session\"}}"),
+        });
+
+        for (var i = 0; i < LiveCompsLookup.FailuresBeforeDown; i++) world.Run($"antminer s19 {i}");
+
+        var health = world.Lookup.Health;
+        Assert.True(health.Configured);              // the key is fine; the source is not
+        Assert.False(health.Answering);
+        Assert.Equal(LiveCompsLookup.FailuresBeforeDown, health.ConsecutiveFailures);
+
+        // And the allowance stops being spent to learn the same thing a fourth time.
+        Assert.False(world.Lookup.ShouldAttempt);
+
+        // Said in words a board can print, and saying which of the two it is.
+        Assert.Contains("Live sold prices are unavailable", health.Note);
+        Assert.Contains("fault at the source", health.Note);
+    }
+
+    [Fact]
+    public void The_cooldown_buys_one_more_try_rather_than_writing_the_source_off()
+    {
+        using var world = new World(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("down"),
+        });
+
+        for (var i = 0; i < LiveCompsLookup.FailuresBeforeDown; i++) world.Run($"antminer s19 {i}");
+        Assert.False(world.Lookup.ShouldAttempt);
+
+        world.Now = world.Now.Add(LiveCompsLookup.RetryAfterDown).AddSeconds(1);
+
+        // A circuit breaker, not a kill switch: the source must be able to come back.
+        Assert.True(world.Lookup.Health.RetryDue);
+        Assert.True(world.Lookup.ShouldAttempt);
+    }
+
+    [Fact]
+    public void One_good_answer_clears_it_immediately()
+    {
+        var fail = true;
+        using var world = new World(_ => fail
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("down") }
+            : Json(PageWith(2)));
+
+        for (var i = 0; i < LiveCompsLookup.FailuresBeforeDown; i++) world.Run($"antminer s19 {i}");
+        Assert.False(world.Lookup.Health.Answering);
+
+        fail = false;
+        world.Run("antminer s19 recovered");
+
+        var health = world.Lookup.Health;
+        Assert.True(health.Answering);
+        Assert.Equal(0, health.ConsecutiveFailures);
+        Assert.Equal("", health.Note);
+        Assert.NotNull(health.LastSuccessAt);
+    }
+
+    [Fact]
+    public void No_recent_sales_is_an_answer_and_never_counts_against_the_source()
+    {
+        using var world = new World(_ => Json("{\"data\":{\"total_results\":0,\"products\":[]}}"));
+
+        for (var i = 0; i < LiveCompsLookup.FailuresBeforeDown + 2; i++) world.Run($"a model nobody sells {i}");
+
+        // eBay saying it has no recent sales for a thing is exactly the fact the call was spent to
+        // learn. Counting it as a failure would write off a working source on a quiet market.
+        Assert.True(world.Lookup.Health.Answering);
+        Assert.True(world.Lookup.ShouldAttempt);
+    }
+
+    [Fact]
+    public void A_deployment_with_no_key_says_that_instead()
+    {
+        using var world = new World { Enabled = false };
+
+        var health = world.Lookup.Health;
+        Assert.False(health.Configured);
+        Assert.Contains("aren't set up here", health.Note);
+    }
+
     // ── Scaffolding ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>One app's worth of live lookups: a stub API, a scratch comps table, a movable clock.</summary>

@@ -56,6 +56,88 @@ public sealed class LiveCompsLookup(
     /// </remarks>
     public bool IsAvailable => budget.Enabled && api.IsConfigured;
 
+    // ── Is it actually answering? ────────────────────────────────────────────────────────────
+    //
+    // IsAvailable only ever meant "a key is configured and the kill switch is on", and that stayed
+    // true for the three days from 2026-08-20 while every single call came back
+    //
+    //     HTTP 503 {"error":{"message":"eBay requires an authenticated session ..."}}
+    //
+    // Nothing above it knew. Each product spent an API call into the outage, got nothing, and the
+    // board said "no sold data" — which reads as "this product has never sold" rather than "the
+    // price source is down", and those send a seller to do completely different things. Worse, a
+    // 120-product scan spent 120 calls out of a monthly allowance to learn the same thing 120
+    // times.
+    //
+    // So the outcome of every call is remembered. After a few consecutive failures the source is
+    // called down: the scan says so in words, and stops spending the allowance on it until a
+    // cooldown has passed and one probe is worth trying again. Any success clears it instantly —
+    // this is a circuit breaker, not a kill switch, and it must never be the reason a working
+    // source stays unused.
+    private int _consecutiveFailures;
+    private string _lastFailure = "";
+    private DateTimeOffset? _lastFailureAt;
+    private DateTimeOffset? _lastSuccessAt;
+
+    /// <summary>Consecutive failures before the source is reported as down.</summary>
+    /// <remarks>
+    /// Three, not one: a single timeout is an ordinary bad minute on any network, and calling the
+    /// source down for that would be its own kind of lie.
+    /// </remarks>
+    public const int FailuresBeforeDown = 3;
+
+    /// <summary>How long a source stays written off before one call is spent checking again.</summary>
+    public static readonly TimeSpan RetryAfterDown = TimeSpan.FromMinutes(10);
+
+    /// <summary>What the live sold-price source is doing, in the words a board can print.</summary>
+    public LiveCompsHealth Health
+    {
+        get
+        {
+            var down = _consecutiveFailures >= FailuresBeforeDown;
+            var retryDue = down && (_lastFailureAt is not { } at || budget.Now - at >= RetryAfterDown);
+            return new LiveCompsHealth(
+                Configured: IsAvailable,
+                Answering: !down,
+                ConsecutiveFailures: _consecutiveFailures,
+                LastError: _lastFailure,
+                LastSuccessAt: _lastSuccessAt,
+                RetryDue: retryDue);
+        }
+    }
+
+    /// <summary>
+    /// Whether spending a call is worth it right now. False only while a source that has failed
+    /// repeatedly is inside its cooldown.
+    /// </summary>
+    public bool ShouldAttempt
+    {
+        get { var h = Health; return h.Configured && (h.Answering || h.RetryDue); }
+    }
+
+    private void RecordOutcome(string outcome, string detail)
+    {
+        // "empty" is an answer, not a failure: eBay saying it has no recent sales for a thing is
+        // exactly the fact the lookup was spent to learn.
+        if (outcome is "ok" or "empty")
+        {
+            var wasDown = _consecutiveFailures >= FailuresBeforeDown;
+            _consecutiveFailures = 0;
+            _lastFailure = "";
+            _lastSuccessAt = budget.Now;
+            if (wasDown) log.Add("Info", "Live sold-comps source is answering again", detail);
+            return;
+        }
+
+        _consecutiveFailures++;
+        _lastFailure = detail;
+        _lastFailureAt = budget.Now;
+        if (_consecutiveFailures == FailuresBeforeDown)
+            log.Add("Warning", "Live sold-comps source called down",
+                $"{FailuresBeforeDown} calls in a row failed. Pricing falls back to the stored comps "
+                + $"database until one probe is retried in {RetryAfterDown.TotalMinutes:0} minutes. Last: {detail}");
+    }
+
     /// <summary>The run for <paramref name="id"/>, or null once it has been forgotten.</summary>
     public LiveCompsRun? Get(string id) => _runs.TryGetValue(id, out var run) ? run : null;
 
@@ -206,6 +288,7 @@ public sealed class LiveCompsLookup(
         }
         finally
         {
+            RecordOutcome(run.Outcome, status > 0 ? $"HTTP {status} for \"{run.Query}\"" : run.Message);
             run.Stage      = StageFor(run.Outcome);
             run.Percent    = 100;
             run.Finished   = true;
@@ -282,6 +365,29 @@ public sealed class LiveCompsLookup(
 /// the change is that only the source of the rows moved. It is a separate type rather than a reuse
 /// so that the retired scraper and everything it drags with it can be deleted in one piece.
 /// </remarks>
+/// <summary>
+/// What the live sold-price source is doing — for a board that has to explain its own numbers.
+/// </summary>
+/// <param name="Configured">A key is present and the kill switch is on.</param>
+/// <param name="Answering">Recent calls have worked. False after several consecutive failures.</param>
+/// <param name="LastError">The most recent failure, as the API described it.</param>
+/// <param name="LastSuccessAt">When it last answered, or null if it has not answered this run.</param>
+/// <param name="RetryDue">The cooldown has passed and one call is worth spending to check.</param>
+public sealed record LiveCompsHealth(
+    bool Configured, bool Answering, int ConsecutiveFailures,
+    string LastError, DateTimeOffset? LastSuccessAt, bool RetryDue)
+{
+    /// <summary>The sentence a board puts on screen, or empty when there is nothing to say.</summary>
+    public string Note =>
+        !Configured
+            ? "Live sold-price lookups aren't set up here, so everything is priced from stored comps."
+            : Answering
+                ? ""
+                : "Live sold prices are unavailable right now — eBay's sold-listing source is refusing "
+                  + "calls — so everything below is priced from the stored comps database and AI estimates. "
+                  + "This is a fault at the source, not a product with no sales history.";
+}
+
 public sealed class LiveCompsRun
 {
     public string Id { get; } = Guid.NewGuid().ToString("N")[..12];
