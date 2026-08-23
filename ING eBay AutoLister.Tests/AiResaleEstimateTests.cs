@@ -27,13 +27,33 @@ public class AiResaleEstimateTests
     }
 
     [Fact]
-    public void One_call_prices_the_whole_board()
+    public void The_board_is_priced_in_chunks_small_enough_to_come_back_whole()
     {
-        // Forty calls would be forty times the money and a minute of waiting. One prompt carries
-        // the board; a model that answers with fewer rows simply leaves those unpriced.
+        // It WAS one call for sixty items. Measured 2026-08-23: sixty rows of JSON do not fit in a
+        // 4096-token ceiling that adaptive thinking and web search spend from too, so the reply
+        // ended mid-object and the strict reader threw the whole batch away — three times, because
+        // the retry re-sent an identical prompt and truncation is deterministic. Chunks of fifteen
+        // sit far inside the ceiling, and a chunk that still fails costs fifteen rows, not sixty.
         Assert.Contains("public async Task<List<AiResaleEstimate>> EstimateResaleAsync(", Service, StringComparison.Ordinal);
         Assert.Contains("IReadOnlyList<AiEstimateItem> items", Service, StringComparison.Ordinal);
-        Assert.Contains(".Take(60)", Service, StringComparison.Ordinal);
+        Assert.Contains("const int chunkSize = 15;", Service, StringComparison.Ordinal);
+        Assert.Contains("private async Task<List<AiResaleEstimate>> EstimateChunkAsync(", Service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void One_failed_chunk_does_not_abandon_the_rest_of_the_board()
+    {
+        // The owner, 2026-08-23: "The bot needs to price all the listings - people will wait for
+        // good results." Fifteen rows failing is a smaller loss than the other eighty-five going
+        // unpriced with them.
+        Assert.Contains("AI resale estimate — one batch failed", Service.Replace("—", "—"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_truncated_reply_keeps_the_prices_that_arrived()
+    {
+        Assert.Contains("JsonSalvage.CompleteObjects(raw)", Service, StringComparison.Ordinal);
+        Assert.Contains("reply ran out of room", Service, StringComparison.Ordinal);
     }
 
     [Fact]

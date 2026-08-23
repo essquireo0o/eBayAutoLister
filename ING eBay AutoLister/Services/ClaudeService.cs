@@ -1159,9 +1159,48 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
     public async Task<List<AiResaleEstimate>> EstimateResaleAsync(
         IReadOnlyList<AiEstimateItem> items, CancellationToken ct = default)
     {
-        var asked = (items ?? []).Where(i => !string.IsNullOrWhiteSpace(i.Title)).Take(60).ToList();
-        if (asked.Count == 0) return [];
+        var all = (items ?? []).Where(i => !string.IsNullOrWhiteSpace(i.Title)).Take(400).ToList();
+        if (all.Count == 0) return [];
 
+        // ── Why this is chunked ──────────────────────────────────────────────────
+        // It used to be one call for sixty items against a 4096-token ceiling, with thinking and
+        // web-search results coming out of that same ceiling. Sixty rows of JSON do not fit, so the
+        // reply ended mid-object, the parser found no closing bracket, and the whole batch was
+        // thrown away as "unreadable". Worse, the retry re-sent the identical prompt: truncation is
+        // deterministic, so all three attempts died the same way and the log said
+        // "AiUnreadableReply after 3 attempt(s)" for what was really one sentence about token budget.
+        //
+        // This is the only path that can value a row when stored comps miss and the live sold-price
+        // source is behind eBay's login wall, so losing the batch means the board says "no sold
+        // data" on rows it could have priced. Chunks of fifteen sit far inside the ceiling, one bad
+        // chunk costs fifteen rows instead of sixty, and a chunk that fails outright no longer
+        // takes the others down with it.
+        const int chunkSize = 15;
+        var results = new List<AiResaleEstimate>();
+
+        for (var offset = 0; offset < all.Count; offset += chunkSize)
+        {
+            var chunk = all.Skip(offset).Take(chunkSize).ToList();
+            try
+            {
+                results.AddRange(await EstimateChunkAsync(chunk, ct));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Partial coverage is the product here. The seller waits for prices on a hundred
+                // rows; fifteen of them failing is a smaller loss than abandoning the other eighty-five.
+                log.Add("Warning", "AI resale estimate — one batch failed",
+                    $"Items {offset + 1}-{offset + chunk.Count} of {all.Count} went unpriced. {ex.Message}");
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>One batch of items, small enough that the reply fits.</summary>
+    private async Task<List<AiResaleEstimate>> EstimateChunkAsync(
+        IReadOnlyList<AiEstimateItem> asked, CancellationToken ct)
+    {
         var lines = string.Join("\n", asked.Select(i =>
             $"- id={i.ItemId} | {TrimTo(i.Title!.Trim(), 160)}"
             + (i.AskingPrice is > 0 ? $" | asking ${i.AskingPrice:0.##}" : "")
@@ -1220,14 +1259,35 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
         // execution tool alongside it, which this call has no use for.
         List<AiResaleEstimate> Parse(MessageResponse response)
         {
-            var json = ExtractJsonArray(LastTextOf(response, "[]"));
-            return JsonSerializer.Deserialize<List<AiResaleEstimate>>(json, JsonOptions) ?? [];
+            var raw = LastTextOf(response, "[]");
+            try
+            {
+                var json = ExtractJsonArray(raw);
+                return JsonSerializer.Deserialize<List<AiResaleEstimate>>(json, JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                // Cut off mid-object. Keep what closed cleanly rather than losing the batch, and
+                // name the real cause — "unreadable" sent three sessions looking for a bad prompt.
+                var salvaged = JsonSalvage.CompleteObjects(raw);
+                if (salvaged.Length == 0) throw;
+
+                var kept = JsonSerializer.Deserialize<List<AiResaleEstimate>>(salvaged, JsonOptions) ?? [];
+                log.Add("Warning", "AI resale estimate — reply ran out of room",
+                    $"The model was cut off mid-answer (stop reason: {response.StopReason ?? "unknown"}). "
+                    + $"Kept {kept.Count} of the {asked.Count} asked for; the rest stay unpriced.");
+                return kept;
+            }
         }
 
         MessageParameters Request(bool withWeb) => new()
         {
             Model     = "claude-fable-5",
-            MaxTokens = 4096,
+            // Fifteen items of JSON is a few hundred tokens; the rest of this budget is headroom for
+            // adaptive thinking and web-search results, which are spent from the SAME ceiling. 4096
+            // was the whole allowance for sixty items plus both of those, which is where the
+            // truncation came from.
+            MaxTokens = 8192,
             Messages  = [new() { Role = RoleType.User, Content = [new TextContent { Text = prompt }] }],
             Thinking  = new ThinkingParameters { Type = ThinkingType.adaptive, Effort = ThinkingEffort.low },
             Tools     = withWeb
