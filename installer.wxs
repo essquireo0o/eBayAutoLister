@@ -190,10 +190,20 @@
       phone camera on — the port is closed the rest of the time whatever the firewall says.
       Return="ignore" for the same reason as the port reservation above: a machine with unusual
       firewall policy must still finish installing.
+
+      One range, 9443-9455, rather than a list: netsh takes both and a plain range is the form
+      there is no doubt about, which matters for a command that runs once, elevated, inside an
+      installer where a syntax error would be invisible. The extra ports are the trust page's,
+      because an iPhone cannot open 9443 until it has been given the
+      certificate to trust, and it cannot be given that over the connection the missing trust is
+      blocking — so the trust page is plain HTTP on its own port. It is a RANGE because that port
+      is chosen at run time: 9444 is only a preference, and this machine found it already held by
+      an antivirus service. Opening one port and then listening on another would leave the phone
+      timing out on the one page that exists to stop phones timing out.
     -->
     <CustomAction Id="AllowPhoneCameraPort"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; &amp; netsh advfirewall firewall add rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; dir=in action=allow protocol=TCP localport=9443 remoteip=localsubnet&quot;"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; &amp; netsh advfirewall firewall add rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; dir=in action=allow protocol=TCP localport=9443-9455 remoteip=localsubnet&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />
