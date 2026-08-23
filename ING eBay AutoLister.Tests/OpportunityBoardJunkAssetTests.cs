@@ -4,8 +4,9 @@ namespace ING_eBay_AutoLister.Tests;
 /// The Opportunity Finder board opened on a $10 "thin" win, three long shots and a -$48 Pass at
 /// #5 on "best overall" — "a bunch of junk — if there are no opportunities that's fine but this is
 /// a bunch of junk" (owner, 2026-08-20). These pin the four things that made it so and their fixes:
-/// the strict bars are on by default, the auto-relax can no longer switch them off, a loser never
-/// outranks a winner however confident its comps are, and a bar the seller sets is remembered.
+/// the profitability and evidence bars are on by default, the auto-relax can no longer switch them
+/// off, a loser never outranks a winner however confident its comps are, and a bar the seller sets
+/// is remembered. Profitability means above zero; the old $100 floor hid real positive plays.
 /// </summary>
 public class OpportunityBoardJunkAssetTests
 {
@@ -16,7 +17,17 @@ public class OpportunityBoardJunkAssetTests
     public void The_board_opens_with_both_strict_bars_on()
     {
         Assert.Contains("id=\"fb-arb-hide-losers\" type=\"checkbox\" checked", Html);
+        Assert.Contains("Only profitable deals", Html);
         Assert.Contains("id=\"fb-arb-proven-only\" type=\"checkbox\" checked", Html);
+    }
+
+    [Fact]
+    public void The_default_money_bar_keeps_every_positive_play()
+    {
+        Assert.Contains("const PROFITABLE_NET = 0;", Js);
+        Assert.Contains("r.netProfit > PROFITABLE_NET", Js);
+        Assert.DoesNotContain("const WORTH_DOING_NET = 100;", Js);
+        Assert.Contains("Show ${n} break-even or losing listings", Js);
     }
 
     [Fact]
@@ -58,9 +69,13 @@ public class OpportunityBoardJunkAssetTests
         return text[start..end];
     }
 
-    private static string ReadAsset(string name)
+    private static string ReadAsset(
+        string name,
+        [System.Runtime.CompilerServices.CallerFilePath] string sourceFile = "")
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        // Isolated output keeps the running desktop app's bin directory unlocked. CallerFilePath
+        // anchors this search to the checkout even when the test host changes its working folder.
+        var dir = new DirectoryInfo(Path.GetDirectoryName(sourceFile) ?? AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ING eBay AutoLister.slnx")))
             dir = dir.Parent;
 

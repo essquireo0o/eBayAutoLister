@@ -3787,7 +3787,8 @@
     // keepOpen so the lookup's bar isn't hidden a beat before the scan repurposes it as a sweep.
     await runLiveLookup(query, 'es', { keepOpen: true });
 
-    // The real wait is here — searching eBay and pricing up to 120 listings. Sweep the same bar so
+    // The real wait is here — searching eBay and pricing the whole returned page (up to 200
+    // listings). Sweep the same bar so
     // there is honest motion for it, instead of a full green bar frozen under a static line.
     scanWorking('es', `Searching eBay for "${query}" and pricing every result…`);
     const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);
@@ -4095,9 +4096,12 @@
 
   // Re-sorting and filtering are pure client-side views over the response already in hand —
   // changing the sort must never re-run the scan.
-  // The least net profit that makes a flip worth the work at all - LocalArbitrageAnalyzer.SolidProfit.
-  // Spelled here too because the board filters on it before the server's verdict is ever read.
-  const WORTH_DOING_NET = 100;
+  // The first board-level gate is honest profitability, not an arbitrary $100 payday. The old
+  // default hid nine profitable, comp-backed rows in the measured Antminer scan and made a scan
+  // that had priced 120 products look as though it had found only one. The server's verdict still
+  // distinguishes a strong $100+ play from a smaller win; this switch decides only whether losses
+  // and break-even rows belong on the initial board.
+  const PROFITABLE_NET = 0;
 
   // Why the board is empty, counted rather than guessed. Naming the bar that cut is the difference
   // between "this tool is broken" and "there was nothing here worth buying" - and the second one is
@@ -4105,16 +4109,16 @@
   function emptyUnderTheBarMessage() {
     const all = (arbitrageData && arbitrageData.items) || [];
     const priced = all.filter(r => r.netProfit != null);
-    const clearsBar = priced.filter(r => r.netProfit >= WORTH_DOING_NET);
+    const clearsBar = priced.filter(r => r.netProfit > PROFITABLE_NET);
     const proven = clearsBar.filter(r => r.evidenceTier === 'confident');
 
     if (!clearsBar.length) {
-      return `${all.length} deal${all.length === 1 ? '' : 's'} priced, and not one nets $${WORTH_DOING_NET} `
-           + `after fees. That is the answer: there is nothing here worth the drive, the listing and the packing. `
-           + `Untick "Only deals that clear $${WORTH_DOING_NET}" to see the small stuff anyway.`;
+      return `${all.length} deal${all.length === 1 ? '' : 's'} priced, and not one makes money `
+           + `after fees. That is the answer: there is no profitable flip in this scan. `
+           + `Untick "Only profitable deals" to inspect the break-even and losing listings anyway.`;
     }
     const ai = clearsBar.filter(r => r.evidenceTier === 'ai').length;
-    return `${clearsBar.length} deal${clearsBar.length === 1 ? '' : 's'} clear $${WORTH_DOING_NET}, but `
+    return `${clearsBar.length} deal${clearsBar.length === 1 ? '' : 's'} make money after fees, but `
          + `${proven.length === 0 ? 'none of them are' : 'only ' + proven.length + ' of them are'} `
          + `priced off sold comps that actually match the item - the rest rest on one loose comp, on `
          + `another product's price`
@@ -4183,7 +4187,7 @@
     const relaxed = [];
     if (!arbFiltersTouched) {
       const survives = (hl, po, fo, wo) => arbitrageData.items.filter(r =>
-        (!hl || (r.netProfit != null && r.netProfit >= WORTH_DOING_NET)) &&
+        (!hl || (r.netProfit != null && r.netProfit > PROFITABLE_NET)) &&
         (!po || r.evidenceTier === 'confident') &&
         (!fo || r.speedTier === 'fast') &&
         (!wo || (r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0))).length;
@@ -4233,14 +4237,13 @@
     // than a run of ifs — the list is what lets the board count what each one is holding.
     const shopping = rows;
     const bars = [
-      // The $100 bar, not a "> 0" bar. A row that nets $14 on a 280% return is not a deal: it does
-      // not pay for finding it, listing it and packing it, and it pushes the rows that would down
-      // the board. Same figure the server grades verdicts on (LocalArbitrageAnalyzer.SolidProfit),
-      // so the filter and the badge cannot disagree about what "worth doing" means.
+      // Losses and break-even rows are useful evidence, but they are not arbitrage plays. Keep
+      // every positive, comp-backed result on the initial board and let the server's verdict and
+      // ranking distinguish a small win from a $100+ solid play.
       hideLosers && {
         id: 'fb-arb-hide-losers',
-        back: n => `Show ${n} that net under $${WORTH_DOING_NET}`,
-        keep: r => r.netProfit != null && r.netProfit >= WORTH_DOING_NET,
+        back: n => `Show ${n} break-even or losing listings`,
+        keep: r => r.netProfit != null && r.netProfit > PROFITABLE_NET,
       },
       // A price nobody could check is not a price. These rows kept arriving at the top of the board
       // with the biggest numbers on them precisely BECAUSE they were unchecked — one unusual sold

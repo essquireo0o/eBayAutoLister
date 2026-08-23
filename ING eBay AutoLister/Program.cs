@@ -2923,14 +2923,15 @@ app.MapGet("/api/ebay/scan", async (
 
     try
     {
-        // 120 deep, like every other scan in this app. It used to stop at 30 of the ~200 listings a
+        // Price the whole Browse API page. It used to stop at 120 of the ~200 listings a
         // broad keyword returns, and depth is what decides whether the board has anything on it:
         // measured on "fanuc", analysing 30 gave 3 rows clearing $100 and only 1 of those had enough
         // sold comps to trust; analysing 60 gave 8 and 4. The rows that clear the bar are a small
         // fraction of what comes back, so a shallow scan mostly returns the fraction that doesn't.
         Task<LocalArbitrageResult> Scan(string keyword) => FindLocalArbitrageAsync(
             keyword, "", 40,
-            Math.Clamp(maxItems ?? 120, 1, 400), Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
+            Math.Clamp(maxItems ?? EbaySupplySource.SearchPageSize, 1, EbaySupplySource.SearchPageSize),
+            Math.Clamp(terapeakBudget ?? 5, 0, 10), sort,
             [ebaySource.WithFilters(filters)], craigslistSite: null,
             // eBay charges sales tax, but it is already inside the delivered price the source
             // reports — adding a rate on top would double-count it.

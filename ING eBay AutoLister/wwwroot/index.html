@@ -1732,10 +1732,10 @@
                      LocalArbitrageAnalyzer.SolidProfit does not pay for finding, listing and
                      packing the thing, so it is not a deal — it is a row that makes the real ones
                      harder to see. Unticking it brings the small stuff back. -->
-                <!-- Both bars are ON by default (2026-08-20): a board that opened with $10 "thin"
-                     wins, long shots and a -$48 Pass at #5 was "a bunch of junk", and the owner
-                     would rather read "no opportunities" than that. Unticking is remembered. -->
-                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" checked /> Only deals that clear $100</label>
+                <!-- Both bars are ON by default: the first hides break-even and losing rows, and
+                     the second keeps thin-comp guesses off the initial board. Positive plays under
+                     $100 remain visible; the verdict and ranking distinguish them from strong wins. -->
+                <label class="fb-arb-check"><input id="fb-arb-hide-losers" type="checkbox" checked /> Only profitable deals</label>
                 <!-- The other half of "these results are wrong": a big number priced off one loose
                      sold comp outranked every row that was actually checkable. Estimate-only rows
                      are hidden by default rather than dimmed, because dimming them still left them
@@ -5838,6 +5838,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=152"></script>
+  <script src="app.js?v=153"></script>
 </body>
 </html>
