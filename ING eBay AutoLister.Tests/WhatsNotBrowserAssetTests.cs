@@ -217,7 +217,7 @@ public class WhatsNotBrowserAssetTests
         Assert.Contains("function wnForgetVerdict(host)", Js, StringComparison.Ordinal);
 
         Assert.Contains("id=\"wn-blocked-retry\"", Html, StringComparison.Ordinal);
-        var retry = Section(Js, "on('wn-blocked-retry', 'click'", "const readWhatsHere");
+        var retry = Section(Js, "on('wn-blocked-retry', 'click'", "The way out of a refused frame");
         Assert.Contains("wnForgetVerdict(wnHost(target));", retry, StringComparison.Ordinal);
         Assert.Contains("force: true", retry, StringComparison.Ordinal);
 
@@ -269,11 +269,13 @@ public class WhatsNotBrowserAssetTests
     [Fact]
     public void A_refusal_still_ends_at_a_priced_lot()
     {
-        Assert.Contains("id=\"wn-blocked-read\"", Html, StringComparison.Ordinal);
-        Assert.Contains("on('wn-blocked-read', 'click', readWhatsHere);", Js, StringComparison.Ordinal);
-        // The same handler as the button beside the reader, so the two cannot drift apart.
-        Assert.Contains("on('wn-read-here', 'click', readWhatsHere);", Js, StringComparison.Ordinal);
-        Assert.Contains("setVal('wn-read-url', here);", Js, StringComparison.Ordinal);
+        // The doorway used to be "read the page through the app instead", which Whatnot answers
+        // with 403 for anything that has no signed-in browser behind it — so the refused frame
+        // offered a second thing that could not work. It is now the browser: the show plays there,
+        // and that tab is what gets shared back to 🎥 Watch, listen & price.
+        Assert.Contains("id=\"wn-blocked-open\"", Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("id=\"wn-blocked-read\"", Html, StringComparison.Ordinal);
+        Assert.Contains("Watch, listen &amp; price", Html, StringComparison.Ordinal);
         Assert.Contains(".wn-blocked-actions", Css, StringComparison.Ordinal);
     }
 

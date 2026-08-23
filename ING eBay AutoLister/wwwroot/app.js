@@ -12205,6 +12205,35 @@
     wnVideoTick();   // now, not in twenty seconds — a toggle that does nothing for that long reads as broken
   }
 
+  // Whether this install can actually hear. Claude takes no audio, so the show's sound has to be
+  // transcribed first and that needs an OpenAI key — see TranscriptionService. Held here rather
+  // than asked per press so the button can be honest while it is sitting there.
+  let wnCanListen = false;
+
+  /**
+   * The button's resting label.
+   *
+   * "Watch & listen (AI)" was true and incomplete: it also prices what it finds, which is the only
+   * reason anyone presses it (owner, 2026-08-23 — "that's not totally accurate, it also prices the
+   * items"). And "listen" is a promise this install may not be able to keep, so a machine with no
+   * speech-to-text key is offered the two things it CAN do rather than three things it cannot.
+   */
+  function wnPaintVideoButton() {
+    const btn = $('wn-video-btn');
+    if (!btn) return;
+    btn.classList.remove('active');
+    const label = wnCanListen ? '🎥 Watch, listen & price' : '🎥 Watch & price';
+    btn.textContent = label;
+    // The prose underneath names this button. Set from the same variable so the two can never
+    // disagree about what the seller is being told to press.
+    const named = $('wn-video-name');
+    if (named) named.textContent = label;
+    btn.title = wnCanListen
+      ? 'Share your Whatnot tab — with tab audio ticked — and AI reads the screen and hears the host, then prices it'
+      : 'Share your Whatnot tab and AI reads each new lot off the screen and prices it. '
+        + 'Add an OpenAI key in Settings → AI Provider and it hears the host as well.';
+  }
+
   function wnStopVideoWatch(why) {
     if (wnVideoTimer) { clearInterval(wnVideoTimer); wnVideoTimer = null; }
     wnStopListening();   // before the tracks stop, so the recorder is not torn out from under
@@ -12213,8 +12242,7 @@
     wnVideoBusy = false;
     const vid = $('wn-video-el');
     if (vid) { try { vid.pause(); } catch { /* fine */ } vid.srcObject = null; }
-    const btn = $('wn-video-btn');
-    if (btn) { btn.classList.remove('active'); btn.textContent = '🎥 Watch & listen (AI)'; }
+    wnPaintVideoButton();
     wnVideoStatus(why || '', why ? 'idle' : '');
   }
 
@@ -14210,17 +14238,10 @@
       wnLoad(target, { push: false, force: true });
     });
 
-    // The way out of a refused frame that still ends in a priced lot: the address the panel
-    // is on, handed to the reader at the top of the screen, which fetches the page through
-    // the app where no framing rule applies.
-    const readWhatsHere = () => {
-      const here = wnNormalizeUrl(wnHistory[wnHistoryAt] || $('wn-url')?.value);
-      if (here) setVal('wn-read-url', here);
-      const readBox = $('wn-read-url');
-      readBox?.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-      $('wn-read-btn')?.focus();
-    };
-    on('wn-blocked-read', 'click', readWhatsHere);
+    // The way out of a refused frame used to be "read the page through the app instead", which
+    // Whatnot answers with 403 for anything without a signed-in browser behind it. The way out is
+    // now the browser itself — the show plays there, and that tab is what gets shared back to
+    // 🎥 Watch, listen & price.
 
     const box = $('wn-url');
     if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter') wnLoad(); });
@@ -14240,19 +14261,15 @@
     on('wn-bid-down', 'click', () => wnStepBid(-1));
 
     // ── Reading the lot off the show ──────────────────────────────────────────
-    on('wn-read-btn', 'click', () => wnReadShow());
     // Reading the VIDEO, not the page: share the Whatnot tab, AI names what's on screen, price it.
     on('wn-video-btn', 'click', wnToggleVideoWatch);
     // The panel at the bottom is where the seller navigated to the show; retyping
     // that address into a second box is the friction this button removes. Same handler
     // as the one on the refusal overlay — two ways in, one behaviour.
-    on('wn-read-here', 'click', readWhatsHere);
-    $('wn-read-url')?.addEventListener('keydown', e => { if (e.key === 'Enter') wnReadShow(); });
 
     // ── The check on the name everything is priced from ───────────────────────
     // Bound to a press and to nothing else. The offer inside the panel is caught on
     // the panel, because the panel is replaced whole every time it is redrawn.
-    on('wn-photo-btn', 'click', wnCheckPhoto);
     $('wn-photo-out')?.addEventListener('click', e => {
       const use = e.target.closest('[data-use-photo]');
       if (use) wnUsePhotoTitle(use.getAttribute('data-use-photo'));
@@ -19571,6 +19588,9 @@
       if ($('s-license-key')) $('s-license-key').placeholder = f.hasLicenseKey ? `(saved: ${f.licenseKeyPreview} — leave blank to keep)` : 'ING-FREE-XXXX or ING-PRO-XXXX';
       $('s-anthropic-key').placeholder = f.hasAnthropicKey ? '(saved — leave blank to keep)' : 'sk-ant-...';
       if ($('s-openai-key')) $('s-openai-key').placeholder = f.hasOpenAiKey ? '(saved — leave blank to keep)' : 'sk-...';
+      // The WhatsNot button says "listen" only when there is something to listen with.
+      wnCanListen = !!f.hasOpenAiKey;
+      wnPaintVideoButton();
       // Image generation is optional and lives in its own strip on the Settings page — nowhere
       // in this modal, so it can never read as a step between a new seller and their first listing.
       const pgMode = computePgImggenMode(f.imageGenMode, f.localSdBackend);

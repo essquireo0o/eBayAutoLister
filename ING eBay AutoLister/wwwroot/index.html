@@ -3079,38 +3079,26 @@
                own connection afterwards, and the screen says so every time. -->
           <div class="wn-read">
             <div class="wn-read-row">
-              <label class="wn-field wn-field-wide wn-desk">
-                <span>Show address</span>
-                <input id="wn-read-url" type="text" spellcheck="false" autocomplete="off"
-                       placeholder="https://www.whatnot.com/live/… — the show you're watching" />
-              </label>
-              <button id="wn-read-btn" class="btn btn-primary wn-read-btn wn-desk" type="button">📡 Read the show</button>
-              <button id="wn-read-here" class="btn btn-ghost wn-desk" type="button"
-                      title="Copy the address the panel at the bottom of this screen is on">↧ From the panel</button>
-              <!-- The check on everything above it. The card's ceiling, spread, sell-through and
-                   room all come from one eBay sold search, and that search runs on the NAME in the
-                   box below — typed on a live show by somebody holding a camera. The lot's own
-                   photograph (the read brings its address back) is the only evidence on this screen
-                   that can contradict that name. Pressed, never automatic: a look at a picture costs
-                   money and seconds, and the watch loop deliberately does not reach it. -->
-              <button id="wn-photo-btn" class="btn btn-ghost wn-photo-btn wn-desk" type="button"
-                      title="Look at the lot's photo and check it against the name being priced">🔍 Check the photo</button>
-              <!-- Off by default, and it is the only thing on this screen that reaches the
-                   network on its own. It also stops itself the moment the seller edits the item
-                   box: whatever they typed outranks whatever the page says. -->
-              <label class="wn-watch wn-desk" title="Read the show again every few seconds and price each new lot as it comes up">
-                <input id="wn-watch" type="checkbox" />
-                <span>Keep reading</span>
-              </label>
-              <!-- Reads the SHOW, not the page. Whatnot refuses to be embedded and a browser cannot
-                   see inside a cross-origin frame, so this asks you to share your Whatnot tab, samples
-                   a frame from it every few seconds, records the tab's sound in short pieces, and has
-                   AI name what is on screen using both — then prices it exactly like a typed name.
-                   Tick "Also share tab audio" in the share picker and the host is heard as well as
-                   seen. This is the one control that spends an AI read per frame, on purpose and
-                   only while it is on. -->
-              <button id="wn-video-btn" class="btn btn-ghost wn-video-btn" type="button"
-                      title="Share your Whatnot tab — with tab audio ticked — and AI reads the screen and hears the host, then prices it">🎥 Watch &amp; listen (AI)</button>
+              <!-- ── Why there is one button here and not five (2026-08-23) ────────────────────
+                   This row used to lead with 📡 Read the show: fetch the show's public page through
+                   the app and read the lot off it. Whatnot answers that with HTTP 403 — it does it
+                   to anything that is not a signed-in browser — so the button apologised every time
+                   it was pressed, and the show-address box, "From the panel", "Keep reading" and
+                   "Check the photo" all existed only to feed it or to use what it brought back.
+                   The hosted build had already hidden the lot of them for exactly this reason (see
+                   .wn-desk in style.css: "four buttons that could only apologise"); the desktop
+                   build kept them, so the biggest, gold, primary button on this screen was one that
+                   could not work. The owner said so: "Read the show does not work".
+                   The reason was never hosted-specific, so neither is the removal.
+                   The server endpoints are still there — /api/whatsnot/read and /api/whatsnot/photo
+                   — because nothing is wrong with that code and Whatnot may open the door again.
+                   What is gone is offering it as the way in. -->              <!-- "Watch & listen" was true and incomplete — it also prices what it finds, which
+                   is the only reason anyone presses it (owner, 2026-08-23). The label says all
+                   three. The word "listen" is earned at runtime: transcription needs an OpenAI key
+                   (Claude takes no audio), and without one this button relabels itself rather than
+                   promising an ear it has not got. See wnPaintVideoButton. -->
+              <button id="wn-video-btn" class="btn btn-primary wn-video-btn" type="button"
+                      title="Share your Whatnot tab — with tab audio ticked — and AI reads the screen and hears the host, then prices it">🎥 Watch, listen &amp; price</button>
             </div>
             <!-- Visual status only, deliberately NOT a live region: #wn-say is the one live region on
                  this screen, and a second announcement competing with it during a live sale leaves a
@@ -3128,22 +3116,35 @@
             <div id="wn-photo-out" class="wn-photo-out hidden"></div>
             <!-- Folded, not shown: this paragraph earns its keep the first night and is furniture
                  every night after. The summary line is the reminder; the prose is one click away. -->
-            <details class="wn-help wn-desk">
-              <summary>How the page read works</summary>
+            <details class="wn-help">
+              <summary>How watching the show works</summary>
               <p class="opp-hint wn-read-hint">
-                Reads the show's own page — the same one your browser loads — and puts the lot's name
-                in the box below, then prices it. It reads the <strong>public page, once per press</strong>,
-                with no account behind it; Whatnot's private API would answer the same question and is
-                deliberately not called. What that costs is the price: a page is a snapshot at load, so
-                the <strong>bid stays under your hand</strong>. Every read says where it got each field.
+                Share your Whatnot tab and the app takes a frame from it every few seconds, has AI
+                name what is on screen, and prices that name against real eBay sold comps — the same
+                pricing as typing the lot in by hand. Tick <strong>"Also share tab audio"</strong> in
+                the share picker and short pieces of the show's sound are transcribed too, so the
+                host saying "this one's a 110 terahash" counts as evidence alongside the picture.
+                Nothing is bid and nothing is bought: this screen only ever tells you what a thing is
+                worth. It is the one control here that spends an AI read per frame, and only while it
+                is on.
+              </p>
+              <p class="opp-hint wn-read-hint">
+                <strong>Why the app watches your screen instead of reading the page.</strong> Whatnot
+                answers a request that has no signed-in browser behind it with HTTP 403 — including
+                the app's. Your tab is already signed in and already showing the lot, so the picture
+                on it is the one thing that can be read without asking Whatnot for anything.
+                Typing the lot in and pressing <strong>⚡ Price it</strong> always works too, and
+                costs nothing.
               </p>
             </details>
-            <!-- The hosted build's whole story in one line. The page-read controls above are
-                 desktop-only there (Whatnot turns a server-side, signed-out read away every time,
-                 so on the web they were four buttons that could only apologise), which leaves
-                 exactly two ways in: share the tab, or type the name. Say so, briefly. -->
-            <p class="opp-hint wn-hosted-only">
-              Watch the show in your own browser tab, press <strong>🎥 Watch &amp; listen (AI)</strong>
+            <!-- There are exactly two ways in — share the tab, or type the name — and that is now
+                 true of the desktop build as well as the hosted one, because Whatnot turns a
+                 signed-out read away every time on both. Say so, briefly. -->
+            <p class="opp-hint">
+              <!-- Named from the button rather than copied from it: without a speech-to-text key
+                   the button is "Watch & price", and a sentence naming a button that is not on the
+                   screen is worse than no sentence. See wnPaintVideoButton. -->
+              Watch the show in your own browser tab, press <strong id="wn-video-name">🎥 Watch, listen &amp; price</strong>
               and share that tab with <strong>"Also share tab audio"</strong> ticked — the AI reads
               each new lot off the screen, hears what the host says about it, and prices it below.
               Typing the lot in and pressing <strong>⚡ Price it</strong> always works too, and costs nothing.
@@ -3449,19 +3450,21 @@
               never going to render; it is still re-asked in the background, and
               <strong>Try it anyway</strong> overrules the memory.
               <strong>Open in browser</strong> is the way into a
-              site that refuses.<span class="wn-desk"> The app cannot read what is inside the frame either (a browser refuses
-              cross-origin) — which is what <strong>📡 Read the show</strong> at the top of this screen
-              is for: it fetches the show's page through the app instead, where no such rule applies.</span>
+              site that refuses. The app cannot read what is inside the frame either (a browser refuses
+              cross-origin), and Whatnot turns away a read that has no signed-in browser behind it —
+              which is why the way in is <strong>🎥 Watch, listen &amp; price</strong> at the top of this
+              screen: you share the tab that is already signed in, and the app reads the picture on it.
             </p>
           </details>
           <div class="wn-frame-wrap">
             <!-- Shown over the frame when the site's own headers say the embed was refused, so the
                  blank rectangle underneath stops reading as a broken app. -->
-            <!-- A refusal is a doorway, not a dead end: out to a real browser, or straight to
-                 📡 Read the show, which fetches the same page through the app and fills the box
-                 the ceiling is priced from. Try it anyway is offered only against a verdict that
-                 might be out of date — remembered from a previous night, or taken off the standing
-                 list — never against a header this app read one second ago. -->
+            <!-- A refusal is a doorway, not a dead end: out to a real browser, where the show
+                 plays and the tab can be shared back to 🎥 Watch, listen & price. It used to offer
+                 📡 Read this show instead, which could only ever come back 403. Try it anyway is
+                 offered only against a verdict that might be out of date — remembered from a
+                 previous night, or taken off the standing list — never against a header this app
+                 read one second ago. -->
             <div id="wn-blocked" class="wn-blocked hidden">
               <div class="wn-blocked-title" id="wn-blocked-title"></div>
               <p class="wn-blocked-detail" id="wn-blocked-detail"></p>
@@ -3469,8 +3472,6 @@
               <p class="wn-blocked-header" id="wn-blocked-header"></p>
               <div class="wn-blocked-actions">
                 <button id="wn-blocked-open" class="btn btn-primary" type="button">Open in browser ↗</button>
-                <button id="wn-blocked-read" class="btn btn-ghost" type="button"
-                        title="Fetch this show's page through the app and read the lot off it">📡 Read this show instead</button>
                 <button id="wn-blocked-retry" class="btn btn-ghost hidden" type="button"
                         title="Point the frame at it regardless — the remembered refusal may be out of date">Try it anyway</button>
               </div>

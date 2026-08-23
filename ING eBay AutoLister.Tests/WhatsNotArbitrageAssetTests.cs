@@ -120,10 +120,18 @@ public class WhatsNotArbitrageAssetTests
     public void The_screen_says_what_the_frame_can_and_cannot_do()
     {
         Assert.Contains("The app cannot read what is inside the", Html, StringComparison.Ordinal);
-        // And what to do about it. This used to end "so the item is typed into the box above"; the
-        // read gave the sentence a better second half, and the half that matters — the frame is not
-        // where the lot's name comes from — is still the one being made.
-        Assert.Contains("Read the show", Html, StringComparison.Ordinal);
+        // And what to do about it. The second half of this sentence has now been wrong twice: it
+        // ended "so the item is typed into the box above", then pointed at 📡 Read the show, which
+        // Whatnot answers with 403 for anything that is not a signed-in browser. It points at the
+        // one way in that does not ask Whatnot for anything — the tab the seller is already
+        // watching on. The half that matters is unchanged: the frame is not where the name comes
+        // from.
+        Assert.Contains("Watch, listen &amp; price", Html, StringComparison.Ordinal);
+        // Not DoesNotContain("Read the show") — the comment above the row explains at length why
+        // that button is gone, and a test that fails on its own explanation is a test that gets
+        // the explanation deleted. What must be absent is the CONTROL, and that is pinned in
+        // WhatsNotWatchNotReadTests.
+        Assert.DoesNotContain("id=\"wn-read-btn\"", Html, StringComparison.Ordinal);
     }
 
     /// <summary>
