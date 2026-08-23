@@ -12,6 +12,21 @@ public class OpportunityBoardJunkAssetTests
 {
     private static readonly string Html = ReadAsset("index.html");
     private static readonly string Js = ReadAsset("app.js");
+    private static readonly string Css = ReadAsset("style.css");
+
+    [Fact]
+    public void The_finder_opens_on_the_primary_search_instead_of_the_supplier_upload()
+    {
+        var scan = Html.IndexOf("class=\"opp-supplier-panel ebay-scan-panel opp-primary-tool\"", StringComparison.Ordinal);
+        var upload = Html.IndexOf("id=\"opp-supplier-drop-zone\"", StringComparison.Ordinal);
+
+        Assert.True(scan >= 0 && upload > scan, "the primary eBay search must appear before secondary sourcing tools");
+        Assert.Contains("Find the flip worth buying.", Html);
+        Assert.Contains("class=\"opp-query-chip\"", Html);
+        Assert.Contains("chip.dataset.query", Js);
+        Assert.Contains("#opportunity-section .opp-primary-tool", Css);
+        Assert.Contains("@media (max-width: 560px)", Css);
+    }
 
     [Fact]
     public void The_board_opens_with_both_strict_bars_on()

@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=133" />
+  <link rel="stylesheet" href="style.css?v=134" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1421,29 +1421,16 @@
 
         <div class="opportunity-overlay-body">
 
-          <div class="opp-supplier-panel">
-            <h3 class="opp-supplier-heading">📦 Supplier File Analyzer</h3>
-            <p class="opp-hint">Drop or paste a supplier price list or product photo — AI extracts every product and wholesale cost, then checks real eBay sold-comp data to estimate dropship profit.</p>
-
-            <div id="opp-supplier-drop-zone" class="nl-drop-zone" tabindex="0" contenteditable="true" spellcheck="false">
-              <div class="nl-drop-icon"></div>
-              <p class="nl-drop-title">Drop or paste a price list / product photo here</p>
-              <p class="nl-drop-sub">or <span class="link">click to browse</span> &nbsp;·&nbsp; JPG, PNG, WEBP</p>
-              <p class="nl-drop-hint">AI extracts products and prices them against real sold comps</p>
-              <input id="opp-supplier-file-input" type="file" accept="image/*" hidden />
+          <div class="opp-command-hero">
+            <div class="opp-command-copy">
+              <span class="opp-kicker">DEAL INTELLIGENCE</span>
+              <h3>Find the flip worth buying.</h3>
+              <p>Search a product once. ING checks every available eBay listing, prices it against real sold comps, and puts the strongest net-profit opportunities first.</p>
             </div>
-
-            <div id="opp-supplier-preview-wrap" class="nl-preview-wrap hidden">
-              <img id="opp-supplier-preview-img" alt="Supplier file preview" />
-              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-                <button id="opp-supplier-btn-clear" class="btn btn-ghost small" type="button">Clear</button>
-                <button id="opp-supplier-btn-reanalyze" class="btn btn-ghost small hidden" type="button">Re-analyze</button>
-              </div>
-            </div>
-
-            <div id="opp-supplier-results" class="hidden">
-              <div id="opp-supplier-summary" class="opp-results-summary"></div>
-              <div id="opp-supplier-list" class="opp-results-list"></div>
+            <div class="opp-command-steps" aria-label="How Opportunity Finder works">
+              <span><b>1</b> Search</span>
+              <span><b>2</b> Compare solds</span>
+              <span><b>3</b> Buy with a ceiling</span>
             </div>
           </div>
 
@@ -1453,26 +1440,42 @@
                in with the local boards buried it behind five chips and four fields that mean
                nothing to it. Results render in the shared table below — one scanner engine, two
                ways to start it. -->
-          <div class="opp-supplier-panel ebay-scan-panel">
-            <h3 class="opp-supplier-heading">🛒 eBay Scanner — buy underpriced on eBay, resell on eBay</h3>
-            <p class="opp-hint">Searches eBay itself for listings priced below what the same thing actually sells for — underpriced Buy It Nows and auctions nobody has bid on. Every result is priced against real eBay sold data, with the delivered cost (item + shipping) as the buy price. <strong>Nationwide, no login, nothing to set up.</strong></p>
+          <div class="opp-supplier-panel ebay-scan-panel opp-primary-tool">
+            <div class="opp-tool-heading">
+              <div>
+                <span class="opp-tool-label">BEST PLACE TO START</span>
+                <h3 class="opp-supplier-heading">Scan eBay for underpriced listings</h3>
+                <p class="opp-hint">We compare the delivered cost with real sold prices and rank every profitable resale play.</p>
+              </div>
+              <span class="opp-tool-badge">Nationwide · no setup</span>
+            </div>
 
             <div class="ebay-scan-row">
               <div class="opp-field ebay-scan-field">
-                <label for="ebay-scan-query">What to look for</label>
+                <label for="ebay-scan-query">What product should we hunt?</label>
                 <!-- spellcheck on: the browser's own red underline catches a typo before the scan
                      is spent. If one gets through anyway, the server retries the corrected spelling
                      and the results say so — see CorrectedFrom/CorrectedTo. -->
-                <input id="ebay-scan-query" type="text" spellcheck="true" autocorrect="on" autocapitalize="off" placeholder="e.g. Antminer S19, PS5, Dyson V11" />
+                <input id="ebay-scan-query" type="text" spellcheck="true" autocorrect="on" autocapitalize="off" placeholder="Try Antminer S19, PlayStation 5, Dyson V11…" />
               </div>
-              <button id="ebay-scan-btn" class="btn btn-primary opp-search-submit" type="button">🛒 Scan eBay</button>
+              <button id="ebay-scan-btn" class="btn btn-primary opp-search-submit" type="button"><span>Find deals</span><span aria-hidden="true">→</span></button>
+            </div>
+
+            <div class="opp-quick-searches" aria-label="Example searches">
+              <span>Popular:</span>
+              <button class="opp-query-chip" type="button" data-query="Antminer S19">Antminer S19</button>
+              <button class="opp-query-chip" type="button" data-query="PlayStation 5 console">PlayStation 5</button>
+              <button class="opp-query-chip" type="button" data-query="Dyson V11">Dyson V11</button>
+              <button class="opp-query-chip" type="button" data-query="Apple Watch Ultra">Apple Watch Ultra</button>
             </div>
 
             <!-- Filters that only mean something on eBay. They are here rather than on the local
                  board below because a condition filter on a classifieds RSS feed, or an
                  auction/Buy-It-Now filter on a freebie board, is a control that silently does
                  nothing. Each one maps to a Browse API filter — see EbayScanFilters. -->
-            <div class="ebay-scan-filters">
+            <details class="opp-advanced-search">
+              <summary>Fine-tune the scan <span>Listing type, condition, price and seller feedback</span></summary>
+              <div class="ebay-scan-filters">
               <div class="opp-field">
                 <label for="ebay-scan-type">Listing type</label>
                 <select id="ebay-scan-type">
@@ -1503,9 +1506,10 @@
                 <label for="ebay-scan-feedback">Seller feedback at least</label>
                 <input id="ebay-scan-feedback" type="number" min="0" step="10" placeholder="any" />
               </div>
-            </div>
+              </div>
+            </details>
 
-            <p id="ebay-scan-note" class="fb-blank-query-hint">Every result is priced against real eBay sold data and ranked by profit after fees, right below this box. The buy price is what actually leaves your wallet — item plus shipping.</p>
+            <p id="ebay-scan-note" class="fb-blank-query-hint opp-trust-line"><span>✓</span> Profit includes purchase price, shipping and eBay fees. Low-feedback sellers are surfaced as opportunities and clearly flagged for extra verification.</p>
 
             <!-- Live eBay lookup progress for a scan. The scrape runs first and writes what it
                  finds into the comps database, so the board below is priced against sold data
@@ -1530,15 +1534,54 @@
                the seller searched in one place and the answer appeared in another. -->
           <div id="ebay-results-slot"></div>
 
+          <div class="opp-divider"><span>More ways to source inventory</span></div>
+
+          <div class="opp-supplier-panel opp-secondary-tool">
+            <div class="opp-tool-heading">
+              <div>
+                <span class="opp-tool-label">HAVE A SUPPLIER SHEET?</span>
+                <h3 class="opp-supplier-heading">Analyze a price list or product photo</h3>
+                <p class="opp-hint">Drop in an image and AI extracts each product and cost, then checks the margins against real eBay sold comps.</p>
+              </div>
+              <span class="opp-tool-icon" aria-hidden="true">📦</span>
+            </div>
+
+            <div id="opp-supplier-drop-zone" class="nl-drop-zone opp-compact-drop" tabindex="0" contenteditable="true" spellcheck="false">
+              <div class="nl-drop-icon"></div>
+              <p class="nl-drop-title">Drop or paste a price list / product photo</p>
+              <p class="nl-drop-sub"><span class="link">Browse files</span> &nbsp;·&nbsp; JPG, PNG, WEBP</p>
+              <input id="opp-supplier-file-input" type="file" accept="image/*" hidden />
+            </div>
+
+            <div id="opp-supplier-preview-wrap" class="nl-preview-wrap hidden">
+              <img id="opp-supplier-preview-img" alt="Supplier file preview" />
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                <button id="opp-supplier-btn-clear" class="btn btn-ghost small" type="button">Clear</button>
+                <button id="opp-supplier-btn-reanalyze" class="btn btn-ghost small hidden" type="button">Re-analyze</button>
+              </div>
+            </div>
+
+            <div id="opp-supplier-results" class="hidden">
+              <div id="opp-supplier-summary" class="opp-results-summary"></div>
+              <div id="opp-supplier-list" class="opp-results-list"></div>
+            </div>
+          </div>
+
           <!-- Sourcing: what can be bought under resale value right now, across every place the
                seller ticks. Craigslist needs no login at all (public search + RSS, see
                CraigslistService); the retail deal feeds need none either (public RSS, see
                DealFeedService); Facebook needs a one-time login to their own account because it
                publishes no search API. All arrive as the same LocalSupplyListing.
                eBay is deliberately NOT in this picker — it has its own panel above. -->
-          <div class="opp-supplier-panel fb-panel">
-            <h3 class="opp-supplier-heading">📍 Local &amp; online deals — classifieds, free stuff, clearance &amp; liquidation</h3>
-            <p class="opp-hint">Everywhere <em>other than</em> eBay: what's being given away near you, local classifieds, what's on clearance nationwide (Slickdeals, DealNews, TechBargains), <em>and</em> what closing businesses are auctioning off. Every price is compared against real eBay sold prices. <strong>Only Facebook needs a login.</strong></p>
+          <div class="opp-supplier-panel fb-panel opp-secondary-tool">
+            <div class="opp-tool-heading">
+              <div>
+                <span class="opp-tool-label">GO BEYOND EBAY</span>
+                <h3 class="opp-supplier-heading">Search local, clearance and liquidation deals</h3>
+                <p class="opp-hint">Compare classifieds, free items and nationwide clearance against real eBay sold prices. Only Facebook needs a login.</p>
+              </div>
+              <span class="opp-tool-icon" aria-hidden="true">📍</span>
+            </div>
 
             <!-- Source picker, rendered from /api/local/sources so a new source appears here
                  without touching this markup. -->
@@ -5839,6 +5882,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=155"></script>
+  <script src="app.js?v=156"></script>
 </body>
 </html>

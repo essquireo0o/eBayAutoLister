@@ -18379,6 +18379,315 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
    rules that broke it and later in the file, so the column wins without an !important. */
 .opportunity-overlay-body > * { margin-inline: auto; }
 
+/* ── Opportunity Finder: search-first command surface ──────────────────────
+   The page used to greet sellers with a full upload box and a paragraph wall,
+   while the action almost everyone came for started below the fold. This visual
+   hierarchy makes the eBay hunt the unmistakable primary path, then presents
+   supplier and local sourcing as quieter follow-on tools. */
+#opportunity-section .opportunity-overlay-header {
+  min-height: 84px;
+  padding-block: 16px;
+  background:
+    radial-gradient(650px 170px at 82% -30%, rgba(239, 190, 77, .34), transparent 68%),
+    radial-gradient(420px 160px at 36% 120%, rgba(20, 143, 146, .22), transparent 72%),
+    linear-gradient(112deg, #061f24 0%, #08383d 58%, #0b4b4c 100%);
+}
+#opportunity-section .opportunity-overlay-header h2 {
+  font-size: clamp(20px, 2vw, 28px);
+  letter-spacing: -.035em;
+}
+#opportunity-section .opportunity-overlay-body {
+  padding-top: clamp(20px, 3vw, 38px);
+  background:
+    radial-gradient(800px 420px at 92% 0%, rgba(16, 122, 126, .08), transparent 72%),
+    linear-gradient(180deg, color-mix(in srgb, var(--page) 91%, #e8f5f3) 0%, var(--page) 440px);
+}
+.opp-command-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 34px;
+  margin-bottom: 22px;
+}
+.opp-command-copy { max-width: 760px; }
+.opp-kicker,
+.opp-tool-label {
+  display: block;
+  color: var(--gold-ink);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .14em;
+  line-height: 1.2;
+}
+.opp-command-copy h3 {
+  margin: 7px 0 8px;
+  color: var(--ink);
+  font-size: clamp(27px, 3.2vw, 44px);
+  line-height: 1.04;
+  letter-spacing: -.045em;
+}
+.opp-command-copy p {
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+.opp-command-steps {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  box-shadow: var(--e1);
+}
+.opp-command-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.opp-command-steps b {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--teal-900);
+  color: #fff;
+  font-size: 10px;
+}
+#opportunity-section .opp-supplier-panel {
+  border-radius: 18px;
+  background: var(--card);
+}
+#opportunity-section .opp-primary-tool {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(22px, 3vw, 34px);
+  border: 1px solid color-mix(in srgb, var(--teal-800) 28%, var(--line));
+  box-shadow: 0 18px 50px rgba(4, 40, 43, .12), 0 2px 8px rgba(4, 40, 43, .06);
+}
+#opportunity-section .opp-primary-tool::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, var(--gold), #efd78e 42%, #20a6a2 100%);
+}
+.opp-tool-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.opp-tool-heading > div { min-width: 0; }
+#opportunity-section .opp-supplier-heading {
+  margin: 5px 0 6px;
+  font-size: clamp(19px, 2vw, 25px);
+  line-height: 1.18;
+  letter-spacing: -.025em;
+}
+#opportunity-section .opp-hint {
+  max-width: 78ch;
+  margin: 0;
+  line-height: 1.55;
+}
+.opp-tool-badge,
+.opp-tool-icon {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--success) 24%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success) 9%, var(--card));
+  color: var(--success);
+  padding: 7px 11px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.opp-tool-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-color: var(--line);
+  background: var(--soft);
+  font-size: 20px;
+}
+#opportunity-section .ebay-scan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--teal-800) 38%, var(--line));
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: 0 8px 26px rgba(4, 40, 43, .08);
+}
+#opportunity-section .ebay-scan-row .opp-field { gap: 5px; }
+#opportunity-section .ebay-scan-row label { padding-left: 11px; }
+#opportunity-section #ebay-scan-query {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  font-size: clamp(16px, 1.6vw, 19px);
+  font-weight: 600;
+  box-shadow: none;
+}
+#opportunity-section #ebay-scan-query::placeholder { color: color-mix(in srgb, var(--muted) 68%, transparent); }
+#opportunity-section #ebay-scan-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  min-width: 154px;
+  min-height: 52px;
+  padding-inline: 20px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 850;
+  box-shadow: 0 8px 18px rgba(178, 124, 18, .24);
+}
+.opp-quick-searches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 11px 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.opp-query-chip {
+  appearance: none;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+.opp-query-chip:hover {
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 10%, var(--card));
+  transform: translateY(-1px);
+}
+.opp-advanced-search {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.opp-advanced-search summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 2px 5px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.opp-advanced-search summary::-webkit-details-marker { display: none; }
+.opp-advanced-search summary::before {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--gold-ink);
+  font-size: 15px;
+}
+.opp-advanced-search[open] summary::before { content: "−"; }
+.opp-advanced-search summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+#opportunity-section .ebay-scan-filters {
+  margin: 8px 0 5px 30px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+}
+#opportunity-section .ebay-scan-narrow { max-width: none; }
+.opp-trust-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px !important;
+  color: var(--muted);
+}
+.opp-trust-line > span {
+  color: var(--success);
+  font-weight: 900;
+}
+.opp-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 30px auto 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.opp-divider::before,
+.opp-divider::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+#opportunity-section .opp-secondary-tool {
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(4, 40, 43, .055);
+}
+#opportunity-section .opp-secondary-tool:hover { border-color: color-mix(in srgb, var(--teal-700) 28%, var(--line)); }
+#opportunity-section .opp-compact-drop {
+  min-height: 122px;
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--soft) 70%, transparent);
+}
+#opportunity-section .opp-compact-drop .nl-drop-icon { transform: scale(.8); }
+#opportunity-section .opp-compact-drop .nl-drop-title { margin-top: 2px; }
+#opportunity-section .fb-panel { margin-top: 14px; }
+
+@media (max-width: 900px) {
+  .opp-command-hero { display: block; }
+  .opp-command-steps { width: max-content; max-width: 100%; margin-top: 16px; overflow-x: auto; }
+  .opp-tool-heading { gap: 12px; }
+  .opp-tool-badge { display: none; }
+  #opportunity-section .ebay-scan-row { grid-template-columns: 1fr; }
+  #opportunity-section #ebay-scan-btn { width: 100%; }
+  #opportunity-section .ebay-scan-filters { margin-left: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  #opportunity-section .opportunity-overlay-body { padding: 16px 12px 36px; }
+  .opp-command-copy h3 { font-size: 29px; }
+  .opp-command-copy p { font-size: 13px; }
+  .opp-command-steps span { padding-inline: 8px; }
+  .opp-command-steps span:not(:first-child) b { display: none; }
+  #opportunity-section .opp-primary-tool,
+  #opportunity-section .opp-secondary-tool { padding: 19px 16px; border-radius: 14px; }
+  #opportunity-section .ebay-scan-filters { grid-template-columns: 1fr; }
+  .opp-advanced-search summary span { display: none; }
+  .opp-tool-icon { width: 38px; height: 38px; }
+}
+
 /* ── WhatsNot: the live screen, composed ───────────────────────────────────────
    One surface treatment for every block on the screen, one rhythm between them, and the
    frame area given the presence of a stage rather than the look of a failed image. */
