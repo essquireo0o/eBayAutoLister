@@ -17255,6 +17255,13 @@
     refreshCopilotSeoStatus().then(() => {
       if (copilotSeoRunning && !copilotSeoPoll) pollCopilotSeo();
     });
+
+    // This screen is called "Fix The Whole Account At Once" and it opened showing nothing but a
+    // button to go and look at the account. The scan is READ-ONLY and costs nothing — it reads the
+    // live policies and listings and changes not one thing — so there was never a question worth
+    // asking before running it. Once per session, cached after, and the header button stays as the
+    // way to ask for a fresh read.
+    autoScan('copilot', 'copilot-actions', runCopilotScan);
   }
 
   function closeCopilotSection() {
@@ -18207,6 +18214,31 @@
     });
   }
 
+  /**
+   * Which folder the screen opens on when the seller has not picked one.
+   *
+   * It used to be plFolders[0] — the first name alphabetically, which on this app's own seed
+   * folders is "L7", and L7 is empty. So the seller took a photograph on their phone, opened the
+   * Photo Library to look at it, and was told "No photos in this model yet" while their shots sat
+   * one folder down under photo-box. It reads as "the picture never transferred" (owner,
+   * 2026-08-23), and the pictures had transferred perfectly every time.
+   *
+   * So: the folder that most recently received a photograph, which is the one the seller has just
+   * been filling. Falling back to the fullest, then to the first — an empty folder is only ever
+   * opened when every folder is empty, which is the one time it is the truth.
+   */
+  function plDefaultFolder() {
+    const withPhotos = plFolders.filter(f => (f.imageCount || 0) > 0);
+    if (!withPhotos.length) return plFolders[0]?.modelKey || '';
+
+    const dated = withPhotos.filter(f => f.newestAtUtc);
+    if (dated.length) {
+      return dated.reduce((best, f) =>
+        Date.parse(f.newestAtUtc) > Date.parse(best.newestAtUtc) ? f : best).modelKey;
+    }
+    return withPhotos.reduce((best, f) => (f.imageCount > best.imageCount ? f : best)).modelKey;
+  }
+
   async function loadPhotoLibrary() {
     const list = $('pl-folder-list');
     try {
@@ -18216,7 +18248,7 @@
       return;
     }
     // Keep the seller on the folder they were working in; fall back to the first one.
-    if (!plFolders.some(f => f.modelKey === plSelected)) plSelected = plFolders[0]?.modelKey || '';
+    if (!plFolders.some(f => f.modelKey === plSelected)) plSelected = plDefaultFolder();
     renderPhotoFolders();
     renderPhotoFolderDetail();
   }
