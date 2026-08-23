@@ -9258,8 +9258,14 @@ app.MapGet("/api/photos/default-folders", (PhotoLibrary photos) => Results.Ok(ph
 
 // ── Representative-photo library (USED items) ───────────────────────────────────────────────
 // Every model folder + its photo URLs, so the UI can show/manage the seller's real stock photos.
+// NewestAtUtc rides along so the screen can open on the folder that was just filled. The order
+// stays alphabetical: the folder LIST is a list of names and should read like one — it is only
+// the initial SELECTION that has to follow the photographs.
 app.MapGet("/api/photos/library", (PhotoLibrary photos) =>
-    Results.Ok(photos.GetAllFolders().Select(f => new { f.ModelKey, f.ImageCount, photos = photos.ListPhotoUrls(f.ModelKey) })));
+    Results.Ok(photos.GetAllFolders().Select(f => new
+    {
+        f.ModelKey, f.ImageCount, f.NewestAtUtc, photos = photos.ListPhotoUrls(f.ModelKey),
+    })));
 
 // ── Photo Box Camera ──────────────────────────────────────────────────────────
 // The phone camera, and why a hosted server cannot offer it: the capture page is served

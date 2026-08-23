@@ -154,10 +154,26 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
     private PhotoFolderSummary Summarize(string folder)
     {
         var path = Path.Combine(RootPath, folder);
-        var count = Directory.Exists(path)
-            ? Directory.EnumerateFiles(path).Count(f => ImageExtensions.Contains(Path.GetExtension(f)))
-            : 0;
-        return new PhotoFolderSummary(folder, path, count);
+        var images = Directory.Exists(path)
+            ? Directory.EnumerateFiles(path).Where(f => ImageExtensions.Contains(Path.GetExtension(f))).ToList()
+            : [];
+
+        // When this folder last received a photograph. It is what lets the screen open on the
+        // folder the seller has just been filling instead of on whichever one sorts first —
+        // see the picker in loadPhotoLibrary. Null for a folder that has never held one.
+        DateTime? newest = null;
+        foreach (var file in images)
+        {
+            try
+            {
+                var at = File.GetLastWriteTimeUtc(file);
+                if (newest is null || at > newest) newest = at;
+            }
+            catch (IOException) { /* a file being written this instant is not worth failing over */ }
+            catch (UnauthorizedAccessException) { /* nor one we may not stat */ }
+        }
+
+        return new PhotoFolderSummary(folder, path, images.Count, newest);
     }
 
     private static string Sanitize(string? name) =>
@@ -167,7 +183,7 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
         Regex.Replace((s ?? "").ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim();
 }
 
-public sealed record PhotoFolderSummary(string ModelKey, string Path, int ImageCount);
+public sealed record PhotoFolderSummary(string ModelKey, string Path, int ImageCount, DateTime? NewestAtUtc = null);
 
 public sealed record RepresentativeMatch(string ModelKey, IReadOnlyList<string> PhotoUrls, string Disclosure);
 
