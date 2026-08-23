@@ -370,6 +370,9 @@ public sealed class LocalArbitrageAnalyzer(
             OriginalPrice = listing.OriginalPrice,
             Location = listing.Location,
             DistanceMiles = listing.DistanceMiles,
+            SellerUsername = listing.SellerUsername,
+            SellerFeedbackScore = listing.SellerFeedbackScore,
+            SellerFeedbackPercent = listing.SellerFeedbackPercent,
             PostedAgo = listing.PostedAgo,
             PostedUtc = listing.PostedUtc,
             IsRetail = listing.IsRetail,
@@ -1065,7 +1068,26 @@ public sealed class LocalArbitrageAnalyzer(
                 : 0.0;
         var roiFactor = Math.Max(0.3, Math.Log10(1 + Math.Max(0.0, roi)));
         var evidenceFactor = string.Equals(r.EvidenceTier, "confident", StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.8;
-        return (double)profit * roiFactor * evidenceFactor;
+        return (double)profit * roiFactor * evidenceFactor * SellerOpportunityFactor(r);
+    }
+
+    /// <summary>
+    /// Low-feedback eBay listings attract fewer competing buyers and are often where the pricing
+    /// mistake lives. This is a modest ranking lift, not a change to profit or a claim of safety.
+    /// </summary>
+    public static double SellerOpportunityFactor(LocalArbitrageOpportunity row)
+    {
+        if (!string.Equals(row.Source, EbaySupplySource.SourceId, StringComparison.OrdinalIgnoreCase) ||
+            row.SellerFeedbackScore is not int feedback)
+            return 1.0;
+
+        return feedback switch
+        {
+            <= 5 => 1.20,
+            <= 25 => 1.14,
+            <= 100 => 1.07,
+            _ => 1.0,
+        };
     }
 
     // Best money first. Rows that couldn't be priced sort last rather than being dropped —

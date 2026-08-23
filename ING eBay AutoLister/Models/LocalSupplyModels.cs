@@ -50,6 +50,12 @@ public class LocalSupplyListing
     // retail deal, which has no location at all.
     public double? DistanceMiles { get; set; }
 
+    // A new/low-feedback eBay account often gets less bidding and can be where the price edge is;
+    // it is also extra counterparty risk. Carry the facts so ranking and the warning can use them.
+    public string SellerUsername { get; set; } = "";
+    public int? SellerFeedbackScore { get; set; }
+    public decimal? SellerFeedbackPercent { get; set; }
+
     // ── Retail supply (deal feeds) ────────────────────────────────────────────
     // A clearance item bought from Amazon and a drill bought off a stranger for cash are the same
     // shape to the pipeline, but they do NOT cost the same: retail charges sales tax and doesn't

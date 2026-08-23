@@ -108,6 +108,9 @@ public class LocalArbitrageAnalyzerTests
         var listing = Listing(50m, id: "778");
         listing.OriginalPrice = 90m;
         listing.PostedAgo = "2 hours ago";
+        listing.SellerUsername = "new_seller";
+        listing.SellerFeedbackScore = 4;
+        listing.SellerFeedbackPercent = 100m;
         var pricing = Pricing(terapeakComps: 4);
         pricing.LiquidityLevel = "Fast Mover";
         pricing.LiquidityScore = 82;
@@ -122,6 +125,9 @@ public class LocalArbitrageAnalyzerTests
         Assert.Equal(90m, row.OriginalPrice);       // price-drop tiles are motivated sellers
         Assert.Equal(12, row.DistanceMiles);
         Assert.Equal("2 hours ago", row.PostedAgo);
+        Assert.Equal("new_seller", row.SellerUsername);
+        Assert.Equal(4, row.SellerFeedbackScore);
+        Assert.Equal(100m, row.SellerFeedbackPercent);
         Assert.Equal("hosted_comps+terapeak", row.ResaleSource);
         Assert.Equal("Fast Mover", row.LiquidityLevel);
         Assert.Equal(82, row.LiquidityScore);
@@ -516,6 +522,32 @@ public class LocalArbitrageAnalyzerTests
             [Row("far", 100m, 50m, miles: 48), Row("near", 100m, 50m, miles: 3)]);
 
         Assert.Equal(["near", "far"], ranked.Select(r => r.Title));
+    }
+
+    [Fact]
+    public void Rank_Balanced_LiftsAnOtherwiseEqualLowFeedbackEbayOpportunity()
+    {
+        var established = Row("established", 100m, 50m);
+        established.Source = EbaySupplySource.SourceId;
+        established.SellerFeedbackScore = 5000;
+        var overlooked = Row("overlooked", 100m, 50m);
+        overlooked.Source = EbaySupplySource.SourceId;
+        overlooked.SellerFeedbackScore = 3;
+
+        var ranked = LocalArbitrageAnalyzer.Rank([established, overlooked], LocalArbitrageAnalyzer.SortByBalanced);
+
+        Assert.Equal(["overlooked", "established"], ranked.Select(r => r.Title));
+        Assert.Equal(1.20, LocalArbitrageAnalyzer.SellerOpportunityFactor(overlooked));
+        Assert.Equal(1.0, LocalArbitrageAnalyzer.SellerOpportunityFactor(established));
+    }
+
+    [Fact]
+    public void SellerOpportunityFactor_DoesNotRewardUnknownFeedbackOrNonEbayRows()
+    {
+        Assert.Equal(1.0, LocalArbitrageAnalyzer.SellerOpportunityFactor(Row("unknown", 100m, 50m)));
+        var local = Row("local", 100m, 50m);
+        local.SellerFeedbackScore = 0;
+        Assert.Equal(1.0, LocalArbitrageAnalyzer.SellerOpportunityFactor(local));
     }
 
     // ── Ranking by what the board can stand behind ─────────────────────────────

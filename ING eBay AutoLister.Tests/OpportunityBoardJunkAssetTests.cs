@@ -38,6 +38,15 @@ public class OpportunityBoardJunkAssetTests
     }
 
     [Fact]
+    public void Balanced_ranking_uses_low_feedback_as_an_opportunity_signal_and_shows_the_risk()
+    {
+        Assert.Contains("feedback <= 5 ? 1.20", Js);
+        Assert.Contains("feedback <= 25 ? 1.14", Js);
+        Assert.Contains("less competition; verify seller &amp; item", Js);
+        Assert.Contains("sellerFeedbackScore: row.sellerFeedbackScore", Js);
+    }
+
+    [Fact]
     public void The_auto_relax_may_loosen_preferences_but_never_the_evidence_bar_or_the_floor()
     {
         var relax = Slice(Js, "const steps = [", "];");

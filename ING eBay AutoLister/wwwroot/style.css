@@ -5662,6 +5662,14 @@ textarea {
 }
 .fb-arb-title:hover { text-decoration: underline; }
 .fb-arb-meta, .fb-arb-note { font-size: var(--fs-2xs); color: var(--muted); }
+.fb-arb-low-feedback {
+  color: #8a5a00;
+  background: color-mix(in srgb, var(--gold) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-weight: 750;
+}
 /* Verdicts are colour-coded by how much the data supports them, not by how big the
    number is — a thin-evidence row must never read as a green light. */
 .fb-verdict {

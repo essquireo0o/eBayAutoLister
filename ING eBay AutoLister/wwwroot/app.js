@@ -4299,7 +4299,17 @@
     const balancedScore = r => {
       if (r.netProfit == null) return -Infinity;
       // Geometric mean of the two percentiles: top on both → ~1; top on one, bottom on the other → ~0.
-      return Math.sqrt((netPct.get(r) ?? 0) * (roiPct.get(r) ?? 0));
+      const base = Math.sqrt((netPct.get(r) ?? 0) * (roiPct.get(r) ?? 0));
+      // New/low-feedback sellers get fewer eyes and bids, often creating the price edge. The lift
+      // stays inside the evidence tier and never changes the displayed profit or implies safety.
+      const feedback = r.sellerFeedbackScore == null ? null
+        : Number.isFinite(Number(r.sellerFeedbackScore)) ? Number(r.sellerFeedbackScore) : null;
+      const sellerFactor = r.source !== 'ebay' || feedback == null ? 1
+        : feedback <= 5 ? 1.20
+        : feedback <= 25 ? 1.14
+        : feedback <= 100 ? 1.07
+        : 1;
+      return base * sellerFactor;
     };
     const cmp = {
       // Net dollars weighed against ROI (and damped for thin comps) — the row that makes the most
@@ -4613,6 +4623,8 @@
       price: row.localAsk, isFree: row.localAsk === 0 && !!row.freebie,
       originalPrice: row.originalPrice, location: row.location, distanceMiles: row.distanceMiles,
       postedAgo: row.postedAgo, postedUtc: row.postedUtc,
+      sellerUsername: row.sellerUsername, sellerFeedbackScore: row.sellerFeedbackScore,
+      sellerFeedbackPercent: row.sellerFeedbackPercent,
       isRetail: row.isRetail, retailer: row.retailer, freeShipping: row.freeShipping,
       couponCode: row.couponCode, categoryId: row.categoryId, pricedAs: row.pricedAs, query,
     };
@@ -4878,6 +4890,13 @@
 
   function arbitrageRowHtml(row, index) {
     const verdict = ARB_VERDICTS[row.verdict] || ARB_VERDICTS.no_data;
+    const feedback = row.source === 'ebay' && row.sellerFeedbackScore != null
+      ? Number(row.sellerFeedbackScore) : null;
+    const lowFeedback = feedback != null && feedback <= 25;
+    const sellerMeta = feedback == null ? ''
+      : lowFeedback
+        ? `<span class="fb-arb-low-feedback">🎯 ${feedback.toLocaleString()} feedback — less competition; verify seller &amp; item</span>`
+        : `seller ${esc(row.sellerUsername || 'unknown')} · ${feedback.toLocaleString()} feedback`;
     const meta = [
       row.distanceMiles != null ? `${row.distanceMiles} mi` : '',
       row.location ? esc(row.location) : '',
@@ -4890,6 +4909,7 @@
       row.isRetail && row.freeShipping ? 'ships free' : '',
       // A price that only exists with a code is not a price without it.
       row.couponCode ? `<span class="retail-code">code ${esc(row.couponCode)}</span>` : '',
+      sellerMeta,
       ...categoryMeta(row),
       ...liquidationMeta(row),
       ...freebieMeta(row),

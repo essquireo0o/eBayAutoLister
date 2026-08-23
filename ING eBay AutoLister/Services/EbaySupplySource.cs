@@ -245,6 +245,9 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
             // what IsLocationBased exists to prevent.
             Location      = "eBay",
             DistanceMiles = null,
+            SellerUsername = item.SellerUsername,
+            SellerFeedbackScore = item.SellerFeedbackScore,
+            SellerFeedbackPercent = item.SellerFeedbackPercent,
 
             PostedAgo = BuildTimingText(item, isAuction),
         };

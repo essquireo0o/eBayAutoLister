@@ -23,6 +23,7 @@ public class DealRepriceTests
         Title = "Bitmain Antminer S19j Pro", Url = "https://www.facebook.com/marketplace/item/42/",
         ImageUrl = "https://example.test/s19.jpg", Price = price, IsFree = isFree,
         Location = "Las Vegas, NV", DistanceMiles = 12, PostedAgo = "3 hours ago",
+        SellerUsername = "new_seller", SellerFeedbackScore = 4, SellerFeedbackPercent = 100m,
         CategoryId = ResaleCategoryCatalog.AnythingId,
     };
 
@@ -49,6 +50,9 @@ public class DealRepriceTests
         Assert.Equal(50m, listing.Price);
         Assert.False(listing.IsFree);
         Assert.Equal(12, listing.DistanceMiles);
+        Assert.Equal("new_seller", listing.SellerUsername);
+        Assert.Equal(4, listing.SellerFeedbackScore);
+        Assert.Equal(100m, listing.SellerFeedbackPercent);
 
         // Classified in place the way the scan does, so valuation and fees match — never left blank.
         Assert.False(string.IsNullOrEmpty(listing.CategoryId));
