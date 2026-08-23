@@ -2754,7 +2754,9 @@
   // Client-side ceilings, generous enough not to cut a real scan short: the point is that a
   // request which will never come back stops looking like one that is still working.
   const LOCAL_SEARCH_TIMEOUT_MS = 4 * 60 * 1000;      // Craigslist is seconds; Facebook loads a real page
-  const LOCAL_ARBITRAGE_TIMEOUT_MS = 8 * 60 * 1000;   // + a sold-comp lookup per distinct product
+  // A full eBay sweep can be fifty 200-row pages followed by a sold-comp lookup per distinct
+  // product. The owner explicitly prefers waiting for the complete answer over a fast sample.
+  const LOCAL_ARBITRAGE_TIMEOUT_MS = 60 * 60 * 1000;
 
   // The last search the seller ran, so a Try again button can repeat it without them retyping.
   let lastLocalRun = null;
@@ -3787,8 +3789,8 @@
     // keepOpen so the lookup's bar isn't hidden a beat before the scan repurposes it as a sweep.
     await runLiveLookup(query, 'es', { keepOpen: true });
 
-    // The real wait is here — searching eBay and pricing the whole returned page (up to 200
-    // listings). Sweep the same bar so
+    // The real wait is here — following every eBay result page (up to the 10,000 listings Browse
+    // exposes) and pricing the complete collected set. Sweep the same bar so
     // there is honest motion for it, instead of a full green bar frozen under a static line.
     scanWorking('es', `Searching eBay for "${query}" and pricing every result…`);
     const { data, error } = await localFetchJson(`/api/ebay/scan?${qs}`, LOCAL_ARBITRAGE_TIMEOUT_MS);

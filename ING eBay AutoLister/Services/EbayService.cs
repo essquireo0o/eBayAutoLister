@@ -798,13 +798,28 @@ public class EbayService(
         // whole query segment rather than passing a value the Browse API would reject.
         var sortPart = sort == EbayScanFilters.BestMatch ? "" : $"&sort={sort}";
 
-        string Url(string keywords) => "https://api.ebay.com/buy/browse/v1/item_summary/search" +
-                   $"?q={Uri.EscapeDataString(keywords)}&filter={Uri.EscapeDataString(string.Join(",", filters))}{sortPart}&limit={limit}";
+        // Browse returns at most 200 rows per page and exposes at most 10,000 rows from one result
+        // set. `limit` is this method's TOTAL requested sweep, not the page size: the Opportunity
+        // Finder asks for the full 10,000 and follows `next` until eBay says there is no next page.
+        // Small callers (the sniper, competition checks) still make their single 1/25/50-row call.
+        const int apiPageSize = 200;
+        const int apiResultCeiling = 10_000;
+        var wanted = Math.Clamp(limit, 1, apiResultCeiling);
+        var pageSize = Math.Min(apiPageSize, wanted);
 
-        var response = await client.GetAsync(Url(q));
-        var body = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-            throw new Exception($"eBay listing search failed (HTTP {(int)response.StatusCode}): {body}");
+        string Url(string keywords) => "https://api.ebay.com/buy/browse/v1/item_summary/search" +
+                   $"?q={Uri.EscapeDataString(keywords)}&filter={Uri.EscapeDataString(string.Join(",", filters))}{sortPart}&limit={pageSize}&offset=0";
+
+        async Task<string> FetchAsync(string url)
+        {
+            var response = await client.GetAsync(url);
+            var text = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"eBay listing search failed (HTTP {(int)response.StatusCode}): {text}");
+            return text;
+        }
+
+        var body = await FetchAsync(Url(q));
 
         // QuotePhrase turns any multi-word search into an EXACT-PHRASE match, and eBay answers a
         // phrase that appears in no title with a flat zero. Measured on the live Browse API:
@@ -818,9 +833,8 @@ public class EbayService(
         // quoted form is still tried first: where the phrase does exist it is the tighter answer.
         if (!body.Contains("\"itemSummaries\"", StringComparison.Ordinal) && q.Contains('"'))
         {
-            var retry = await client.GetAsync(Url(q.Replace("\"", "")));
-            var retryBody = await retry.Content.ReadAsStringAsync();
-            if (retry.IsSuccessStatusCode && retryBody.Contains("\"itemSummaries\"", StringComparison.Ordinal))
+            var retryBody = await FetchAsync(Url(q.Replace("\"", "")));
+            if (retryBody.Contains("\"itemSummaries\"", StringComparison.Ordinal))
             {
                 log.Add("Info", "eBay search widened",
                     $"Nothing matched the exact phrase \"{query}\" — searched the words separately instead.");
@@ -828,75 +842,106 @@ public class EbayService(
             }
         }
 
-        var items = new List<EbayOpportunityItem>();
-        using var doc = JsonDocument.Parse(body);
-        if (!doc.RootElement.TryGetProperty("itemSummaries", out var summaries))
-            return items;
-
-        foreach (var item in summaries.EnumerateArray())
+        var items = new List<EbayOpportunityItem>(Math.Min(wanted, 1_000));
+        var examined = 0;
+        var pages = 0;
+        while (true)
         {
-            var seller = item.TryGetProperty("seller", out var s) ? s : default;
-            var feedbackScore = seller.ValueKind == JsonValueKind.Object &&
-                                 seller.TryGetProperty("feedbackScore", out var fs) &&
-                                 fs.TryGetInt32(out var fsVal) ? fsVal : 0;
-            if (feedbackScore < minFeedback) continue;
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("itemSummaries", out var summaries) ||
+                summaries.ValueKind != JsonValueKind.Array || summaries.GetArrayLength() == 0)
+                break;
 
-            // Auction items with no bids yet often have no "price" — the real current price
-            // lives in currentBidPrice instead. Fall back to that so $0 doesn't show for them.
-            var price = item.TryGetProperty("price", out var p) &&
-                        p.TryGetProperty("value", out var pv) &&
-                        decimal.TryParse(pv.GetString(), out var priceVal) ? priceVal : 0;
-            if (price == 0 && item.TryGetProperty("currentBidPrice", out var cbp) &&
-                cbp.TryGetProperty("value", out var cbv) &&
-                decimal.TryParse(cbv.GetString(), out var cbVal))
-                price = cbVal;
+            pages++;
+            var remaining = wanted - examined;
+            var pageItems = summaries.EnumerateArray().Take(remaining).ToList();
+            examined += pageItems.Count;
 
-            DateTime? endDate = item.TryGetProperty("itemEndDate", out var ed) &&
-                                DateTimeOffset.TryParse(ed.GetString(), out var edVal)
-                                ? edVal.UtcDateTime : null;
-
-            // Cheapest shipping option's cost — used to compare buyer's real total cost
-            // (price + shipping) against sold comps, not just the listed price alone. Whether one
-            // was quoted at all is carried separately: no shippingOptions block means the cost is
-            // unknown, and treating unknown as free is how a buy-side estimate quietly loses money.
-            var shippingCost = 0m;
-            var shippingStated = false;
-            if (item.TryGetProperty("shippingOptions", out var shipOpts) && shipOpts.ValueKind == JsonValueKind.Array)
+            foreach (var item in pageItems)
             {
-                foreach (var opt in shipOpts.EnumerateArray())
+                var seller = item.TryGetProperty("seller", out var s) ? s : default;
+                var feedbackScore = seller.ValueKind == JsonValueKind.Object &&
+                                     seller.TryGetProperty("feedbackScore", out var fs) &&
+                                     fs.TryGetInt32(out var fsVal) ? fsVal : 0;
+                if (feedbackScore < minFeedback) continue;
+
+                // Auction items with no bids yet often have no "price" — the real current price
+                // lives in currentBidPrice instead. Fall back to that so $0 doesn't show for them.
+                var price = item.TryGetProperty("price", out var p) &&
+                            p.TryGetProperty("value", out var pv) &&
+                            decimal.TryParse(pv.GetString(), out var priceVal) ? priceVal : 0;
+                if (price == 0 && item.TryGetProperty("currentBidPrice", out var cbp) &&
+                    cbp.TryGetProperty("value", out var cbv) &&
+                    decimal.TryParse(cbv.GetString(), out var cbVal))
+                    price = cbVal;
+
+                DateTime? endDate = item.TryGetProperty("itemEndDate", out var ed) &&
+                                    DateTimeOffset.TryParse(ed.GetString(), out var edVal)
+                                    ? edVal.UtcDateTime : null;
+
+                // Cheapest shipping option's cost — used to compare buyer's real total cost
+                // (price + shipping) against sold comps, not just the listed price alone. Whether one
+                // was quoted at all is carried separately: no shippingOptions block means the cost is
+                // unknown, and treating unknown as free is how a buy-side estimate quietly loses money.
+                var shippingCost = 0m;
+                var shippingStated = false;
+                if (item.TryGetProperty("shippingOptions", out var shipOpts) && shipOpts.ValueKind == JsonValueKind.Array)
                 {
-                    if (opt.TryGetProperty("shippingCost", out var sc) &&
-                        sc.TryGetProperty("value", out var scv) &&
-                        decimal.TryParse(scv.GetString(), out var scVal))
+                    foreach (var opt in shipOpts.EnumerateArray())
                     {
-                        shippingCost = scVal;
-                        shippingStated = true;
-                        break;
+                        if (opt.TryGetProperty("shippingCost", out var sc) &&
+                            sc.TryGetProperty("value", out var scv) &&
+                            decimal.TryParse(scv.GetString(), out var scVal))
+                        {
+                            shippingCost = scVal;
+                            shippingStated = true;
+                            break;
+                        }
                     }
                 }
+
+                items.Add(new EbayOpportunityItem
+                {
+                    Title               = item.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
+                    Price               = price,
+                    ShippingCost        = shippingCost,
+                    ShippingStated      = shippingStated,
+                    Url                 = item.TryGetProperty("itemWebUrl", out var u) ? u.GetString() ?? "" : "",
+                    ImageUrl            = item.TryGetProperty("image", out var img) && img.TryGetProperty("imageUrl", out var iu) ? iu.GetString() ?? "" : "",
+                    EndDate             = endDate,
+                    SellerUsername      = seller.ValueKind == JsonValueKind.Object && seller.TryGetProperty("username", out var un) ? un.GetString() ?? "" : "",
+                    SellerFeedbackScore = feedbackScore,
+                    SellerFeedbackPercent = seller.ValueKind == JsonValueKind.Object &&
+                                            seller.TryGetProperty("feedbackPercentage", out var fp) &&
+                                            decimal.TryParse(fp.GetString(), out var fpVal) ? fpVal : null,
+                    BuyingOption        = item.TryGetProperty("buyingOptions", out var bo) && bo.GetArrayLength() > 0 ? bo[0].GetString() ?? "" : "",
+                    BidCount            = item.TryGetProperty("bidCount", out var bc) && bc.TryGetInt32(out var bcVal) ? bcVal : 0,
+                    ItemId              = item.TryGetProperty("legacyItemId", out var lid) ? lid.GetString() ?? ""
+                                          : item.TryGetProperty("itemId", out var iid) ? iid.GetString() ?? "" : "",
+                    Condition           = item.TryGetProperty("condition", out var cnd) ? cnd.GetString() ?? "" : "",
+                });
             }
 
-            items.Add(new EbayOpportunityItem
-            {
-                Title               = item.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
-                Price               = price,
-                ShippingCost        = shippingCost,
-                ShippingStated      = shippingStated,
-                Url                 = item.TryGetProperty("itemWebUrl", out var u) ? u.GetString() ?? "" : "",
-                ImageUrl            = item.TryGetProperty("image", out var img) && img.TryGetProperty("imageUrl", out var iu) ? iu.GetString() ?? "" : "",
-                EndDate             = endDate,
-                SellerUsername      = seller.ValueKind == JsonValueKind.Object && seller.TryGetProperty("username", out var un) ? un.GetString() ?? "" : "",
-                SellerFeedbackScore = feedbackScore,
-                SellerFeedbackPercent = seller.ValueKind == JsonValueKind.Object &&
-                                        seller.TryGetProperty("feedbackPercentage", out var fp) &&
-                                        decimal.TryParse(fp.GetString(), out var fpVal) ? fpVal : null,
-                BuyingOption        = item.TryGetProperty("buyingOptions", out var bo) && bo.GetArrayLength() > 0 ? bo[0].GetString() ?? "" : "",
-                BidCount            = item.TryGetProperty("bidCount", out var bc) && bc.TryGetInt32(out var bcVal) ? bcVal : 0,
-                ItemId              = item.TryGetProperty("legacyItemId", out var lid) ? lid.GetString() ?? ""
-                                      : item.TryGetProperty("itemId", out var iid) ? iid.GetString() ?? "" : "",
-                Condition           = item.TryGetProperty("condition", out var cnd) ? cnd.GetString() ?? "" : "",
-            });
+            if (examined >= wanted ||
+                !doc.RootElement.TryGetProperty("next", out var next) ||
+                next.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(next.GetString()))
+                break;
+
+            // eBay explicitly recommends following `next` rather than paginating from `total`,
+            // because totals can shift while listings are added and ended. Only its own Browse API
+            // continuation is accepted; a malformed response must never turn this client into an
+            // arbitrary-URL fetcher.
+            var nextUrl = next.GetString()!;
+            if (!Uri.TryCreate(nextUrl, UriKind.Absolute, out var nextUri) ||
+                nextUri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(nextUri.Host, "api.ebay.com", StringComparison.OrdinalIgnoreCase))
+                throw new Exception("eBay listing search returned an invalid continuation URL.");
+
+            body = await FetchAsync(nextUrl);
         }
+
+        if (pages > 1)
+            log.Add("Info", "eBay full listing sweep", $"Read {examined:N0} listings across {pages} page(s) for \"{query}\".");
 
         return items;
     }

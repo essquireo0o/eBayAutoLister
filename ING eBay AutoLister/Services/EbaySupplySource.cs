@@ -88,9 +88,8 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
     public const string SourceId = "ebay";
 
     /// <summary>
-    /// How many listings one search pulls back. eBay's Browse API allows 200 in a single request,
-    /// and this is one request either way — so a bigger page costs nothing in calls and everything
-    /// in whether the board can be filled.
+    /// How many listings one Opportunity Finder search can pull back. Browse pages at 200 but
+    /// exposes up to 10,000 results; EbayService follows every continuation page to this ceiling.
     /// </summary>
     /// <remarks>
     /// This was 50, which a cheapest-first sort turns into a hostage to whoever is flooding the
@@ -100,7 +99,9 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
     /// of the cheap end of any parts search, so the page has to be deep enough to see past it.
     /// Nothing downstream gets more expensive — the scan still caps priced rows at its own maxItems.
     /// </remarks>
-    public const int SearchPageSize = 200;
+    // Historic name retained because the endpoint uses it as its clamp. It is now the complete
+    // result-set limit, not one HTTP page; EbayService owns the real 200-row page size.
+    public const int SearchPageSize = 10_000;
 
     private EbayScanFilters _filters = EbayScanFilters.Default;
 

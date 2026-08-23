@@ -31,6 +31,13 @@ public class OpportunityBoardJunkAssetTests
     }
 
     [Fact]
+    public void A_full_listing_sweep_is_allowed_to_finish_instead_of_timing_out_at_eight_minutes()
+    {
+        Assert.Contains("const LOCAL_ARBITRAGE_TIMEOUT_MS = 60 * 60 * 1000;", Js);
+        Assert.Contains("up to the 10,000 listings Browse", Js);
+    }
+
+    [Fact]
     public void The_auto_relax_may_loosen_preferences_but_never_the_evidence_bar_or_the_floor()
     {
         var relax = Slice(Js, "const steps = [", "];");
