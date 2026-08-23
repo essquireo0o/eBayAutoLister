@@ -158,6 +158,9 @@ public sealed class CouponService(IHttpClientFactory httpFactory, ActionLog log)
         if (HasPastDateRange(offer.Title, DateTime.UtcNow)) return null;
         if (offer.Code.Length == 0 || offer.Value <= 0) return null;
         if (offer.Kind is not (CouponKinds.PercentOff or CouponKinds.AmountOff)) return null;
+        if (!offer.AppliesToOrder && Regex.IsMatch(offer.Title,
+                @"\b(?:membership|subscription|annual plan|monthly plan|streaming|meal delivery|food delivery|software license|digital download)\b",
+                RegexOptions.IgnoreCase)) return null;
 
         var effectivePercent = offer.Kind == CouponKinds.PercentOff
             ? offer.Value

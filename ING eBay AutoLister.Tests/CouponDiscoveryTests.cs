@@ -43,6 +43,18 @@ public class CouponDiscoveryTests
     }
 
     [Fact]
+    public void Non_resellable_memberships_and_subscriptions_are_not_inventory_leads()
+    {
+        var membership = Code(50m);
+        membership.Title = "50% Off Wayfair Rewards Annual Membership";
+        Assert.Null(CouponService.ToDiscoveryOpportunity(membership, 20));
+
+        var subscription = Code(40m);
+        subscription.Title = "Streaming subscription annual plan";
+        Assert.Null(CouponService.ToDiscoveryOpportunity(subscription, 20));
+    }
+
+    [Fact]
     public void Expired_codes_never_become_buying_leads()
     {
         var offer = Code(50m);
