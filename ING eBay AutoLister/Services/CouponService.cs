@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using ING_eBay_AutoLister.Models;
 
@@ -154,6 +155,7 @@ public sealed class CouponService(IHttpClientFactory httpFactory, ActionLog log)
     public static CouponOpportunity? ToDiscoveryOpportunity(CouponOffer offer, int minimumDiscountPercent)
     {
         if (offer.ExpiresUtc is DateTime expiry && expiry < DateTime.UtcNow) return null;
+        if (HasPastDateRange(offer.Title, DateTime.UtcNow)) return null;
         if (offer.Code.Length == 0 || offer.Value <= 0) return null;
         if (offer.Kind is not (CouponKinds.PercentOff or CouponKinds.AmountOff)) return null;
 
@@ -180,6 +182,42 @@ public sealed class CouponService(IHttpClientFactory httpFactory, ActionLog log)
                 : $"${offer.Value:0.##} off" + (offer.MinSpend > 0 ? $" ${offer.MinSpend:0.##}+" : ""),
             OpportunityScore = Math.Clamp(magnitude + confidence * 12 + (offer.AppliesToOrder ? 4 : 12) + freshness, 0, 100),
         };
+    }
+
+    /// <summary>
+    /// Some public feeds leave ExpiresUtc empty even though the headline contains a date range.
+    /// Treat an already-ended range as expired instead of promoting a stale headline as a lead.
+    /// </summary>
+    public static bool HasPastDateRange(string title, DateTime now)
+    {
+        var match = Regex.Match(title,
+            @"(?<startMonth>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(?<startDay>\d{1,2})\s*(?:-|–|—|to|through)\s*(?:(?<endMonth>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+)?(?<endDay>\d{1,2})(?:,?\s*(?<year>20\d{2}))?",
+            RegexOptions.IgnoreCase);
+        if (!match.Success) return false;
+
+        var year = match.Groups["year"].Success
+            ? int.Parse(match.Groups["year"].Value, CultureInfo.InvariantCulture)
+            : now.Year;
+        var startMonth = DateTime.ParseExact(match.Groups["startMonth"].Value[..3], "MMM",
+            CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces).Month;
+        var endMonth = match.Groups["endMonth"].Success
+            ? DateTime.ParseExact(match.Groups["endMonth"].Value[..3], "MMM",
+                CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces).Month
+            : startMonth;
+        var startDay = int.Parse(match.Groups["startDay"].Value, CultureInfo.InvariantCulture);
+        var endDay = int.Parse(match.Groups["endDay"].Value, CultureInfo.InvariantCulture);
+
+        try
+        {
+            var start = new DateTime(year, startMonth, startDay);
+            var endYear = endMonth < startMonth ? year + 1 : year;
+            var end = new DateTime(endYear, endMonth, endDay);
+            return end.Date < now.Date && start <= end;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     /// <summary>The product words worth sending into eBay pricing, without checkout instructions.</summary>

@@ -52,6 +52,25 @@ public class CouponDiscoveryTests
     }
 
     [Fact]
+    public void A_past_date_range_in_the_headline_cannot_hide_missing_expiry_metadata()
+    {
+        var offer = Code(50m);
+        offer.Title = "Macy's beauty products 50% Off (Aug. 7 - Aug. 16)";
+
+        Assert.True(CouponService.HasPastDateRange(offer.Title, new DateTime(2026, 8, 23)));
+        Assert.Null(CouponService.ToDiscoveryOpportunity(offer, 20));
+    }
+
+    [Fact]
+    public void A_current_or_future_date_range_remains_eligible()
+    {
+        Assert.False(CouponService.HasPastDateRange(
+            "Holiday sale (Dec. 28 - Jan. 5)", new DateTime(2026, 12, 30)));
+        Assert.False(CouponService.HasPastDateRange(
+            "Summer sale (Aug. 20 - Aug. 30)", new DateTime(2026, 8, 23)));
+    }
+
+    [Fact]
     public void Checkout_instructions_are_removed_before_ebay_pricing()
     {
         var offer = Code(30m);
