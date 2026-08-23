@@ -749,41 +749,79 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <title>ING Photo Box — phone camera</title>
         <style>
-          *{box-sizing:border-box;margin:0;padding:0}
-          body{background:#08272b;color:#e8eef0;font:16px/1.5 -apple-system,system-ui,sans-serif;
-               min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px}
-          h1{font-size:17px;color:#f0d79a;margin-bottom:2px}
-          .sub{font-size:13px;color:#9fb9bd;margin-bottom:14px;text-align:center}
-          video{width:100%;max-width:520px;border-radius:12px;background:#000;aspect-ratio:3/4;object-fit:cover}
-          .status{margin-top:14px;font-size:15px;text-align:center;min-height:24px}
-          .ok{color:#7ddba0}.busy{color:#f0d79a}.bad{color:#ff9c8a}
-          button{margin-top:16px;padding:14px 22px;font-size:16px;font-weight:600;border:0;border-radius:10px;
-                 background:#c79a36;color:#241703}
-          .count{margin-top:12px;font-size:14px;color:#9fb9bd}
-          .awake{margin-top:6px;font-size:12px;color:#6f8b90}
-          .awake.warn{color:#f0d79a}
-          .zoomwrap{display:flex;align-items:center;gap:10px;width:100%;max-width:520px;margin-top:12px}
-          .zoomwrap input[type=range]{flex:1}
-          .zlab{font-size:12px;color:#9fb9bd}
-          .zval{font-size:13px;color:#f0d79a;min-width:56px;text-align:right}
-          .flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .18s}
-          .zoomrow{display:flex;align-items:center;gap:10px;width:100%;max-width:520px;margin-top:14px}
-          .zoomrow input{flex:1;accent-color:#c79a36}
-          .mini{margin:0;padding:6px 14px;font-size:18px;background:#123c42;color:#e8eef0}
-          .zoom{margin-top:6px;font-size:13px;color:#9fb9bd;min-height:18px}
-          /* The camera controls the desktop is driving, shown here too. The person holding the
-             phone is often the person who can see that the shot is too dark. */
-          .rig{width:100%;max-width:520px;margin-top:14px;display:flex;flex-direction:column;gap:10px}
-          .rigrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-          .riglab{font-size:12px;color:#9fb9bd;min-width:64px;text-transform:uppercase;letter-spacing:.04em}
-          .pill{padding:9px 14px;font-size:14px;border-radius:999px;background:#123c42;color:#cfe3e6;
-                border:1px solid #1d5760;margin:0}
-          .pill.on{background:#c79a36;color:#241703;border-color:#c79a36;font-weight:700}
+          :root{color-scheme:dark;--gold:#d9a62f;--ink:#f7fbfb;--muted:#9fb1b4;--panel:#111719}
+          *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+          html,body{width:100%;height:100%;overflow:hidden;background:#050707}
+          body{color:var(--ink);font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,sans-serif;
+               overscroll-behavior:none;touch-action:manipulation}
+          button{font:inherit}
+          .camera{position:relative;width:100%;height:100dvh;max-width:680px;margin:auto;overflow:hidden;
+                  background:#050707;display:grid;grid-template-rows:minmax(0,1fr) auto}
+          .stage{position:relative;min-height:0;overflow:hidden;background:#000}
+          video{display:block;width:100%;height:100%;background:#000;object-fit:cover}
+          .camera-top{position:absolute;z-index:5;inset:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+                      gap:12px;padding:calc(env(safe-area-inset-top) + 12px) 16px 22px;
+                      background:linear-gradient(180deg,rgba(0,0,0,.72),transparent)}
+          .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:-.01em}
+          .brandmark{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;
+                     background:linear-gradient(145deg,#f0c453,#b67d12);color:#151006;font-size:11px;font-weight:900}
+          .live{display:flex;align-items:center;gap:6px;color:#dce7e8;font-size:12px;font-weight:700}
+          .live::before{content:"";width:7px;height:7px;border-radius:50%;background:#54dd88;box-shadow:0 0 0 4px rgba(84,221,136,.13)}
+          .stage-actions{display:flex;gap:9px}
+          .iconbtn{display:grid;place-items:center;width:40px;height:40px;border:1px solid rgba(255,255,255,.22);
+                   border-radius:50%;background:rgba(7,14,16,.58);backdrop-filter:blur(14px);color:#fff;font-size:18px}
+          .iconbtn.on{background:var(--gold);border-color:var(--gold);color:#181004}
+          .lensrow{position:absolute;z-index:5;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;
+                   justify-content:center;padding:5px;border-radius:999px;background:rgba(5,10,11,.58);backdrop-filter:blur(14px)}
+          .lens{width:44px;height:36px;border:0;border-radius:999px;background:transparent;color:#fff;
+                font-size:13px;font-weight:800;padding:0}
+          .lens.on{background:var(--gold);color:#201504}
+          .status-float{position:absolute;z-index:4;left:50%;bottom:66px;transform:translateX(-50%);max-width:90%;
+                        padding:7px 12px;border-radius:999px;background:rgba(4,10,11,.62);backdrop-filter:blur(12px);
+                        color:#e9f1f1;font-size:12px;font-weight:650;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .status-float.ok{color:#7de3a4}.status-float.busy{color:#f3d888}.status-float.bad{color:#ff9e91}
+          .dock{position:relative;z-index:6;padding:12px 18px calc(env(safe-area-inset-bottom) + 14px);background:#0b1012;
+                border-top:1px solid rgba(255,255,255,.08)}
+          .shutterrow{display:grid;grid-template-columns:64px 1fr 64px;align-items:center;min-height:84px}
+          .thumb,.controls-toggle{justify-self:center;width:48px;height:48px;border:1px solid rgba(255,255,255,.16);
+                                  border-radius:13px;background:#172023;color:#dce7e8;overflow:hidden}
+          .thumb{padding:0;position:relative}.thumb img{width:100%;height:100%;object-fit:cover}.thumb span{font-size:19px}
+          .controls-toggle{font-size:21px}
+          .shutter{justify-self:center;width:74px;height:74px;padding:5px;border:3px solid #fff;border-radius:50%;background:transparent}
+          .shutter span{display:block;width:100%;height:100%;border-radius:50%;background:#fff;transition:transform .08s ease,background .15s ease}
+          .shutter:active span{transform:scale(.88);background:var(--gold)}
+          .capture-meta{display:flex;align-items:center;justify-content:center;gap:9px;min-height:20px;color:#829497;font-size:11px}
+          .capture-meta .count{color:#c8d4d5}.awake{max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .awake.warn{color:#e9c66e}
+          .controls-sheet{position:absolute;z-index:8;left:10px;right:10px;bottom:calc(100% - 8px);max-height:min(54dvh,430px);
+                          overflow:auto;padding:18px;border:1px solid rgba(255,255,255,.12);border-radius:20px;
+                          background:rgba(16,23,25,.97);box-shadow:0 -18px 50px rgba(0,0,0,.38);
+                          transform:translateY(18px);opacity:0;pointer-events:none;transition:.2s ease}
+          .controls-sheet.open{transform:none;opacity:1;pointer-events:auto}
+          .sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+          .sheet-head h2{font-size:17px}.sheet-head button{border:0;background:transparent;color:#aebfc1;font-size:24px;padding:2px 6px}
+          .rig{display:flex;flex-direction:column;gap:13px}
+          .rigrow{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+          .riglab{font-size:10px;color:#819396;min-width:68px;text-transform:uppercase;letter-spacing:.1em;font-weight:800}
+          .pill{padding:8px 12px;font-size:12px;border-radius:999px;background:#182326;color:#d5e1e2;border:1px solid #29383b}
+          .pill.on{background:var(--gold);color:#1d1303;border-color:var(--gold);font-weight:800}
           .pill[disabled]{opacity:.35}
-          .lensrow{display:flex;gap:8px;justify-content:center;width:100%;max-width:520px;margin-top:12px}
-          .lens{width:56px;height:56px;border-radius:50%;background:rgba(9,40,45,.85);color:#cfe3e6;
-                border:1px solid #1d5760;font-size:14px;font-weight:700;margin:0;padding:0}
-          .lens.on{background:#c79a36;color:#241703;border-color:#c79a36}
+          .zoomrow{display:grid;grid-template-columns:38px minmax(0,1fr) 38px;align-items:center;gap:9px;margin-top:14px}
+          .zoomrow input{width:100%;accent-color:var(--gold)}
+          .mini{width:38px;height:38px;border:1px solid #2a3a3d;border-radius:50%;background:#182326;color:#e8f1f1;font-size:20px}
+          .zoom{text-align:center;margin-top:5px;font-size:11px;color:#92a5a8;min-height:16px}
+          #start{position:absolute;z-index:12;left:50%;top:50%;transform:translate(-50%,-50%);padding:14px 22px;
+                 border:0;border-radius:999px;background:var(--gold);color:#201504;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.38)}
+          .review{position:fixed;z-index:20;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:#050707}
+          .review.hidden{display:none}.review-head{display:flex;align-items:center;justify-content:space-between;
+                 padding:calc(env(safe-area-inset-top) + 14px) 18px 12px;background:#0b1012}
+          .review-head strong{font-size:17px}.review-head span{color:#8ea0a3;font-size:12px}
+          .review-frame{min-height:0;display:grid;place-items:center;background:#000;overflow:hidden}
+          .review-frame img{width:100%;height:100%;object-fit:contain}
+          .review-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;padding:14px 16px calc(env(safe-area-inset-bottom) + 16px);background:#0b1012}
+          .review-actions button{min-height:52px;border-radius:14px;font-size:15px;font-weight:820}
+          .retake{border:1px solid #314144;background:#172124;color:#eef5f5}.use{border:0;background:var(--gold);color:#211504}
+          .flash{position:fixed;z-index:30;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .18s}
           /* The horizon. Two lines: one fixed, one that rolls with the phone. They meet and turn
              gold when the phone is square to the item, which is the only moment that matters. */
           .level{position:absolute;left:50%;top:50%;width:120px;height:2px;margin-left:-60px;
@@ -791,51 +829,100 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           .level.flat{background:#c79a36;height:3px}
           .levelref{position:absolute;left:50%;top:50%;width:44px;height:2px;margin-left:-22px;
                     background:rgba(255,255,255,.25);pointer-events:none}
-          .stage{position:relative;width:100%;max-width:520px}
           .tapdot{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #c79a36;
                   border-radius:10px;pointer-events:none;opacity:0;transition:opacity .3s}
           .tapdot.show{opacity:1}
-          .hint{font-size:12px;color:#6f8b90;text-align:center;margin-top:4px}
+          .hint{position:absolute;z-index:4;left:50%;top:50%;transform:translate(-50%,52px);color:rgba(255,255,255,.62);
+                font-size:11px;text-shadow:0 1px 3px #000;white-space:nowrap}
+          .hidden{display:none!important}
+          @media (orientation:landscape) and (max-height:560px){
+            .camera{max-width:none;grid-template-columns:minmax(0,1fr) 220px;grid-template-rows:1fr}
+            .dock{grid-column:2;padding-top:calc(env(safe-area-inset-top) + 12px);display:flex;flex-direction:column;justify-content:center}
+            .controls-sheet{position:fixed;left:auto;right:10px;bottom:10px;top:10px;width:min(360px,70vw);max-height:none}
+          }
         </style></head>
         <body>
-          <h1>ING Photo Box</h1>
-          <div class="sub">Point this phone at the item and leave this page open.<br>Press <b>Snap</b> in the app on your computer.</div>
-          <div class="stage">
-            <video id="v" playsinline muted autoplay></video>
-            <div class="levelref" id="levelref" style="display:none"></div>
-            <div class="level" id="level" style="display:none"></div>
-            <div class="tapdot" id="tapdot"></div>
-          </div>
-          <div class="lensrow" id="lensrow" style="display:none"></div>
-          <div class="hint" id="taphint" style="display:none">Tap the picture to focus there</div>
-          <div class="rig" id="rig" style="display:none">
-            <div class="rigrow" id="flashrow">
-              <span class="riglab">Flash</span>
-              <button class="pill" type="button" data-flash="off">Off</button>
-              <button class="pill" type="button" data-flash="auto">Auto</button>
-              <button class="pill" type="button" data-flash="on">On</button>
+          <main class="camera">
+            <div class="stage">
+              <video id="v" playsinline muted autoplay></video>
+              <div class="camera-top">
+                <div class="brand"><span class="brandmark">ING</span><span>Photo Box</span></div>
+                <div class="stage-actions">
+                  <button class="iconbtn" id="flipbtn" type="button" aria-label="Switch front or back camera">↻</button>
+                  <button class="iconbtn" id="levelquick" type="button" aria-label="Toggle level guide">⊖</button>
+                </div>
+              </div>
+              <div class="status-float busy" id="s">Starting camera…</div>
+              <div class="levelref" id="levelref" style="display:none"></div>
+              <div class="level" id="level" style="display:none"></div>
+              <div class="tapdot" id="tapdot"></div>
+              <div class="hint" id="taphint" style="display:none">Tap anywhere to focus</div>
+              <div class="lensrow" id="lensrow" style="display:none"></div>
             </div>
-            <div class="rigrow" id="levelrow">
-              <span class="riglab">Level</span>
-              <button class="pill" type="button" id="levelbtn">Off</button>
+
+            <section class="dock" aria-label="Camera shutter and controls">
+              <div class="shutterrow">
+                <button class="thumb" id="lastphoto" type="button" aria-label="Review last photo" disabled><span>▧</span><img id="lastphotoimg" class="hidden" alt="Last photo"></button>
+                <button class="shutter" id="shot" type="button" aria-label="Take photo"><span></span></button>
+                <button class="controls-toggle" id="controls-toggle" type="button" aria-label="Camera controls">☷</button>
+              </div>
+              <div class="capture-meta">
+                <span class="live">Connected</span>
+                <span class="count" id="c">No photos yet</span>
+                <span class="awake" id="awake"></span>
+              </div>
+
+              <div class="controls-sheet" id="controls-sheet">
+                <div class="sheet-head"><h2>Camera controls</h2><button id="controls-close" type="button" aria-label="Close controls">×</button></div>
+                <div class="rig" id="rig">
+                  <div class="rigrow" id="flashrow" style="display:none">
+                    <span class="riglab">Flash</span>
+                    <button class="pill" type="button" data-flash="off">Off</button>
+                    <button class="pill" type="button" data-flash="auto">Auto</button>
+                    <button class="pill" type="button" data-flash="on">On</button>
+                  </div>
+                  <div class="rigrow">
+                    <span class="riglab">Brightness</span>
+                    <input id="phone-exposure" type="range" min="-2" max="2" step="0.25" value="0" aria-label="Brightness">
+                    <span id="phone-exposure-value">Auto</span>
+                  </div>
+                  <div class="rigrow">
+                    <span class="riglab">Focus</span>
+                    <button class="pill on" type="button" data-focus="auto">Auto</button>
+                    <button class="pill" type="button" data-focus="macro">Macro</button>
+                    <button class="pill" type="button" data-focus="far">Far</button>
+                  </div>
+                  <div class="rigrow">
+                    <span class="riglab">Color</span>
+                    <button class="pill on" type="button" data-wb="auto">Auto</button>
+                    <button class="pill" type="button" data-wb="daylight">Daylight</button>
+                    <button class="pill" type="button" data-wb="tungsten">Warm lamp</button>
+                    <button class="pill" type="button" data-wb="cool">Cool light</button>
+                  </div>
+                  <div class="rigrow" id="levelrow">
+                    <span class="riglab">Guide</span>
+                    <button class="pill" type="button" id="levelbtn">Level off</button>
+                  </div>
+                </div>
+                <div class="zoomrow">
+                  <button class="mini" id="zout" type="button" aria-label="Zoom out">−</button>
+                  <input id="zr" type="range" min="1" max="8" step="0.1" value="1" aria-label="Zoom">
+                  <button class="mini" id="zin" type="button" aria-label="Zoom in">+</button>
+                </div>
+                <div class="zoom" id="z">1× zoom</div>
+              </div>
+            </section>
+            <button id="start">Allow camera</button>
+          </main>
+
+          <section class="review hidden" id="review" aria-label="Review captured photo">
+            <div class="review-head"><strong id="review-title">Review photo</strong><span id="review-note">Full-resolution capture</span></div>
+            <div class="review-frame"><img id="reviewimg" alt="Photo just taken"></div>
+            <div class="review-actions">
+              <button class="retake" id="retake" type="button">Retake</button>
+              <button class="use" id="usephoto" type="button">Use photo</button>
             </div>
-          </div>
-          <div class="zoomwrap" id="zoomwrap" style="display:none">
-            <span class="zlab">zoom</span>
-            <input type="range" id="zoom" min="0.5" max="3" step="0.1" value="0.5">
-            <span class="zval" id="zoomval">widest</span>
-          </div>
-          <div class="status busy" id="s">Starting the camera…</div>
-          <div class="count" id="c"></div>
-          <div class="awake" id="awake"></div>
-          <div class="zoomrow">
-            <button class="mini" id="zout" type="button" aria-label="Zoom out">−</button>
-            <input id="zr" type="range" min="1" max="8" step="0.1" value="1" aria-label="Zoom">
-            <button class="mini" id="zin" type="button" aria-label="Zoom in">+</button>
-          </div>
-          <div class="zoom" id="z"></div>
-          <button id="shot" type="button">📸 Take the photo</button>
-          <button id="start">Allow camera</button>
+          </section>
           <canvas id="cv" style="display:none"></canvas>
           <div class="flash" id="fl"></div>
         <script>
@@ -844,7 +931,11 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         const s = document.getElementById('s'), c = document.getElementById('c');
         const startBtn = document.getElementById('start'), fl = document.getElementById('fl');
         const awakeEl = document.getElementById('awake');
+        const review = document.getElementById('review'), reviewImg = document.getElementById('reviewimg');
+        const reviewTitle = document.getElementById('review-title'), reviewNote = document.getElementById('review-note');
+        const retakeBtn = document.getElementById('retake'), usePhotoBtn = document.getElementById('usephoto');
         let taken = 0, running = false, wakeLock = null;
+        let pendingPhoto = null, pendingPhotoUrl = '', lastPhotoUrl = '', reviewCommitted = false, capturing = false;
         let settingsSeq = -1;              // which settings this page has already applied
         const zEl = document.getElementById('z');
 
@@ -863,7 +954,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         }, { passive: false });
         document.addEventListener('touchend', () => { pinchFrom = 0; }, { passive: true });
 
-        function say(t, cls) { s.textContent = t; s.className = 'status ' + (cls || ''); }
+        function say(t, cls) { s.textContent = t; s.className = 'status-float ' + (cls || ''); }
 
         // ── Keeping the phone awake ────────────────────────────────────────────────
         // An iPhone locks its screen after thirty seconds, and a locked screen suspends
@@ -920,7 +1011,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             // a failure is silent because a camera that cannot describe itself still takes photos.
             await sendCaps();
             await keepAwake();
-            say('Ready — press Snap on your computer.', 'ok');
+            say('Ready — tap the shutter', 'ok');
             poll();
             preview();
           } catch (e) {
@@ -1338,6 +1429,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           if (flashRow) flashRow.style.display = hasTorch ? '' : 'none';
           document.querySelectorAll('[data-flash]').forEach(b =>
             b.classList.toggle('on', b.dataset.flash === flashMode));
+          document.querySelectorAll('[data-focus]').forEach(b =>
+            b.classList.toggle('on', b.dataset.focus === focusMode));
+          document.querySelectorAll('[data-wb]').forEach(b =>
+            b.classList.toggle('on', b.dataset.wb === wbMode));
           const hint = document.getElementById('taphint');
           if (hint) hint.style.display = caps_().pointsOfInterest ? '' : 'none';
           paintLenses();
@@ -1366,12 +1461,58 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           return { sx: (v.videoWidth - w) / 2, sy: (v.videoHeight - h) / 2, sw: w, sh: h };
         }
 
-        async function shoot() {
+        function showReview(blob, needsApproval) {
+          if (pendingPhotoUrl) URL.revokeObjectURL(pendingPhotoUrl);
+          pendingPhoto = blob;
+          pendingPhotoUrl = URL.createObjectURL(blob);
+          reviewImg.src = pendingPhotoUrl;
+          reviewCommitted = false;
+          reviewTitle.textContent = needsApproval ? 'How does it look?' : 'Photo captured';
+          reviewNote.textContent = needsApproval ? 'Zoom in to check detail' : 'Sending to Photo Library…';
+          retakeBtn.style.display = needsApproval ? '' : 'none';
+          usePhotoBtn.disabled = !needsApproval;
+          usePhotoBtn.textContent = needsApproval ? 'Use photo' : 'Saving…';
+          review.classList.remove('hidden');
+        }
+
+        function rememberPhoto(blob) {
+          if (lastPhotoUrl) URL.revokeObjectURL(lastPhotoUrl);
+          lastPhotoUrl = URL.createObjectURL(blob);
+          const img = document.getElementById('lastphotoimg'), button = document.getElementById('lastphoto');
+          img.src = lastPhotoUrl;
+          img.classList.remove('hidden');
+          button.querySelector('span').classList.add('hidden');
+          button.disabled = false;
+        }
+
+        function closeReview() {
+          review.classList.add('hidden');
+          pendingPhoto = null;
+          if (pendingPhotoUrl) URL.revokeObjectURL(pendingPhotoUrl);
+          pendingPhotoUrl = '';
+          say('Ready — tap the shutter', 'ok');
+        }
+
+        async function sendPhoto(blob) {
+          say('Saving photo…', 'busy');
+          const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: blob });
+          if (!res.ok) { say('The computer would not take that photo.', 'bad'); return false; }
+          taken++;
+          c.textContent = taken + (taken === 1 ? ' photo saved' : ' photos saved');
+          rememberPhoto(blob);
+          say('Saved to Photo Library', 'ok');
+          return true;
+        }
+
+        async function shoot(reviewBeforeSending) {
+          if (!running || capturing) return;
+          capturing = true;
           // The lamp, if this phone has one and the mode asked for it. Turned off in the finally
           // below whatever happens next, because a torch left burning is a flat battery and a
           // seller who thinks the app broke their phone.
-          const lit = await fireFlash();
+          let lit = false;
           try {
+          lit = await fireFlash();
           const q = window_();
           cv.width = Math.round(q.sw); cv.height = Math.round(q.sh);
           const g = cv.getContext('2d');
@@ -1379,11 +1520,22 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           developFrame(g, cv.width, cv.height);
           fl.style.opacity = '0.85'; setTimeout(() => fl.style.opacity = '0', 120);
           const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.95));
-          say('Sending…', 'busy');
-          const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: blob });
-          if (res.ok) { taken++; c.textContent = taken + (taken === 1 ? ' photo sent' : ' photos sent'); say('Ready — press Snap on your computer.', 'ok'); }
-          else say('The computer would not take that photo.', 'bad');
-          } finally { if (lit) await applyTorch(false); }
+          if (!blob) { say('That frame could not be captured. Try again.', 'bad'); return; }
+          showReview(blob, !!reviewBeforeSending);
+          if (!reviewBeforeSending) {
+            const saved = await sendPhoto(blob);
+            if (saved) {
+              reviewCommitted = true;
+              reviewTitle.textContent = 'Saved to Photo Library';
+              reviewNote.textContent = cv.width + ' × ' + cv.height + ' full-resolution photo';
+              usePhotoBtn.disabled = false;
+              usePhotoBtn.textContent = 'Back to camera';
+            } else {
+              usePhotoBtn.disabled = false;
+              usePhotoBtn.textContent = 'Try again';
+            }
+          }
+          } finally { if (lit) await applyTorch(false); capturing = false; }
         }
 
         // ── What the lens would not do, done to the pixels ───────────────────────
@@ -1545,7 +1697,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                 if (typeof j.level === 'boolean' && j.level !== levelOn) await applyLevel(j.level);
                 paintRig(!!caps_().torch);
               }
-              if (j.shoot || j.command === 'shoot') await shoot();
+              if (j.shoot || j.command === 'shoot') await shoot(false);
               else if (j.command === 'record-start') startRecording();
               else if (j.command === 'record-stop') stopRecording();
             } catch (e) {
@@ -1558,7 +1710,39 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
         // The shutter, on the phone as well as on the desk: sometimes the person holding the
         // camera is the person who can see the shot.
-        document.getElementById('shot').addEventListener('click', () => { if (running) shoot(); });
+        document.getElementById('shot').addEventListener('click', () => {
+          document.getElementById('controls-sheet').classList.remove('open');
+          shoot(true);
+        });
+        usePhotoBtn.addEventListener('click', async () => {
+          if (reviewCommitted) { closeReview(); return; }
+          if (!pendingPhoto) return;
+          usePhotoBtn.disabled = true;
+          usePhotoBtn.textContent = 'Saving…';
+          const saved = await sendPhoto(pendingPhoto);
+          usePhotoBtn.disabled = false;
+          if (!saved) { usePhotoBtn.textContent = 'Try again'; return; }
+          reviewCommitted = true;
+          reviewTitle.textContent = 'Saved to Photo Library';
+          reviewNote.textContent = cv.width + ' × ' + cv.height + ' full-resolution photo';
+          retakeBtn.style.display = 'none';
+          usePhotoBtn.textContent = 'Take another';
+        });
+        retakeBtn.addEventListener('click', closeReview);
+        document.getElementById('lastphoto').addEventListener('click', () => {
+          if (!lastPhotoUrl) return;
+          reviewImg.src = lastPhotoUrl;
+          pendingPhoto = null;
+          reviewCommitted = true;
+          reviewTitle.textContent = 'Last saved photo';
+          reviewNote.textContent = 'Already in Photo Library';
+          retakeBtn.style.display = 'none';
+          usePhotoBtn.textContent = 'Back to camera';
+          review.classList.remove('hidden');
+        });
+        const controlsSheet = document.getElementById('controls-sheet');
+        document.getElementById('controls-toggle').addEventListener('click', () => controlsSheet.classList.toggle('open'));
+        document.getElementById('controls-close').addEventListener('click', () => controlsSheet.classList.remove('open'));
         document.getElementById('zr').addEventListener('input', e => applyZoom(e.target.value));
         document.getElementById('zin').addEventListener('click', () => { applyZoom(zoom + 0.5); document.getElementById('zr').value = zoom; });
         document.getElementById('zout').addEventListener('click', () => { applyZoom(zoom - 0.5); document.getElementById('zr').value = zoom; });
@@ -1576,8 +1760,23 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
           if (flashBtn) { flashMode = flashBtn.dataset.flash; paintRig(!!caps_().torch); return; }
           const lensBtn = e.target.closest ? e.target.closest('[data-lens]') : null;
           if (lensBtn) { applyLens(lensBtn.dataset.lens); return; }
+          const focusBtn = e.target.closest ? e.target.closest('[data-focus]') : null;
+          if (focusBtn) { applyFocus(focusBtn.dataset.focus).then(() => paintRig(!!caps_().torch)); return; }
+          const wbBtn = e.target.closest ? e.target.closest('[data-wb]') : null;
+          if (wbBtn) { applyWhiteBalance(wbBtn.dataset.wb).then(() => paintRig(!!caps_().torch)); return; }
         });
         document.getElementById('levelbtn').addEventListener('click', () => applyLevel(!levelOn));
+        document.getElementById('levelquick').addEventListener('click', () => {
+          const on = !levelOn;
+          applyLevel(on);
+          document.getElementById('levelquick').classList.toggle('on', on);
+        });
+        document.getElementById('flipbtn').addEventListener('click', () => applyFacing(facing === 'environment' ? 'user' : 'environment'));
+        document.getElementById('phone-exposure').addEventListener('input', e => {
+          const ev = Number(e.target.value);
+          document.getElementById('phone-exposure-value').textContent = Math.abs(ev) < .01 ? 'Auto' : (ev > 0 ? '+' : '') + ev.toFixed(2);
+          applyExposure(ev);
+        });
 
         startBtn.addEventListener('click', begin);
         // Safari needs a tap before it will hand over a camera, so the button is the real entry
