@@ -335,3 +335,33 @@ public class CouponStoreOutcome
     public string? Error { get; set; }
     public List<LocalSupplyManualSite> ManualSites { get; set; } = [];
 }
+
+/// <summary>
+/// One unusually large public discount worth investigating as a possible resale buy. It is a lead,
+/// not claimed profit: the coupon is verified at checkout and the product is priced against sold
+/// comps before the seller spends money.
+/// </summary>
+public class CouponOpportunity
+{
+    public CouponOffer Offer { get; set; } = new();
+    public string ProductQuery { get; set; } = "";
+    public decimal EffectiveDiscountPercent { get; set; }
+    public string DiscountLabel { get; set; } = "";
+    public int OpportunityScore { get; set; }
+    public bool ProductSpecific => !Offer.AppliesToOrder;
+}
+
+/// <summary>Cross-store coupon discovery for the Opportunity Finder.</summary>
+public class CouponDiscoveryResult
+{
+    /// <summary>ok | partial | no_deals | error</summary>
+    public string Status { get; set; } = "";
+    public int MinimumDiscountPercent { get; set; }
+    public int StoresScanned { get; set; }
+    public int StoresAnswered { get; set; }
+    public int OffersExamined { get; set; }
+    public List<CouponOpportunity> Opportunities { get; set; } = [];
+    public List<CouponStoreOutcome> Stores { get; set; } = [];
+    public DateTime CheckedUtc { get; set; }
+    public string? Error { get; set; }
+}

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using ING_eBay_AutoLister.Models;
 
 namespace ING_eBay_AutoLister.Services;
@@ -80,6 +81,119 @@ public sealed class CouponService(IHttpClientFactory httpFactory, ActionLog log)
         if (result.Status != "error") _cache[merchant.Id] = (DateTime.UtcNow, result);
 
         return result;
+    }
+
+    /// <summary>
+    /// Searches every catalogued retailer where typed codes are a real buying tool and returns the
+    /// unusually large offers first. These are leads, not booked profit: the UI sends the product
+    /// into sold-comp pricing before anyone treats the discount as an arbitrage play.
+    /// </summary>
+    public async Task<CouponDiscoveryResult> DiscoverAsync(int minimumDiscountPercent = 20,
+        CancellationToken ct = default)
+    {
+        minimumDiscountPercent = Math.Clamp(minimumDiscountPercent, 10, 80);
+        var merchants = CouponCatalog.Merchants.Where(m => !m.CodesRare).ToList();
+        var lookups = new ConcurrentBag<CouponLookupResult>();
+        using var gate = new SemaphoreSlim(6);
+
+        await Task.WhenAll(merchants.Select(async merchant =>
+        {
+            await gate.WaitAsync(ct);
+            try { lookups.Add(await LookupAsync(merchant.Id, ct)); }
+            finally { gate.Release(); }
+        }));
+
+        var answered = lookups.Count(r => r.Status != "error");
+        var offersExamined = lookups.Sum(r => r.Offers.Count);
+        var opportunities = lookups
+            .SelectMany(r => r.Offers)
+            .Select(o => ToDiscoveryOpportunity(o, minimumDiscountPercent))
+            .Where(o => o is not null)
+            .Cast<CouponOpportunity>()
+            .GroupBy(o => $"{o.Offer.MerchantId}|{o.Offer.Code}|{o.Offer.Kind}|{o.Offer.Value:0.##}|{o.ProductQuery}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(o => o.OpportunityScore).First())
+            .OrderByDescending(o => o.OpportunityScore)
+            .ThenByDescending(o => CouponConfidence.Rank(o.Offer.Confidence))
+            .ThenByDescending(o => o.EffectiveDiscountPercent)
+            .Take(80)
+            .ToList();
+
+        var result = new CouponDiscoveryResult
+        {
+            MinimumDiscountPercent = minimumDiscountPercent,
+            StoresScanned = merchants.Count,
+            StoresAnswered = answered,
+            OffersExamined = offersExamined,
+            Opportunities = opportunities,
+            Stores = lookups.OrderBy(r => r.MerchantLabel).Select(r => new CouponStoreOutcome
+            {
+                MerchantId = r.MerchantId,
+                MerchantLabel = r.MerchantLabel,
+                Status = r.Status,
+                OfferCount = r.Offers.Count,
+                Note = r.MerchantNote,
+                Error = r.Error,
+                ManualSites = r.ManualSites,
+            }).ToList(),
+            CheckedUtc = DateTime.UtcNow,
+        };
+
+        result.Status = answered == 0 ? "error"
+            : opportunities.Count == 0 ? "no_deals"
+            : answered < merchants.Count ? "partial"
+            : "ok";
+        if (answered == 0) result.Error = "None of the public coupon feeds answered right now.";
+
+        log.Add("Info", "Coupon opportunity scan",
+            $"{opportunities.Count} large offer(s), {offersExamined} examined across {answered}/{merchants.Count} stores.");
+        return result;
+    }
+
+    /// <summary>Turns one parsed offer into a discovery lead, or rejects ordinary/noisy savings.</summary>
+    public static CouponOpportunity? ToDiscoveryOpportunity(CouponOffer offer, int minimumDiscountPercent)
+    {
+        if (offer.ExpiresUtc is DateTime expiry && expiry < DateTime.UtcNow) return null;
+        if (offer.Code.Length == 0 || offer.Value <= 0) return null;
+        if (offer.Kind is not (CouponKinds.PercentOff or CouponKinds.AmountOff)) return null;
+
+        var effectivePercent = offer.Kind == CouponKinds.PercentOff
+            ? offer.Value
+            : offer.MinSpend > 0 ? Math.Round(offer.Value / offer.MinSpend * 100m, 1) : 0m;
+        var largeDollarOffer = offer.Kind == CouponKinds.AmountOff && offer.Value >= 50m;
+        if (effectivePercent < minimumDiscountPercent && !largeDollarOffer) return null;
+
+        var query = ProductQuery(offer);
+        var confidence = CouponConfidence.Rank(offer.Confidence);
+        var ageDays = Math.Max(0, (DateTime.UtcNow - offer.PublishedUtc).TotalDays);
+        var freshness = Math.Max(0, 10 - (int)Math.Floor(ageDays / 3));
+        var magnitude = effectivePercent > 0 ? (int)Math.Min(60, effectivePercent)
+            : (int)Math.Min(40, offer.Value / 5m);
+
+        return new CouponOpportunity
+        {
+            Offer = offer,
+            ProductQuery = query,
+            EffectiveDiscountPercent = effectivePercent,
+            DiscountLabel = offer.Kind == CouponKinds.PercentOff
+                ? $"{offer.Value:0.##}% off"
+                : $"${offer.Value:0.##} off" + (offer.MinSpend > 0 ? $" ${offer.MinSpend:0.##}+" : ""),
+            OpportunityScore = Math.Clamp(magnitude + confidence * 12 + (offer.AppliesToOrder ? 4 : 12) + freshness, 0, 100),
+        };
+    }
+
+    /// <summary>The product words worth sending into eBay pricing, without checkout instructions.</summary>
+    public static string ProductQuery(CouponOffer offer)
+    {
+        var query = offer.Title;
+        query = Regex.Replace(query,
+            @"\s+(?:with|using|use|apply|when you apply)\s+(?:the\s+)?(?:promo|coupon|discount)?\s*code\b.*$",
+            "", RegexOptions.IgnoreCase);
+        query = Regex.Replace(query, @"\s*[|—–-]\s*(?:save\s+)?(?:\$\d+|\d+%\s+off).*$", "",
+            RegexOptions.IgnoreCase);
+        query = Regex.Replace(query, @"\s+", " ").Trim(' ', '-', '—', '–', '|', ':');
+        if (query.Length > 140) query = query[..140].Trim();
+        return query.Length >= 4 ? query : offer.MerchantLabel;
     }
 
     private async Task<CouponLookupResult> FetchAsync(CouponMerchant merchant, string query, CancellationToken ct)

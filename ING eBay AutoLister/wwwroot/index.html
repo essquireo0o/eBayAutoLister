@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=134" />
+  <link rel="stylesheet" href="style.css?v=135" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -1533,6 +1533,33 @@
                the box above printed its progress and its table at the bottom of a different card —
                the seller searched in one place and the answer appeared in another. -->
           <div id="ebay-results-slot"></div>
+
+          <section class="opp-supplier-panel coupon-hunt-panel" aria-labelledby="coupon-hunt-title">
+            <div class="coupon-hunt-head">
+              <div>
+                <span class="opp-tool-label">COUPON ARBITRAGE</span>
+                <h3 id="coupon-hunt-title" class="opp-supplier-heading">Find massive discounts worth reselling</h3>
+                <p class="opp-hint">Scans public coupon feeds across major retailers, surfaces the unusually large usable codes, and sends the exact product into eBay pricing before you buy.</p>
+              </div>
+              <div class="coupon-hunt-mark" aria-hidden="true"><span>％</span></div>
+            </div>
+            <div class="coupon-hunt-action">
+              <div class="opp-field">
+                <label for="coupon-hunt-min">Minimum discount</label>
+                <select id="coupon-hunt-min">
+                  <option value="15">15%+ — more leads</option>
+                  <option value="20" selected>20%+ — strong discounts</option>
+                  <option value="30">30%+ — massive only</option>
+                  <option value="40">40%+ — rare finds</option>
+                </select>
+              </div>
+              <button id="coupon-hunt-btn" class="btn btn-primary" type="button"><span>Scan coupon opportunities</span><span aria-hidden="true">→</span></button>
+              <p class="coupon-hunt-safety"><strong>Discount ≠ profit.</strong> Codes are verified at checkout; resale value is checked against eBay sold data next.</p>
+            </div>
+            <div id="coupon-hunt-status" class="coupon-hunt-status" role="status" aria-live="polite"></div>
+            <div id="coupon-hunt-summary" class="coupon-hunt-summary hidden"></div>
+            <div id="coupon-hunt-results" class="coupon-hunt-results hidden"></div>
+          </section>
 
           <div class="opp-divider"><span>More ways to source inventory</span></div>
 
@@ -5882,6 +5909,6 @@
 
   <!-- Trial paywall removed — app is freeware -->
 
-  <script src="app.js?v=156"></script>
+  <script src="app.js?v=157"></script>
 </body>
 </html>

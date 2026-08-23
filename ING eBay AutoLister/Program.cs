@@ -3229,6 +3229,29 @@ static LocalArbitrageResult FailedArbitrage(string q, string zip, int radius, st
 // Always answers 200 with a body the UI can render, including when every list refused: the manual
 // links (RetailMeNot and the cashback portals, which block automated reads) are part of the answer
 // and are worth returning even when nothing machine-readable could be.
+app.MapGet("/api/coupons/opportunities", async (
+    int? minimumDiscount, CouponService coupons, ActionLog log, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await coupons.DiscoverAsync(minimumDiscount ?? 20, ct));
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception ex)
+    {
+        log.Add("Error", "Coupon opportunity scan failed", ex.Message);
+        return Results.Ok(new CouponDiscoveryResult
+        {
+            Status = "error", MinimumDiscountPercent = Math.Clamp(minimumDiscount ?? 20, 10, 80),
+            CheckedUtc = DateTime.UtcNow,
+            Error = $"The coupon opportunity scan couldn't be completed: {ex.Message}",
+        });
+    }
+});
+
 app.MapGet("/api/coupons", async (
     string? store, decimal? price, decimal? salesTax, CouponService coupons, ActionLog log, CancellationToken ct) =>
 {

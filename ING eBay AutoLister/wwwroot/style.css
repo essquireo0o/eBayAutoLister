@@ -5387,6 +5387,214 @@ textarea {
   color: var(--muted);
   min-height: 16px;
 }
+/* Cross-store coupon discovery: a sourcing lane, not the little one-store checkout helper. */
+#opportunity-section .coupon-hunt-panel {
+  position: relative;
+  overflow: hidden;
+  margin-top: 18px;
+  padding: clamp(22px, 3vw, 30px);
+  border: 1px solid color-mix(in srgb, var(--gold) 38%, var(--line));
+  background:
+    radial-gradient(520px 240px at 100% 0%, color-mix(in srgb, var(--gold) 14%, transparent), transparent 70%),
+    linear-gradient(145deg, var(--card), color-mix(in srgb, var(--card) 90%, var(--teal-50)));
+  box-shadow: 0 14px 38px rgba(4, 40, 43, .08);
+}
+.coupon-hunt-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--gold), #efd27c 52%, var(--success));
+}
+.coupon-hunt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+.coupon-hunt-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 58px;
+  width: 58px;
+  height: 58px;
+  border: 1px solid color-mix(in srgb, var(--gold) 42%, var(--line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--gold) 13%, var(--card));
+  color: var(--gold-ink);
+  font-size: 25px;
+  font-weight: 900;
+  transform: rotate(3deg);
+}
+.coupon-hunt-action {
+  display: grid;
+  grid-template-columns: minmax(190px, .42fr) auto minmax(260px, 1fr);
+  align-items: end;
+  gap: 12px 16px;
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--soft) 72%, transparent);
+}
+.coupon-hunt-action select { width: 100%; min-height: 42px; }
+.coupon-hunt-action .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 42px;
+  white-space: nowrap;
+}
+.coupon-hunt-safety {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.coupon-hunt-safety strong { color: var(--ink); }
+.coupon-hunt-status {
+  min-height: 20px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.coupon-hunt-status.is-scanning {
+  padding-left: 22px;
+  color: var(--gold-ink);
+  background: radial-gradient(circle at 7px 50%, var(--gold) 0 4px, transparent 5px);
+  animation: coupon-hunt-pulse 1.1s ease-in-out infinite alternate;
+}
+.coupon-hunt-status.is-error { color: var(--danger); }
+@keyframes coupon-hunt-pulse { to { opacity: .56; } }
+.coupon-hunt-summary {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.coupon-hunt-summary strong { color: var(--ink); }
+.coupon-hunt-results { display: grid; gap: 10px; }
+.coupon-hunt-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.coupon-hunt-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--gold) 42%, var(--line));
+  box-shadow: 0 10px 24px rgba(4, 40, 43, .08);
+}
+.coupon-hunt-card.is-top { border-left: 3px solid var(--gold); }
+.coupon-hunt-rank {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+.coupon-hunt-card.is-top .coupon-hunt-rank {
+  background: color-mix(in srgb, var(--gold) 16%, var(--card));
+  color: var(--gold-ink);
+}
+.coupon-hunt-card-main { min-width: 0; }
+.coupon-hunt-card-top,
+.coupon-hunt-meta,
+.coupon-hunt-code-row,
+.coupon-hunt-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+.coupon-hunt-card-top { justify-content: space-between; }
+.coupon-hunt-discount {
+  color: var(--success);
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: -.025em;
+}
+.coupon-hunt-score {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.coupon-hunt-card h4 {
+  margin: 5px 0 7px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.coupon-hunt-meta { color: var(--muted); font-size: 11px; }
+.coupon-hunt-meta strong { color: var(--ink); }
+.coupon-hunt-code-row {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+.coupon-hunt-code-row code {
+  color: var(--gold-ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: .04em;
+}
+.coupon-hunt-code-row button {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.coupon-hunt-warning {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.coupon-hunt-card-actions { margin-top: 10px; }
+.coupon-hunt-card-actions a {
+  color: var(--gold-ink);
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+.coupon-hunt-sitewide { color: var(--muted); font-size: 11px; font-style: italic; }
+.coupon-hunt-empty {
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-size: var(--fs-sm);
+}
+@media (max-width: 850px) {
+  .coupon-hunt-action { grid-template-columns: 1fr 1fr; }
+  .coupon-hunt-safety { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .coupon-hunt-action { grid-template-columns: 1fr; }
+  .coupon-hunt-action .btn { width: 100%; }
+  .coupon-hunt-safety { grid-column: auto; }
+  .coupon-hunt-card { grid-template-columns: 34px minmax(0, 1fr); padding: 13px 11px; gap: 8px; }
+  .coupon-hunt-rank { width: 28px; height: 28px; }
+  .coupon-hunt-mark { width: 42px; height: 42px; flex-basis: 42px; border-radius: 13px; font-size: 19px; }
+}
 .coupon-verdict {
   padding: 8px 10px;
   border-radius: var(--r-xs);

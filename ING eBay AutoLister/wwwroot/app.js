@@ -1109,6 +1109,7 @@
     bindFacebookMarketplace();
     bindNegotiation();
     bindCouponCheck();
+    bindCouponHunt();
     bindPhotoLibrary();
     bindInventoryHealth();
     bindWatcherOffers();
@@ -5451,6 +5452,125 @@
     btn.addEventListener('click', runCouponCheck);
     ['coupon-store-input', 'coupon-price-input'].forEach(id =>
       $(id)?.addEventListener('keydown', event => { if (event.key === 'Enter') runCouponCheck(); }));
+  }
+
+  // ── Coupon arbitrage discovery ────────────────────────────────────────────
+  // A store lookup helps after the product is known. This does the opposite: search the readable
+  // coupon feeds across resale-friendly retailers, lead with unusually large codes, then hand a
+  // product-specific result to the sold-market scanner. The handoff is deliberate — a coupon is
+  // a cheaper buy, not evidence of resale profit by itself.
+  function bindCouponHunt() {
+    const btn = $('coupon-hunt-btn');
+    if (!btn) return;
+    btn.addEventListener('click', runCouponHunt);
+    $('coupon-hunt-results')?.addEventListener('click', event => {
+      const copy = event.target.closest?.('[data-coupon-copy]');
+      if (copy) {
+        navigator.clipboard?.writeText(copy.dataset.couponCopy || '');
+        const old = copy.textContent;
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = old; }, 1200);
+        return;
+      }
+      const price = event.target.closest?.('[data-coupon-price]');
+      if (!price) return;
+      const query = price.dataset.couponPrice || '';
+      const input = $('ebay-scan-query');
+      if (!query || !input) return;
+      input.value = query;
+      $('opportunity-section')?.querySelector('.opp-primary-tool')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      input.focus();
+      setTimeout(runEbayScan, 350);
+    });
+  }
+
+  async function runCouponHunt() {
+    const btn = $('coupon-hunt-btn');
+    const status = $('coupon-hunt-status');
+    const results = $('coupon-hunt-results');
+    const summary = $('coupon-hunt-summary');
+    const minimum = Number($('coupon-hunt-min')?.value || 20);
+    if (!status || !results || !summary) return;
+
+    btn.disabled = true;
+    results.classList.add('hidden');
+    summary.classList.add('hidden');
+    let elapsed = 0;
+    status.className = 'coupon-hunt-status is-scanning';
+    status.textContent = 'Scanning public coupon feeds across every resale-friendly retailer…';
+    const clock = setInterval(() => {
+      elapsed++;
+      status.textContent = `Scanning every retailer — ${elapsed}s elapsed. Large cross-store scans can take a few minutes.`;
+    }, 1000);
+
+    const { data, error } = await localFetchJson(
+      `/api/coupons/opportunities?minimumDiscount=${encodeURIComponent(minimum)}`, 10 * 60 * 1000);
+    clearInterval(clock);
+    btn.disabled = false;
+
+    if (!data) {
+      status.className = 'coupon-hunt-status is-error';
+      status.textContent = error || 'The coupon opportunity scan could not be completed.';
+      return;
+    }
+    renderCouponHunt(data);
+  }
+
+  function renderCouponHunt(data) {
+    const status = $('coupon-hunt-status');
+    const results = $('coupon-hunt-results');
+    const summary = $('coupon-hunt-summary');
+    const deals = data.opportunities || [];
+    if (!status || !results || !summary) return;
+
+    status.className = 'coupon-hunt-status';
+    status.textContent = data.status === 'error' ? (data.error || 'Coupon feeds did not answer.') : '';
+    summary.innerHTML = `<strong>${deals.length} unusually large discount${deals.length === 1 ? '' : 's'}</strong>` +
+      ` from ${data.storesAnswered || 0} of ${data.storesScanned || 0} retailers · ` +
+      `${data.offersExamined || 0} public offers examined` +
+      (data.status === 'partial' ? ' · some stores could not be read' : '');
+    summary.classList.remove('hidden');
+
+    if (!deals.length) {
+      results.innerHTML = `<div class="coupon-hunt-empty">No ${data.minimumDiscountPercent || 20}%+ usable codes were published in the feeds that answered. That is a valid scan—not a list padded with ordinary 5% offers.</div>`;
+      results.classList.remove('hidden');
+      return;
+    }
+
+    results.innerHTML = deals.map((deal, index) => {
+      const offer = deal.offer || {};
+      const grade = COUPON_CONFIDENCE[offer.confidence] || COUPON_CONFIDENCE.low;
+      const scope = deal.productSpecific ? 'Product-specific lead' : 'Store-wide buying power';
+      const priceButton = deal.productSpecific && deal.productQuery
+        ? `<button class="btn btn-primary small" type="button" data-coupon-price="${esc(deal.productQuery)}">Check eBay resale market →</button>`
+        : `<span class="coupon-hunt-sitewide">Pair this code with a product that already has strong sold comps.</span>`;
+      return `<article class="coupon-hunt-card${index < 3 ? ' is-top' : ''}">
+        <div class="coupon-hunt-rank">${index + 1}</div>
+        <div class="coupon-hunt-card-main">
+          <div class="coupon-hunt-card-top">
+            <span class="coupon-hunt-discount">${esc(deal.discountLabel)}</span>
+            <span class="coupon-hunt-score">${deal.opportunityScore || 0} opportunity score</span>
+          </div>
+          <h4>${esc(offer.title || deal.productQuery || 'Coupon opportunity')}</h4>
+          <div class="coupon-hunt-meta">
+            <strong>${esc(offer.merchantLabel || 'Retailer')}</strong><span>${scope}</span>
+            <span class="coupon-offer-grade coupon-chip-${grade.cls}" title="${esc(offer.confidenceNote || '')}">${grade.label}</span>
+          </div>
+          <div class="coupon-hunt-code-row">
+            <code>${esc(offer.code || 'No code')}</code>
+            ${offer.code ? `<button type="button" data-coupon-copy="${esc(offer.code)}">Copy code</button>` : ''}
+            ${offer.minSpend > 0 ? `<span>Minimum ${money(offer.minSpend)}</span>` : ''}
+            ${offer.expiresUtc ? `<span>Ends ${esc(shortDate(offer.expiresUtc))}</span>` : ''}
+          </div>
+          <p class="coupon-hunt-warning">Verify the code at checkout. Profit is not counted until the product is priced against real sold data.</p>
+          <div class="coupon-hunt-card-actions">
+            ${priceButton}
+            <a href="${esc(offer.url)}" target="_blank" rel="noopener">Open coupon source ↗</a>
+          </div>
+        </div>
+      </article>`;
+    }).join('');
+    results.classList.remove('hidden');
   }
 
   async function runCouponCheck() {
