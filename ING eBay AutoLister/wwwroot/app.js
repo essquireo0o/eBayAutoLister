@@ -7503,6 +7503,15 @@
     pbBtnLabel('pb-phone', '📱 Stop using my phone');
     const qr = $('pb-phone-qr');
     if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url || ''; }
+    // The one-time trust setup, on its own code. Painted the same way and for the same reason:
+    // the SVG is built server-side, so this only ever swaps it when the address changes.
+    const trustQr = $('pb-trust-qr');
+    if (trustQr && st.trustQrSvg && trustQr.dataset.url !== st.trustUrl) {
+      trustQr.innerHTML = st.trustQrSvg;
+      trustQr.dataset.url = st.trustUrl || '';
+    }
+    const trustLink = $('pb-trust-url');
+    if (trustLink) trustLink.textContent = st.trustUrl || '';
     const link = $('pb-phone-url'); if (link) link.textContent = st.url || '';
 
     const state = $('pb-phone-state');

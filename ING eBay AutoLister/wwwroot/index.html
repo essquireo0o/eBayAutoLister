@@ -3086,14 +3086,36 @@
                     <h3>Scan this with your iPhone</h3>
                     <ol>
                       <li>Point the phone's camera at the code and open the link.</li>
-                      <li>Safari will warn that the connection is not private — it is your own computer,
-                          with a certificate it made for itself. Tap <b>Show details</b>, then
-                          <b>visit this website</b>.</li>
+                      <li><b>On an iPhone, do the one-time setup first</b> — the block below. Safari
+                          refuses a certificate your computer made for itself and gives you no way
+                          past it, so "tap through the warning" is advice that only works in Chrome.
+                          Once the setup is done it never asks again on that phone.</li>
                       <li>Tap <b>Allow camera</b>, aim the phone at the item, and leave that page open.</li>
                       <li>Press <b>📸 Snap</b> here. The phone takes the photo.</li>
                     </ol>
                     <div class="pb-phone-link" id="pb-phone-url"></div>
                     <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
+
+                    <!-- The setup that makes Safari work. Its own code because it is served over
+                         plain HTTP on another port: the phone cannot be handed the certificate
+                         over the connection that the missing certificate is blocking. Folded,
+                         because it is once per phone and furniture on every night after. -->
+                    <details class="pb-phone-trust">
+                      <summary>First time on this iPhone? Do this once</summary>
+                      <div class="pb-phone-trust-body">
+                        <div class="pb-phone-qr" id="pb-trust-qr"></div>
+                        <ol>
+                          <li>Scan this second code and tap <b>Download the certificate</b>.</li>
+                          <li>Open <b>Settings</b> — <b>Profile Downloaded</b> is near the top.
+                              Tap <b>Install</b> and enter your passcode.</li>
+                          <li><b>Settings &rsaquo; General &rsaquo; About &rsaquo; Certificate Trust
+                              Settings</b>, and switch on <b>ING Photo Box camera authority</b>.
+                              iPhones make you do this last step by hand — no installer on this
+                              computer is allowed to do it for you.</li>
+                        </ol>
+                        <div class="pb-phone-link" id="pb-trust-url"></div>
+                      </div>
+                    </details>
                   </div>
                 </div>
               </div>

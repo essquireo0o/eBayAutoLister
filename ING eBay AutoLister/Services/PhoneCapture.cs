@@ -71,6 +71,46 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// <summary>Where the phone connects. Deliberately not 9332: that port is the app's alone.</summary>
     public const int Port = 9443;
 
+    /// <summary>
+    /// Plain HTTP, and deliberately so: the only thing on it is what a phone needs BEFORE it can
+    /// open the HTTPS page at all — the certificate authority to trust. See the trust routes.
+    /// </summary>
+    /// <remarks>
+    /// A PREFERENCE, not a promise. On the machine this was written on, 9444 was already held by
+    /// an antivirus service on 0.0.0.0 — and Kestrel's ListenAnyIP does not fail when that
+    /// happens. It binds the IPv6 half, reports itself started, and every IPv4 request goes to the
+    /// other process instead, which accepts the connection and never answers. From the outside
+    /// that is indistinguishable from the app being broken, and no error is logged anywhere. So
+    /// the port is probed for real before Kestrel is told about it, and the one that answers is
+    /// the one the QR code points at.
+    /// </remarks>
+    public const int TrustPortPreferred = 9444;
+
+    /// <summary>The port the trust page is actually on, once the server has started.</summary>
+    public static int TrustPort { get; private set; } = TrustPortPreferred;
+
+    /// <summary>
+    /// The first port at or after the preferred one that this machine will really give us on IPv4.
+    /// </summary>
+    private static int PickTrustPort()
+    {
+        for (var port = TrustPortPreferred; port < TrustPortPreferred + 12; port++)
+        {
+            try
+            {
+                // IPv4 explicitly: the failure this exists to catch is a port that is free on IPv6
+                // and taken on IPv4, which is the half a phone actually uses.
+                var probe = new TcpListener(IPAddress.Any, port);
+                probe.Server.ExclusiveAddressUse = true;
+                probe.Start();
+                probe.Stop();
+                return port;
+            }
+            catch (SocketException) { /* somebody else has it — try the next one */ }
+        }
+        return TrustPortPreferred;   // nothing free; start anyway and let the error be visible
+    }
+
     // Pairing is a relationship, not a server session. The QR secret lives in the seller's fixed
     // data home so a Chrome tab that was paired yesterday still has the right address after an
     // update restarts the executable today. It is disabled only by the explicit Disconnect
@@ -187,6 +227,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         bool CanExposure = false, bool CanFocus = false, bool CanMacro = false,
         bool CanWhiteBalance = false, bool CanTap = false, bool CanMultiCamera = false,
         double ZoomMin = 1, double ZoomMax = 1, string Lenses = "",
+        // The one-time setup a phone needs before it can open the camera page at all. Carried on
+        // every status so the screen can offer it without a second round trip — and so it is
+        // right there when Safari refuses, which is the moment the seller needs it.
+        string TrustUrl = "", string TrustQrSvg = "",
         // Whether the zoom on screen is the lens moving or the frame being cropped. The desk
         // shows it because the two are genuinely different pictures — one keeps every pixel the
         // sensor has — and because a chip that only ever showed the number the desk asked for is
@@ -240,7 +284,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                    _zoom, _torch, _canTorch, _capWidth, _capHeight,
                    _flash, _exposure, _focus, _whiteBalance, _lens, _facing, _level,
                    _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
-                   _zoomMin, _zoomMax, _lenses, _zoomOptical);
+                   _zoomMin, _zoomMax, _lenses,
+                   TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -321,6 +366,21 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             builder.WebHost.ConfigureKestrel(k =>
             {
                 k.ListenAnyIP(Port, o => o.UseHttps(Certificate()));
+                // ── The chicken and the egg ──────────────────────────────────────────────────
+                // The camera page is HTTPS because a browser gives no camera to an insecure page.
+                // Its certificate is local, so the phone does not trust it, so the phone has to be
+                // given the authority to trust — and it cannot fetch that over the connection it
+                // does not trust yet. Safari makes that absolute: with a certificate it will not
+                // accept there is no "visit this website anyway", so the seller is simply stuck,
+                // and telling them to install Chrome is not an answer.
+                //
+                // So the trust arrives over plain HTTP on the next port, carrying only three
+                // things: a page of instructions, an Apple configuration profile, and the
+                // authority's public certificate. Nothing here is secret — a public key is
+                // public — and there is no token, because a phone that cannot reach this cannot
+                // reach anything else on this machine either.
+                TrustPort = PickTrustPort();
+                k.ListenAnyIP(TrustPort);
                 k.Limits.MaxRequestBodySize = 25 * 1024 * 1024;   // a phone photo, with room to spare
             });
 
@@ -330,6 +390,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             _app = web;
 
             log.Add("Info", "Phone camera ready", PublicUrl);
+            log.Add("Info", "Phone camera trust page", TrustUrl()
+                + (TrustPort == TrustPortPreferred ? "" : $" (port {TrustPortPreferred} was taken)"));
             return Snapshot();
         }
         catch (Exception ex)
@@ -702,42 +764,319 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             log.Add("Info", "Phone camera photo", url);
             return Results.Ok(new { url });
         });
+
+        // ── Trust, over plain HTTP ───────────────────────────────────────────────────────────
+        //
+        // Three routes, no token, nothing secret. They exist because the HTTPS page cannot serve
+        // the thing that makes the HTTPS page openable. See the TrustPort comment in StartAsync.
+        //
+        // WHY A CONFIGURATION PROFILE AND NOT JUST THE .CER. Safari on iOS will download a bare
+        // certificate, but what it does with it depends on the version and it is easy to end up
+        // with a file in Downloads and no trust. A .mobileconfig is the path iOS is built for:
+        // tapping it puts "Profile Downloaded" in Settings, and installing it puts the authority
+        // in the certificate store under this app's name, where the seller can also find it later
+        // to remove. It still needs the second step — Settings, General, About, Certificate Trust
+        // Settings — because iOS does not let any downloaded root become fully trusted without a
+        // person saying so, and no installer on the computer can say it for them.
+
+        web.MapGet("/trust", () => Results.Content(TrustPageHtml(), "text/html; charset=utf-8"));
+
+        // The name matters: iOS decides what to do with this from the extension and the type.
+        web.MapGet("/trust.mobileconfig", () =>
+            Results.File(MobileConfig(), "application/x-apple-aspen-config", "ing-photo-box.mobileconfig"));
+
+        // For everything that is not an iPhone — Android, a second computer, a browser being
+        // configured by hand. DER, because that is what Windows and Android both expect.
+        web.MapGet("/ing-photo-box-ca.cer", () =>
+        {
+            using var ca = Authority();
+            return Results.File(ca.Export(X509ContentType.Cert), "application/x-x509-ca-cert", "ing-photo-box-ca.cer");
+        });
+
+        // Anything else on this port is somebody's browser guessing. Send them to the one page.
+        web.MapFallback(ctx =>
+        {
+            if (ctx.Connection.LocalPort != TrustPort) { ctx.Response.StatusCode = 404; return Task.CompletedTask; }
+            ctx.Response.Redirect("/trust");
+            return Task.CompletedTask;
+        });
     }
 
     /// <summary>
     /// A self-signed certificate for this machine's address, kept between runs so a phone that
     /// has already trusted it does not have to be asked again every time the app restarts.
     /// </summary>
-    private static X509Certificate2 Certificate()
+
+    /// <summary>The address a phone types to be handed the authority, before it trusts anything.</summary>
+    public static string TrustUrl() => $"http://{LocalAddress()}:{TrustPort}/trust";
+
+    /// <summary>
+    /// An Apple configuration profile carrying this machine's camera authority as a root.
+    /// </summary>
+    /// <remarks>
+    /// The UUIDs are derived from the authority's own thumbprint rather than made fresh each
+    /// request, so installing it twice replaces the profile instead of stacking a second copy in
+    /// the seller's Settings — and so a phone that already has it recognises it.
+    /// </remarks>
+    /// <remarks>Public so it can be tested: it only ever READS the authority, never writes one.</remarks>
+    public static byte[] MobileConfig()
     {
-        var path = Path.Combine(AppPaths.DataHome, "phone-camera.pfx");
-        const string pass = "ing-photobox";   // guards a file already inside the user's profile
-        if (File.Exists(path))
+        using var ca = Authority();
+        var der = Convert.ToBase64String(ca.Export(X509ContentType.Cert));
+
+        // Two stable, different UUIDs from one thumbprint: the profile and the payload inside it
+        // must not share an identifier.
+        var seed = Convert.FromHexString(ca.Thumbprint);
+        var profileId = new Guid(System.Security.Cryptography.MD5.HashData(seed)).ToString().ToUpperInvariant();
+        var payloadId = new Guid(System.Security.Cryptography.MD5.HashData([.. seed, 1])).ToString().ToUpperInvariant();
+
+        var xml = $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>PayloadContent</key>
+              <array>
+                <dict>
+                  <key>PayloadType</key><string>com.apple.security.root</string>
+                  <key>PayloadVersion</key><integer>1</integer>
+                  <key>PayloadIdentifier</key><string>com.ingmining.photobox.ca</string>
+                  <key>PayloadUUID</key><string>{payloadId}</string>
+                  <key>PayloadDisplayName</key><string>ING Photo Box camera certificate</string>
+                  <key>PayloadDescription</key><string>Lets this iPhone open the camera page on your own computer without a warning.</string>
+                  <key>PayloadCertificateFileName</key><string>ing-photo-box-ca.cer</string>
+                  <key>PayloadContent</key>
+                  <data>{der}</data>
+                </dict>
+              </array>
+              <key>PayloadType</key><string>Configuration</string>
+              <key>PayloadVersion</key><integer>1</integer>
+              <key>PayloadIdentifier</key><string>com.ingmining.photobox</string>
+              <key>PayloadUUID</key><string>{profileId}</string>
+              <key>PayloadDisplayName</key><string>ING Photo Box camera</string>
+              <key>PayloadOrganization</key><string>ING Mining LLC</string>
+              <key>PayloadDescription</key><string>Trusts the camera page served by ING Listing Engine on your own computer. It grants nothing else, and it works only on your own network.</string>
+              <key>PayloadRemovalDisallowed</key><false/>
+            </dict>
+            </plist>
+            """;
+
+        return System.Text.Encoding.UTF8.GetBytes(xml);
+    }
+
+    /// <summary>
+    /// The page a phone lands on before it can open the camera. Written for somebody standing at a
+    /// bench holding a phone: what to tap, in order, and what each step is for.
+    /// </summary>
+    private static string TrustPageHtml()
+    {
+        var camera = $"https://{LocalAddress()}:{Port}/";
+        return $$"""
+            <!DOCTYPE html>
+            <html lang="en"><head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+            <title>Trust the ING Photo Box camera</title>
+            <style>
+              :root{color-scheme:dark}
+              *{box-sizing:border-box;margin:0;padding:0}
+              body{background:#050707;color:#f7fbfb;font:16px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+                   padding:calc(env(safe-area-inset-top) + 22px) 20px 40px;max-width:640px;margin:auto}
+              h1{font-size:23px;line-height:1.25;letter-spacing:-.01em;margin-bottom:6px}
+              .sub{color:#9fb1b4;margin-bottom:26px}
+              ol{list-style:none;counter-reset:s}
+              li{counter-increment:s;position:relative;padding:0 0 22px 46px;border-left:2px solid #1d2729;margin-left:14px}
+              li:last-child{border-left-color:transparent}
+              li::before{content:counter(s);position:absolute;left:-15px;top:-2px;width:28px;height:28px;border-radius:50%;
+                         display:grid;place-items:center;background:linear-gradient(145deg,#f0c453,#b67d12);
+                         color:#151006;font-weight:900;font-size:13px}
+              b{color:#fff}
+              .btn{display:block;text-align:center;background:linear-gradient(145deg,#f0c453,#b67d12);color:#151006;
+                   font-weight:800;padding:16px;border-radius:14px;text-decoration:none;margin:6px 0 4px}
+              .go{display:block;text-align:center;border:1px solid #2b3a3d;color:#f7fbfb;padding:15px;border-radius:14px;
+                  text-decoration:none;margin-top:10px}
+              .why{margin-top:30px;padding-top:18px;border-top:1px solid #1d2729;color:#9fb1b4;font-size:14px}
+              code{background:#111719;padding:2px 6px;border-radius:6px;font-size:13px}
+            </style></head><body>
+              <h1>One-time setup for this phone</h1>
+              <p class="sub">Your computer's camera page uses a certificate it made itself. iPhones don't
+                 trust those until you say so — and Safari won't let you skip past it. Three taps, once.</p>
+              <ol>
+                <li><b>Download the profile.</b>
+                    <a class="btn" href="/trust.mobileconfig">Download the certificate</a>
+                    Safari will say a profile was downloaded. That's the right answer.</li>
+                <li><b>Install it.</b> Open <b>Settings</b> — <b>Profile Downloaded</b> is near the top.
+                    Tap it, then <b>Install</b>, and enter your passcode.</li>
+                <li><b>Turn trust on.</b> Still in Settings: <b>General</b> &rsaquo; <b>About</b> &rsaquo;
+                    <b>Certificate Trust Settings</b>, and switch on
+                    <b>ING Photo Box camera authority</b>.
+                    <br>iPhones make you do this last step by hand for any certificate you install —
+                    no app on your computer can do it for you.</li>
+                <li><b>Open the camera.</b>
+                    <a class="go" href="{{camera}}">Open the camera page &rsaquo;</a>
+                    Or just scan the QR code on your computer again. No more warnings, on Safari or
+                    anything else — and it stays that way on this phone.</li>
+              </ol>
+              <p class="why"><b>What you are trusting.</b> One certificate, made by the copy of ING
+                 Listing Engine running on your own computer, naming only that computer's address on
+                 your own network (<code>{{LocalAddress()}}</code>). It is not a password, it grants
+                 nothing on the internet, and you can remove it any time under
+                 Settings &rsaquo; General &rsaquo; VPN &amp; Device Management.</p>
+            </body></html>
+            """;
+    }
+
+    // ── Why there is an authority here and not just a certificate ───────────────────────────
+    //
+    // The phone has to trust this server, and the only device whose opinion counts is the phone.
+    // A certificate installed by the MSI lands in Windows' store, which an iPhone never consults —
+    // so "install it in the installer so it doesn't ask" cannot work, and the trust has to be
+    // carried to the phone once, by hand. See /trust on the plain-HTTP listener.
+    //
+    // Once per phone, though, not once per certificate. So this issues from a small LOCAL
+    // AUTHORITY that is made once and kept: the phone trusts the authority, and every server
+    // certificate signed by it afterwards is trusted too. That matters because the server
+    // certificate is pinned to this machine's LAN address, and a laptop that moves between a
+    // house and a workshop gets a new address — with a bare self-signed certificate, every one
+    // of those was a new certificate and another trip through Settings.
+    //
+    // Apple's rules for the SERVER certificate (iOS 13+) are why the leaf looks the way it does:
+    // a SAN (the common name is ignored), the serverAuth EKU, RSA 2048 or better, SHA-256 or
+    // better, and no more than 825 days of validity. Miss any of them and Safari does not offer
+    // "visit this website anyway" — it simply refuses, which is exactly the dead end the owner
+    // hit. The authority is not a server certificate and is not bound by the 825 days, so it is
+    // given ten years: re-trusting it every two years would be the same chore on a longer fuse.
+    private const string KeyPass = "ing-photobox";   // guards files already inside the user's profile
+
+    private static string CaPath   => Path.Combine(AppPaths.DataHome, "phone-camera-ca.pfx");
+    private static string LeafPath => Path.Combine(AppPaths.DataHome, "phone-camera.pfx");
+
+    /// <summary>The local authority, made once and kept. This is what a phone is asked to trust.</summary>
+    public static X509Certificate2 Authority()
+    {
+        if (File.Exists(CaPath))
         {
             try
             {
-                var existing = X509CertificateLoader.LoadPkcs12FromFile(path, pass);
-                if (existing.NotAfter > DateTime.UtcNow.AddDays(7)) return existing;
+                var existing = X509CertificateLoader.LoadPkcs12FromFile(CaPath, KeyPass,
+                    X509KeyStorageFlags.Exportable);
+                // Six months of headroom: a phone that trusted this must not be sent back to
+                // Settings the week it expires.
+                if (existing.NotAfter > DateTime.UtcNow.AddDays(180)) return existing;
+            }
+            catch { /* unreadable: make a new one below */ }
+        }
+
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest(
+            "CN=ING Photo Box camera authority, O=ING Mining LLC", rsa,
+            HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        req.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 0, true));
+        req.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign | X509KeyUsageFlags.DigitalSignature, true));
+        req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
+
+        var ca = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(10));
+        var pfx = ca.Export(X509ContentType.Pfx, KeyPass);
+        try { File.WriteAllBytes(CaPath, pfx); } catch { /* not being able to keep it is not fatal */ }
+        return X509CertificateLoader.LoadPkcs12(pfx, KeyPass, X509KeyStorageFlags.Exportable);
+    }
+
+    /// <summary>Every IPv4 address this machine answers on, so moving network does not re-issue.</summary>
+    private static List<IPAddress> LocalAddresses()
+    {
+        var found = new List<IPAddress>();
+        try
+        {
+            foreach (var address in NetworkInterface.GetAllNetworkInterfaces()
+                         .Where(n => n.OperationalStatus == OperationalStatus.Up
+                                  && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                         .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                         .Select(a => a.Address)
+                         .Where(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)))
+            {
+                if (!found.Any(a => a.Equals(address))) found.Add(address);
+            }
+        }
+        catch { /* one unreadable adapter must not cost the certificate */ }
+
+        if (IPAddress.TryParse(LocalAddress(), out var primary) && !found.Any(a => a.Equals(primary)))
+            found.Insert(0, primary);
+        if (found.Count == 0) found.Add(IPAddress.Loopback);
+        return found;
+    }
+
+    private static X509Certificate2 Certificate()
+    {
+        var wanted = LocalAddresses();
+        using var ca = Authority();
+
+        if (File.Exists(LeafPath))
+        {
+            try
+            {
+                var existing = X509CertificateLoader.LoadPkcs12FromFile(LeafPath, KeyPass);
+                // Three ways a cached certificate stops being the right one to serve.
+                //
+                // It is running out. It no longer covers the address the phone will actually type
+                // — a certificate for last week's IP fails with a name mismatch, and a name
+                // mismatch is one of the errors Safari will not let anyone past. Or it was not
+                // issued by the authority the phone has been asked to trust, which is every
+                // certificate written before this machine had an authority at all: serving one of
+                // those to a phone that has dutifully installed the profile would be the same
+                // warning again, for a reason the seller could not possibly work out.
+                if (existing.NotAfter > DateTime.UtcNow.AddDays(7)
+                    && CoversAll(existing, wanted)
+                    && string.Equals(existing.Issuer, ca.Subject, StringComparison.Ordinal))
+                    return existing;
             }
             catch { /* unreadable or expired: make a new one below */ }
         }
 
-        var ip = LocalAddress();
         using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest($"CN=ING Photo Box ({ip})", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        req.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
+        var req = new CertificateRequest($"CN=ING Photo Box ({wanted[0]})", rsa,
+            HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        req.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(
-            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
+            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
         req.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], false));
+        req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
+
         var san = new SubjectAlternativeNameBuilder();
-        san.AddIpAddress(IPAddress.Parse(ip));
+        foreach (var address in wanted) san.AddIpAddress(address);
         san.AddDnsName("photobox.local");
+        san.AddDnsName("localhost");
         req.CertificateExtensions.Add(san.Build());
 
-        var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(2));
-        var pfx = cert.Export(X509ContentType.Pfx, pass);
-        try { File.WriteAllBytes(path, pfx); } catch { /* not being able to cache it is not fatal */ }
-        return X509CertificateLoader.LoadPkcs12(pfx, pass);
+        // 397 days: comfortably inside Apple's 825-day ceiling and inside the 398 the public CAs
+        // settled on, so nothing downstream has to think about it.
+        var notBefore = DateTimeOffset.UtcNow.AddDays(-1);
+        var notAfter  = notBefore.AddDays(397);
+        if (notAfter > ca.NotAfter) notAfter = new DateTimeOffset(ca.NotAfter).AddDays(-1);
+
+        var serial = new byte[16];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(serial);
+        serial[0] &= 0x7F;   // a positive serial; some stacks reject the negative reading
+
+        using var issued = req.Create(ca, notBefore, notAfter, serial);
+        using var leaf = issued.CopyWithPrivateKey(rsa);
+
+        var pfx = leaf.Export(X509ContentType.Pfx, KeyPass);
+        try { File.WriteAllBytes(LeafPath, pfx); } catch { /* not being able to cache it is not fatal */ }
+        return X509CertificateLoader.LoadPkcs12(pfx, KeyPass);
+    }
+
+    /// <summary>Whether this certificate already names every address the phone might be given.</summary>
+    private static bool CoversAll(X509Certificate2 cert, List<IPAddress> addresses)
+    {
+        try
+        {
+            var san = cert.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault();
+            if (san is null) return false;
+            var named = san.EnumerateIPAddresses().ToList();
+            return addresses.All(a => named.Any(n => n.Equals(a)));
+        }
+        catch { return false; }
     }
 
     public async ValueTask DisposeAsync() => await StopAsync();
