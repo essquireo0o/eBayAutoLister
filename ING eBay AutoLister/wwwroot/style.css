@@ -18333,23 +18333,43 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-phone-words h3 { font-size: var(--fs-lg); margin-bottom: 10px; }
 .pb-phone-words ol { margin: 0 0 12px 20px; font-size: var(--fs-sm); line-height: 1.7; color: var(--muted); }
 .pb-phone-words li { margin-bottom: 8px; }
-/* The one-time iPhone trust setup. Folded away because it is once per phone, and sitting
-   inside the pairing panel because that is where somebody is standing when Safari refuses. */
+/* The one-time iPhone trust setup, sitting inside the pairing panel because that is where
+   somebody is standing when Safari refuses.
+
+   It used to be a folded <details>, and the fold was the bug: the numbered steps above it say
+   "do the one-time setup first, the block below" while the block below was a collapsed grey
+   line. Everything underneath it was measured working -- the chain verifies, the profile
+   carries the CA that signed it, the port is reachable -- so the only broken thing about
+   Safari support was that the instructions were hidden. It is a card now, and it reads like
+   the requirement it is. */
 .pb-phone-trust {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  /* Lifted off the rail so it reads as the one thing left to do rather than as a footnote. */
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.pb-phone-trust > summary {
-  cursor: pointer;
-  font-size: var(--fs-2xs);
-  font-weight: 700;
+.pb-phone-trust-head {
+  margin: 0 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 800;
   color: var(--accent);
-  list-style: none;
 }
-.pb-phone-trust > summary::-webkit-details-marker { display: none; }
-.pb-phone-trust > summary::before { content: "▸ "; }
-.pb-phone-trust[open] > summary::before { content: "▾ "; }
+.pb-phone-trust-why {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.45;
+  color: var(--text-dim, #8b93a7);
+}
+/* The step everybody misses, and the only one iOS refuses to let software do. */
+.pb-phone-trust-last { font-weight: 600; }
+.pb-phone-trust-note {
+  display: block;
+  margin-top: 3px;
+  font-weight: 400;
+  color: var(--text-dim, #8b93a7);
+}
 .pb-phone-trust-body {
   /* Stacked, not side by side. This lives in the pairing rail, which is narrow whatever the
      window is doing — a row here put the code beside the steps and cut the steps off. */

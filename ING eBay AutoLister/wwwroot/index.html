@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=135" />
+  <link rel="stylesheet" href="style.css?v=136" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -3087,37 +3087,61 @@
                   <div class="pb-phone-words">
                     <h3>Scan this with your iPhone</h3>
                     <ol>
-                      <li>Point the phone's camera at the code and open the link.</li>
-                      <li><b>On an iPhone, do the one-time setup first</b> — the block below. Safari
-                          refuses a certificate your computer made for itself and gives you no way
-                          past it, so "tap through the warning" is advice that only works in Chrome.
-                          Once the setup is done it never asks again on that phone.</li>
-                      <li>Tap <b>Allow camera</b>, aim the phone at the item, and leave that page open.</li>
-                      <li>Press <b>📸 Snap</b> here. The phone takes the photo.</li>
+                      <li>Point the phone's camera at the code and open the link. It is an ordinary
+                          web address — no certificate is involved in opening it, on any phone.</li>
+                      <li><b>Quickest, and nothing to install:</b> tap <b>Take photos with this phone</b>.
+                          The iPhone's own camera opens, and every photo you take lands here. This works
+                          on Safari with no setup whatsoever.</li>
+                      <li><b>For the live viewfinder and the shutter on this screen</b> — watching the
+                          phone's lens here and pressing 📸 Snap from the computer — Safari needs to
+                          trust this computer's certificate first: the three steps at the bottom of this
+                          panel. Safari gives you no way to tap past that; "accept the warning" is advice
+                          that only works in Chrome, and on iPhone even accepting it leaves the camera
+                          blocked. Once done it never asks again on that phone.</li>
+                      <li>Then tap <b>Allow camera</b>, leave that page open, and press <b>📸 Snap</b> here.</li>
                     </ol>
                     <div class="pb-phone-link" id="pb-phone-url"></div>
                     <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
 
                     <!-- The setup that makes Safari work. Its own code because it is served over
-                         plain HTTP on another port: the phone cannot be handed the certificate
-                         over the connection that the missing certificate is blocking. Folded,
-                         because it is once per phone and furniture on every night after. -->
-                    <details class="pb-phone-trust">
-                      <summary>First time on this iPhone? Do this once</summary>
+                         plain HTTP on another port: the phone cannot be handed the certificate over
+                         the connection that the missing certificate is blocking.
+
+                         NOT a <details>, and that is the whole point of this block. It was folded —
+                         "once per phone, furniture every night after" — and the fold is why Safari
+                         never worked: the step above says "do the one-time setup first, the block
+                         below" while the block below is a collapsed grey line, so the one thing
+                         standing between an iPhone and a working camera was the thing nobody could
+                         see. Everything here was measured working on 2026-08-24 — the certificate
+                         chain verifies, the profile carries exactly the CA that signed it, and the
+                         setup port is reachable — which left the fold as the only thing wrong.
+                         The owner has ruled on this shape once already: hiding is not easy, and a
+                         <details> on AI Listing was reverted for the same reason. -->
+                    <section class="pb-phone-trust" id="pb-phone-trust">
+                      <h4 class="pb-phone-trust-head">📱 iPhone: do this once for the LIVE camera</h4>
+                      <p class="pb-phone-trust-why">
+                        Only needed for the viewfinder on this screen and the 📸 Snap button. If you just
+                        want photographs, tap <b>Take photos with this phone</b> on the page the code
+                        opens — that needs none of this. Safari will not run a live camera on a
+                        certificate this computer made for itself and will not let you tap past it, so
+                        these three steps are the way in. About a minute, once per phone.
+                      </p>
                       <div class="pb-phone-trust-body">
                         <div class="pb-phone-qr" id="pb-trust-qr"></div>
                         <ol>
                           <li>Scan this second code and tap <b>Download the certificate</b>.</li>
                           <li>Open <b>Settings</b> — <b>Profile Downloaded</b> is near the top.
                               Tap <b>Install</b> and enter your passcode.</li>
-                          <li><b>Settings &rsaquo; General &rsaquo; About &rsaquo; Certificate Trust
-                              Settings</b>, and switch on <b>ING Photo Box camera authority</b>.
-                              iPhones make you do this last step by hand — no installer on this
-                              computer is allowed to do it for you.</li>
+                          <li class="pb-phone-trust-last"><b>Settings &rsaquo; General &rsaquo; About
+                              &rsaquo; Certificate Trust Settings</b>, and switch on
+                              <b>ING Photo Box camera authority</b>.
+                              <span class="pb-phone-trust-note">This is the step people miss, and it is
+                              the one that actually turns the camera on. iPhones make you do it by hand:
+                              no installer on this computer is allowed to do it for you.</span></li>
                         </ol>
                         <div class="pb-phone-link" id="pb-trust-url"></div>
                       </div>
-                    </details>
+                    </section>
                   </div>
                 </div>
               </div>
