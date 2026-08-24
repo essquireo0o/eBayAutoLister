@@ -19,6 +19,26 @@ public class Credentials
     public string EbayClientSecret { get; set; } = "";
     public string EbayRuName { get; set; } = "";
     public bool EbaySandbox { get; set; } = false;
+
+    // ── Amazon (SP-API) ─────────────────────────────────────────────────────────────────────
+    // The same five values eBay needs, for a different account. Kept here rather than on
+    // ServerCredentials for the reason AmazonOptions gives: that type is overlaid onto every
+    // hosted user's row, and one Amazon grant there would be one Amazon account for everybody.
+    public string AmazonClientId { get; set; } = "";
+    public string AmazonClientSecret { get; set; } = "";
+    public string AmazonRefreshToken { get; set; } = "";
+    public string AmazonMarketplaceId { get; set; } = "";
+    public string AmazonSellerId { get; set; } = "";
+
+    /// <summary>Sandbox until somebody says otherwise, which is the opposite of a convenience.</summary>
+    public bool AmazonSandbox { get; set; } = true;
+
+    /// <summary>
+    /// WHEN the seller agreed that submissions may create real listings on their own Amazon
+    /// account, or empty. A timestamp rather than a bool because "did they agree" and "when did
+    /// they agree" are the same question the day a listing nobody remembers approving turns up.
+    /// </summary>
+    public string AmazonProductionConsentAt { get; set; } = "";
     public string EbayFulfillmentPolicyId { get; set; } = "";
     public string EbayPaymentPolicyId { get; set; } = "";
     public string EbayReturnPolicyId { get; set; } = "";
@@ -112,6 +132,16 @@ public class CredentialsPatch
     public string? EbayClientSecret { get; set; }
     public string? EbayRuName { get; set; }
     public bool?   EbaySandbox { get; set; }
+
+    public string? AmazonClientId { get; set; }
+    public string? AmazonClientSecret { get; set; }
+    public string? AmazonRefreshToken { get; set; }
+    public string? AmazonMarketplaceId { get; set; }
+    public string? AmazonSellerId { get; set; }
+    public bool?   AmazonSandbox { get; set; }
+
+    /// <summary>True the moment the seller ticks the production box; false withdraws it.</summary>
+    public bool?   AmazonProductionConsent { get; set; }
     public string? EbayFulfillmentPolicyId { get; set; }
     public string? EbayPaymentPolicyId { get; set; }
     public string? EbayReturnPolicyId { get; set; }
@@ -220,6 +250,17 @@ public class CredentialsStore
         SetSecret(patch.EbayDevId,    v => data.EbayDevId    = v);
         SetSecret(patch.EbayRuName,   v => data.EbayRuName   = v);
         if (patch.EbaySandbox is { } sandbox) data.EbaySandbox = sandbox;
+
+        // Amazon: keep-if-blank, exactly like the eBay identifiers above, so a form that renders
+        // "(saved)" for a secret and posts it back empty does not wipe the account.
+        SetSecret(patch.AmazonClientId,      v => data.AmazonClientId      = v);
+        SetSecret(patch.AmazonClientSecret,  v => data.AmazonClientSecret  = v);
+        SetSecret(patch.AmazonRefreshToken,  v => data.AmazonRefreshToken  = v);
+        SetSecret(patch.AmazonMarketplaceId, v => data.AmazonMarketplaceId = v);
+        SetSecret(patch.AmazonSellerId,      v => data.AmazonSellerId      = v);
+        if (patch.AmazonSandbox is { } amazonSandbox) data.AmazonSandbox = amazonSandbox;
+        if (patch.AmazonProductionConsent is { } consented)
+            data.AmazonProductionConsentAt = consented ? DateTime.UtcNow.ToString("u") : "";
 
         // Business policies: clearable, so an empty string that was actually sent does clear them.
         if (patch.EbayFulfillmentPolicyId is not null) data.EbayFulfillmentPolicyId = patch.EbayFulfillmentPolicyId.Trim();
@@ -464,6 +505,13 @@ public class CredentialsStore
             HasEbayClientSecret     = !string.IsNullOrWhiteSpace(data.EbayClientSecret),
             HasEbayUserToken        = !string.IsNullOrWhiteSpace(data.EbayUserToken),
             HasEbayRefreshToken     = !string.IsNullOrWhiteSpace(data.EbayRefreshToken),
+            AmazonClientId            = data.AmazonClientId,
+            AmazonMarketplaceId       = data.AmazonMarketplaceId,
+            AmazonSellerId            = data.AmazonSellerId,
+            AmazonSandbox             = data.AmazonSandbox,
+            HasAmazonClientSecret     = !string.IsNullOrWhiteSpace(data.AmazonClientSecret),
+            HasAmazonRefreshToken     = !string.IsNullOrWhiteSpace(data.AmazonRefreshToken),
+            AmazonProductionConsentAt = data.AmazonProductionConsentAt,
             EbayTokenExpiresAt      = data.EbayTokenExpiresAt?.ToString("u"),
             DefaultPostalCode       = data.DefaultPostalCode,
             DefaultCountry          = data.DefaultCountry.Length > 0 ? data.DefaultCountry : "US",
@@ -608,6 +656,15 @@ public class PublicFields
     public bool HasEbayClientSecret { get; set; }
     public bool HasEbayUserToken { get; set; }
     public bool HasEbayRefreshToken { get; set; }
+
+    // Amazon. Identifiers come back as themselves; the two secrets come back as booleans only.
+    public string AmazonClientId { get; set; } = "";
+    public string AmazonMarketplaceId { get; set; } = "";
+    public string AmazonSellerId { get; set; } = "";
+    public bool AmazonSandbox { get; set; } = true;
+    public bool HasAmazonClientSecret { get; set; }
+    public bool HasAmazonRefreshToken { get; set; }
+    public string AmazonProductionConsentAt { get; set; } = "";
     public string? EbayTokenExpiresAt { get; set; }
 
     // Listing defaults

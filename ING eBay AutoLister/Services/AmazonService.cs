@@ -50,6 +50,13 @@ public sealed class AmazonOptions
     public string SellerId      { get; init; } = "";
 
     /// <summary>
+    /// When the seller agreed that a submission may create a real listing on their own Amazon
+    /// account, or empty. Read by <see cref="AmazonSubmitGuard"/>, which refuses production
+    /// outright without it — see there for why the flag alone is not enough.
+    /// </summary>
+    public string ProductionConsentAt { get; init; } = "";
+
+    /// <summary>
     /// Which Amazon this build talks to. <b>Sandbox unless something explicitly says otherwise.</b>
     /// </summary>
     /// <remarks>
@@ -92,9 +99,49 @@ public sealed class AmazonOptions
         RefreshToken  = Read(configuration, "AmazonRefreshToken"),
         MarketplaceId = Read(configuration, "AmazonMarketplaceId"),
         SellerId      = Read(configuration, "AmazonSellerId"),
+        ProductionConsentAt = Read(configuration, "AmazonProductionConsentAt"),
         Sandbox       = ReadSandbox(configuration),
         Region        = ReadRegion(configuration),
     };
+
+    /// <summary>
+    /// The same options, but reading what the seller actually TYPED first.
+    /// </summary>
+    /// <remarks>
+    /// On the desktop build credentials.json is not a configuration source — it is a store the app
+    /// reads directly, which is why eBay takes a <see cref="CredentialsStore"/> and not an
+    /// <see cref="IConfiguration"/>. Amazon read configuration only, so every value saved on the
+    /// Amazon page landed in a file nothing consulted and the app went on reporting that no client
+    /// id was set. Stored values win; configuration remains the fallback, so a hosted deployment or
+    /// a machine configured by environment variables is unchanged.
+    /// </remarks>
+    public static AmazonOptions FromCredentials(Credentials stored, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+
+        var configured = FromConfiguration(configuration);
+
+        // Which of the two decides the environment. Once the seller has entered an application on
+        // the page, the page's own toggle is the honest answer — otherwise unticking "use the
+        // sandbox" would silently do nothing. Nothing reaches a real account on this alone: the
+        // production submit still needs the recorded agreement. See AmazonSubmitGuard.
+        var entered = !string.IsNullOrWhiteSpace(stored.AmazonClientId);
+
+        return new AmazonOptions
+        {
+            ClientId            = Prefer(stored.AmazonClientId,            configured.ClientId),
+            ClientSecret        = Prefer(stored.AmazonClientSecret,        configured.ClientSecret),
+            RefreshToken        = Prefer(stored.AmazonRefreshToken,        configured.RefreshToken),
+            MarketplaceId       = Prefer(stored.AmazonMarketplaceId,       configured.MarketplaceId),
+            SellerId            = Prefer(stored.AmazonSellerId,            configured.SellerId),
+            ProductionConsentAt = Prefer(stored.AmazonProductionConsentAt, configured.ProductionConsentAt),
+            Sandbox             = entered ? stored.AmazonSandbox : configured.Sandbox,
+            Region              = configured.Region,
+        };
+    }
+
+    private static string Prefer(string stored, string configured) =>
+        string.IsNullOrWhiteSpace(stored) ? configured : stored.Trim();
 
     /// <summary>
     /// Sandbox unless configuration says the literal <c>false</c>. A typo reads as sandbox, which is

@@ -160,8 +160,11 @@ public class AmazonSubmitEndpointTests(Xunit.Abstractions.ITestOutputHelper outp
     }
 
     [Fact]
-    public async Task A_production_deployment_cannot_submit_at_all()
+    public async Task A_production_deployment_cannot_submit_until_the_seller_has_agreed_to_it()
     {
+        // Sandbox off is a CONFIGURATION value: it travels in backups, gets copied between
+        // machines, and can be set by somebody who is not the person answerable for the listing.
+        // On its own it has never been permission to create one.
         using var server = await Server.StartAsync(Amazon.Accepted,
             extra: [("Credentials:AmazonSandbox", "false")]);
 
@@ -169,8 +172,24 @@ public class AmazonSubmitEndpointTests(Xunit.Abstractions.ITestOutputHelper outp
 
         Assert.Equal(AmazonSubmissionState.NotConfigured, answer.GetProperty("state").GetString());
         Assert.Empty(server.Amazon.Requests);
-        Assert.Contains("sandbox only", answer.GetProperty("headline").GetString()!,
+        Assert.Contains("real listing", answer.GetProperty("headline").GetString()!,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_production_deployment_submits_once_the_seller_has_agreed()
+    {
+        // The other half, and the reason the refusal above is a gate rather than a wall: a seller
+        // who has ticked the box on the Amazon page — which records WHEN they ticked it — is
+        // asking for a real listing, and the app stops arguing and sends it.
+        using var server = await Server.StartAsync(Amazon.Accepted,
+            extra: [("Credentials:AmazonSandbox", "false"),
+                    ("Credentials:AmazonProductionConsentAt", "2026-08-24 14:00:00Z")]);
+
+        var answer = await server.PostAsync(AmazonSubmitEndpoints.OfferPath, Offer());
+
+        Assert.NotEqual(AmazonSubmissionState.NotConfigured, answer.GetProperty("state").GetString());
+        Assert.NotEmpty(server.Amazon.Requests);
     }
 
     [Fact]

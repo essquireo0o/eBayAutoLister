@@ -260,7 +260,8 @@ builder.Services.AddSingleton<EbayService>();
 // The Amazon half. Read from configuration at startup like the eBay registration above, and
 // SANDBOX unless something explicitly says otherwise — a wrong sandbox flag lists nothing, a wrong
 // production flag publishes to a real Selling Partner account. See AmazonOptions.
-builder.Services.AddSingleton(AmazonOptions.FromConfiguration(builder.Configuration));
+builder.Services.AddSingleton(sp => AmazonOptions.FromCredentials(
+    sp.GetRequiredService<CredentialsStore>().Get(), builder.Configuration));
 builder.Services.AddSingleton<AmazonService>();
 // What Amazon requires per product type. The schema cache is a singleton because it owns a folder
 // and serialises writes to it; the service is one because the cache is. See AmazonSchemaCache.
@@ -9312,6 +9313,10 @@ app.MapGet("/api/ebay/status", (CredentialsStore store, EbayService ebay, Server
 
 // The Amazon counterpart of the endpoint above. Mapped from its own file so the handler the tests
 // exercise is the handler this app serves — see AmazonStatusEndpoint.
+// Where the five Amazon values are entered, since nothing else in the app asks for them. A page
+// of its own rather than a panel: see AmazonConnectPage.
+AmazonConnectPage.Map(app);
+
 AmazonStatusEndpoint.Map(app);
 
 // What Amazon actually requires for a given product, before a word of the listing is written —

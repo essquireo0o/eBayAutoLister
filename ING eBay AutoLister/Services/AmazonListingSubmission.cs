@@ -104,13 +104,18 @@ public static class AmazonSubmitGuard
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        if (!options.Sandbox)
+        // Production is allowed only when the seller has said so IN THIS APP, and the saying is
+        // kept with a date. The sandbox flag alone was never consent: it is a configuration value,
+        // and configuration gets copied between machines, restored from a backup, or set by
+        // somebody who was not the person answerable for the listing. See CredentialsStore's
+        // AmazonProductionConsentAt, and the tick box on the Amazon page that writes it.
+        if (!options.Sandbox && string.IsNullOrWhiteSpace(options.ProductionConsentAt))
             return new AmazonConfigProblem("production_refused",
-                "This build submits to the Amazon sandbox only. Credentials__AmazonSandbox is set to false, which " +
-                "points every call at a real Selling Partner account, and a submission there creates a real listing " +
-                "the seller is answerable for.",
-                "Leave Credentials__AmazonSandbox unset (or true) to submit. Publishing to a live Amazon account " +
-                "needs the seller's explicit consent, which nothing in this build asks for yet.");
+                "Credentials__AmazonSandbox is false, which points every call at a real Selling Partner account, " +
+                "and a submission there creates a real listing the seller is answerable for. Nobody has agreed to " +
+                "that in this app.",
+                "Open the Amazon page and tick \"submissions may create real listings on my Amazon account\", or " +
+                "set Credentials__AmazonSandbox back to true to keep working against the sandbox.");
 
         return options.CallProblem;
     }
