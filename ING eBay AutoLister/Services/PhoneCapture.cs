@@ -392,6 +392,13 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             });
 
             var web = builder.Build();
+            // Preview frames use one persistent binary connection. Without this middleware the
+            // WebSocket route below is merely an HTTP endpoint and Safari receives a 400 before
+            // the first encoded frame leaves the phone.
+            web.UseWebSockets(new WebSocketOptions
+            {
+                KeepAliveInterval = TimeSpan.FromSeconds(15)
+            });
             MapRoutes(web);
             await web.StartAsync(ct);
             _app = web;
@@ -611,6 +618,17 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             System.Text.Encoding.ASCII.GetBytes(token.PadRight(64)[..64]),
             System.Text.Encoding.ASCII.GetBytes(_token.PadRight(64)[..64]));
 
+        void StorePreview(byte[] frame)
+        {
+            if (frame.Length <= 500) return;
+            _preview = frame;
+            _previewAt = DateTimeOffset.UtcNow;
+            _lastSeen = DateTimeOffset.UtcNow;
+            _phoneEverConnected = true;
+            Interlocked.Increment(ref _previewSeq);
+            _previewReady.Set();
+        }
+
         web.MapGet("/p/{token}", (string token) =>
         {
             if (!Ok(token)) return Results.NotFound();
@@ -745,24 +763,58 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             return Results.Ok(new { ok = true });
         });
 
-        // Viewfinder frames. Small, frequent, and never written to disk.
+        // Viewfinder frames. Small JPEGs, frequent, and never written to disk. The WebSocket is
+        // the normal path: one TLS handshake and one connection for the whole camera session.
+        // The phone drops a preview when that connection already has a frame buffered, so a slow
+        // wifi link lowers frame rate instead of showing the seller where the camera used to be.
+        web.Map("/p/{token}/preview-stream", async context =>
+        {
+            var token = Convert.ToString(context.Request.RouteValues["token"]) ?? "";
+            if (!Ok(token)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+            if (!context.WebSockets.IsWebSocketRequest)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            using var socket = await context.WebSockets.AcceptWebSocketAsync();
+            var buffer = new byte[512 * 1024];
+            try
+            {
+                while (socket.State == System.Net.WebSockets.WebSocketState.Open &&
+                       !context.RequestAborted.IsCancellationRequested)
+                {
+                    var count = 0;
+                    System.Net.WebSockets.ValueWebSocketReceiveResult part;
+                    do
+                    {
+                        if (count == buffer.Length)
+                        {
+                            await socket.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.MessageTooBig,
+                                "preview frame too large", context.RequestAborted);
+                            return;
+                        }
+                        part = await socket.ReceiveAsync(buffer.AsMemory(count), context.RequestAborted);
+                        if (part.MessageType == System.Net.WebSockets.WebSocketMessageType.Close) return;
+                        count += part.Count;
+                    }
+                    while (!part.EndOfMessage);
+
+                    if (part.MessageType == System.Net.WebSockets.WebSocketMessageType.Binary && count > 500)
+                        StorePreview(buffer.AsSpan(0, count).ToArray());
+                }
+            }
+            catch (OperationCanceledException) { /* phone page closed */ }
+            catch (System.Net.WebSockets.WebSocketException) { /* wifi changed or phone locked */ }
+        });
+
+        // Compatibility fallback for a browser or network that refuses WebSockets.
         web.MapPost("/p/{token}/preview", async (string token, HttpRequest req) =>
         {
             if (!Ok(token)) return Results.NotFound();
-            _lastSeen = DateTimeOffset.UtcNow;
-            _phoneEverConnected = true;
             using var ms = new MemoryStream();
             await req.Body.CopyToAsync(ms);
-            if (ms.Length > 500)
-            {
-                _preview = ms.ToArray();
-                _previewAt = DateTimeOffset.UtcNow;
-                Interlocked.Increment(ref _previewSeq);
-                // Straight out to whoever is watching. This is the whole viewfinder path now:
-                // lens -> phone POST -> this line -> the desktop's open stream, with no timer
-                // anywhere between them.
-                _previewReady.Set();
-            }
+            StorePreview(ms.ToArray());
             return Results.Ok();
         });
 
@@ -2160,8 +2212,38 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         // requestAnimationFrame is deliberately not used: it stops in a backgrounded tab, and a
         // phone propped up as a camera is very often a phone the person is not looking at.
         const MIN_FRAME_MS = 40;              // 25fps ceiling — past this is heat, not smoothness
+        const MAX_PREVIEW_BACKLOG = 128 * 1024;
         const pv = document.createElement('canvas');
         const pctx = pv.getContext('2d', { alpha: false, desynchronized: true });
+
+        // One binary connection for the whole viewfinder. A POST for every frame paid the HTTP
+        // request machinery 20 times a second and, worse, awaited frames that were already stale.
+        // WebSocket.send queues bytes immediately. When one or two JPEGs are already queued we
+        // drop the current preview and encode the next camera position instead; full-resolution
+        // still photographs use sendPhoto() and are never dropped or sent through this channel.
+        let previewSocket = null, previewSocketRetryAt = 0;
+        async function previewLink() {
+          if (previewSocket && previewSocket.readyState === WebSocket.OPEN) return previewSocket;
+          if (Date.now() < previewSocketRetryAt) return null;
+          previewSocketRetryAt = Date.now() + 3000;
+          const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const ws = new WebSocket(scheme + '//' + location.host + '/p/' + TOKEN + '/preview-stream');
+          ws.binaryType = 'arraybuffer';
+          try {
+            await new Promise((ok, no) => {
+              const timer = setTimeout(() => no(new Error('preview socket timed out')), 1800);
+              ws.onopen = () => { clearTimeout(timer); ok(); };
+              ws.onerror = () => { clearTimeout(timer); no(new Error('preview socket unavailable')); };
+            });
+            ws.onclose = () => { if (previewSocket === ws) previewSocket = null; };
+            previewSocket = ws;
+            return ws;
+          } catch (e) {
+            try { ws.close(); } catch (_) { }
+            return null;
+          }
+        }
+
         async function preview() {
           let lastFrame = -1;
           while (running) {
@@ -2177,14 +2259,23 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                 if (pv.width !== w || pv.height !== h) { pv.width = w; pv.height = h; }
                 pctx.drawImage(v, q.sx, q.sy, q.sw, q.sh, 0, 0, w, h);
                 const b = await new Promise(r => pv.toBlob(r, 'image/jpeg', 0.5));
-                // Awaited, so the next frame is not encoded until this one is off the phone:
-                // frames queued behind a slow link are frames that arrive already wrong.
-                if (b) await fetch('/p/' + TOKEN + '/preview', { method: 'POST', body: b });
+                if (b) {
+                  const ws = await previewLink();
+                  if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Latest-frame-wins: never build a video queue the seller has to watch catch up.
+                    if (ws.bufferedAmount < MAX_PREVIEW_BACKLOG) ws.send(b);
+                  } else {
+                    // Old browser / filtered network. Still a live view, just with per-frame POSTs.
+                    await fetch('/p/' + TOKEN + '/preview', { method: 'POST', body: b });
+                  }
+                }
               }
             } catch (e) { /* a dropped preview frame is not worth a message */ }
             const spent = performance.now() - began;
             if (spent < MIN_FRAME_MS) await new Promise(r => setTimeout(r, MIN_FRAME_MS - spent));
           }
+          try { previewSocket?.close(); } catch (e) { }
+          previewSocket = null;
         }
 
         // ── Recording ─────────────────────────────────────────────────────────────

@@ -43,6 +43,22 @@ public class PhoneCameraLatencyTests
     }
 
     [Fact]
+    public void Encoded_preview_frames_share_one_connection_and_stale_frames_are_dropped()
+    {
+        Assert.Contains("web.UseWebSockets(new WebSocketOptions", Phone);
+        Assert.Contains("/p/{token}/preview-stream", Phone);
+        Assert.Contains("new WebSocket(scheme + '//' + location.host", Phone);
+        Assert.Contains("ws.binaryType = 'arraybuffer'", Phone);
+        Assert.Contains("ws.bufferedAmount < MAX_PREVIEW_BACKLOG", Phone);
+        Assert.Contains("ws.send(b)", Phone);
+
+        // Full-resolution stills retain their separate, reliable upload path; only disposable
+        // viewfinder JPEGs are allowed to be dropped under back-pressure.
+        Assert.Contains("sendPhoto(blob)", Phone);
+        Assert.Contains("fetch('/p/' + TOKEN + '/preview'", Phone);
+    }
+
+    [Fact]
     public void A_frame_the_camera_has_not_redrawn_is_never_sent_twice()
     {
         // Encoding and shipping an identical frame costs a JPEG and a request to say nothing.
