@@ -3808,7 +3808,7 @@ app.MapPost("/api/whatsnot/bid", async (
             if (await metals.ValueAsync(title, ct) is { } metal)
                 melt = MeltAnchor.Decide(title, metal,
                     analysis is null ? null : ResalePricing.From(analysis, terms.Query),
-                    req.CurrentBid ?? 0m);
+                    req.CurrentBid ?? 0m, askIsFirm: false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -3967,7 +3967,7 @@ app.MapPost("/api/whatsnot/rebid", async (
             if (await metals.ValueAsync(quote.Item, ct) is { } metal)
                 melt = MeltAnchor.Decide(quote.Item, metal,
                     quote.Analysis is null ? null : ResalePricing.From(quote.Analysis, quote.Search.Query),
-                    req.CurrentBid ?? 0m);
+                    req.CurrentBid ?? 0m, askIsFirm: false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { log.Add("Warning", "Metal spot lookup failed", $"\"{quote.Item}\": {ex.Message}"); }

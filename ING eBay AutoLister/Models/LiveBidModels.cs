@@ -233,6 +233,14 @@ public sealed class LiveBidCard
     public LiveTrendRead Trend { get; set; } = new();
 
     /// <summary>
+    /// What the metal in this lot is worth at today's spot price, when the lot states a metal and a
+    /// weight. Never null &mdash; a card that only mentions metal when it found some is a card whose
+    /// silence means both "this is not bullion" and "nothing looked". See
+    /// <see cref="Services.MeltAnchor"/>.
+    /// </summary>
+    public LiveMeltRead Melt { get; set; } = new();
+
+    /// <summary>
     /// How many of this the seller would own if they won it — shelf, tonight's buy sheet and this
     /// lot — and how long eBay takes to absorb that many. Never null, and it changes no price on
     /// this card: saturation is a claim about time, not about what the thing fetches. See
@@ -586,6 +594,40 @@ public static class LiveSearchDropKinds
 /// that only mentioned the direction of travel when it happened to find one would leave the seller
 /// unable to tell "these are holding their price" from "nobody looked".
 /// </remarks>
+/// <summary>
+/// The metal a lot is made of, priced at spot, beside what the comps said about it.
+/// </summary>
+/// <remarks>
+/// A live show is where this matters most: coin and bullion lots go past at one a minute, the
+/// host's wording is auction talk rather than an eBay title, and the sold comps behind a "1 oz
+/// gold bar" are whatever else was called that &mdash; including the plated souvenirs. Weight x
+/// purity x the published spot price does not depend on any of that being right.
+/// </remarks>
+public sealed class LiveMeltRead
+{
+    /// <summary>False when the lot does not state a metal and a weight. Every field below is then
+    /// empty and the ceiling is the comps' own.</summary>
+    public bool Readable { get; set; }
+
+    /// <summary>True when the metal SET the resale price rather than merely being stated beside it.</summary>
+    public bool SetPrice { get; set; }
+
+    /// <summary>priced | raised | agreed | contradicted | none &mdash; see <see cref="Services.MeltOutcome"/>.</summary>
+    public string Outcome { get; set; } = "none";
+
+    /// <summary>gold | silver | platinum | palladium.</summary>
+    public string Metal { get; set; } = "";
+
+    /// <summary>What the metal alone is worth: weight x purity x spot.</summary>
+    public decimal MeltValue { get; set; }
+
+    /// <summary>The spot price used, per gram, so the seller can check it against a screen.</summary>
+    public decimal SpotPerGram { get; set; }
+
+    /// <summary>The sentence the anchor wrote, including why it did or did not take the price.</summary>
+    public string Note { get; set; } = "";
+}
+
 public sealed class LiveTrendRead
 {
     /// <summary>False when the comps could not support a reading at all. Every figure below is then

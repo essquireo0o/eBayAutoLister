@@ -85,7 +85,15 @@ public static class MeltAnchor
     /// <param name="comps">Whatever the sold-comps tiers came back with, price or no price.</param>
     /// <param name="lowestAsk">The cheapest ask across the group — what a buyer would actually pay.</param>
     /// <remarks>Pure and total: no clock, no network, no mutation of anything passed in.</remarks>
-    public static MeltVerdict? Decide(string lookupTitle, MetalMelt? melt, ResalePricing? comps, decimal lowestAsk)
+    /// <param name="askIsFirm">
+    /// Whether <paramref name="lowestAsk"/> is a price somebody is actually ASKING. True on a shelf
+    /// or a fixed-price listing, where a $6.99 "1 oz gold bar" tells you the title is a lie. FALSE
+    /// on a live auction, where the current bid starts near zero on purpose and says nothing at all
+    /// about the lot — reading an opening dollar as a contradiction would refuse to price every real
+    /// bullion lot for the first several bids, which is precisely when the seller needs the number.
+    /// </param>
+    public static MeltVerdict? Decide(string lookupTitle, MetalMelt? melt, ResalePricing? comps, decimal lowestAsk,
+                                      bool askIsFirm = true)
     {
         if (melt is null || melt.MeltLow <= 0m) return null;
 
@@ -96,7 +104,7 @@ public static class MeltAnchor
         // ── The ask has the first word, because it is the one fact nobody wrote to sell you ──────
         // A free listing gets the same treatment: there is no ask to check the title against, and
         // "free gold" is a category of ad, not a category of metal.
-        if (lowestAsk <= 0m || lowestAsk < melt.MeltLow * TooCheapToBeReal)
+        if (askIsFirm && (lowestAsk <= 0m || lowestAsk < melt.MeltLow * TooCheapToBeReal))
         {
             return new MeltVerdict(MeltOutcome.Contradicted, melt, comps, Tier: "", Note: Contradiction(melt, lowestAsk));
         }
@@ -106,7 +114,7 @@ public static class MeltAnchor
             return new MeltVerdict(MeltOutcome.Priced, melt, Price(lookupTitle, melt), TierFor(melt),
                 $"Priced off the metal in it, not off sold listings: {melt.Arithmetic}. "
                 + "A commodity is worth what its weight is worth, and that price is published every minute."
-                + PurityCaveat(melt));
+                + PurityCaveat(melt) + Unvouched(askIsFirm));
         }
 
         if (compsPrice < melt.MeltLow)
@@ -115,13 +123,22 @@ public static class MeltAnchor
                 $"The sold comps came out at {compsPrice:C2}, below what the metal alone is worth — "
                 + $"{melt.Arithmetic}. Comps that price metal under its own weight are comps for a "
                 + "different object, so this is priced off spot instead."
-                + PurityCaveat(melt));
+                + PurityCaveat(melt) + Unvouched(askIsFirm));
         }
 
         return new MeltVerdict(MeltOutcome.Floor, melt, comps, Tier: "",
             Note: $"The metal alone is worth {Span(melt)} — {melt.Arithmetic} — so the comps above it are a "
                 + "premium for what it is, not just what it weighs. That metal value is the floor under this buy.");
     }
+
+    /// <summary>
+    /// Said only where the ask could not be checked. On a shelf, a price far under the metal is the
+    /// tell that the title is wrong; at an auction there is no such tell, so the seller is told that
+    /// the figure rests on the lot being what it says it is rather than on anything corroborating it.
+    /// </summary>
+    private static string Unvouched(bool askIsFirm) =>
+        askIsFirm ? "" : " Nothing here corroborates the title — a current bid is not an asking price — "
+                       + "so this figure assumes the lot is the metal and weight it says it is.";
 
     /// <summary>A resale price that is the metal, shaped exactly like a comps-priced one.</summary>
     /// <remarks>

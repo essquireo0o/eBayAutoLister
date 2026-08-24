@@ -142,14 +142,22 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
         string item, MarketAnalysisResult? analysis, LiveBidRequest request, FeeProfile fees,
         ResaleCategory? category = null, DateTime? nowUtc = null, OwnSalesEvidence? own = null,
         LiveSearchTerms? search = null, LiveStockTonight tonight = default, LiveShipTonight ship = default,
-        LiveBudgetTonight cash = default, LiveRoomTonight room = default)
+        LiveBudgetTonight cash = default, LiveRoomTonight room = default, MeltVerdict? melt = null)
     {
         var now = nowUtc ?? DateTime.UtcNow;
         var terms = search ?? LiveSearchQuery.Build(item);
         // The lookup title is the QUERY, not the typed name — PricedAs has always meant "what the
         // comp lookup ran against", and on a live show those two stopped being the same thing the
         // moment the auction wording started being taken out of it.
-        var resale = analysis is null ? null : ResalePricing.From(analysis, terms.Query);
+        var comps = analysis is null ? null : ResalePricing.From(analysis, terms.Query);
+
+        // The metal in it, where the comps are the wrong instrument entirely. A live coin show is
+        // where this matters most: lots go past at one a minute, the host's wording is auction talk
+        // rather than an eBay title, and the sold comps behind "1 oz gold bar" are whatever else was
+        // called that — the plated souvenirs included. Weight x purity x spot does not depend on any
+        // of that being right, and it overrules the comps in ONE direction only: when they came out
+        // BELOW the metal. See MeltAnchor for why that asymmetry is the whole safety argument.
+        var resale = melt is { SetsPrice: true, Pricing: { } melted } ? melted : comps;
 
         // Which way the price has been going. Read off the SAME comps the resale figure above came
         // from — no second lookup, nothing extra to wait for — and recomputed on a re-price rather
@@ -202,7 +210,10 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
             Item = item,
             Search = terms,
             Trend = trend,
-            Condition = condition,
+            Condition = condition,
+            // Stated whether or not it took the price: "this is not bullion" and "nothing looked"
+            // must not be the same silence. See LiveMeltRead.
+            Melt = MeltRead(melt),
             Ship = freight,
             Tax = tax,
             PricedAs = resale?.LookupTitle ?? terms.Query,
@@ -654,6 +665,21 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
     /// point is how a card ends up saying "4 comps" under a badge that was chosen because there
     /// were two.
     /// </remarks>
+    /// <summary>The metal block, in the house style: present on every card, empty when the lot is not metal.</summary>
+    private static LiveMeltRead MeltRead(MeltVerdict? verdict) =>
+        verdict is null
+            ? new LiveMeltRead()
+            : new LiveMeltRead
+            {
+                Readable     = true,
+                SetPrice     = verdict.SetsPrice,
+                Outcome      = verdict.Outcome.ToString().ToLowerInvariant(),
+                Metal        = verdict.Melt.Content.Metal,
+                MeltValue    = verdict.Melt.MeltLow,
+                SpotPerGram  = verdict.Melt.SpotPerGram,
+                Note         = verdict.Note,
+            };
+
     public static int CompCountOf(MarketAnalysisResult analysis) =>
         analysis.Sources.PricedOnCompCount > 0
             ? analysis.Sources.PricedOnCompCount + analysis.Sources.TerapeakComparableCount
