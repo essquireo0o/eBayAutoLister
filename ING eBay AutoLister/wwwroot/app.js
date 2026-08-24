@@ -18757,35 +18757,20 @@
     }
   }
 
-  // /api/photos/remove-bg writes the cutout to /generated-photos and hands back a URL, but the
-  // library upload takes base64 — so pull the cleaned bytes back before saving them to the model.
-  async function plRemoveBackground(imageBase64, mimeType) {
-    const res  = await fetch('/api/photos/remove-bg', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageBase64, mimeType })
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'Background removal failed');
-    const blob = await fetch(body.url).then(r => r.blob());
-    return { imageBase64: await blobToBase64(blob), mimeType: blob.type || 'image/png' };
-  }
-
   async function plUploadFiles(fileList) {
     const images = [...(fileList || [])].filter(f => (f.type || '').startsWith('image/'));
     if (!images.length) return;
     if (!plSelected) { setPlUploadMsg('Pick or create a model folder first.', 'error'); return; }
 
-    const model    = plSelected;
-    const removeBg = !!$('pl-remove-bg')?.checked;
+    const model = plSelected;
     let saved = 0;
     const failures = [];
 
     for (const [i, file] of images.entries()) {
       const label = file.name || 'Pasted photo';
-      setPlUploadMsg(`Saving ${i + 1} of ${images.length}${removeBg ? ' — removing background, this takes a few seconds…' : '…'}`);
+      setPlUploadMsg(`Saving ${i + 1} of ${images.length}…`);
       try {
-        let payload = { imageBase64: await blobToBase64(file), mimeType: file.type || 'image/jpeg' };
-        if (removeBg) payload = await plRemoveBackground(payload.imageBase64, payload.mimeType);
+        const payload = { imageBase64: await blobToBase64(file), mimeType: file.type || 'image/jpeg' };
 
         const res  = await fetch('/api/photos/library/upload', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -23706,7 +23691,6 @@
     if ($('nl-preview-img')) $('nl-preview-img').src = '';
     $('nl-drop-zone')?.classList.remove('hidden');
     $('nl-preview-wrap')?.classList.add('hidden');
-    $('nl-cutout-wrap')?.classList.add('hidden');
     $('nl-ai-status')?.classList.add('hidden');
     $('nl-ai-done')?.classList.add('hidden');
     $('nl-ai-error')?.classList.add('hidden');
@@ -24167,8 +24151,9 @@
         if (previewImg) previewImg.src = absUrl;
         $('nl-drop-zone')?.classList.add('hidden');
         $('nl-preview-wrap')?.classList.remove('hidden');
-        // Also kick off background removal → Picture 1
-        nlAutoRemoveBg(absUrl);
+        // Picture 1 is the photograph. It used to be an automatic cut-out of the
+        // photograph, written over slot 0 without asking.
+        setPhotoSlotUrl(0, absUrl);
       }
 
       const activeTab = draftTabs.find(t => t.id === activeDraftTabId);
@@ -24419,7 +24404,7 @@
       if (previewImg) previewImg.src = absUrls[0];
       $('nl-drop-zone')?.classList.add('hidden');
       $('nl-preview-wrap')?.classList.remove('hidden');
-      nlAutoRemoveBg(absUrls[0]);
+      setPhotoSlotUrl(0, absUrls[0]);
       absUrls.slice(1).forEach((u, i) => setPhotoSlotUrl(i + 1, u));
     } else {
       addActivity('No photos found online', 'Drop or paste a photo manually, or try a more specific item name');
@@ -24559,12 +24544,12 @@
       $('nl-ai-done')?.classList.remove('hidden');
       addActivity('AI analysis complete', data.title || 'Form filled — review before publishing.');
 
-      // Auto remove background — use first fetched photo, or fall back to the uploaded image
-      // directly. Skipped on the used-item path: library photos are already curated, and the
-      // uploaded screenshot must never end up as the listing photo.
+      // Picture 1 — the first fetched photo, or the uploaded image itself. Skipped on the
+      // used-item path: library photos are already curated, and the uploaded screenshot must
+      // never end up as the listing photo.
       if (!usedNeedsRealPhoto) {
-        if (firstPhotoUrl) nlAutoRemoveBg(firstPhotoUrl);
-        else if (nlImageBase64) nlAutoRemoveBgFromBase64(nlImageBase64, nlMimeType || 'image/jpeg');
+        if (firstPhotoUrl) setPhotoSlotUrl(0, firstPhotoUrl);
+        else if (nlImageBase64) setPhotoSlotUrl(0, `data:${nlMimeType || 'image/jpeg'};base64,${nlImageBase64}`);
       }
     } catch (err) {
       // Reached only on a bug in the code above — callApi itself never throws.
@@ -24765,7 +24750,7 @@
     const firstImg = (d.imageUrls || []).find(u => u && (u.startsWith('http') || u.startsWith('/')));
     if (firstImg) {
       const abs = firstImg.startsWith('/') ? window.location.origin + firstImg : firstImg;
-      nlAutoRemoveBg(abs);
+      setPhotoSlotUrl(0, abs);
     }
 
     nlUpdateCharCount('nl-title', 'nl-title-count', 80);
@@ -26337,13 +26322,7 @@
     removeBtn.title = 'Remove';
     removeBtn.addEventListener('click', e => { e.stopPropagation(); clearPhotoSlot(index); });
 
-    const rembgBtn = document.createElement('button');
-    rembgBtn.type = 'button';
-    rembgBtn.className = 'slot-rembg';
-    rembgBtn.textContent = 'Remove BG';
-    rembgBtn.addEventListener('click', e => { e.stopPropagation(); nlRemoveBgFromSlot(index); });
-
-    slot.append(fileInput, ph, img, label, removeBtn, rembgBtn);
+    slot.append(fileInput, ph, img, label, removeBtn);
 
     slot.addEventListener('click', () => {
       if (slot.classList.contains('has-image')) openPhotoEditor(index);
@@ -26449,45 +26428,6 @@
       addActivity('Photo added', `Picture ${index + 1}`);
     };
     reader.readAsDataURL(file);
-  }
-
-  async function nlRemoveBgFromSlot(index) {
-    const slot = getPhotoSlot(index);
-    if (!slot?.classList.contains('has-image')) return;
-    const url = slot.dataset.url;
-    if (!url) return;
-
-    const btn = slot.querySelector('.slot-rembg');
-    if (btn) { btn.textContent = 'Working…'; btn.disabled = true; }
-
-    try {
-      let b64, mimeType;
-      if (url.startsWith('data:')) {
-        const [header, data] = url.split(',');
-        b64 = data; mimeType = header.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
-      } else {
-        const fetchRes = await fetch(url);
-        if (!fetchRes.ok) throw new Error('Could not fetch image');
-        const blob = await fetchRes.blob();
-        mimeType = blob.type || 'image/jpeg';
-        b64 = await blobToBase64(blob);
-      }
-      const res  = await fetch('/api/photos/remove-bg', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: b64, mimeType })
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'BG removal failed');
-      setPhotoSlotUrl(index, body.url);
-      addActivity('Background removed', `Picture ${index + 1}`);
-    } catch (err) {
-      toastErr(errorText(err, 'Unknown error.'), {
-        title: `Background removal failed on picture ${index + 1}`,
-        action: { label: 'Try again', onClick: () => nlRemoveBgFromSlot(index) },
-      });
-    } finally {
-      if (btn) { btn.textContent = 'Remove BG'; btn.disabled = false; }
-    }
   }
 
   async function uploadPhotosToEbay(photoUrls) {
@@ -26936,75 +26876,6 @@
     }
 
     return tmp.innerHTML;
-  }
-
-  async function nlAutoRemoveBg(localUrl) {
-    $('nl-cutout-wrap')?.classList.remove('hidden');
-    $('nl-cutout-spinner')?.classList.remove('hidden');
-    const cutoutImg = $('nl-cutout-img');
-    if (cutoutImg) cutoutImg.src = '';
-
-    try {
-      const fetchRes = await fetch(localUrl);
-      if (!fetchRes.ok) throw new Error('Could not fetch photo');
-      const blob   = await fetchRes.blob();
-      const b64    = await blobToBase64(blob);
-      const apiRes = await fetch('/api/photos/remove-bg', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: b64, mimeType: blob.type || 'image/png' })
-      });
-      const body = await apiRes.json();
-      if (!apiRes.ok) throw new Error(body.error || 'Background removal failed');
-
-      if (cutoutImg) cutoutImg.src = body.url;
-      setPhotoSlotUrl(0, body.url);
-      addActivity('Background removed automatically', 'Set as Picture 1');
-    } catch (err) {
-      $('nl-cutout-wrap')?.classList.add('hidden');
-      addActivity('Auto BG removal failed', errorText(err));
-    } finally {
-      $('nl-cutout-spinner')?.classList.add('hidden');
-    }
-  }
-
-  async function nlAutoRemoveBgFromBase64(b64, mimeType) {
-    $('nl-cutout-wrap')?.classList.remove('hidden');
-    $('nl-cutout-spinner')?.classList.remove('hidden');
-    const cutoutImg = $('nl-cutout-img');
-    if (cutoutImg) cutoutImg.src = '';
-    try {
-      const apiRes = await fetch('/api/photos/remove-bg', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: b64, mimeType })
-      });
-      const body = await apiRes.json();
-      if (!apiRes.ok) throw new Error(body.error || 'Background removal failed');
-      if (cutoutImg) cutoutImg.src = body.url;
-      setPhotoSlotUrl(0, body.url);
-      addActivity('Background removed automatically', 'Set as Picture 1');
-    } catch (err) {
-      $('nl-cutout-wrap')?.classList.add('hidden');
-      addActivity('Auto BG removal failed', errorText(err));
-    } finally {
-      $('nl-cutout-spinner')?.classList.add('hidden');
-    }
-  }
-
-  async function nlRemoveBg() {
-    if (!nlImageBase64) { return; }
-    try {
-      const res = await fetch('/api/photos/remove-bg', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: nlImageBase64, mimeType: nlMimeType || 'image/jpeg' })
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Background removal failed');
-      nlAddPhotoRow(body.url, true);
-      addActivity('Background removed', 'Set as Picture 1');
-    } catch (err) {
-      addActivity('Background removal failed', errorText(err));
-    }
   }
 
   async function nlImproveSeo() {
