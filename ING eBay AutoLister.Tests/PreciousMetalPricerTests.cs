@@ -51,6 +51,26 @@ public class PreciousMetalPricerTests
         Assert.Null(P.Read(name));
     }
 
+    /// <summary>
+    /// Gold leaf reads as a coating here, and that is a decision rather than an oversight.
+    /// </summary>
+    /// <remarks>
+    /// Leaf is genuine 24k gold, so an earlier draft of this file priced it by weight. What settles
+    /// it against that is which way the error runs: the gram figure on a leaf listing is almost
+    /// always the vial, the card or the assembly rather than the metal, and the market is
+    /// overwhelmingly decorative flake. Priced at melt, a $12 novelty vial reads as $222 of gold on
+    /// a board the owner acts on with cash; refused, a rare genuine leaf lot goes unpriced and the
+    /// seller sees the search link. The second is the cheaper mistake, so Bullion.Grade calls leaf
+    /// a coating and this defers to it — one vocabulary, and the comp filter agrees.
+    /// </remarks>
+    [Theory]
+    [InlineData("24 karat gold leaf 1.5 grams")]
+    [InlineData("gold foil nugget novelty vial 2 grams")]
+    public void Leaf_and_foil_are_not_priced_by_their_stated_weight(string name)
+    {
+        Assert.Null(P.Read(name));
+    }
+
     [Theory]
     [InlineData("natural gold nugget")]                 // no weight — nothing to multiply
     [InlineData("Antminer S19 95TH/s")]                 // not metal at all
@@ -91,7 +111,6 @@ public class PreciousMetalPricerTests
     [Theory]
     [InlineData("14k gold ring 8.2 grams", 8.2, 14.0 / 24.0)]
     [InlineData("18kt gold chain 22 g", 22, 18.0 / 24.0)]
-    [InlineData("24 karat gold leaf 1.5 grams", 1.5, 1.0)]
     [InlineData("10k gold bracelet 15gm", 15, 10.0 / 24.0)]
     public void Karat_is_read_as_a_fraction_of_twenty_four(string name, double grams, double purity)
     {

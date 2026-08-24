@@ -22,9 +22,11 @@ namespace ING_eBay_AutoLister.Services;
 /// calculation on google."
 /// </para>
 /// <para>
-/// <b>What it refuses to do.</b> Plated, filled, vermeil and tone carry a few cents of metal on a
-/// base of brass, and pricing one at melt would be the same mistake in the opposite direction and
-/// far more expensive. Those are rejected outright. Purity that is not stated is never assumed
+/// <b>What it refuses to do.</b> Plated, filled and vermeil carry a few cents of metal on a base of
+/// brass, and pricing one at melt would be the same mistake in the opposite direction and far more
+/// expensive. Those are rejected outright, by <see cref="Bullion.Grade"/> — the same reading that
+/// decides which comps may price a bullion row, so the two can never disagree about what solid
+/// metal is. Purity that is not stated is never assumed
 /// either: an unmarked nugget gets a RANGE with its assumption named, not a single confident
 /// number, because inventing a purity is inventing money.
 /// </para>
@@ -42,29 +44,6 @@ public sealed partial class PreciousMetalPricer(IHttpClientFactory http, ActionL
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // ── What the name says ────────────────────────────────────────────────────────
-
-    /// <summary>Anything that means "a thin layer of the metal on something else".</summary>
-    private static readonly string[] NotSolid =
-    [
-        "plated", "plate ", "gold-plated", "silver-plated", "gp ", "hge", "heavy gold electroplate",
-        "filled", "gold filled", "gf ", "1/20", "1/10 12k", "rolled gold",
-        "vermeil", "tone", "goldtone", "silvertone", "gold tone", "silver tone",
-        "colored", "coloured", "color ", "look", "style", "finish", "wash", "dipped",
-        "clad", "layered", "over sterling", "plate", "electroplat",
-
-        // ── And anything that means "not the metal at all" ────────────────────────────────────
-        // A separate failure from plating and a more expensive one. These lots state a metal AND a
-        // weight in the title exactly the way a real bar does — "1 OZ Gold USA 100 Dollar Bullion
-        // Bar", $6.99 — and a melt figure taken off that title would be four figures of imaginary
-        // gold on a board the owner acts on with cash. The Hobby Protection Act word is "copy";
-        // the marketplace words are these. The gold-FOIL "banknote" belongs here too: it carries
-        // real gold, in a quantity that has nothing to do with the number printed on the front.
-        // Gold LEAF is deliberately absent — leaf sold by the gram is real gold sold by the gram,
-        // and the novelty version of it says "foil" or "banknote" and is caught by those.
-        "replica", "reproduction", "copy", "novelty", "souvenir", "tribute", "fantasy",
-        "fake", "faux", "not real", "prop ", "toy ",
-        "foil", "banknote", "bank note",
-    ];
 
     private static readonly (string Word, string Symbol)[] Metals =
     [
@@ -89,10 +68,16 @@ public sealed partial class PreciousMetalPricer(IHttpClientFactory http, ActionL
         if (string.IsNullOrWhiteSpace(name)) return null;
         var text = " " + name.ToLowerInvariant().Replace('⁄', '/') + " ";
 
-        // A layer of gold on brass is not gold. This check comes first and is absolute.
-        foreach (var bad in NotSolid)
-            if (text.Contains(bad, StringComparison.Ordinal))
-                return null;
+        // A layer of gold on brass is not gold, and this check comes first and is absolute.
+        //
+        // The vocabulary lives in Bullion, not here. It was duplicated in this file until
+        // 2026-08-24, and the copy was wrong in two ways that list had already reasoned through:
+        // it treated bare "tone" as plating, which reads a rainbow-TONED Morgan dollar as costume
+        // brass, and bare "plate" the same way, which does it to a sterling serving plate. One
+        // vocabulary, so the melt price and the comp filter can never disagree about what solid
+        // metal is. Anything short of Solid — a coating, or a title too vague to commit either way
+        // — gets no melt figure at all.
+        if (Bullion.Grade(name) is not BullionGrade.Solid) return null;
 
         var metal = Metals.FirstOrDefault(m => text.Contains(m.Word, StringComparison.Ordinal));
         if (metal.Symbol is null) return null;

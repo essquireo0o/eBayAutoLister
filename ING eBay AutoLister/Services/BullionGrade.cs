@@ -76,6 +76,13 @@ public static partial class Bullion
         "gold foil", "silver foil", "gold leaf", "24k foil", "gold colored", "gold coloured",
         "replica", "novelty", "tribute", "fantasy", "imitation", "faux", "not real",
         "gold plated", "silver plated",
+        // Added 2026-08-24 when PreciousMetalPricer was pointed at this list instead of keeping a
+        // second one of its own. Same rule, same direction — these are all surface or souvenir
+        // language the original set happened not to carry. "copy" keeps its trailing space so it
+        // cannot fire on "copyright"; "banknote" is the shape this commit's own $6.99 bar was
+        // stamped in.
+        "gold finish", "silver finish", "gold wash", "silver wash",
+        "souvenir", "reproduction", "copy ", "banknote", "bank note",
     ];
 
     // "The metal is a coating, unless the title also states a hallmark." A sterling serving plate
