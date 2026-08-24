@@ -310,10 +310,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
-    // The primary QR starts by probing the secure camera. A phone that already trusts this computer
-    // goes straight into the live studio; a phone that does not gets the one-time setup and retains
-    // the certificate-free /c/{token} capture link as an immediate fallback.
-    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
+    // The primary QR must always take a photograph. Safari can open its native camera from this
+    // plain-HTTP file-input page with no profile or certificate; the optional /trust route remains
+    // available from that page for sellers who specifically want the desktop live viewfinder.
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/c/{_token}";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface
@@ -910,6 +910,58 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         // The way out of the certificate entirely. A file input is not a secure-context
         // feature, so this page opens the iPhone camera from plain HTTP with nothing to
         // install. Linked from the setup page above, for the phone that will not be set up.
+        // The listing, written from the phone, on the photograph just taken.
+        //
+        // The seller is standing over the item with it in their hand — which is the moment they can
+        // answer what the AI cannot see, and the moment they are least able to walk to a computer.
+        // So the phone gets the same call the desktop makes: title, category, condition, item
+        // specifics and a starting price, from the shot that was sent seconds ago.
+        //
+        // The photograph is NOT re-uploaded. It is already in the library, saved by the handler
+        // above, and re-sending two megabytes over a phone's uplink to analyse what the computer is
+        // already holding would be the slowest possible way to ask.
+        web.MapPost("/c/{token}/listing", async (string token, PhoneListingAsk ask, CancellationToken ct) =>
+        {
+            if (!Ok(token)) return Results.NotFound();
+            _lastSeen = DateTimeOffset.UtcNow;
+
+            var url = (ask?.Url ?? "").Trim();
+            if (url.Length == 0) url = _shots.Count > 0 ? _shots[^1] : "";
+            if (url.Length == 0)
+                return Results.BadRequest(new { error = "Take a photo first — there is nothing to write a listing from." });
+
+            var bytes = photos.ReadPhoto(url);
+            if (bytes is null)
+                return Results.BadRequest(new { error = "That photo is no longer in the library." });
+
+            try
+            {
+                var listing = await claude.AnalyzeImageAsync(Convert.ToBase64String(bytes), "image/jpeg", ct);
+                log.Add("Info", "Phone wrote a listing", $"{url} — {listing.Title}");
+
+                // Only what a phone screen can hold and a seller can check standing up. The whole
+                // draft is on the computer; this is the part worth reading before walking back to it.
+                return Results.Ok(new
+                {
+                    ok = true,
+                    title      = listing.Title,
+                    category   = listing.Category,
+                    condition  = ConditionWords(listing.Condition),
+                    price      = listing.Price,
+                    brand      = listing.Brand,
+                    photo      = url,
+                });
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                // The photograph is already saved and is not lost with the listing that failed.
+                log.Add("Warning", "Phone listing failed", $"{url} — {ex.Message}");
+                return Results.Json(new { error = "The AI could not write this one. The photo is saved on your computer." },
+                                    statusCode: 502);
+            }
+        });
+
         web.MapGet("/c/{token}", (string token, HttpContext ctx) =>
         {
             if (!Ok(token)) return Results.NotFound();
@@ -942,6 +994,27 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     /// A self-signed certificate for this machine's address, kept between runs so a phone that
     /// has already trusted it does not have to be asked again every time the app restarts.
     /// </summary>
+
+    /// <summary>Which photograph to write the listing from. Empty means the one just sent.</summary>
+    public sealed class PhoneListingAsk
+    {
+        public string? Url { get; set; }
+    }
+
+    /// <summary>eBay's condition codes are for eBay. A person holding the item reads words.</summary>
+    private static string ConditionWords(string? code) => (code ?? "").ToUpperInvariant() switch
+    {
+        "NEW" or "NEW_OTHER" or "NEW_WITH_TAGS"      => "New",
+        "NEW_WITH_DEFECTS"                            => "New with defects",
+        "MANUFACTURER_REFURBISHED" or "CERTIFIED_REFURBISHED" => "Refurbished",
+        "SELLER_REFURBISHED"                          => "Refurbished by seller",
+        "USED_EXCELLENT"                              => "Used — excellent",
+        "USED_VERY_GOOD"                              => "Used — very good",
+        "USED_GOOD"                                   => "Used — good",
+        "USED_ACCEPTABLE"                             => "Used — acceptable",
+        "FOR_PARTS_OR_NOT_WORKING"                    => "For parts or not working",
+        _                                             => "Used",
+    };
 
     /// <summary>The address a phone types to be handed the authority, before it trusts anything.</summary>
     public static string TrustUrl() => $"http://{LocalAddress()}:{TrustPort}/trust";

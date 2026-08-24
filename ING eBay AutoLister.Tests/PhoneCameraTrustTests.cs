@@ -155,10 +155,10 @@ public class PhoneCameraTrustTests
     }
 
     [Fact]
-    public void The_primary_qr_checks_live_camera_trust_before_showing_the_fallback()
+    public void The_primary_qr_is_the_certificate_free_camera_and_keeps_live_setup_optional()
     {
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
-        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/start\"", Source, StringComparison.Ordinal);
+        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/c/{_token}\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
         // The old certificate bootstrap never put a pairing secret in a discoverable /start path.
