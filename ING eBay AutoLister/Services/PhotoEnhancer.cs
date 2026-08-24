@@ -14,7 +14,12 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
     /// <summary>The model ran, but its mask was not trustworthy enough to alter a product photo.</summary>
     public sealed class RejectedException(string message) : Exception(message);
 
-    public sealed record Result(string Url, bool AiDetected, int CropPercent, int Width, int Height);
+    /// <summary>
+/// <paramref name="BackgroundReplaced"/> is false when the cut-out was refused and the photograph
+/// came back with the safe improvements only. <paramref name="Note"/> then says why.
+/// </summary>
+public sealed record Result(string Url, bool AiDetected, int CropPercent, int Width, int Height,
+                            bool BackgroundReplaced = true, string Note = "");
 
     public async Task<Result> EnhanceAsync(string sourceUrl, CancellationToken ct)
     {
@@ -71,9 +76,12 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
 
             var bytes = await File.ReadAllBytesAsync(output, ct);
             var url = await photos.SavePhotoAsync(PhotoLibrary.PhotoBoxFolder, bytes, "jpg");
-            log.Add("Info", "AI photo enhanced",
-                $"{url} — {(detail.AiDetected ? "AI subject" : "smart fallback")}, {detail.CropPercent}% crop, {detail.Width}x{detail.Height}");
-            return new Result(url, detail.AiDetected, detail.CropPercent, detail.Width, detail.Height);
+            log.Add("Info", detail.BackgroundReplaced ? "AI photo enhanced" : "Photo improved, background left alone",
+                detail.BackgroundReplaced
+                    ? $"{url} — {(detail.AiDetected ? "AI subject" : "smart fallback")}, {detail.CropPercent}% crop, {detail.Width}x{detail.Height}"
+                    : $"{url} — {detail.Note}");
+            return new Result(url, detail.AiDetected, detail.CropPercent, detail.Width, detail.Height,
+                              detail.BackgroundReplaced, detail.Note);
         }
         finally
         {
@@ -119,7 +127,8 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
         try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
-    private sealed record ScriptResult(bool AiDetected, int CropPercent, int Width, int Height);
+    private sealed record ScriptResult(bool AiDetected, int CropPercent, int Width, int Height,
+                                   bool BackgroundReplaced = true, string Note = "");
 
     // AI gives us the subject silhouette. If that silhouette cannot prove it is safe, enhancement
     // refuses the job and the caller keeps the original. A damaged product photo is never a useful
@@ -132,8 +141,31 @@ from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 src, dst = sys.argv[1], sys.argv[2]
 
 def safe_reject(reason):
-    print('SAFE_REJECT:' + reason, file=sys.stderr)
-    raise SystemExit(42)
+    print('SAFE_REJECT:' + reason, file=sys.stderr)   # the log still records WHICH gate refused
+    # The gate refused the CUT-OUT. That is a judgement about the background and about nothing
+    # else: exposure, contrast, colour and sharpening invent no pixels, cannot move a product onto
+    # a backdrop it was never on, and are most of the visible win on a phone snap anyway.
+    #
+    # Refusing them too is why "keep the original when uncertain" read to the owner as the feature
+    # doing nothing. Measured on their own captures: eight of eight real photographs were rejected,
+    # seven on classic_agreement — a border heuristic that only means anything when the product sits
+    # on a clean sheet, and is noise on the floors, carpets and desks they actually shoot on.
+    #
+    # So the refusal downgrades instead of abandoning: the photograph still comes back better, and
+    # it comes back with the reason the background was left alone.
+    photo = ImageOps.exif_transpose(Image.open(src)).convert('RGB')
+    lum = np.asarray(photo.convert('L'))
+    exposure = max(1.04, min(1.20, 185.0 / max(1.0, float(np.mean(lum))))) 
+    out = ImageEnhance.Brightness(photo).enhance(exposure)
+    out = ImageOps.autocontrast(out, cutoff=.35)
+    out = ImageEnhance.Contrast(out).enhance(1.07)
+    out = ImageEnhance.Color(out).enhance(1.06)
+    out = ImageEnhance.Sharpness(out).enhance(1.18)
+    out.save(dst, 'JPEG', quality=92, optimize=True)
+    print(json.dumps({'aiDetected': False, 'cropPercent': 0,
+                      'width': out.width, 'height': out.height,
+                      'backgroundReplaced': False, 'note': reason}))
+    raise SystemExit(0)
 
 img = ImageOps.exif_transpose(Image.open(src)).convert('RGB')
 ow, oh = img.size
@@ -200,10 +232,10 @@ try:
         except Exception:
             pass
 except Exception as ex:
-    safe_reject('The subject detector was unavailable, so the original was kept.')
+    safe_reject('The subject detector was unavailable, so the background was left as photographed.')
 
 if not ai_used:
-    safe_reject('The app could not isolate the whole product with enough confidence, so the original was kept.')
+    safe_reject('The app could not isolate the whole product with enough confidence, so the background was left as photographed.')
 
 # Quality gate. These are deliberately strict: AI Enhance is automatic, so uncertainty is a reason
 # to do nothing. The separate Cut out button remains available when the seller wants to try an
@@ -211,25 +243,25 @@ if not ai_used:
 ai_area = int(ai_mask.sum())
 clean_ratio = ai_area / max(1.0, w * h)
 if not .02 < clean_ratio < .82:
-    safe_reject('The cleaned subject mask was incomplete or covered too much of the frame, so the original was kept.')
+    safe_reject('The cleaned subject mask was incomplete or covered too much of the frame, so the background was left as photographed.')
 if mask_quality.get('kept_fraction', 1.0) < .94:
-    safe_reject('The mask would discard separate product details or accessories, so the original was kept.')
+    safe_reject('The mask would discard separate product details or accessories, so the background was left as photographed.')
 if mask_quality.get('significant_components', 1) > 8:
-    safe_reject('The scene contains too many separate objects for a safe automatic cut-out.')
+    safe_reject('The scene contains too many separate objects for a safe automatic cut-out, so the background was left as photographed.')
 
 edge_band = max(2, int(min(w, h) * .012))
 edge_hits = (int(ai_mask[:edge_band].sum()) + int(ai_mask[-edge_band:].sum()) +
              int(ai_mask[:, :edge_band].sum()) + int(ai_mask[:, -edge_band:].sum()))
 if edge_hits / max(1.0, ai_area) > .035:
-    safe_reject('The detected product reaches the frame edge and could be clipped, so the original was kept.')
+    safe_reject('The detected product reaches the frame edge and could be clipped, so the background was left as photographed.')
 
 classic_agreement = float(np.logical_and(ai_mask, classic).sum()) / max(1.0, ai_area)
 if classic_agreement < .58:
-    safe_reject('Two independent subject checks disagreed, so the original was kept.')
+    safe_reject('Two independent subject checks disagreed, so the background was left as photographed.')
 
 uncertain_alpha = np.logical_and(ai_alpha > 18, ai_alpha < 180)
 if float(uncertain_alpha.sum()) / max(1.0, ai_area) > .24:
-    safe_reject('The subject edge was too uncertain for a clean replacement, so the original was kept.')
+    safe_reject('The subject edge was too uncertain for a clean replacement, so the background was left as photographed.')
 
 # The mask passed every gate above. Never merge in the border heuristic: doing that reintroduces
 # uneven patches of the photographed sheet as literal islands beside the product.
@@ -304,6 +336,7 @@ result.alpha_composite(shadow, (x + int(canvas * .012), y + int(canvas * .025)))
 result.alpha_composite(subject, (x, y))
 result = result.convert('RGB')
 result.save(dst, 'JPEG', quality=95, optimize=True, progressive=True)
-print(json.dumps({'aiDetected': ai_used, 'cropPercent': crop_percent, 'width': canvas, 'height': canvas}))
+print(json.dumps({'aiDetected': ai_used, 'cropPercent': crop_percent, 'width': canvas, 'height': canvas,
+                  'backgroundReplaced': True, 'note': ''}))
 """;
 }

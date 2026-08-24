@@ -68,7 +68,14 @@ public class PhotoBoxWorkflowAssetTests
         Assert.Contains("MapPost(\"/api/photos/enhance\"", Program);
         Assert.Contains("new_session('u2netp')", Enhancer);
         Assert.Contains("SAFE_REJECT:", Enhancer);
-        Assert.Contains("raise SystemExit(42)", Enhancer);
+        // The gate still refuses the CUT-OUT, and still says which check refused it. What changed is
+        // what a refusal DOES: measured on the owner's own captures, eight of eight real photographs
+        // were rejected — seven of them on classic_agreement, a border heuristic that means nothing
+        // when the product is on a floor or a desk rather than a sheet. So the feature was dark. It
+        // now falls through to the improvements that invent nothing, and reports what it did.
+        Assert.Contains("'backgroundReplaced': False", Enhancer);
+        Assert.Contains("raise SystemExit(0)", Enhancer);
+        Assert.Contains("result.BackgroundReplaced", Program);
         Assert.Contains("clean_ratio", Enhancer);
         Assert.Contains("kept_fraction", Enhancer);
         Assert.Contains("significant_components", Enhancer);

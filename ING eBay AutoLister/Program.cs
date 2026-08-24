@@ -9543,7 +9543,14 @@ app.MapPost("/api/photos/enhance", async (PhotoEnhanceRequest req, PhotoEnhancer
             result.CropPercent,
             result.Width,
             result.Height,
-            adjustments = new[] { "AI background removal", "studio backdrop", "auto crop", "exposure", "contrast", "colour", "sharpness" }
+            // What was actually done, not what the feature is called. When the cut-out gate refuses,
+            // the photograph still comes back improved — and saying "AI background removal" over a
+            // picture whose background is untouched is how a seller stops believing any of it.
+            result.BackgroundReplaced,
+            note = result.Note,
+            adjustments = result.BackgroundReplaced
+                ? new[] { "AI background removal", "studio backdrop", "auto crop", "exposure", "contrast", "colour", "sharpness" }
+                : new[] { "exposure", "contrast", "colour", "sharpness" }
         });
     }
     catch (OperationCanceledException) { throw; }
