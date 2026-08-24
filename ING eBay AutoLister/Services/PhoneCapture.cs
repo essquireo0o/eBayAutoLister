@@ -121,6 +121,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     private readonly SemaphoreSlim _gate = new(1, 1);
     private WebApplication? _app;
 
+    /// <summary>The last request that reached either phone listener, whatever it asked for.</summary>
+    private volatile string _lastContact = "";
+
+    /// <summary>When each device was last written to the log, so one phone cannot flood it.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _contactSeen = new();
+
     private string _token = "";
     private DateTimeOffset _lastSeen;
     private TaskCompletionSource<bool>? _shutter;   // completed when the desktop presses Snap
@@ -235,7 +241,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         // shows it because the two are genuinely different pictures — one keeps every pixel the
         // sensor has — and because a chip that only ever showed the number the desk asked for is
         // how a zoom that did nothing went unnoticed.
-        bool ZoomOptical = false);
+        bool ZoomOptical = false,
+        // The last request that reached this machine's phone listeners, or "" if none ever has.
+        // See the middleware in MapRoutes for why an unanswered question needed its own field.
+        string LastContact = "");
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -288,7 +297,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                    _flash, _exposure, _focus, _whiteBalance, _lens, _facing, _level,
                    _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
                    _zoomMin, _zoomMax, _lenses,
-                   TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical);
+                   TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical, _lastContact);
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -603,6 +612,38 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
     private void MapRoutes(WebApplication web)
     {
+        // ── Who actually reached this machine ────────────────────────────────────────────────
+        //
+        // Every other line this class logs describes something that had already gone right: a
+        // photo saved, a pairing read, a camera started. So when the owner says "using my phone
+        // does not work at all", there is nothing whatsoever to look at — and the two causes need
+        // opposite fixes. A request arriving and no camera appearing is a certificate or a page
+        // problem, on this side, fixable here. No request arriving at all is the phone never
+        // reaching the machine: wrong network, asleep, cellular, a captive portal — none of which
+        // any amount of work on this code will touch.
+        //
+        // A whole day went into guessing between those two. One line per device per minute ends
+        // it, and it costs a dictionary lookup on a listener that serves a handful of requests.
+        web.Use(async (ctx, next) =>
+        {
+            var ip   = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var path = ctx.Request.Path.HasValue ? ctx.Request.Path.Value! : "/";
+            var now  = DateTimeOffset.Now;
+
+            _lastContact = $"{ip} asked for {path} on port {ctx.Connection.LocalPort} at {now:HH:mm:ss}";
+
+            // First sight of a device, then at most once a minute after that. A phone polling the
+            // viewfinder would otherwise write a log line every second and bury everything else.
+            if (!_contactSeen.TryGetValue(ip, out var last) || now - last > TimeSpan.FromMinutes(1))
+            {
+                _contactSeen[ip] = now;
+                log.Add("Info", "A phone reached this computer",
+                    $"{ip} asked for {path} on port {ctx.Connection.LocalPort}");
+            }
+
+            await next();
+        });
+
         // The public surface is deliberately tiny: one blank pixel proves Safari accepts this
         // machine's certificate, and / redirects to the paired camera only after that HTTPS
         // connection already succeeded. The pairing token never crosses the HTTP bootstrap.
