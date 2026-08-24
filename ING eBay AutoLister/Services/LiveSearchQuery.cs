@@ -303,6 +303,12 @@ public static partial class LiveSearchQuery
             Widened = true,
             AskedForExactly = terms.AskedForExactly,
             Note = terms.Note,
+            // If stored history improved on one rung but still did not reach the minimum comp
+            // count, the live fallback must keep the rest of the ladder. Otherwise one thin stored
+            // match would collapse the live search back to a single query.
+            SimilarQueries = terms.SimilarQueries
+                .Where(query => !string.Equals(query, shorter, StringComparison.OrdinalIgnoreCase))
+                .ToList(),
             WidenedNote = $"Nothing on eBay has sold under the whole name, so the search was widened to "
                 + $"“{shorter}”.",
         };
