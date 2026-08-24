@@ -292,10 +292,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
-    // The primary QR is the route that works on every iPhone immediately. The trusted live studio
-    // remains available from the separate setup QR, but ordinary capture must not begin with an
-    // Apple profile dialog that appears to do nothing after the seller taps Allow.
-    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/c/{_token}";
+    // The primary QR starts by probing the secure camera. A phone that already trusts this computer
+    // goes straight into the live studio; a phone that does not gets the one-time setup and retains
+    // the certificate-free /c/{token} capture link as an immediate fallback.
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface

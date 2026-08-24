@@ -99,13 +99,13 @@ public class PhoneCameraNoCertTests
     }
 
     [Fact]
-    public void The_primary_qr_opens_the_working_no_certificate_camera_immediately()
+    public void The_primary_qr_prefers_the_live_camera_and_keeps_no_certificate_capture_as_a_fallback()
     {
-        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/c/{_token}\";", Source,
+        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
                         StringComparison.Ordinal);
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
-        Assert.DoesNotContain("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
-                              StringComparison.Ordinal);
+        Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
+        Assert.Contains("href=\"/c/{{_token}}\"", Source, StringComparison.Ordinal);
     }
 
     [Fact]
