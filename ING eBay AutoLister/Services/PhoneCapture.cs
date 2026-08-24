@@ -66,7 +66,7 @@ public sealed record PhoneSettingsRequest(
     string? WhiteBalance = null, string? Lens = null, string? Facing = null,
     bool? Level = null);
 
-public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDisposable
+public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeService claude) : IAsyncDisposable
 {
     /// <summary>Where the phone connects. Deliberately not 9332: that port is the app's alone.</summary>
     public const int Port = 9443;
@@ -131,6 +131,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     private DateTimeOffset _lastSeen;
     private TaskCompletionSource<bool>? _shutter;   // completed when the desktop presses Snap
     private readonly List<string> _shots = [];      // photo-library urls, oldest first
+
+    /// <summary>When a photograph last arrived from a phone that has no live channel. See PhoneSending.</summary>
+    private DateTimeOffset _phoneSending = DateTimeOffset.MinValue;
     private bool _phoneEverConnected;
 
     // What the desktop has asked the camera to do. The phone applies these; it does not decide
@@ -244,7 +247,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         bool ZoomOptical = false,
         // The last request that reached this machine's phone listeners, or "" if none ever has.
         // See the middleware in MapRoutes for why an unanswered question needed its own field.
-        string LastContact = "");
+        string LastContact = "",
+        // A phone on the NO-CERTIFICATE page can never be "connected": that flag means a live lens
+        // and a working desktop shutter, and a file input has neither. It is still very much here —
+        // photographs are arriving — and reporting that as "No camera yet" is why the feature read
+        // as dead while it was working. Two states, because there genuinely are two.
+        bool PhoneSending = false);
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -297,7 +305,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                    _flash, _exposure, _focus, _whiteBalance, _lens, _facing, _level,
                    _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
                    _zoomMin, _zoomMax, _lenses,
-                   TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical, _lastContact);
+                   TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical, _lastContact,
+                   PhoneSending: DateTimeOffset.UtcNow - _phoneSending < TimeSpan.FromMinutes(3));
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -867,6 +876,11 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
             await req.Body.CopyToAsync(ms);
             var bytes = ms.ToArray();
             if (bytes.Length < 2000) return Results.BadRequest(new { error = "empty frame" });
+            // Deliberately NOT _phoneEverConnected: that enables the desktop Snap button, which
+            // works by setting a command and waiting on /poll — a channel this path does not have.
+            // Lighting it up here would make Snap time out on "the phone didn't send a photo",
+            // which is a button that lies instead of a panel that under-reports.
+            _phoneSending = DateTimeOffset.UtcNow;
             var url = await photos.SavePhotoAsync(PhotoLibrary.PhotoBoxFolder, bytes, "jpg");
             _shots.Add(url);
             _shotArrived.Set();
