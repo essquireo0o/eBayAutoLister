@@ -125,6 +125,27 @@ public class PhotoTreatmentsDoNotPileUpTests
         Assert.Contains("Background left as photographed", Js, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void The_collector_never_reaches_the_store_that_holds_live_listing_pictures()
+    {
+        // Cut out and Portrait answer with /generated-photos/<file>, not a library url. Widening
+        // the pattern to collect those would look like finishing the job and would eventually blank
+        // the pictures on a listing the seller has already published: those exact urls are pushed
+        // into listing ImageUrls (Program.cs 1231, 1294, 1323), and nothing on disk tells a
+        // superseded cut-out apart from a photograph currently illustrating a live listing.
+        // From the comment, not the signature: the reasoning this pins sits above the function.
+        var body = Slice(Js, "// Drops a superseded file from the library",
+                             "// ── Getting the photograph out");
+
+        // Verbatim, because the thing being asserted is a JS regex full of backslashes.
+        Assert.Contains(@"/^\/photos\/", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("generated-photos/(", body, StringComparison.Ordinal);
+
+        // The reason has to stay next to the rule. A scope limit with no stated why is the kind of
+        // thing the next session deletes on sight.
+        Assert.Contains("ImageUrls", body, StringComparison.Ordinal);
+    }
+
     private static string Slice(string text, string from, string to)
     {
         var a = text.IndexOf(from, StringComparison.Ordinal);

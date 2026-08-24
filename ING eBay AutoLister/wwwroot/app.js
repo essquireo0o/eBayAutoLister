@@ -7997,6 +7997,21 @@
   // Drops a superseded file from the library. Fire-and-forget on purpose: a leftover picture is
   // untidy, and failing a treatment the seller can already see because the tidy-up 404'd would be
   // worse than the mess.
+  //
+  // ONLY /photos/, and that is deliberate rather than an oversight to be tidied up later.
+  //
+  // Cut out and Portrait do not answer with a library url — they return /generated-photos/<file>,
+  // a different store with no delete route at all, currently 300 files and 98 MB on this machine.
+  // It is tempting to widen this regex and collect those too, and it would be a bad mistake: those
+  // urls are pushed into LocalArbitrageOpportunity/listing ImageUrls (Program.cs 1231, 1294, 1323)
+  // and are what a draft or a live eBay listing points at for its pictures. A superseded cut-out
+  // and a photograph currently illustrating a published listing are the same kind of file in the
+  // same folder, and nothing on disk distinguishes them, so a collector here would eventually
+  // blank the images on something the seller has already sold from.
+  //
+  // So the rule is scoped to the store the seller actually sees filling up — the Photo Library —
+  // and the other one is left alone on purpose. Cleaning it needs provenance that does not exist
+  // yet (which url is referenced by which draft), not a wider pattern.
   async function pbForgetLibraryFile(url) {
     const parts = /^\/photos\/([^/]+)\/([^/?#]+)$/.exec(url || '');
     if (!parts) return;
