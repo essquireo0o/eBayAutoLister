@@ -24186,6 +24186,52 @@
 
   // Kick off the Terapeak browser login from the bar's Connect button, then poll until
   // the login window closes and hide the prompt once connected.
+  // ── What it is probably worth, when nothing sold under its name ──────────────────────────────
+  //
+  // Deliberately NOT dressed as sold data. The stats row stays hidden, because average/median/
+  // min/max/count are statements about real sales and there are none — filling them from a range
+  // would be inventing four facts to avoid one blank. What appears instead says what it is in
+  // words, shows the range rather than a single confident number, and repeats the model's own
+  // basis so the seller can disagree with the reasoning rather than just the figure.
+  //
+  // A number the seller can argue with beats a dash. A number they cannot tell apart from a
+  // measured one is worse than either.
+  async function nlEstimateWithoutComps(itemName, summary, list) {
+    if (!itemName || !summary || !list) return;
+    summary.textContent = 'No sold listings matched — asking AI what this usually fetches…';
+
+    try {
+      const { data } = await localFetchJson('/api/local/ai-estimate', 180000, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [{ itemId: 'nl', title: itemName, askingPrice: thNum('nl-price') || null }] }),
+      });
+
+      const est = ((data && data.estimates) || [])[0];
+      // The model is told it may omit anything genuinely unpriceable, and a zero or negative range
+      // is not a price. Both are dropped rather than shown — back to the honest blank.
+      if (!est || !(est.mid > 0)) { summary.textContent = ''; return; }
+
+      const low = est.low > 0 ? est.low : est.mid;
+      const high = est.high > 0 ? est.high : est.mid;
+      summary.textContent = `No sold listings matched "${itemName}" — this is an estimate, not sold data.`;
+      list.innerHTML = `
+        <div class="nl-comp-estimate">
+          <div class="nl-comp-estimate-head">✨ AI estimate — no sold comps behind this</div>
+          <div class="nl-comp-estimate-range">${moneyExact(low)}<span> – </span>${moneyExact(high)}</div>
+          <div class="nl-comp-estimate-why">
+            ${est.basis ? `Priced as ${esc(est.basis)}. ` : ''}What things like this fetch across eBay,
+            Mercari, Marketplace and auction results — not what any one of them sold for. Check the
+            sold search above before you commit to it.
+          </div>
+        </div>`;
+    } catch {
+      // The estimate is a bonus on a panel that already showed nothing. Failing it must not turn a
+      // quiet blank into an error the seller has to read past.
+      summary.textContent = '';
+    }
+  }
+
   async function nlSoldCompsConnect() {
     const btn = $('nl-sold-comps-connect-btn');
     const msg = $('nl-sold-comps-connect-msg');
@@ -24257,7 +24303,15 @@
       if (data.terapeakUrl) { terapeak.href = data.terapeakUrl; terapeak.classList.remove('hidden'); }
 
       if (!res.ok || !data.count) {
-        summary.textContent = ''; // links alone are enough — no need to announce the absence of data
+        // Nothing sold under this name. That used to end here: the panel blanked itself and left
+        // two search links, on the screen where the seller is deciding what to charge. "No sold
+        // data" is a true statement about this app's database and a useless one about the market —
+        // they still have to pick a number, and with nothing on screen they pick it out of the air.
+        //
+        // The model can price it. That tier already exists and is already trusted enough to run the
+        // Opportunity Finder's third pass; it simply was never wired to the screen where a price is
+        // actually committed. See nlEstimateWithoutComps.
+        await nlEstimateWithoutComps(itemName, summary, list);
         return;
       }
 

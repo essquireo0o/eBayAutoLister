@@ -19835,3 +19835,33 @@ details.pb-tips { padding: 0 !important; overflow: hidden; }
   .pb-enhance-bar { grid-template-columns: 42px minmax(0, 1fr); }
   .pb-enhance-toggle { grid-column: 1 / -1; width: 100%; justify-content: center; }
 }
+
+/* The estimate that stands in when nothing sold under this item's name. Visibly NOT the sold-comp
+   rows above it: those are real sales and this is a model's read of the wider market, and a seller
+   who cannot tell them apart at a glance will quote the wrong one to a buyer. Cool grey rather
+   than the panel's gold, its own border, and the words "not sold data" on the face of it. */
+.nl-comp-estimate {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: rgba(120, 140, 170, .07);
+}
+.nl-comp-estimate-head {
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: .02em;
+  color: var(--text-dim, #8b93a7);
+  margin-bottom: 4px;
+}
+.nl-comp-estimate-range {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--text);
+}
+.nl-comp-estimate-range span { opacity: .5; font-weight: 500; }
+.nl-comp-estimate-why {
+  margin-top: 5px;
+  font-size: var(--fs-2xs);
+  line-height: 1.45;
+  color: var(--text-dim, #8b93a7);
+}
