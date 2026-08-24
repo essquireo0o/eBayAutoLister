@@ -5,12 +5,15 @@ namespace ING_eBay_AutoLister.Services;
 
 /// <summary>
 /// Turns a raw phone frame into the photo that should actually go on the listing. A lightweight
-/// segmentation model supplies the subject bounds when available; a deterministic edge/background
-/// detector is the offline fallback, so enhancement never depends on a model download succeeding.
-/// The original Photo Box image remains in the library and the enhanced copy is saved beside it.
+/// segmentation model supplies the subject bounds, but only when independent quality checks agree
+/// that the complete product was found. Otherwise enhancement is refused and the original remains
+/// untouched. An accepted enhanced copy is saved beside the original in the Photo Library.
 /// </summary>
 public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, ActionLog log)
 {
+    /// <summary>The model ran, but its mask was not trustworthy enough to alter a product photo.</summary>
+    public sealed class RejectedException(string message) : Exception(message);
+
     public sealed record Result(string Url, bool AiDetected, int CropPercent, int Width, int Height);
 
     public async Task<Result> EnhanceAsync(string sourceUrl, CancellationToken ct)
@@ -52,6 +55,12 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
+            if (process.ExitCode == 42 && stderr.Contains("SAFE_REJECT:", StringComparison.Ordinal))
+            {
+                var reason = stderr[(stderr.IndexOf("SAFE_REJECT:", StringComparison.Ordinal) + "SAFE_REJECT:".Length)..]
+                    .Split('\r', '\n', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                throw new RejectedException(reason);
+            }
             if (process.ExitCode != 0 || !File.Exists(output))
                 throw new InvalidOperationException($"Photo enhancement failed (exit {process.ExitCode}): {stderr[..Math.Min(400, stderr.Length)]}");
 
@@ -112,14 +121,20 @@ public sealed class PhotoEnhancer(IWebHostEnvironment env, PhotoLibrary photos, 
 
     private sealed record ScriptResult(bool AiDetected, int CropPercent, int Width, int Height);
 
-    // AI gives us the subject silhouette. The classic border detector is an offline fallback only:
-    // mixing it into successful segmentation can mistake uneven light on a white sheet for product.
+    // AI gives us the subject silhouette. If that silhouette cannot prove it is safe, enhancement
+    // refuses the job and the caller keeps the original. A damaged product photo is never a useful
+    // fallback; conservative failure is part of the feature.
     private const string PythonScript = """
 import json, sys
 import numpy as np
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 
 src, dst = sys.argv[1], sys.argv[2]
+
+def safe_reject(reason):
+    print('SAFE_REJECT:' + reason, file=sys.stderr)
+    raise SystemExit(42)
+
 img = ImageOps.exif_transpose(Image.open(src)).convert('RGB')
 ow, oh = img.size
 
@@ -154,6 +169,7 @@ except Exception:
 ai_used = False
 ai_mask = None
 ai_alpha = None
+mask_quality = {}
 try:
     from rembg import remove, new_session
     # u2netp is the lightweight subject model: fast enough to run after every shutter press.
@@ -161,7 +177,7 @@ try:
     ai_alpha = np.asarray(ai.convert('L'))
     ai_mask = ai_alpha > 18
     ratio = float(ai_mask.mean())
-    ai_used = .002 < ratio < .94
+    ai_used = .02 < ratio < .82
     if ai_used:
         # Keep the product and any substantial disconnected accessory, but discard dust, sheet
         # marks and isolated segmentation flecks. A component under 0.8% of the main subject is
@@ -174,17 +190,50 @@ try:
                 main_size = int(ai_sizes[1:].max())
                 ai_keep = ai_sizes >= max(24, int(main_size * .008))
                 ai_keep[0] = False
+                kept_size = int(ai_sizes[ai_keep].sum())
+                original_size = int(ai_sizes[1:].sum())
+                significant = int(ai_keep[1:].sum())
                 ai_mask = ai_keep[ai_labels]
                 ai_alpha = np.where(ai_mask, ai_alpha, 0).astype(np.uint8)
+                mask_quality['kept_fraction'] = kept_size / max(1.0, original_size)
+                mask_quality['significant_components'] = significant
         except Exception:
             pass
 except Exception as ex:
-    print('AI subject detector unavailable; using smart border detection: ' + str(ex), file=sys.stderr)
+    safe_reject('The subject detector was unavailable, so the original was kept.')
 
-# A successful AI mask is authoritative. The classic detector exists only as an offline fallback:
-# merging it into good segmentation reintroduces uneven patches of the photographed white sheet.
-# That produced literal white islands beside dark products—the opposite of background removal.
-mask = ai_mask if ai_used else classic
+if not ai_used:
+    safe_reject('The app could not isolate the whole product with enough confidence, so the original was kept.')
+
+# Quality gate. These are deliberately strict: AI Enhance is automatic, so uncertainty is a reason
+# to do nothing. The separate Cut out button remains available when the seller wants to try an
+# aggressive background removal by hand.
+ai_area = int(ai_mask.sum())
+clean_ratio = ai_area / max(1.0, w * h)
+if not .02 < clean_ratio < .82:
+    safe_reject('The cleaned subject mask was incomplete or covered too much of the frame, so the original was kept.')
+if mask_quality.get('kept_fraction', 1.0) < .94:
+    safe_reject('The mask would discard separate product details or accessories, so the original was kept.')
+if mask_quality.get('significant_components', 1) > 8:
+    safe_reject('The scene contains too many separate objects for a safe automatic cut-out.')
+
+edge_band = max(2, int(min(w, h) * .012))
+edge_hits = (int(ai_mask[:edge_band].sum()) + int(ai_mask[-edge_band:].sum()) +
+             int(ai_mask[:, :edge_band].sum()) + int(ai_mask[:, -edge_band:].sum()))
+if edge_hits / max(1.0, ai_area) > .035:
+    safe_reject('The detected product reaches the frame edge and could be clipped, so the original was kept.')
+
+classic_agreement = float(np.logical_and(ai_mask, classic).sum()) / max(1.0, ai_area)
+if classic_agreement < .58:
+    safe_reject('Two independent subject checks disagreed, so the original was kept.')
+
+uncertain_alpha = np.logical_and(ai_alpha > 18, ai_alpha < 180)
+if float(uncertain_alpha.sum()) / max(1.0, ai_area) > .24:
+    safe_reject('The subject edge was too uncertain for a clean replacement, so the original was kept.')
+
+# The mask passed every gate above. Never merge in the border heuristic: doing that reintroduces
+# uneven patches of the photographed sheet as literal islands beside the product.
+mask = ai_mask
 
 ys, xs = np.where(mask)
 if len(xs) < max(64, int(w * h * .001)):
@@ -207,10 +256,7 @@ crop_percent = max(0, min(99, round(100 * (1 - (cropped.width * cropped.height) 
 
 # Keep a soft subject alpha through the same crop. Never mix a fallback background heuristic into
 # a successful AI silhouette; it cannot distinguish a white accessory from a bright patch of sheet.
-if ai_used:
-    subject_alpha = ai_alpha
-else:
-    subject_alpha = classic.astype(np.uint8) * 255
+subject_alpha = ai_alpha
 alpha_img = Image.fromarray(subject_alpha, mode='L').crop(box)
 alpha_img = alpha_img.filter(ImageFilter.MedianFilter(3)).filter(ImageFilter.GaussianBlur(1.15))
 

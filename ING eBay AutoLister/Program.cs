@@ -1145,6 +1145,16 @@ static async Task<IResult> Guarded<T>(FailureDomain domain, string operation, Ac
     {
         return Results.Ok(await work());
     }
+    catch (PhotoEnhancer.RejectedException ex)
+    {
+        log.Add("Info", "AI photo enhancement kept the original", ex.Message);
+        return Results.UnprocessableEntity(new
+        {
+            error = "Original kept — AI Enhance was not confident enough to change this photo.",
+            detail = ex.Message,
+            originalKept = true
+        });
+    }
     catch (OperationCanceledException) { throw; }
     catch (Exception ex)
     {

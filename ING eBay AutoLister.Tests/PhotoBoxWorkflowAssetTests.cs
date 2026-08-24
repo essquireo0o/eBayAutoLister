@@ -63,15 +63,28 @@ public class PhotoBoxWorkflowAssetTests
     }
 
     [Fact]
-    public void EnhancementUsesAiSubjectDetectionWithAnOfflineFallback()
+    public void EnhancementKeepsTheOriginalUnlessTheAiMaskPassesItsSafetyGate()
     {
         Assert.Contains("MapPost(\"/api/photos/enhance\"", Program);
         Assert.Contains("new_session('u2netp')", Enhancer);
-        Assert.Contains("mask = ai_mask if ai_used else classic", Enhancer);
+        Assert.Contains("SAFE_REJECT:", Enhancer);
+        Assert.Contains("raise SystemExit(42)", Enhancer);
+        Assert.Contains("clean_ratio", Enhancer);
+        Assert.Contains("kept_fraction", Enhancer);
+        Assert.Contains("significant_components", Enhancer);
+        Assert.Contains("edge_hits", Enhancer);
+        Assert.Contains("classic_agreement", Enhancer);
+        Assert.Contains("uncertain_alpha", Enhancer);
+        Assert.Contains("mask = ai_mask", Enhancer);
+        Assert.DoesNotContain("mask = ai_mask if ai_used else classic", Enhancer);
         Assert.Contains("subject_alpha = ai_alpha", Enhancer);
         Assert.DoesNotContain("np.maximum(ai_alpha, classic", Enhancer);
         Assert.Contains("main_size * .008", Enhancer);
         Assert.Contains("ai_alpha = np.where(ai_mask, ai_alpha, 0)", Enhancer);
+        Assert.Contains("catch (PhotoEnhancer.RejectedException ex)", Program);
+        Assert.Contains("Results.UnprocessableEntity", Program);
+        Assert.Contains("originalKept = true", Program);
+        Assert.Contains("Original kept — AI Enhance was not confident enough", Program);
         Assert.Contains("ImageEnhance.Brightness", Enhancer);
         Assert.Contains("ImageOps.autocontrast", Enhancer);
         Assert.Contains("ImageEnhance.Sharpness", Enhancer);
