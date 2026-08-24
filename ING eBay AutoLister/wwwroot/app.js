@@ -7622,6 +7622,7 @@
         const enhanced = await pbEnhancePhoto(url);
         pbSessionSnaps = pbSessionSnaps.map(saved => saved === url ? enhanced.url : saved);
         pbEnhancedSnaps.add(enhanced.url);
+        pbSupersede(url, enhanced.url);
         pbRenderFilmstrip();
         if (note) {
           note.className = 'wn-video-status wn-video-ok';
@@ -7887,7 +7888,7 @@
             enhanced = await pbEnhancePhoto(r.url);
             listingUrl = enhanced.url;
             pbEnhancedSnaps.add(listingUrl);
-            pbOriginalOf.set(listingUrl, r.url);
+            pbSupersede(r.url, listingUrl);
           } catch (enhanceError) {
             // A treatment can fail; a shutter press cannot be allowed to disappear with it. The
             // untouched full-resolution frame is already safe in the library and becomes the
@@ -7935,6 +7936,48 @@
       if (!(await pbShoot())) return;
       if (i < 2) await new Promise(r => setTimeout(r, 1200));
     }
+  }
+
+  // ── One photograph, one file ─────────────────────────────────────────────────
+  //
+  // Every treatment -- AI Enhance, Cut out, Portrait -- POSTs the picture and gets a NEW library
+  // file back, then swaps it into the strip. The file it swapped OUT stayed on disk forever, so
+  // the Photo Library filled with near-identical thumbnails of the same object: enhance one shot
+  // five times and five files land, byte-for-byte identical when the treatment is deterministic.
+  // Measured on the owner's library at 73 files, five of them the same 227,936 bytes, and they
+  // were deleting them by hand a row at a time.
+  //
+  // The rule is one file per version, not one per attempt: when a derived picture replaces an
+  // earlier DERIVED picture, the earlier one goes. The original capture is never touched by this
+  // -- it is the photograph the seller actually took, it is what "Save to my computer" exports,
+  // and no amount of retouching is allowed to consume it.
+  function pbSupersede(oldUrl, newUrl) {
+    if (!oldUrl || !newUrl || oldUrl === newUrl) return;
+    // The raw capture at the root of this chain. An original maps to nothing, so it is its own.
+    const original = pbOriginalOf.get(oldUrl) || oldUrl;
+    pbOriginalOf.delete(oldUrl);
+    if (newUrl !== original) pbOriginalOf.set(newUrl, original);
+    // Only ever a derived file. oldUrl === original means the seller just enhanced their untouched
+    // photograph for the first time, and both copies are wanted.
+    if (oldUrl !== original) pbForgetLibraryFile(oldUrl);
+  }
+
+  // Drops a superseded file from the library. Fire-and-forget on purpose: a leftover picture is
+  // untidy, and failing a treatment the seller can already see because the tidy-up 404'd would be
+  // worse than the mess.
+  async function pbForgetLibraryFile(url) {
+    const parts = /^\/photos\/([^/]+)\/([^/?#]+)$/.exec(url || '');
+    if (!parts) return;
+    try {
+      await fetch('/api/photos/library/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelKey: decodeURIComponent(parts[1]),
+          fileName: decodeURIComponent(parts[2]),
+        }),
+      });
+    } catch { /* see above */ }
   }
 
   // ── Getting the photograph out of the app ────────────────────────────────────
@@ -8094,6 +8137,7 @@
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? result.url : u));
       pbEnhancedSnaps.delete(url);
       pbEnhancedSnaps.add(result.url);
+      pbSupersede(url, result.url);
       pbRenderFilmstrip();
       if (note) {
         note.className = 'wn-video-status wn-video-ok';
@@ -8229,6 +8273,7 @@
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? out : u));
       pbEnhancedSnaps.delete(url);
       if (wasEnhanced) pbEnhancedSnaps.add(out);
+      pbSupersede(url, out);
       pbRenderFilmstrip();
       if (note) note.classList.add('hidden');
       addActivity(label + ' applied', 'Photo Box picture');
