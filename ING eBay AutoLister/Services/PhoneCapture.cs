@@ -292,7 +292,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
-    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
+    // The primary QR is the route that works on every iPhone immediately. The trusted live studio
+    // remains available from the separate setup QR, but ordinary capture must not begin with an
+    // Apple profile dialog that appears to do nothing after the seller taps Allow.
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/c/{_token}";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface
@@ -800,7 +803,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         // The way out of the certificate entirely. A file input is not a secure-context
         // feature, so this page opens the iPhone camera from plain HTTP with nothing to
         // install. Linked from the setup page above, for the phone that will not be set up.
-        web.MapGet("/c", () => Results.Content(CameraFreePageHtml(), "text/html; charset=utf-8"));
+        web.MapGet("/c/{token}", (string token, HttpContext ctx) =>
+        {
+            if (!Ok(token)) return Results.NotFound();
+            ctx.Response.Headers.CacheControl = "no-store";
+            return Results.Content(CameraFreePageHtml(), "text/html; charset=utf-8");
+        });
 
         // The name matters: iOS decides what to do with this from the extension and the type.
         web.MapGet("/trust.mobileconfig", () =>
@@ -938,7 +946,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
           <button class="btn" id="shoot" type="button">Take a photo</button>
           <button class="go" id="pick" type="button">Choose photos already taken</button>
-          <input id="cam" type="file" accept="image/*" capture="environment" multiple hidden>
+          <input id="cam" type="file" accept="image/*" capture="environment" hidden>
           <input id="lib" type="file" accept="image/*" multiple hidden>
 
           <div class="count" id="count">Nothing sent yet.</div>
@@ -1079,7 +1087,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                  set up, the camera opens automatically.</p>
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
-              <a class="go" href="/c" style="margin-bottom:4px">Skip all this — take photos with this phone &rsaquo;</a>
+              <a class="go" href="/c/{{_token}}" style="margin-bottom:4px">Skip all this — take photos with this phone &rsaquo;</a>
               <p class="sub" style="font-size:14px;margin-bottom:22px">Uses the iPhone's own camera. No certificate,
                  nothing to install, works right now. You tap the shutter instead of the computer.</p>
               <section id="setup" class="hidden">

@@ -27,7 +27,9 @@ public class PhoneCameraNoCertTests
     {
         // On the plain-HTTP port, beside /trust. On the HTTPS port it would be behind the very
         // wall it exists to get around.
-        Assert.Contains("web.MapGet(\"/c\", () => Results.Content(CameraFreePageHtml()", Source, StringComparison.Ordinal);
+        Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
+        Assert.Contains("if (!Ok(token)) return Results.NotFound();", Source, StringComparison.Ordinal);
+        Assert.Contains("ctx.Response.Headers.CacheControl = \"no-store\"", Source, StringComparison.Ordinal);
         Assert.Contains("k.ListenAnyIP(TrustPort);", Source, StringComparison.Ordinal);
     }
 
@@ -36,7 +38,8 @@ public class PhoneCameraNoCertTests
     {
         // capture="environment" is the whole mechanism: it is what makes an ordinary file input
         // open the rear camera directly instead of a file browser.
-        Assert.Contains("type=\"file\" accept=\"image/*\" capture=\"environment\" multiple", Page, StringComparison.Ordinal);
+        Assert.Contains("type=\"file\" accept=\"image/*\" capture=\"environment\" hidden", Page, StringComparison.Ordinal);
+        Assert.DoesNotContain("capture=\"environment\" multiple", Page, StringComparison.Ordinal);
 
         // And a second input WITHOUT capture, for photos already taken — the same page, because a
         // seller who has already shot the item should not be sent looking for another one.
@@ -88,11 +91,21 @@ public class PhoneCameraNoCertTests
 
         // Above the fold and before the three Settings steps, because the seller reading it is the
         // one for whom those steps have already failed.
-        Assert.Contains("href=\"/c\"", trust, StringComparison.Ordinal);
+        Assert.Contains("href=\"/c/{{_token}}\"", trust, StringComparison.Ordinal);
         Assert.Contains("take photos with this phone", trust, StringComparison.OrdinalIgnoreCase);
 
         // And the way back, for the seller who does want the viewfinder after all.
         Assert.Contains("href=\"/trust\"", Page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_primary_qr_opens_the_working_no_certificate_camera_immediately()
+    {
+        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/c/{_token}\";", Source,
+                        StringComparison.Ordinal);
+        Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
+        Assert.DoesNotContain("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
+                              StringComparison.Ordinal);
     }
 
     [Fact]
