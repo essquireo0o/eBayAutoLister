@@ -112,6 +112,22 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
                 ? "Target is an accessory sold FOR this model, candidate is the model itself"
                 : "Candidate is an accessory sold FOR this model, target is the model itself";
 
+        // Solid precious metal and a plated souvenir of it share every word in the title, and the
+        // comp search cannot tell them apart: "1 OZ Gold USA 100 Dollar Bullion Bar" came back at
+        // $6.99 off two sold comps on a day gold was $4,604/ozt. Whichever of the two that row
+        // really was, it was priced off the other one — and the direction that prices a $7 gold-clad
+        // brass bar off real bullion tells the owner to bid two thousand dollars for it. Excluded
+        // both ways; see Bullion for why a title that settles nothing is left alone instead.
+        if (exclusionReason is null)
+        {
+            var targetMetal = Bullion.Grade(target.RawText);
+            var candidateMetal = Bullion.Grade(candidate.Title);
+            if (Bullion.Conflict(targetMetal, candidateMetal))
+                exclusionReason = targetMetal is BullionGrade.Solid
+                    ? "Candidate is plated/clad/novelty metal, target states solid metal"
+                    : "Candidate is solid metal, target is plated/clad/novelty";
+        }
+
         // Both sides have a specific generation/capacity/model/part-number, and they disagree —
         // not "unknown vs known," but two different products (the RTX 4090 vs 4090-Ti case).
         if (exclusionReason is null && ConflictingValue(target.Generation, candidateProduct.Generation))
