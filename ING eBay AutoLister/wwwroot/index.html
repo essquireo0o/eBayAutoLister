@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=136" />
+  <link rel="stylesheet" href="style.css?v=137" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -2893,6 +2893,29 @@
                 </div>
               </div>
 
+              <!-- The result comes before the machinery. Once a photo exists this is the first
+                   block below the viewfinder: inspect it at useful size, edit or save it, then
+                   reach for camera controls only if another shot needs changing. -->
+              <section class="pb-review" aria-label="Captured photo review">
+                <div class="pb-strip-head hidden" id="pb-strip-head">
+                  <div class="pb-review-title">
+                    <span>Photo review</span>
+                    <strong id="pb-strip-count">0 photos</strong>
+                  </div>
+                  <span class="pb-strip-hint">Newest last. Tap a photo to edit it. Press ✕ to leave it off the listing — it stays in your Photo Library.</span>
+                </div>
+                <div class="pb-filmstrip hidden" id="pb-filmstrip"></div>
+
+                <div class="pb-actions">
+                  <button id="pb-ai" class="btn btn-primary" type="button" disabled
+                          title="Send this session's photos to the AI Listing screen — it writes the listing and prices it from sold comps">✨ AI Listing</button>
+                  <button id="pb-save-all" class="btn btn-secondary hidden" type="button"
+                          title="Copy this session's photos to your Desktop, where you can attach or upload them like any other file">💾 Save to my computer</button>
+                  <button id="pb-library" class="btn btn-ghost" type="button">🖼 Photo Library</button>
+                  <button id="pb-clear" class="btn btn-ghost hidden" type="button" title="Start a new item — the photos stay in the library">Start a new item</button>
+                </div>
+              </section>
+
               <!-- Zoom. The phone does it: its lens where the lens will move, a crop of a
                    twelve-megapixel frame where it will not — either way the viewfinder and the
                    saved photo are the same picture. -->
@@ -3029,23 +3052,6 @@
               <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
               <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
 
-              <!-- Everything shot this session, newest last. This is also the set the AI Listing
-                   button hands over, which is why a bad frame can be dropped here: the photo stays
-                   in the library, it just stops riding along to the listing. -->
-              <div class="pb-strip-head hidden" id="pb-strip-head">
-                <strong id="pb-strip-count">0 photos</strong>
-                <span class="pb-strip-hint">Newest last. Press ✕ on a photo to leave it off the listing — the file stays in your Photo Library.</span>
-              </div>
-              <div class="pb-filmstrip hidden" id="pb-filmstrip"></div>
-
-              <div class="pb-actions">
-                <button id="pb-ai" class="btn btn-primary" type="button" disabled
-                        title="Send this session's photos to the AI Listing screen — it writes the listing and prices it from sold comps">✨ AI Listing</button>
-                <button id="pb-save-all" class="btn btn-secondary hidden" type="button"
-                        title="Copy this session's photos to your Desktop, where you can attach or upload them like any other file">💾 Save to my computer</button>
-                <button id="pb-library" class="btn btn-ghost" type="button">🖼 Photo Library</button>
-                <button id="pb-clear" class="btn btn-ghost hidden" type="button" title="Start a new item — the photos stay in the library">Start a new item</button>
-              </div>
             </div>
 
             <!-- The camera itself: how to connect it, and what it is doing. -->

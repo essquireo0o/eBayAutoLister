@@ -18553,7 +18553,23 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
   .pb-ctl-why { grid-column: 1; }
 }
 
-.pb-strip-head { display: flex; align-items: baseline; gap: 10px; }
+.pb-review {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px; border: 1px solid color-mix(in srgb, var(--gold) 42%, var(--line));
+  border-radius: var(--r-lg);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--gold) 7%, var(--panel)), var(--panel));
+  box-shadow: var(--shadow-1);
+}
+/* No empty result card. It appears as a complete review workspace the instant app.js reveals the
+   first photograph, and because it sits directly below the viewfinder it precedes every control. */
+.pb-review:has(#pb-filmstrip.hidden) { display: none; }
+.pb-strip-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.pb-review-title { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+.pb-review-title > span {
+  color: var(--gold-deep); font-size: var(--fs-2xs); font-weight: var(--fw-bold);
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.pb-review-title > strong { color: var(--ink); font-size: var(--fs-lg); }
 .pb-strip-hint { color: var(--muted); font-size: var(--fs-sm); }
 .pb-filmstrip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; }
 .pb-shot { position: relative; flex: 0 0 auto; width: 160px; }
@@ -18578,6 +18594,21 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 .pb-shot-open:hover .pb-shot-hint,
 .pb-shot-open:focus-visible .pb-shot-hint { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .pb-shot-hint { transition: none; } }
+/* One capture is not a thumbnail collection. It is the thing the seller came here to inspect, so
+   give it the full review surface and preserve the entire frame instead of center-cropping it. */
+.pb-filmstrip:has(.pb-shot:only-child) { overflow: visible; }
+.pb-filmstrip:has(.pb-shot:only-child) .pb-shot { width: min(100%, 760px); }
+.pb-filmstrip:has(.pb-shot:only-child) .pb-shot-open { width: 100%; }
+.pb-filmstrip:has(.pb-shot:only-child) .pb-shot img {
+  width: 100%; height: min(58vw, 560px); object-fit: contain;
+  border-color: color-mix(in srgb, var(--gold) 36%, var(--line));
+}
+.pb-review .pb-actions { padding-top: 12px; border-top: 1px solid var(--line); }
+@media (max-width: 640px) {
+  .pb-review { padding: 12px; }
+  .pb-strip-head { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .pb-filmstrip:has(.pb-shot:only-child) .pb-shot img { height: min(92vw, 520px); }
+}
 /* The chip is a dark disc over a photograph in BOTH themes, so its text cannot come from
    --ink: in light theme that is #131c20 on rgba(3,18,21,.85), which is near-black on
    near-black, and the photo numbers have simply not been there. A colour that is fixed
