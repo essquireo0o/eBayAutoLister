@@ -128,20 +128,31 @@ public class PhotoLibraryTests : IDisposable
 
     // ── Folders ─────────────────────────────────────────────────────────────
 
+    // The library used to invent four model folders on first run, named after mining hardware, so
+    // that a seller who had photographed one thing opened the screen and found it filed among four
+    // empty strangers. It now shows what is there and nothing else.
     [Fact]
-    public void A_fresh_library_offers_the_seed_model_folders_empty()
+    public void A_fresh_library_is_empty_rather_than_pre_filled_with_somebody_elses_models()
     {
         var photos = NewLibrary();
 
-        var folders = photos.GetDefaultFolders();
-
-        Assert.Equal(4, folders.Count);
-        Assert.All(folders, f => Assert.Equal(0, f.ImageCount));
-        Assert.Contains(folders, f => f.ModelKey == "S19j_Pro");
+        Assert.Empty(photos.GetAllFolders());
+        Assert.Empty(photos.GetDefaultFolders());
     }
 
     [Fact]
-    public void Folders_the_seller_made_are_listed_with_the_seeds_in_name_order()
+    public void Once_a_photo_lands_the_library_shows_that_folder_and_only_that_folder()
+    {
+        AddFile(PhotoLibrary.PhotoBoxFolder, "shot.jpg");
+        var photos = NewLibrary();
+
+        var keys = photos.GetAllFolders().Select(f => f.ModelKey).ToList();
+
+        Assert.Equal([PhotoLibrary.PhotoBoxFolder], keys);
+    }
+
+    [Fact]
+    public void Folders_the_seller_made_are_listed_in_name_order()
     {
         var photos = NewLibrary();
         photos.CreateFolder("Whatsminer_M30S");
@@ -149,10 +160,78 @@ public class PhotoLibraryTests : IDisposable
 
         var keys = photos.GetAllFolders().Select(f => f.ModelKey).ToList();
 
-        Assert.Contains("Whatsminer_M30S", keys);
-        Assert.Contains("Avalon_1246", keys);
-        Assert.Contains("L7", keys);
-        Assert.Equal(keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase), keys);
+        Assert.Equal(["Avalon_1246", "Whatsminer_M30S"], keys);
+    }
+
+    // ── Retiring the four invented folders ──────────────────────────────────
+    //
+    // Not creating them any more does nothing for a machine that already ran the old build, so the
+    // empty ones are swept. Both guards on that sweep are load-bearing and tested here: it only
+    // touches a completely empty folder, and it only ever runs once.
+
+    [Fact]
+    public void The_four_invented_folders_are_swept_away_when_they_are_empty()
+    {
+        Directory.CreateDirectory(PhotosDir("S19_95TH"));
+        Directory.CreateDirectory(PhotosDir("L7"));
+        AddFile(PhotoLibrary.PhotoBoxFolder, "shot.jpg");
+
+        var keys = NewLibrary().GetAllFolders().Select(f => f.ModelKey).ToList();
+
+        Assert.Equal([PhotoLibrary.PhotoBoxFolder], keys);
+        Assert.False(Directory.Exists(PhotosDir("S19_95TH")));
+        Assert.False(Directory.Exists(PhotosDir("L7")));
+    }
+
+    [Fact]
+    public void A_seed_folder_the_seller_actually_used_is_never_touched()
+    {
+        AddFile("S19j_Pro", "front.jpg");
+
+        var keys = NewLibrary().GetAllFolders().Select(f => f.ModelKey).ToList();
+
+        Assert.Contains("S19j_Pro", keys);
+        Assert.True(File.Exists(Path.Combine(PhotosDir("S19j_Pro"), "front.jpg")));
+    }
+
+    // Anything at all keeps the folder — "empty" means empty, not "holds no images". A seller who
+    // put a notes file in there was using it.
+    [Fact]
+    public void A_seed_folder_holding_any_file_at_all_is_kept()
+    {
+        AddFile("L7", "notes.txt");
+
+        Assert.Contains("L7", NewLibrary().GetAllFolders().Select(f => f.ModelKey));
+        Assert.True(Directory.Exists(PhotosDir("L7")));
+    }
+
+    // The guard that matters most. Without it, a seller who makes an "L7" folder next week and has
+    // not put a photograph in it yet would find the app had quietly deleted it.
+    [Fact]
+    public void The_sweep_runs_once_so_a_folder_made_later_survives_even_while_empty()
+    {
+        Directory.CreateDirectory(PhotosDir("L7"));
+        var photos = NewLibrary();
+        photos.GetAllFolders();                       // the sweep happens here
+        Assert.False(Directory.Exists(PhotosDir("L7")));
+
+        photos.CreateFolder("L7");                    // ...and the seller makes it again
+
+        Assert.Contains("L7", photos.GetAllFolders().Select(f => f.ModelKey));
+        Assert.Contains("L7", NewLibrary().GetAllFolders().Select(f => f.ModelKey));
+    }
+
+    // photo-box-video holds phone clips and is served on its own route. It is not a model, it never
+    // holds an image, and listing it puts a permanently empty tile in the library.
+    [Fact]
+    public void The_video_folder_is_plumbing_and_is_not_listed_as_a_model()
+    {
+        AddFile("photo-box-video", "clip.mp4");
+        AddFile(PhotoLibrary.PhotoBoxFolder, "shot.jpg");
+
+        var keys = NewLibrary().GetAllFolders().Select(f => f.ModelKey).ToList();
+
+        Assert.Equal([PhotoLibrary.PhotoBoxFolder], keys);
     }
 
     // The count on the folder is what tells the seller whether this model is ready to reuse. A
@@ -380,7 +459,7 @@ public class PhotoLibraryTests : IDisposable
     public void A_model_with_a_folder_but_no_photos_is_not_a_match()
     {
         var photos = NewLibrary();
-        photos.GetDefaultFolders();
+        photos.CreateFolder("S19j_Pro");
 
         Assert.Null(photos.ResolveForListing("Antminer S19j Pro", "Antminer S19j Pro"));
     }

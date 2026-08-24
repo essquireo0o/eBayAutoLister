@@ -76,9 +76,11 @@ public sealed class PhotoLibraryOpensWhereThePhotosAreTests : IDisposable
     [Fact]
     public void An_empty_folder_has_no_date_at_all()
     {
-        Directory.CreateDirectory(Path.Combine(_root, "L7"));
+        // A name the seller could have made. The four retired seed names are swept when empty, so
+        // using one here would test the sweep rather than the date.
+        Directory.CreateDirectory(Path.Combine(_root, "Avalon_1246"));
 
-        var folder = _library.GetAllFolders().Single(f => f.ModelKey == "L7");
+        var folder = _library.GetAllFolders().Single(f => f.ModelKey == "Avalon_1246");
 
         // Not DateTime.MinValue, which would sort like a real answer.
         Assert.Equal(0, folder.ImageCount);
@@ -89,8 +91,10 @@ public sealed class PhotoLibraryOpensWhereThePhotosAreTests : IDisposable
     public void The_folder_list_stays_alphabetical()
     {
         Shoot("photo-box", "a.jpg", DateTime.UtcNow);
-        Directory.CreateDirectory(Path.Combine(_root, "L7"));
-        Directory.CreateDirectory(Path.Combine(_root, "S19_95TH"));
+        // Not the retired seed names: those are swept when empty, which would leave this test
+        // asserting that a one-item list is in order.
+        Directory.CreateDirectory(Path.Combine(_root, "Avalon_1246"));
+        Directory.CreateDirectory(Path.Combine(_root, "Whatsminer_M30S"));
 
         var keys = _library.GetAllFolders().Select(f => f.ModelKey).ToList();
 

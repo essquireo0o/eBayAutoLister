@@ -8,8 +8,33 @@ namespace ING_eBay_AutoLister.Services;
 // actual inventory without a per-unit shoot. New items don't use this (they pull stock images).
 public sealed class PhotoLibrary(IWebHostEnvironment env)
 {
-    // Pre-created so the folders show up empty in the UI, inviting the seller to populate them.
-    private static readonly string[] SeedFolders = ["S19_95TH", "S19_110TH", "S19j_Pro", "L7"];
+    /// <summary>
+    /// Four model folders this app used to invent on first run, and no longer does.
+    /// </summary>
+    /// <remarks>
+    /// They were pre-created "so the folders show up empty in the UI, inviting the seller to
+    /// populate them". In practice the invitation reads as clutter: the owner opens the Photo
+    /// Library to look at the photographs they just took and finds their one real folder filed
+    /// among four empty ones named after somebody else's mining hardware. The library now shows
+    /// only folders that exist because a photograph or a person put them there.
+    /// </remarks>
+    private static readonly string[] RetiredSeedFolders = ["S19_95TH", "S19_110TH", "S19j_Pro", "L7"];
+
+    /// <summary>Written once the retired seeds have been swept, so the sweep can never run twice.</summary>
+    private const string SeedRetirementMarker = ".seeds-retired";
+
+    /// <summary>
+    /// Folders under <c>photos/</c> that are this app's plumbing rather than a model's photographs.
+    /// </summary>
+    /// <remarks>
+    /// <c>photo-box-video</c> holds phone video clips and is served on its own <c>/photo-box-video</c>
+    /// route. It is not a model, it never contains an image, and listing it puts a permanently empty
+    /// tile in the library.
+    /// </remarks>
+    private static readonly HashSet<string> NotModelFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "photo-box-video",
+    };
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".webp", ".gif"
@@ -31,22 +56,61 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
     private string RootPath => Path.Combine(env.ContentRootPath, "photos");
     private void EnsureRoot() => Directory.CreateDirectory(RootPath);
 
-    // Legacy entry point (kept for the existing /api/photos/default-folders caller).
-    public IReadOnlyList<PhotoFolderSummary> GetDefaultFolders()
-    {
-        EnsureRoot();
-        foreach (var f in SeedFolders) Directory.CreateDirectory(Path.Combine(RootPath, f));
-        return SeedFolders.Select(Summarize).ToList();
-    }
+    // Legacy entry point (kept for the existing /api/photos/default-folders caller, which prints a
+    // one-line folder summary on the Settings screen). It used to answer with four folders that
+    // existed only because it had just created them; it now answers with what is actually there.
+    public IReadOnlyList<PhotoFolderSummary> GetDefaultFolders() => GetAllFolders();
 
+    /// <summary>Every model folder the seller actually has, alphabetically.</summary>
     public IReadOnlyList<PhotoFolderSummary> GetAllFolders()
     {
         EnsureRoot();
-        foreach (var f in SeedFolders) Directory.CreateDirectory(Path.Combine(RootPath, f));
+        RetireSeedFoldersOnce();
         return Directory.EnumerateDirectories(RootPath)
-            .Select(d => Summarize(Path.GetFileName(d)!))
+            .Select(d => Path.GetFileName(d)!)
+            .Where(name => !NotModelFolders.Contains(name))
+            .Select(Summarize)
             .OrderBy(s => s.ModelKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Sweeps away the four invented seed folders, once, and only while they are still empty.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not creating them any more does nothing for the machines that already ran the old build —
+    /// the owner's library had four empty tiles sitting on disk next to the one real folder. So the
+    /// retirement has to remove them, not merely stop making them.
+    /// </para>
+    /// <para>
+    /// Two guards, because this deletes directories in the seller's data folder. A folder is only
+    /// touched when it is <b>completely empty</b> — not "holds no images", empty, so a stray file of
+    /// any kind keeps it — and the whole sweep runs <b>once</b>, marked by a dotfile in the photos
+    /// root. Without the marker a seller who later creates an "L7" folder and has not put a
+    /// photograph in it yet would find the app had quietly deleted it.
+    /// </para>
+    /// </remarks>
+    private void RetireSeedFoldersOnce()
+    {
+        var marker = Path.Combine(RootPath, SeedRetirementMarker);
+        try
+        {
+            if (File.Exists(marker)) return;
+
+            foreach (var name in RetiredSeedFolders)
+            {
+                var dir = Path.Combine(RootPath, name);
+                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir);
+            }
+
+            File.WriteAllText(marker, "The four pre-made model folders were removed on "
+                + $"{DateTime.UtcNow:yyyy-MM-dd}. This file stops that from ever running again, so "
+                + "folders you make yourself are left alone even while they are empty.");
+        }
+        catch (IOException) { /* a folder in use is not worth failing a page load over */ }
+        catch (UnauthorizedAccessException) { /* nor one we may not touch */ }
     }
 
     public IReadOnlyList<string> ListPhotoUrls(string modelKey)
