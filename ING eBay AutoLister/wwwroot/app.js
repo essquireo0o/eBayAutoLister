@@ -7378,6 +7378,10 @@
   let pbCountdown = null;
   let pbAutoEnhance = true;     // raw photo remains safe; the enhanced copy goes to the listing
   const pbEnhancedSnaps = new Set();
+  // Enhanced pictures whose background was deliberately LEFT ALONE, because the cut-out was refused
+  // as unsafe and the photo was improved instead (exposure, contrast, colour, sharpening). They are
+  // real improvements and they are not studio shots, so they must not claim to be.
+  const pbKeptBackground = new Set();
   // enhanced url -> the untouched full-resolution capture it was made from.
   //
   // Load-bearing for Save. "AI Enhance after every snap" ships ON, so the URL this session carries
@@ -7622,6 +7626,7 @@
         const enhanced = await pbEnhancePhoto(url);
         pbSessionSnaps = pbSessionSnaps.map(saved => saved === url ? enhanced.url : saved);
         pbEnhancedSnaps.add(enhanced.url);
+        if (enhanced.backgroundReplaced === false) pbKeptBackground.add(enhanced.url);
         pbSupersede(url, enhanced.url);
         pbRenderFilmstrip();
         if (note) {
@@ -7888,6 +7893,7 @@
             enhanced = await pbEnhancePhoto(r.url);
             listingUrl = enhanced.url;
             pbEnhancedSnaps.add(listingUrl);
+            if (enhanced.backgroundReplaced === false) pbKeptBackground.add(listingUrl);
             pbSupersede(r.url, listingUrl);
           } catch (enhanceError) {
             // A treatment can fail; a shutter press cannot be allowed to disappear with it. The
@@ -7905,7 +7911,9 @@
           note.classList.remove('hidden');
           if (enhanced) {
             note.className = 'wn-video-status wn-video-ok';
-            note.textContent = `✨ Studio photo ready — background replaced, ${enhanced.cropPercent || 0}% of empty space removed, then brightened and sharpened. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`;
+            note.textContent = enhanced.backgroundReplaced === false
+              ? `Photo improved — brightened, sharpened and colour-corrected. The cut-out was refused on this one${enhanced.note ? ` (${enhanced.note})` : ''}, so the background is exactly as you photographed it. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`
+              : `✨ Studio photo ready — background replaced, ${enhanced.cropPercent || 0}% of empty space removed, then brightened and sharpened. ${pbSessionSnaps.length} photo${pbSessionSnaps.length === 1 ? '' : 's'} ready.`;
           } else if (!pbAutoEnhance) {
             note.textContent = `Original saved to the Photo Library (${r.folder}). AI Enhance is off.`;
           }
@@ -7955,11 +7963,35 @@
     if (!oldUrl || !newUrl || oldUrl === newUrl) return;
     // The raw capture at the root of this chain. An original maps to nothing, so it is its own.
     const original = pbOriginalOf.get(oldUrl) || oldUrl;
-    pbOriginalOf.delete(oldUrl);
     if (newUrl !== original) pbOriginalOf.set(newUrl, original);
-    // Only ever a derived file. oldUrl === original means the seller just enhanced their untouched
+
+    // Never an original: oldUrl === original means the seller just enhanced their untouched
     // photograph for the first time, and both copies are wanted.
-    if (oldUrl !== original) pbForgetLibraryFile(oldUrl);
+    if (oldUrl === original) return;
+
+    // Still on someone else's entry, so the file stays AND SO DOES ITS LINEAGE. Forgetting the
+    // lineage here was a bug of its own: the next entry to move off this picture would read it as
+    // an original -- because that is what "no entry in the map" means -- and then refuse to clean
+    // it up for the rest of the session. The mapping is what makes it collectable later.
+    if (pbUrlStillInUse(oldUrl)) return;
+
+    pbOriginalOf.delete(oldUrl);
+    pbForgetLibraryFile(oldUrl);
+  }
+
+  // Is anything else still showing this file?
+  //
+  // This became load-bearing when 50c8e90 made library filenames the SHA-256 of the bytes. Before
+  // it, every save produced a fresh Guid and a superseded file could not possibly be anyone else's;
+  // now two byte-identical pictures resolve to ONE url, so deleting "the old one" can pull the
+  // thumbnail out from under a second filmstrip entry — or delete the original that "Save to my
+  // computer" was going to export for a different shot. Content addressing is the right fix for the
+  // duplicates and this is the cost of it: a delete has to ask who else is holding the file.
+  function pbUrlStillInUse(url) {
+    if (pbSessionSnaps.includes(url)) return true;          // another entry is showing it
+    for (const original of pbOriginalOf.values())            // it is another chain's untouched capture
+      if (original === url) return true;
+    return false;
   }
 
   // Drops a superseded file from the library. Fire-and-forget on purpose: a leftover picture is
@@ -8137,6 +8169,8 @@
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? result.url : u));
       pbEnhancedSnaps.delete(url);
       pbEnhancedSnaps.add(result.url);
+      pbKeptBackground.delete(url);
+      if (result.backgroundReplaced === false) pbKeptBackground.add(result.url);
       pbSupersede(url, result.url);
       pbRenderFilmstrip();
       if (note) {
@@ -8192,7 +8226,14 @@
           <span class="pb-shot-hint">✎ Edit</span>
         </button>
         <span class="pb-shot-n">${i + 1} · ${esc(pbShotPlan[i]?.name || 'Extra')}</span>
-        ${pbEnhancedSnaps.has(u) ? '<span class="pb-shot-enhanced">✨ Enhanced</span>' : ''}
+        ${pbEnhancedSnaps.has(u)
+          ? (pbKeptBackground.has(u)
+              // 4a10372: the cut-out was refused and the photo was improved without it. Calling
+              // that "✨ Enhanced" would promise a studio background that is not there, and the
+              // seller would find out on the listing rather than here.
+              ? '<span class="pb-shot-enhanced pb-shot-kept">Background left as photographed</span>'
+              : '<span class="pb-shot-enhanced">✨ Enhanced</span>')
+          : ''}
         <button type="button" class="pb-shot-x" data-act="drop"
                 title="Remove Photo ${i + 1} from this listing. The file stays in your Photo Library."
                 aria-label="Remove photo ${i + 1} from this listing">&times;</button>
@@ -8273,6 +8314,9 @@
       pbSessionSnaps = pbSessionSnaps.map(u => (u === url ? out : u));
       pbEnhancedSnaps.delete(url);
       if (wasEnhanced) pbEnhancedSnaps.add(out);
+      // Cut out replaces the background itself, so it clears the "left as photographed" caveat;
+      // Portrait blurs it and does not, so the caveat travels with the picture.
+      if (pbKeptBackground.delete(url) && endpoint !== 'remove-bg') pbKeptBackground.add(out);
       pbSupersede(url, out);
       pbRenderFilmstrip();
       if (note) note.classList.add('hidden');

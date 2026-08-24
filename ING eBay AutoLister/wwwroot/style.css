@@ -19797,6 +19797,19 @@ body {
   background: var(--gold-tint) !important;
   color: var(--ink) !important;
 }
+/* The same badge, worn by a photo whose cut-out was REFUSED and which was improved without one
+   (4a10372). Cool and quiet rather than gold: the gold badge means "studio background", and a
+   photograph that still has the seller's kitchen behind it must not wear it. Reads as a statement
+   of fact, which is what it is, instead of as a failure. */
+.pb-shot-kept {
+  border-color: rgba(150, 170, 200, .34) !important;
+  color: #d8e2f0 !important;
+  background: rgba(20, 28, 40, .82) !important;
+  font-weight: 700 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
 .pb-shot-enhanced {
   position: absolute;
   left: 7px;

@@ -34,10 +34,16 @@ public class PhotoTreatmentsDoNotPileUpTests
         Assert.Contains("function pbSupersede(", Js, StringComparison.Ordinal);
 
         // The guard IS the safety property. Without it the call deletes whatever it was handed,
-        // which on a first enhance is the seller's untouched photograph.
+        // which on a first enhance is the seller's untouched photograph. Asserted as the early
+        // return rather than as a particular boolean, so the rule is pinned and the spelling is not.
         var body = Slice(Js, "function pbSupersede(", "async function pbForgetLibraryFile");
-        Assert.Contains("oldUrl !== original", body, StringComparison.Ordinal);
+        Assert.Contains("if (oldUrl === original) return;", body, StringComparison.Ordinal);
         Assert.Contains("pbForgetLibraryFile(oldUrl)", body, StringComparison.Ordinal);
+
+        // And the return has to come BEFORE the delete, or the guard guards nothing.
+        Assert.True(body.IndexOf("if (oldUrl === original) return;", StringComparison.Ordinal)
+                  < body.IndexOf("pbForgetLibraryFile(oldUrl)", StringComparison.Ordinal),
+            "the original-capture guard must sit above the delete.");
     }
 
     [Fact]
@@ -75,7 +81,48 @@ public class PhotoTreatmentsDoNotPileUpTests
     [Fact]
     public void The_browser_is_made_to_fetch_the_changed_script()
     {
-        AssetStamp.AtLeast(Html, "app.js?v=", 161);
+        AssetStamp.AtLeast(Html, "app.js?v=", 162);
+    }
+
+    [Fact]
+    public void A_file_two_pictures_share_is_never_deleted_out_from_under_one_of_them()
+    {
+        // 50c8e90 made library filenames the SHA-256 of the bytes, so two identical pictures are
+        // now ONE file and one url. Before that, a superseded file could not possibly be anyone
+        // else's; now deleting it can blank a second filmstrip entry, or destroy the original that
+        // "Save to my computer" was going to export for a different shot.
+        var body = Slice(Js, "function pbSupersede(", "async function pbForgetLibraryFile");
+        Assert.Contains("pbUrlStillInUse(oldUrl)", body, StringComparison.Ordinal);
+
+        var guard = Slice(Js, "function pbUrlStillInUse(", "async function pbForgetLibraryFile");
+        Assert.Contains("pbSessionSnaps.includes(url)", guard, StringComparison.Ordinal);
+        Assert.Contains("pbOriginalOf.values()", guard, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Lineage_survives_a_file_that_is_still_in_use()
+    {
+        // The subtle half. If the map entry is dropped while another picture still holds the file,
+        // the next entry to move off it reads it as an ORIGINAL — that is what "absent from the
+        // map" means — and then refuses to collect it for the rest of the session. So the delete
+        // of the mapping has to sit after the in-use check, not before it.
+        var body = Slice(Js, "function pbSupersede(", "async function pbForgetLibraryFile");
+        var inUse = body.IndexOf("if (pbUrlStillInUse(oldUrl)) return;", StringComparison.Ordinal);
+        var forget = body.IndexOf("pbOriginalOf.delete(oldUrl)", StringComparison.Ordinal);
+        Assert.True(inUse >= 0, "the in-use guard is gone from pbSupersede.");
+        Assert.True(forget > inUse,
+            "pbOriginalOf.delete must come AFTER the in-use check, or a shared file becomes uncollectable.");
+    }
+
+    [Fact]
+    public void A_refused_cut_out_does_not_claim_a_studio_background()
+    {
+        // 4a10372: when the cut-out is refused the photo is still improved, at full resolution,
+        // with the background exactly as photographed. Labelling that "✨ Enhanced" promises a
+        // backdrop that is not there, and the seller finds out on the live listing instead.
+        Assert.Contains("pbKeptBackground", Js, StringComparison.Ordinal);
+        Assert.Contains("backgroundReplaced === false", Js, StringComparison.Ordinal);
+        Assert.Contains("Background left as photographed", Js, StringComparison.Ordinal);
     }
 
     private static string Slice(string text, string from, string to)
