@@ -173,6 +173,7 @@ public static partial class LiveSearchQuery
             ? "Searched for exactly what you typed."
             : "The sold search is a boolean AND — every word has to appear in a sold listing's title, "
               + "so the wording that is about the sale rather than the item was left out.";
+        terms.SimilarQueries = SimilarLookupQueries(terms);
 
         return terms;
     }
@@ -240,6 +241,36 @@ public static partial class LiveSearchQuery
         for (var keep = count - 1; keep >= MinImportantWords; keep--)
             if (WidenTo(terms, keep) is { } rung)
                 yield return rung;
+    }
+
+    /// <summary>
+    /// A bounded live-search ladder: two progressively closer cuts, the three-word product core,
+    /// then the two-word floor. This is wide enough to reach “1955 Washington Quarter” from a
+    /// grading-detail title without spending one external lookup for every word in that title.
+    /// </summary>
+    public static List<string> SimilarLookupQueries(LiveSearchTerms terms)
+    {
+        var count = Important((terms.Query ?? "").Trim()).Count;
+        if (count <= MinImportantWords) return [];
+
+        var targets = new[]
+        {
+            count - 2,
+            Math.Max(WidenToWords, (int)Math.Ceiling(count / 2m)),
+            WidenToWords,
+            MinImportantWords,
+        };
+
+        return targets
+            .Where(keep => keep >= MinImportantWords && keep < count)
+            .Distinct()
+            .OrderByDescending(keep => keep)
+            .Select(keep => WidenTo(terms, keep)?.Query)
+            .Where(query => !string.IsNullOrWhiteSpace(query))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
     }
 
     /// <summary>The widening itself, cut to <paramref name="keepWords"/> identifying words.</summary>

@@ -315,6 +315,7 @@ public sealed class LocalArbitrageAnalyzer(
         IReadOnlyList<CouponOffer>? coupons = null)
     {
         var localAsk = listing.Price ?? 0m;
+        var purchaseShipping = Math.Max(0m, listing.PurchaseShippingCost ?? 0m);
 
         // What KIND of thing this is, decided upstream by the scan and merely read here — see
         // ResaleCategoryCatalog. Everything below reads it twice: once to decide what may value it,
@@ -347,7 +348,7 @@ public sealed class LocalArbitrageAnalyzer(
         // invisible to Craigslist and Facebook: taxPercent 0 ⇒ buyCost == localAsk exactly.
         var taxPercent = listing.IsRetail ? RetailBuyCosts.Sanitize(retailSalesTaxPercent) : 0m;
         var salesTax = RetailBuyCosts.TaxOn(localAsk, taxPercent);
-        var buyCost = localAsk + salesTax;
+        var buyCost = localAsk + purchaseShipping + salesTax;
 
         // On a freebie the pricer has already done both, and it is the only one that can: a rebate's
         // tax is charged against a price the seller gets back, which this row's LocalAsk (zero)
@@ -367,6 +368,7 @@ public sealed class LocalArbitrageAnalyzer(
             Url = listing.Url,
             ImageUrl = listing.ImageUrl,
             LocalAsk = localAsk,
+            PurchaseShippingCost = listing.PurchaseShippingCost,
             OriginalPrice = listing.OriginalPrice,
             Location = listing.Location,
             DistanceMiles = listing.DistanceMiles,
@@ -391,7 +393,7 @@ public sealed class LocalArbitrageAnalyzer(
             SalesTax = freebie is not null ? (freebie.SalesTax > 0m ? freebie.SalesTax : null)
                 : listing.IsRetail ? salesTax : null,
             BuyCostAllIn = freebie is not null ? (buyCost > 0m ? buyCost : null)
-                : listing.IsRetail ? buyCost : null,
+                : listing.IsRetail || listing.PurchaseShippingCost.HasValue ? buyCost : null,
         };
 
         // How this category is costed: which fees apply, whether anything ships, and what a title

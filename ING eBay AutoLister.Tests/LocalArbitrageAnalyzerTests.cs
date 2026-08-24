@@ -75,6 +75,23 @@ public class LocalArbitrageAnalyzerTests
     }
 
     [Fact]
+    public void Build_InboundShippingIsAddedToWhatTheBuyerActuallyPays()
+    {
+        var shipped = Listing(100m);
+        shipped.Source = EbaySupplySource.SourceId;
+        shipped.PurchaseShippingCost = 47m;
+
+        var row = Analyzer.Build(shipped, Pricing(expected: 300m), Fees, retailSalesTaxPercent: 0m);
+        var noInbound = Analyzer.Build(Listing(100m), Pricing(expected: 300m), Fees);
+
+        Assert.Equal(100m, row.LocalAsk);
+        Assert.Equal(47m, row.PurchaseShippingCost);
+        Assert.Equal(147m, row.BuyCostAllIn);
+        Assert.Equal(noInbound.NetProfit - 47m, row.NetProfit);
+        Assert.Equal(Math.Round(row.NetProfit!.Value / 147m * 100m, 1), row.RoiPercent);
+    }
+
+    [Fact]
     public void Build_NoResaleData_IsNoDataNotZeroProfit()
     {
         var row = Analyzer.Build(Listing(50m), resale: null, Fees);

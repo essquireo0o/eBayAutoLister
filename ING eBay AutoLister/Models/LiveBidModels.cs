@@ -540,6 +540,12 @@ public sealed class LiveSearchTerms
     public bool Widened { get; set; }
     public string WidenedNote { get; set; } = "";
 
+    /// <summary>
+    /// Progressively broader sold-search queries worth trying against the live comp source when
+    /// stored history has no answer. Closest first and capped; every entry is cut from Query.
+    /// </summary>
+    public List<string> SimilarQueries { get; set; } = [];
+
     /// <summary>True when the seller asked for their exact words and nothing was cleaned.</summary>
     public bool AskedForExactly { get; set; }
 }

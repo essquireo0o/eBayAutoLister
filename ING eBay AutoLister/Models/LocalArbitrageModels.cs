@@ -26,6 +26,9 @@ public class LocalArbitrageOpportunity
     public string Url { get; set; } = "";
     public string ImageUrl { get; set; } = "";
     public decimal LocalAsk { get; set; }
+    // Inbound shipping paid to acquire the item. Null on local/private rows and when a remote
+    // source omitted the charge; zero is an explicit free-shipping answer.
+    public decimal? PurchaseShippingCost { get; set; }
     // Set when the seller struck their own price through — a motivated seller.
     public decimal? OriginalPrice { get; set; }
     public string Location { get; set; } = "";

@@ -31,6 +31,10 @@ public class LocalSupplyListing
     public decimal? Price { get; set; }
     public string PriceText { get; set; } = "";
     public bool IsFree { get; set; }
+    // Shipping charged to acquire this listing. Kept separate from Price so the board can show
+    // the exact all-in buy calculation instead of presenting a delivered total as an unexplained
+    // sticker price. Null means the source did not state shipping; zero means it explicitly did.
+    public decimal? PurchaseShippingCost { get; set; }
     // Set when the seller struck their own price through — a motivated seller, which is exactly
     // what a sourcing search is looking for.
     public decimal? OriginalPrice { get; set; }

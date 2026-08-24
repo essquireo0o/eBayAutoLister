@@ -233,9 +233,12 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
             Url         = item.Url,
             ImageUrl    = item.ImageUrl,
 
-            Price     = delivered > 0 ? delivered : null,
+            // Preserve the headline price and carry inbound shipping separately. The analyzer
+            // still costs the delivered total, while the UI can now prove that arithmetic.
+            Price     = item.Price > 0 ? item.Price : null,
             PriceText = BuildPriceText(item, shipping, delivered),
             IsFree    = false,
+            PurchaseShippingCost = item.ShippingStated ? item.ShippingCost : null,
 
             // eBay states a shipping cost of zero rather than leaving it unknown, which is the one
             // case where "free shipping" is a fact rather than an assumption.

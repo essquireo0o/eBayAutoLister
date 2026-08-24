@@ -28,6 +28,17 @@ public class CompsLadderTests
     }
 
     [Fact]
+    public void Live_fallback_queries_reach_the_similar_coin_core_without_one_call_per_word()
+    {
+        var queries = LiveSearchQuery.Build(
+            "1955 Washington Quarter PCGS Genuine UNC Detail Wheel Mark").SimilarQueries;
+
+        Assert.Contains("1955 Washington Quarter", queries);
+        Assert.InRange(queries.Count, 1, 4);
+        Assert.Equal(queries.Count, queries.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
     public void It_gives_up_one_word_at_a_time_broadest_last()
     {
         var rungs = LiveSearchQuery.Ladder(LiveSearchQuery.Build(Coin)).ToList();
