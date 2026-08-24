@@ -5684,6 +5684,14 @@
     const lot = row.liquidation;
     const lines = [];
 
+    // eBay supply is bought remotely. Keep the listing's headline price and inbound shipping
+    // separate on screen even though profit/ROI use their sum: a $100 item with $47 shipping is a
+    // $147 buy, and merely printing $147 leaves the seller unable to verify that shipping counted.
+    if (row.purchaseShippingCost != null && !lot) {
+      const inbound = Number(row.purchaseShippingCost) || 0;
+      lines.push(`<span class="retail-tax">${money(row.localAsk)} item + ${inbound > 0 ? money(inbound) : 'free'} inbound shipping</span>`);
+    }
+
     if (lot && lot.buyerPremium > 0) {
       lines.push(`<span class="retail-tax">${money(row.localAsk)} bid + ${money(lot.buyerPremium)} premium` +
         `${lot.buyerPremiumAssumed ? ' (assumed)' : ''}${row.salesTax > 0 ? ` + ${money(row.salesTax)} tax` : ''}</span>`);
@@ -12721,19 +12729,32 @@
       wnTokenItem = item;
       wnRenderCard(body);
 
-      // No stored sold history is no longer the end of the question. One budget-gated live
-      // OpenWebNinja lookup — the same machinery the listing screen and the scanner board
-      // spend — then the same ask again against the rows it just wrote. Once per press: a
-      // second no_data after a fetch that FOUND rows means the titles don't match the name,
-      // not that the history is missing, and a loop would spend the day's budget proving it.
-      // The lots table stays out of this on purpose — a fetch per lot is a fetch per lot.
+      // No stored sold history is no longer the end of the question. Ask the full cleaned name,
+      // then a bounded set of progressively broader SIMILAR-product queries supplied by
+      // LiveSearchQuery. Fetch all the rungs first and reprice once: the server can then choose the
+      // closest rung with enough evidence instead of stopping on one exact-title miss. This is
+      // intentionally deeper than the old single lookup — the seller asked for a usable answer and
+      // is willing to wait — but capped at five live calls so one unusual title cannot spend the
+      // whole daily allowance. The lots table stays out of this: a ladder per pasted lot would fan
+      // out uncontrollably.
       if (!wnLiveFallbackSpent && body.call === 'no_data') {
         const q = body.search?.query || item;
+        const similar = Array.isArray(body.search?.similarQueries) ? body.search.similarQueries : [];
+        const queries = [...new Set([q, ...similar].map(x => String(x || '').trim()).filter(Boolean))].slice(0, 5);
         card.insertAdjacentHTML('beforeend',
-          `<p class="wn-empty" id="wn-live-wait">No stored sold history — asking eBay live for <strong>${esc(q)}</strong>… usually a few seconds.</p>`);
-        wnSayLine('No stored sold history — asking eBay live for real sold prices…');
-        const run = await runLiveLookup(q, 'wn');
-        if (run.outcome === 'ok' && Number(run.rowsFound) > 0) {
+          `<p class="wn-empty" id="wn-live-wait">No exact sold history — widening through ${queries.length} similar-comp search${queries.length === 1 ? '' : 'es'}…</p>`);
+        wnSayLine('No exact sold history — widening the live eBay search to similar comps…');
+
+        let rowsFound = 0;
+        let lastRun = null;
+        for (let i = 0; i < queries.length; i++) {
+          const wait = $('wn-live-wait');
+          if (wait) wait.innerHTML = `Looking for similar comps ${i + 1} of ${queries.length}: <strong>${esc(queries[i])}</strong>…`;
+          lastRun = await runLiveLookup(queries[i], 'wn');
+          rowsFound += Math.max(0, Number(lastRun?.rowsFound) || 0);
+        }
+
+        if (rowsFound > 0) {
           wnLiveFallbackSpent = true;
           try { await wnPriceItem(); } finally { wnLiveFallbackSpent = false; }
           return;
@@ -12741,7 +12762,7 @@
         // The lookup itself said why not — switched off, budget spent, already fetched today,
         // or eBay genuinely has nothing. Its own sentence beats a silent shrug, because
         // "couldn't ask" and "asked, and there are no sales" are opposite conclusions.
-        const why = run.message || 'Live lookup found nothing new.';
+        const why = lastRun?.message || 'The exact and similar live searches found nothing new.';
         const wait = $('wn-live-wait');
         if (wait) wait.outerHTML = `<p class="wn-empty">${esc(why)}</p>`;
         wnSayLine(why);
