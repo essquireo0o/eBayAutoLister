@@ -130,15 +130,12 @@
              go live — because that loop runs many times a day. Everything that reports on money
              already made runs monthly, so it sits at the bottom where a monthly job belongs. -->
         <button class="nav-item active" type="button" data-page="dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#i-dashboard"/></svg>Dashboard</button>
-        <!-- The two doors on the one screen that turns a photo into a finished listing. This is
-             what the app is for, so nothing sits above it but the way home. The door taken presets
-             the marketplace switch in the listing's footer; the draft is one draft either way. -->
+        <!-- The primary selling loop starts with the camera: photograph the item, let AI build the
+             eBay draft, then publish. Desktop only (wn-desk) because the phone reaches this computer
+             over the seller's local network. Amazon remains available to backend integrations but
+             is intentionally not presented as a separate customer-facing workflow. -->
+        <button class="nav-item wn-desk" type="button" data-page="photobox"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo → eBay Listing</button>
         <button class="nav-item" type="button" data-page="ebay"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing eBay</button>
-        <button class="nav-item" type="button" data-page="amazon"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing Amazon</button>
-        <!-- Above the library because it comes first in the real world: the photograph has to be
-             taken before there is anything to file. Desktop only (wn-desk) — the phone reaches the
-             capture page over the seller's own network, which a hosted server never shares. -->
-        <button class="nav-item wn-desk" type="button" data-page="photobox"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Box Camera</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
         <!-- What is live now, and the tool that improves it. Daily, but only after something has
              been listed — so directly under the listing loop rather than inside it. -->
