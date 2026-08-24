@@ -797,6 +797,11 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         web.MapGet("/start", () => Results.Content(TrustPageHtml(autoStart: true), "text/html; charset=utf-8"));
         web.MapGet("/trust", () => Results.Content(TrustPageHtml(autoStart: false), "text/html; charset=utf-8"));
 
+        // The way out of the certificate entirely. A file input is not a secure-context
+        // feature, so this page opens the iPhone camera from plain HTTP with nothing to
+        // install. Linked from the setup page above, for the phone that will not be set up.
+        web.MapGet("/c", () => Results.Content(CameraFreePageHtml(), "text/html; charset=utf-8"));
+
         // The name matters: iOS decides what to do with this from the extension and the type.
         web.MapGet("/trust.mobileconfig", () =>
             Results.File(MobileConfig(), "application/x-apple-aspen-config", "ing-photo-box.mobileconfig"));
@@ -881,6 +886,155 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     }
 
     /// <summary>
+    /// The camera that needs no certificate at all.
+    /// </summary>
+    /// <remarks>
+    /// Safari will not give a page the live camera (<c>getUserMedia</c>) without a secure context,
+    /// which is the entire reason the certificate, the authority and the three Settings taps exist.
+    /// A FILE INPUT has no such requirement: <c>capture="environment"</c> opens the iPhone's own
+    /// camera from a plain-HTTP page and hands the bytes back, with no trust decision, no profile,
+    /// and nothing for the owner to install.
+    /// <para>
+    /// What it costs is the live viewfinder and the desktop shutter — the phone takes the photo,
+    /// the computer does not fire it. What it buys is a Safari that works on the first tap, on any
+    /// iPhone, including one that will never be set up. So it is offered beside the trusted route
+    /// rather than instead of it.
+    /// </para>
+    /// <para>
+    /// The bytes are re-encoded to JPEG in a canvas before they are sent. Not compression for its
+    /// own sake: an iPhone hands back HEIC often enough, and every reader downstream — the AI
+    /// enhance pass, the eBay upload — expects a JPEG. Decoding it on the phone, where the codec is
+    /// native, is cheaper and far more reliable than teaching the desktop to convert.
+    /// </para>
+    /// </remarks>
+    private string CameraFreePageHtml() => $$"""
+        <!DOCTYPE html>
+        <html lang="en"><head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <title>ING Photo Box — phone camera</title>
+        <style>
+          :root{color-scheme:dark}
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{background:#050707;color:#f7fbfb;font:16px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+               padding:calc(env(safe-area-inset-top) + 22px) 20px 40px;max-width:640px;margin:auto}
+          h1{font-size:23px;line-height:1.25;letter-spacing:-.01em;margin-bottom:6px}
+          .sub{color:#9fb1b4;margin-bottom:22px}
+          .btn{display:block;text-align:center;background:linear-gradient(145deg,#f0c453,#b67d12);color:#151006;
+               font-weight:800;padding:20px;border-radius:14px;text-decoration:none;margin:0 0 12px;
+               font-size:18px;border:0;width:100%;font-family:inherit;cursor:pointer}
+          .go{display:block;text-align:center;border:1px solid #2b3a3d;color:#f7fbfb;padding:15px;border-radius:14px;
+              text-decoration:none;margin-top:10px;background:#111719;font:inherit;width:100%;cursor:pointer}
+          .count{margin:22px 0 10px;font-weight:700}
+          .row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid #1d2729;font-size:14px}
+          .row img{width:46px;height:46px;object-fit:cover;border-radius:8px;background:#111719}
+          .row span{color:#9fb1b4}
+          .ok{color:#7fd8a0}.bad{color:#ff9c8a}
+          .why{margin-top:30px;padding-top:18px;border-top:1px solid #1d2729;color:#9fb1b4;font-size:14px}
+          .why a{color:#f0c453}
+        </style></head><body>
+          <h1>Take photos with this phone</h1>
+          <p class="sub">No certificate, no setup. Tap, shoot, and the photo lands on your computer.</p>
+
+          <button class="btn" id="shoot" type="button">Take a photo</button>
+          <button class="go" id="pick" type="button">Choose photos already taken</button>
+          <input id="cam" type="file" accept="image/*" capture="environment" multiple hidden>
+          <input id="lib" type="file" accept="image/*" multiple hidden>
+
+          <div class="count" id="count">Nothing sent yet.</div>
+          <div id="shots"></div>
+
+          <p class="why">Keep this page open and shoot as many as you like — each one appears on the
+             computer as it arrives. For the live viewfinder and a shutter button on the computer,
+             the one-time certificate setup is <a href="/trust">on this page</a>.</p>
+
+          <script>
+            const TOKEN = {{System.Text.Json.JsonSerializer.Serialize(_token)}};
+            const shots = document.getElementById('shots');
+            const count = document.getElementById('count');
+            const cam = document.getElementById('cam');
+            const lib = document.getElementById('lib');
+            let sent = 0, failed = 0;
+
+            document.getElementById('shoot').addEventListener('click', () => cam.click());
+            document.getElementById('pick').addEventListener('click', () => lib.click());
+            cam.addEventListener('change', () => take(cam));
+            lib.addEventListener('change', () => take(lib));
+
+            function tally() {
+              count.textContent = failed
+                ? sent + ' sent, ' + failed + ' failed'
+                : (sent === 1 ? '1 photo sent to your computer' : sent + ' photos sent to your computer');
+            }
+
+            function take(input) {
+              const files = [...input.files];
+              input.value = '';                    // so the same shot can be retaken immediately
+              files.forEach(send);
+            }
+
+            // An iPhone photograph is often HEIC and always large. Both are settled here, on the
+            // device that already has the codec, rather than on the computer that does not.
+            async function toJpeg(file) {
+              const cap = 3000;
+              let width, height, draw;
+              try {
+                const bitmap = await createImageBitmap(file);
+                width = bitmap.width; height = bitmap.height;
+                draw = (c, w, h) => c.drawImage(bitmap, 0, 0, w, h);
+              } catch (e) {
+                // Older Safari cannot make a bitmap from a HEIC File, but it can always show one.
+                const url = URL.createObjectURL(file);
+                try {
+                  const img = await new Promise((ok, no) => {
+                    const i = new Image();
+                    i.onload = () => ok(i);
+                    i.onerror = () => no(new Error('this phone could not read the photo'));
+                    i.src = url;
+                  });
+                  width = img.naturalWidth; height = img.naturalHeight;
+                  draw = (c, w, h) => c.drawImage(img, 0, 0, w, h);
+                } finally { setTimeout(() => URL.revokeObjectURL(url), 10000); }
+              }
+              const scale = Math.min(1, cap / Math.max(width, height));
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.round(width * scale);
+              canvas.height = Math.round(height * scale);
+              draw(canvas.getContext('2d'), canvas.width, canvas.height);
+              const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.92));
+              if (!blob) throw new Error('this phone could not encode the photo');
+              return { blob: blob, thumb: canvas.toDataURL('image/jpeg', 0.4) };
+            }
+
+            async function send(file) {
+              const row = document.createElement('div');
+              row.className = 'row';
+              const pic = document.createElement('img');
+              const label = document.createElement('span');
+              label.textContent = 'Preparing...';
+              row.append(pic, label);
+              shots.prepend(row);
+              try {
+                const shot = await toJpeg(file);
+                pic.src = shot.thumb;
+                label.textContent = 'Sending...';
+                const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: shot.blob });
+                if (!res.ok) throw new Error('the computer refused it (' + res.status + ')');
+                sent++;
+                label.textContent = 'On your computer';
+                label.className = 'ok';
+              } catch (e) {
+                failed++;
+                label.textContent = 'Failed - ' + e.message;
+                label.className = 'bad';
+              }
+              tally();
+            }
+          </script>
+        </body></html>
+        """;
+
+    /// <summary>
     /// The page a phone lands on before it can open the camera. Written for somebody standing at a
     /// bench holding a phone: what to tap, in order, and what each step is for.
     /// </summary>
@@ -925,6 +1079,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                  set up, the camera opens automatically.</p>
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
+              <a class="go" href="/c" style="margin-bottom:4px">Skip all this — take photos with this phone &rsaquo;</a>
+              <p class="sub" style="font-size:14px;margin-bottom:22px">Uses the iPhone's own camera. No certificate,
+                 nothing to install, works right now. You tap the shutter instead of the computer.</p>
               <section id="setup" class="hidden">
               <h2>One-time setup for this iPhone</h2>
               <p class="sub">Safari requires HTTPS before it will allow the camera. Apple does not let a
