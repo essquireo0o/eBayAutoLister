@@ -9457,7 +9457,17 @@
     if (input.dataset.cancelled === '1') return;
     // An inline editor opened and closed without a change is not a save. Re-saving the same
     // number works, but it reports "$0.00 of real profit added", which reads like a failure.
-    if (input.dataset.original !== undefined && raw === input.dataset.original) {
+    //
+    // Only when the number on screen is THIS SALE'S OWN, though. It used to compare the typed text
+    // against the rendered text and stop there, and the rendered text is not always this sale's
+    // state: costSource "basis" means the figure was inherited from the listing's cost basis, and
+    // "none" means there is no figure at all. Measured on the owner's data — 78 sales, unitCost
+    // null on every one of them, 72 showing $0.00 inherited from a zero basis — typing 0 matched
+    // the prefilled "0.00" and returned without saving, every time, on nearly every row. Their
+    // words: "it does not like when I put in 0". Writing an explicit 0 onto the sale IS a change
+    // when the 0 came from somewhere else.
+    if (input.dataset.costsource === 'flip'
+        && input.dataset.original !== undefined && raw === input.dataset.original) {
       renderEarnings();
       return;
     }
@@ -9970,6 +9980,7 @@
     const val = has ? Number(f.costOfGoods).toFixed(2) : '';
     return `<button type="button" class="er-cost-edit${has ? '' : ' is-missing'}"
       data-id="${f.id}" data-unitgross="${unitGross(f)}" data-cost="${val}"
+      data-costsource="${f.costSource || 'none'}"
       title="${has ? 'Change what you paid for this' : 'Record what you paid for this'}"
       aria-label="${has ? 'Change' : 'Record'} what you paid for ${esc(f.title)}"
       >${has ? `paid ${moneyExact(f.costOfGoods)}` : 'add what you paid'}<span class="er-cost-pen" aria-hidden="true">✎</span></button>`;
@@ -9985,7 +9996,8 @@
     slot.className = 'er-cost-inline';
     slot.innerHTML = `<input class="er-cost-cell" data-id="${btn.dataset.id}"
         data-unitgross="${btn.dataset.unitgross}" data-original="${current}"
-        type="text" inputmode="decimal" value="${current}" placeholder="0.00"
+        data-costsource="${btn.dataset.costsource || 'none'}"
+        type="text" inputmode="decimal" value="${current}" placeholder="0.00 or 40%"
         aria-label="What you paid, per unit"
         title="What you paid, per unit. A dollar amount, or a percentage like 40% for the share of the sale you keep. Enter to save, Esc to leave it alone." />`;
     btn.replaceWith(slot);
@@ -10180,9 +10192,16 @@
         ? ` It also priced ${also} other sale${also === 1 ? '' : 's'} of the same item.`
         : '';
       const delta = (earnings.summary?.netProfitAllTime || 0) - before;
-      setEarningsStatus((delta >= 0
-        ? `Cost saved — ${moneyExact(delta)} of real profit added to your total.`
-        : `Cost saved — that works out to a ${moneyExact(Math.abs(delta))} loss, and the total now says so.`) + scope);
+      // A delta of nothing is a real outcome and has to sound like one. "Cost saved — $0.00 of
+      // real profit added to your total" is what the app said after every save of a zero cost,
+      // and it reads as a refusal, which is how a working write came to look broken.
+      setEarningsStatus((delta === 0
+        ? (value === 0
+            ? 'Saved — you paid nothing for this one, so the whole sale counts as profit.'
+            : 'Saved. Your total did not move, because that is what it was already counting.')
+        : delta > 0
+          ? `Cost saved — ${moneyExact(delta)} of real profit added to your total.`
+          : `Cost saved — that works out to a ${moneyExact(Math.abs(delta))} loss, and the total now says so.`) + scope);
     } catch (err) {
       setEarningsStatus(errorText(err, 'That cost could not be saved.'));
     }
