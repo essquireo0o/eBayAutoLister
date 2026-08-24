@@ -174,6 +174,30 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
         return $"/photos/{key}/{name}";
     }
 
+    /// <summary>
+    /// The bytes of a photo this library saved, addressed by the url it handed out
+    /// (<c>/photos/{model}/{file}</c>). Null when that is not a library image that exists.
+    /// </summary>
+    /// <remarks>
+    /// Both parts are sanitized to bare names, exactly as <see cref="DeletePhoto"/> does: a url is
+    /// a string from a request, and "read me any file you like" is the shape of that mistake.
+    /// </remarks>
+    public byte[]? ReadPhoto(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+
+        var parts = url.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3 || !string.Equals(parts[^3], "photos", StringComparison.OrdinalIgnoreCase)) return null;
+
+        var key  = Sanitize(parts[^2]);
+        var name = Sanitize(parts[^1]);
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(name)) return null;
+        if (!ImageExtensions.Contains(Path.GetExtension(name))) return null;
+
+        var path = Path.Combine(RootPath, key, name);
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
     // Delete one photo from a model's folder (a bad shot the seller wants out of the rotation).
     // Both parts are sanitized to bare names, so nothing outside the model's own folder is reachable.
     // Returns false when the file isn't a library image that exists.

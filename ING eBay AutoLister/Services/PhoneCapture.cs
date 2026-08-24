@@ -1118,6 +1118,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
           .row img{width:46px;height:46px;object-fit:cover;border-radius:8px;background:#111719}
           .row span{color:#9fb1b4}
           .ok{color:#7fd8a0}.bad{color:#ff9c8a}
+          .listing{border:1px solid #2b3a3d;border-radius:14px;background:#0d1213;padding:16px;margin:4px 0 10px}
+          .listing h2{font-size:17px;line-height:1.35;margin-bottom:10px}
+          .listing dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+          .listing dt{color:#9fb1b4}
+          .listing dd{color:#f7fbfb;font-weight:600}
+          .listing .after{margin-top:12px;color:#9fb1b4;font-size:13px;line-height:1.45}
           .why{margin-top:30px;padding-top:18px;border-top:1px solid #1d2729;color:#9fb1b4;font-size:14px}
           .why a{color:#f0c453}
         </style></head><body>
@@ -1130,6 +1136,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
           <input id="lib" type="file" accept="image/*" multiple hidden>
 
           <div class="count" id="count">Nothing sent yet.</div>
+
+          <button class="btn" id="write" type="button" hidden>Write the listing with AI</button>
+          <div id="listing" class="listing" hidden></div>
+
           <div id="shots"></div>
 
           <p class="why">Keep this page open and shoot as many as you like — each one appears on the
@@ -1194,6 +1204,51 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               return { blob: blob, thumb: canvas.toDataURL('image/jpeg', 0.4) };
             }
 
+            const write = document.getElementById('write');
+            const listing = document.getElementById('listing');
+            let lastPhoto = '';
+
+            write.addEventListener('click', async () => {
+              write.disabled = true;
+              const was = write.textContent;
+              // The wait is real — this is the same full listing call the computer makes, measured at
+              // 64 seconds on a real photo. Saying so beats a button that looks stuck.
+              write.textContent = 'Reading the photo... about a minute';
+              listing.hidden = true;
+              try {
+                const res = await fetch('/c/' + TOKEN + '/listing', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url: lastPhoto }),
+                });
+                const d = await res.json();
+                if (!res.ok || !d.ok) throw new Error(d.error || 'the AI did not answer');
+                listing.innerHTML =
+                  '<h2>' + esc(d.title || 'Untitled') + '</h2><dl>'
+                  + row('Condition', d.condition)
+                  + row('Price', d.price > 0 ? '$' + Number(d.price).toFixed(2) : '')
+                  + row('Category', d.category)
+                  + row('Brand', d.brand)
+                  + '</dl><p class="after">Saved as a draft on your computer. Open AI Listing there to '
+                  + 'check the price against real sold comps and publish it.</p>';
+                listing.hidden = false;
+              } catch (e) {
+                listing.innerHTML = '<p class="after">Could not write it - ' + esc(e.message)
+                  + '. Your photo is saved on the computer either way.</p>';
+                listing.hidden = false;
+              } finally {
+                write.disabled = false;
+                write.textContent = was;
+              }
+            });
+
+            function esc(t) {
+              return String(t == null ? '' : t).replace(/[&<>"]/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            }
+            function row(label, value) {
+              return value ? '<dt>' + label + '</dt><dd>' + esc(value) + '</dd>' : '';
+            }
+
             async function send(file) {
               const row = document.createElement('div');
               row.className = 'row';
@@ -1208,9 +1263,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 label.textContent = 'Sending...';
                 const res = await fetch('/p/' + TOKEN + '/photo', { method: 'POST', body: shot.blob });
                 if (!res.ok) throw new Error('the computer refused it (' + res.status + ')');
+                const saved = await res.json().catch(() => ({}));
+                if (saved.url) lastPhoto = saved.url;
                 sent++;
                 label.textContent = 'On your computer';
                 label.className = 'ok';
+                write.hidden = false;
               } catch (e) {
                 failed++;
                 label.textContent = 'Failed - ' + e.message;
