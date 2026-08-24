@@ -156,8 +156,21 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
         var key = CreateFolder(modelKey);
         ext = ext.TrimStart('.').ToLowerInvariant();
         if (!ImageExtensions.Contains("." + ext)) ext = "png";
-        var name = $"{Guid.NewGuid():N}.{ext}";
-        await File.WriteAllBytesAsync(Path.Combine(RootPath, key, name), bytes);
+        // Named by WHAT IT IS, not by when it arrived. A random name meant identical bytes always
+        // became another file, and nothing in the app deduplicates at the call site: the owner's
+        // photo-box ended up holding the same enhanced shot five times — four of them written
+        // inside one second — because every AI Enhance of the same photo produced a byte-identical
+        // result and a brand new Guid to put it under. Content addressing settles it once for every
+        // path that saves: enhance, cut-out, portrait, the editor, and the phone upload.
+        //
+        // The consequence worth stating: saving the same photograph twice returns the SAME url
+        // rather than a second one. That is the point — two identical files are not two photographs
+        // — and it is why the write is skipped when the name is already there. Different pixels
+        // still mean a different name, so nothing is ever silently replaced by something else.
+        var name = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                          .ToLowerInvariant()[..32] + "." + ext;
+        var path = Path.Combine(RootPath, key, name);
+        if (!File.Exists(path)) await File.WriteAllBytesAsync(path, bytes);
         return $"/photos/{key}/{name}";
     }
 
