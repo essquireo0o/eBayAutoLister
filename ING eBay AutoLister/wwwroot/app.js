@@ -7546,12 +7546,20 @@
     if (state) {
       // "Waiting" and "it stopped answering" are different problems with different fixes,
       // and the second one is what a locked phone looks like from here.
+      // THREE states, because there are three. The middle one is new and it is the one the owner
+      // hit: a phone on the certificate-free page uploads photographs and has no live channel at
+      // all, so it can never be "connected" — and the panel used to answer that with "Waiting for
+      // the phone to open the page" while the phone was actively sending. Pictures arriving and
+      // the desk saying nothing is here is what "using my phone no longer works" looked like.
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
-        : st.phoneWasConnected
-          ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
-          : 'Waiting for the phone to open the page…';
-      state.className = 'pb-phone-state ' + (st.phoneConnected ? 'wn-video-ok' : 'wn-video-busy');
+        : st.phoneSending
+          ? `Your phone is sending photos${st.shotCount ? ` — ${st.shotCount} so far` : ''}. Shoot from the phone; `
+            + `📸 Snap is for the live camera and needs the one-time setup below.`
+          : st.phoneWasConnected
+            ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
+            : 'Waiting for the phone to open the page…';
+      state.className = 'pb-phone-state ' + (st.phoneConnected || st.phoneSending ? 'wn-video-ok' : 'wn-video-busy');
     }
 
     pbPhoneLive = !!st.phoneConnected;
@@ -7578,13 +7586,21 @@
       pbRenderCamera(st);
       pbShowPhonePreview();
     } else {
-      if (status) status.textContent = 'Waiting for the phone…';
-      $('pb-connect-dot')?.classList.remove('is-live');
+      if (status) status.textContent = st.phoneSending ? 'Your phone is sending photos.' : 'Waiting for the phone…';
+      // The dot is green for sending too: something IS working, and a grey light beside arriving
+      // photographs is the panel disagreeing with the filmstrip next to it.
+      $('pb-connect-dot')?.classList.toggle('is-live', !!st.phoneSending);
       $('pb-camera')?.classList.add('hidden');
       pbStopPhonePreview();
-      pbNoCamera(st.phoneWasConnected
-        ? 'The phone stopped sending — wake its screen and the picture comes back.'
-        : 'Scan the code with your phone, allow the camera, and leave that page open.');
+      // Snap and Burst stay disabled here and that is correct — the certificate-free page has no
+      // command channel, so a shutter pressed on this screen would sit and then time out. The
+      // panel says why instead of leaving two dead buttons to be interpreted.
+      pbNoCamera(st.phoneSending
+        ? 'Your phone is the camera and photos are arriving — they appear below as you shoot. '
+          + 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.'
+        : st.phoneWasConnected
+          ? 'The phone stopped sending — wake its screen and the picture comes back.'
+          : 'Scan the code with your phone, allow the camera, and leave that page open.');
     }
   }
 
