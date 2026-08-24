@@ -1150,6 +1150,16 @@ static async Task<IResult> Guarded<T>(FailureDomain domain, string operation, Ac
     }
 }
 
+// Is the app still here?
+//
+// The cheapest possible answer, because it is asked while something long is already running. A
+// desktop app gets stopped under the page it is serving — an update, a rebuild, a crash — and the
+// request it was in the middle of may then never settle: the browser is left holding a socket with
+// nobody on the other end, and the screen keeps a progress bar up for a job that ended minutes
+// ago. Nothing about the original request can tell that apart from honest slowness. A second,
+// cheap request can. Its caller is the watchdog in localFetchJson.
+app.MapGet("/api/alive", () => Results.Ok(new { ok = true }));
+
 // ── AI analysis ───────────────────────────────────────────────────
 
 // What this account has left today. Mapped in both builds, and answers `enforced: false` on the
