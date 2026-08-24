@@ -256,7 +256,14 @@ public sealed class LiveBidAdvisor(ProfitCalculator profitCalc, JackpotHunter hu
                 // things on a live show, and which one found nothing is the whole next move: a
                 // seller looking at a query with a word in it they did not mean can fix it in one
                 // press, and a seller told "no sold history" cannot do anything at all.
-                ? $"No eBay sold history matched “{terms.Query}”, so there is no resale price to bid against."
+                // And what would give it one. The sold search is a boolean AND — every word has to
+                // appear in a sold title — so on a live show the usual cause is not a product nobody
+                // buys, it is one extra word. A card that says only "nothing matched" leaves the
+                // seller with nothing to do in the twenty seconds they have; naming the next press
+                // is the difference between a dead card and a second try.
+                ? $"No eBay sold history matched “{terms.Query}”, so there is no resale price to bid "
+                  + "against. Every word has to appear in a sold title, so try just the maker and model — "
+                  + "one extra word is usually what took it to nothing."
                 : card.EvidenceNote;
 
             // Except when eBay would refuse the listing, which is a stronger and more useful answer
