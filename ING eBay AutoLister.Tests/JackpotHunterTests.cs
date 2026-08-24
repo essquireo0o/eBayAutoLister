@@ -290,12 +290,17 @@ public class JackpotHunterTests
     {
         var listing = JackpotHunter.AsSupplyListing(new EbayOpportunityItem
         {
-            Title = "Antminer S19j Pro", Price = 120m, ShippingCost = 30m,
+            Title = "Antminer S19j Pro", Price = 120m, ShippingCost = 30m, ShippingStated = true,
             Url = "https://www.ebay.com/itm/123", SellerUsername = "someseller",
         });
 
         Assert.Equal("ebay", listing.Source);
-        Assert.Equal(150m, listing.Price);
+        // Headline price and inbound shipping carried apart, the way EbaySupplySource states
+        // them — $150 delivered, but with the two halves still legible. Folded into one number
+        // the row had no way left to say shipping was KNOWN, and a row that cannot say so has
+        // its profit withheld.
+        Assert.Equal(120m, listing.Price);
+        Assert.Equal(30m, listing.PurchaseShippingCost);
 
         // And it prices through the same analyzer a Craigslist row does: $173.10 break-even at a
         // $200 resale, minus the $150 all-in cost.

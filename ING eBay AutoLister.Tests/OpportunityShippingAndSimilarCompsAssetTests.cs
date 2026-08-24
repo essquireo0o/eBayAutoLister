@@ -29,7 +29,9 @@ public class OpportunityShippingAndSimilarCompsAssetTests
     [Fact]
     public void The_changed_script_has_a_new_cache_stamp()
     {
-        Assert.Contains("app.js?v=158", Html);
+        // A floor, not an exact number — see AssetStamp. Pinned exact, this went red the moment
+        // the next change to app.js raised the stamp to 159, which is the stamp doing its job.
+        AssetStamp.AtLeast(Html, "app.js?v=", 158);
     }
 
     private static string Read(params string[] parts)

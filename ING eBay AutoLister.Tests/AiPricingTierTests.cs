@@ -23,6 +23,11 @@ public class AiPricingTierTests
         {
             Source = "ebay", SourceLabel = "eBay", ItemId = id, Title = title,
             Url = $"https://www.ebay.com/itm/{id}", Price = price,
+            // Stated as free, because these are tests about the AI tier and not about shipping. An
+            // eBay row that leaves shipping UNKNOWN has its money columns withheld on purpose (see
+            // Shipping_unknown_...), and an uncosted row cannot show what the money code did with
+            // an estimate.
+            PurchaseShippingCost = 0m,
         };
 
     private static ResalePricing Comps(decimal expected, int comps = 6, int confidence = 70) =>
@@ -144,6 +149,41 @@ public class AiPricingTierTests
     }
 
     // ── Nothing that speaks unasked may quote it ─────────────────────────────────────────────
+
+    // ── An unpriceable cost does not rewrite the evidence ────────────────────────────────────
+
+    [Fact]
+    public void Shipping_unknown_withholds_the_money_without_claiming_comps_that_do_not_exist()
+    {
+        // Same eBay row, shipping left unstated: Browse omits it on calculated, freight and some
+        // local-pickup listings, and that is not free shipping.
+        var listing = new LocalSupplyListing
+        {
+            Source = "ebay", SourceLabel = "eBay", ItemId = "9",
+            Title = "1 oz Gold Buffalo Bullion Bar .999 Fine 24k",
+            Url = "https://www.ebay.com/itm/9", Price = 50m,
+        };
+        ResaleCategoryCatalog.Classify(listing);
+
+        var row = Analyzer.Build(
+            listing, ResalePricing.FromAi(listing.Title, 180m, 220m, "generic bullion round"), Fees);
+
+        // The money is withheld — no delivered cost, no honest profit.
+        Assert.Equal("no_data", row.Verdict);
+        Assert.Null(row.NetProfit);
+
+        // But the row is still an AI estimate, and it still says so. It must NOT announce comps:
+        // this row found no sold listing at all, and "sold comps were found" printed over its own
+        // sentence is the app claiming evidence it has not got.
+        Assert.Equal(LocalArbitrageEvidence.Ai, row.EvidenceTier);
+        Assert.Contains("No sold listing matched", row.EvidenceNote);
+        Assert.Contains("generic bullion round", row.EvidenceNote);
+        Assert.DoesNotContain("Sold comps were found", row.EvidenceNote);
+
+        // And the shipping fact is added, not substituted.
+        Assert.Contains("Inbound shipping is unknown", row.EvidenceNote);
+        Assert.Equal(0, row.SoldCompCount);
+    }
 
     [Fact]
     public void The_radar_never_fires_on_an_estimate()

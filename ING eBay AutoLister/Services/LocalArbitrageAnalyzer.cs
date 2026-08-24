@@ -268,6 +268,14 @@ public sealed class LocalArbitrageAnalyzer(
 
     // Only a confident row may wear a green badge or state a percentage as a rate. Everything else
     // is capped at "thin" — the arithmetic still shows, labelled as the estimate it is.
+    /// <summary>
+    /// Said about the row's cost, not about its evidence — which is why it is added to the evidence
+    /// note rather than replacing it. Unstated shipping on eBay Browse is calculated, freight or
+    /// local pickup; it is not free, and a delivered cost nobody knows cannot become a profit.
+    /// </summary>
+    private const string ShippingUnknownNote =
+        "Inbound shipping is unknown — it was not treated as free, so the money columns are withheld.";
+
     private static void ApplyEvidence(LocalArbitrageOpportunity row, ResalePricing resale)
     {
         // A model estimate is graded by where it came from, not by counting comps it never had.
@@ -449,7 +457,14 @@ public sealed class LocalArbitrageAnalyzer(
         {
             row.Verdict = "no_data";
             row.VerdictNote = "The listing did not state its shipping cost, so delivered buy cost and profit cannot be calculated.";
-            row.EvidenceNote = "Sold comps were found, but inbound shipping is unknown — it was not treated as free.";
+            // Appended, never assigned over. What is already here was written by ApplyEvidence from
+            // the tier that actually priced the row, and the tiers do not all rest on comps: an AI
+            // estimate found no sold listing at all, and a melt price rests on the metal rather than
+            // on any sale. Overwriting it told those rows "sold comps were found" — a claim of
+            // evidence they have not got, printed over the sentence that said what they do have.
+            row.EvidenceNote = string.IsNullOrWhiteSpace(row.EvidenceNote)
+                ? ShippingUnknownNote
+                : row.EvidenceNote.TrimEnd() + " " + ShippingUnknownNote;
             ApplyDaysToCash(row, resale);
             return row;
         }

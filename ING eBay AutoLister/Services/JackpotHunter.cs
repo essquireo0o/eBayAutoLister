@@ -417,7 +417,14 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
     {
         Source = "ebay", SourceLabel = "eBay Buy It Now",
         ItemId = item.Url, Title = item.Title, Url = item.Url, ImageUrl = item.ImageUrl,
-        Price = Math.Round(item.Price + item.ShippingCost, 2),
+        // The headline price and the shipping kept apart, the way EbaySupplySource states them: the
+        // analyzer adds the two into a delivered cost itself, and a row that folds them silently has
+        // no way left to say whether shipping was KNOWN. That distinction now decides whether the
+        // money columns are shown at all, so a folded price read as "shipping unknown" and threw
+        // away the profit on a listing whose shipping was stated on the page.
+        Price = item.Price > 0 ? item.Price : null,
+        PurchaseShippingCost = item.ShippingStated ? item.ShippingCost : null,
+        FreeShipping = item.ShippingStated && item.ShippingCost == 0m,
         PriceText = item.ShippingCost > 0 ? $"{item.Price:C} + {item.ShippingCost:C} shipping" : $"{item.Price:C}",
         Location = string.IsNullOrWhiteSpace(item.SellerUsername) ? "" : $"seller {item.SellerUsername}",
     };

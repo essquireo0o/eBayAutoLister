@@ -80,9 +80,21 @@ public class AdminKeyTests
         // Warm up, so the first call's JIT is not the measurement.
         for (var i = 0; i < 200; i++) compare();
 
-        var watch = Stopwatch.StartNew();
-        for (var i = 0; i < 4_000; i++) compare();
-        return watch.ElapsedTicks;
+        // The FASTEST of several rounds, not one round. Interference on this box is entirely
+        // one-sided — another session's build or test run can only ever make a round slower,
+        // never faster — so a single timing is a measurement of the machine's mood, and this
+        // test went red twice in three runs while two other sessions were compiling. The
+        // minimum is the round that got the least interference, which is the closest thing to
+        // the compare's own cost. The property under test is unaffected: an early-return
+        // compare is slower on a shared prefix in EVERY round, including its best one.
+        var best = long.MaxValue;
+        for (var round = 0; round < 5; round++)
+        {
+            var watch = Stopwatch.StartNew();
+            for (var i = 0; i < 4_000; i++) compare();
+            best = Math.Min(best, watch.ElapsedTicks);
+        }
+        return best;
     }
 
     private static CredentialsStore New()
