@@ -277,6 +277,9 @@ builder.Services.AddSingleton<PhotoEnhancer>();
 // The seller's phone as the photo-box camera, with the shutter still on this screen.
 // Its own listener on its own port — see PhoneCapture for why it is not a route here.
 builder.Services.AddSingleton<PhoneCapture>();
+// Getting a photograph back OUT of the app. See PhotoExport: the capture path worked long before
+// there was any button that produced a file the seller could see.
+builder.Services.AddSingleton<PhotoExport>();
 builder.Services.AddSingleton<ActionLog>();
 builder.Services.AddSingleton<DraftStore>();
 // Crash recovery and duplicate-publish protection. Singletons, and PublishGuard must be one:
@@ -9412,6 +9415,100 @@ app.MapPost("/api/photobox/snap", async (PhoneCapture phone, ActionLog log, Canc
     return Results.Ok(new { url, folder = PhotoLibrary.PhotoBoxFolder, source = "phone" });
 });
 
+// ── Getting the photograph out ────────────────────────────────────────────────────────────────
+//
+// The capture path has worked for weeks: the phone shoots, the frame transfers, a full-resolution
+// file lands in the library and the enhancer makes a studio version of it. None of that put a
+// photograph anywhere the owner could find one. The files are named with a GUID and live under
+// %LOCALAPPDATA%, which is the right home for something the app manages and no home at all for
+// something a person wants to attach to an email -- so "I can't take a photo and save it to my
+// desktop" was true the whole time, and every previous fix went to the camera, which was working.
+//
+// Not a download. A download lands wherever the browser has been told to put things, under the name
+// the server chose, and asks the seller to go and find it; this writes the file to the Desktop and
+// answers with the name it used, so the next sentence on screen is the name of a file they are
+// already looking at.
+app.MapPost("/api/photobox/save-to-desktop", (SavePhotosRequest req, PhotoExport export, ActionLog log) =>
+{
+    // Hosted has no desktop to write to -- the browser's own download is the only honest answer
+    // there, and the page falls back to it on this refusal.
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+
+    var urls = (req.Urls is { Count: > 0 } many ? many : [req.Url ?? ""])
+        .Where(u => !string.IsNullOrWhiteSpace(u))
+        .ToList();
+    if (urls.Count == 0) return Results.BadRequest(new { error = "No photo was named to save." });
+
+    var saved = new List<string>();
+    var failures = new List<string>();
+    string? folder = null;
+    var now = DateTimeOffset.Now;
+
+    foreach (var url in urls)
+    {
+        try
+        {
+            // Each copy is stamped a second apart from the last so a burst of six does not collide
+            // six times over on one timestamp before UniqueName has to count its way out.
+            var one = export.Save(url, destination: null, now.AddSeconds(saved.Count));
+            saved.Add(one.FileName);
+            folder ??= one.Folder;
+        }
+        catch (Exception ex)
+        {
+            // One unreadable photo must not lose the other five. Counted, named and reported.
+            failures.Add(ex.Message);
+            log.Add("Warning", "Photo could not be saved to the desktop", $"{url}: {ex.Message}");
+        }
+    }
+
+    if (saved.Count == 0)
+        return Results.BadRequest(new
+        {
+            error = "That photo could not be saved.",
+            detail = failures.FirstOrDefault() ?? "The file is no longer in the photo library.",
+        });
+
+    log.Add("Info", "Photos saved to the desktop", $"{saved.Count} file(s) -> {folder}");
+    // Not the path -- the page never needs it and never gets to send one back. See show-in-folder.
+    return Results.Ok(new
+    {
+        saved = saved.Count,
+        files = saved,
+        folder,
+        failed = failures.Count,
+        // The whole point of the feature, in the words the page will repeat back.
+        message = saved.Count == 1
+            ? $"Saved to your Desktop as \"{saved[0]}\"."
+            : $"Saved {saved.Count} photos to your Desktop, starting with \"{saved[0]}\".",
+    });
+});
+
+// Where it went, opened. A message saying a file was saved, on a screen that has been telling this
+// seller things were fine while they could not find a photograph, is not evidence -- so the app can
+// put the folder on screen with the file already highlighted. It takes no path: see
+// PhotoExport.LastSavedPath for why accepting one from the page would be the wrong shape entirely.
+app.MapPost("/api/photobox/show-in-folder", (PhotoExport export) =>
+{
+    if (PhotoBoxHostedRefusal() is { } refusal) return refusal;
+    if (export.LastSavedPath is not { Length: > 0 } path || !File.Exists(path))
+        return Results.BadRequest(new { error = "Nothing has been saved out of the app yet." });
+
+    try
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
+        {
+            UseShellExecute = true
+        });
+        return Results.Ok(new { opened = true, path });
+    }
+    catch (Exception ex)
+    {
+        // The file is still on the Desktop whatever the file manager did, so the path is the answer.
+        return Results.Ok(new { opened = false, path, error = ex.Message });
+    }
+});
+
 // The shutter deliberately returns the untouched frame first. The desktop then calls this route
 // while showing an honest "AI Enhance" state; if enhancement ever fails, the raw full-resolution
 // photo is still safe in the library and remains usable instead of losing the whole capture.
@@ -10751,7 +10848,13 @@ app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStor
         },
         dashboardUrl    = $"{baseUrl}/owner?k={adminKey}"
     });
-}).RateLimitLikeAuth();
+// AllowAnonymous for the same reason the calibration endpoints carry it: the admin key IS the
+// credential here, checked constant-time above, and the hosted build's closed-by-default policy
+// otherwise answers 401 before the key is ever read. The owner reaching their own dashboard is not
+// a signed-in seller session — there is no owner ACCOUNT to sign in as — so requiring a cookie made
+// the key unusable on the only build that matters. Verified against the live site 2026-08-24:
+// /api/owner/stats answered 401 to the correct key, and /owner served the marketing page.
+}).AllowAnonymous().RateLimitLikeAuth();
 
 // ── Learned pricing calibration ───────────────────────────────────────
 // POST /api/calibration/update (arb-bot) writes it, GET /api/calibration reads it back. Both
@@ -10864,7 +10967,11 @@ load();
 </html>
 """;
     return Results.Content(html, "text/html");
-}).RateLimitLikeAuth();
+// Anonymous for the same reason as the stats endpoint it fetches: the key in the query string is
+// the whole credential, and a page that redirects the owner to a seller sign-in form they have no
+// account for is a dashboard nobody can open. The key check above still stands, and the per-IP
+// budget below keeps it from being guessed at network speed.
+}).AllowAnonymous().RateLimitLikeAuth();
 
 // The full detail of one live listing, for the edit drawer.
 //
