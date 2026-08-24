@@ -3651,7 +3651,8 @@ app.MapPost("/api/whatsnot/bid", async (
     MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc,
     OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer,
     EarningsStore earnings, CostBasisStore costBasis, EarningsCalculator earningsCalc, DealStore deals,
-    LiveBuySheet sheet, LiveRoomBook roomBook, CredentialsStore store, LicenseService license, ActionLog log,
+    LiveBuySheet sheet, LiveRoomBook roomBook, CredentialsStore store, LicenseService license,
+    PreciousMetalPricer metals, ActionLog log,
     CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
@@ -3664,6 +3665,27 @@ app.MapPost("/api/whatsnot/bid", async (
         return BadInputJson("Nothing to price",
             "No item name arrived with the request.",
             "Type or paste what's on screen — the brand and model are what the sold search runs on.");
+    }
+
+    // A pasted link is not a lot, and the sold search can never make it into one. The seller watches
+    // the show in their own tab, so its URL is the likeliest thing to land in this box by accident;
+    // sent on as a name it produced the query "https www com/live/b059f792-…" and a CAN'T PRICE IT
+    // card about an item nobody had named yet. Saying so costs one parse. Running it costs a live
+    // lookup out of the daily allowance to learn something that was knowable before asking.
+    var typedAddress = WhatnotShowParser.ReadTypedAddress(title);
+    if (typedAddress.IsAddress)
+    {
+        return typedAddress.IsWhatnotShow
+            ? BadInputJson("That is the show's address, not the lot",
+                "The link names the whole live show. A show is not one object, so there is nothing "
+                + "for a sold search to match — and no eBay listing has ever been titled after a "
+                + "Whatnot link.",
+                "Type what is on screen right now — the brand and model of the lot being auctioned. "
+                + "Or press Watch & price and the app reads each new lot off the screen for you.")
+            : BadInputJson("That is a web address, not an item name",
+                "A sold search matches the words in eBay titles, and no eBay title is a link.",
+                "Type the brand and model of the thing itself — that is what the sold history is "
+                + "filed under.");
     }
 
     // What KIND of thing this is, decided by the same classification the local scan runs — so a
@@ -3771,8 +3793,33 @@ app.MapPost("/api/whatsnot/bid", async (
     // live path nothing measurable. See Services/LiveRoom.cs.
     var theRoom = LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName), sheet.WinsOnShow(req.ShowName));
 
+    // ── The metal in it ──────────────────────────────────────────────────────────────────────
+    //
+    // Free and offline first: the title either states a metal and a weight or it does not, and only
+    // the ones that do ever cost a spot lookup — which is cached by the minute, so a coin show that
+    // prices forty lots reads the price once. A live show is where this matters most, because the
+    // comps behind "1 oz gold bar" are whatever else was called that, plated souvenirs included,
+    // and the seller has about twenty seconds to decide. See MeltAnchor.
+    MeltVerdict? melt = null;
+    if (metals.Read(title) is not null)
+    {
+        try
+        {
+            if (await metals.ValueAsync(title, ct) is { } metal)
+                melt = MeltAnchor.Decide(title, metal,
+                    analysis is null ? null : ResalePricing.From(analysis, terms.Query),
+                    req.CurrentBid ?? 0m);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            // The spot feed is not this card's reason to exist. The comps answer stands.
+            log.Add("Warning", "Metal spot lookup failed", $"\"{title}\": {ex.Message}");
+        }
+    }
+
     var card = advisor.Build(title, analysis, req, feeProfile, category, nowUtc: null, own: own,
-        search: terms, tonight: tonight, ship: freight, cash: spent, room: theRoom);
+        search: terms, tonight: tonight, ship: freight, cash: spent, room: theRoom, melt: melt);
 
     // Keep the comps while this lot is on screen, so the next bid costs nothing. The token is the
     // only thing handed out; the analysis itself never leaves the server. The seller's own record
@@ -3870,9 +3917,10 @@ app.MapPost("/api/whatsnot/bid", async (
 //
 // Which also makes the target return, the shipping and the buyer's premium instant, and that is the
 // bigger win: the seller can move the target and watch the ceiling move with it, mid-lot.
-app.MapPost("/api/whatsnot/rebid", (
+app.MapPost("/api/whatsnot/rebid", async (
     LiveBidRequest req, LiveBidAdvisor advisor, LiveBidBoard board, LiveBuySheet sheet,
-    LiveRoomBook roomBook, FeeProfile feeProfile, CredentialsStore store, LicenseService license) =>
+    LiveRoomBook roomBook, FeeProfile feeProfile, CredentialsStore store, LicenseService license,
+    PreciousMetalPricer metals, ActionLog log, CancellationToken ct) =>
 {
     if (TrialGuard(store, license) is { } blocked) return blocked;
 
@@ -3908,9 +3956,26 @@ app.MapPost("/api/whatsnot/rebid", (
     // themselves, mid-lot, by pressing Won it on the one before. Held comps, fresh money.
     // And the room, re-read for the same reason: the seller changes it themselves, mid-lot, by
     // pressing Went for on the lot that just sold. Held comps, fresh room.
+    // Re-read for the same reason as the counts above: the bid moves while the lot is on screen, and
+    // whether the metal beats the comps depends on what is being asked for it. The spot price itself
+    // is a cached read, so a re-price costs nothing extra. See MeltAnchor.
+    MeltVerdict? melt = null;
+    if (metals.Read(quote.Item) is not null)
+    {
+        try
+        {
+            if (await metals.ValueAsync(quote.Item, ct) is { } metal)
+                melt = MeltAnchor.Decide(quote.Item, metal,
+                    quote.Analysis is null ? null : ResalePricing.From(quote.Analysis, quote.Search.Query),
+                    req.CurrentBid ?? 0m);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { log.Add("Warning", "Metal spot lookup failed", $"\"{quote.Item}\": {ex.Message}"); }
+    }
+
     var card = advisor.Build(quote.Item, quote.Analysis, req, feeProfile, quote.Category, now, quote.Own, quote.Search,
         sheet.UnitsWonOf(quote.Item), sheet.ShippingOnShow(req.ShowName), sheet.Committed(),
-        LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName, now), sheet.WinsOnShow(req.ShowName, now)));
+        LiveRoom.Tonight(roomBook.PassesOnShow(req.ShowName, now), sheet.WinsOnShow(req.ShowName, now)), melt);
     card.Token = quote.Token;
     card.PricedAtUtc = quote.PricedAtUtc;
     card.CompsAgeSeconds = quote.AgeSeconds(now);

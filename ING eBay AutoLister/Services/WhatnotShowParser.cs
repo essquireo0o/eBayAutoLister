@@ -82,6 +82,41 @@ public static class WhatnotShowParser
     }
 
     /// <summary>
+    /// Whether what the seller typed is a web address rather than the name of a thing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The live screen's item box sits beside a browser tab showing the auction, so the show's own
+    /// URL is the likeliest thing in the world to be pasted into it. Passed on as an item name it
+    /// became the sold query <c>https www com/live/b059f792-fbd1-4811-af64-54cc653999e8</c> — the
+    /// tokeniser had stripped the scheme and the host into separate words — and the card came back
+    /// CAN'T PRICE IT. It was never going to price it: no eBay listing has ever been titled after a
+    /// Whatnot link, and none ever will be, so that search fails identically every time it is run.
+    /// </para>
+    /// <para>
+    /// A name is refused only when it cannot be anything else: no whitespace, and either a real
+    /// http(s) address or a bare <c>www.</c> host. "S19j-Pro-104TH" and "whatnot.com" are left
+    /// alone — the first is an item, and the second is a word someone might reasonably be selling.
+    /// </para>
+    /// </remarks>
+    public static (bool IsAddress, bool IsWhatnotShow) ReadTypedAddress(string? text)
+    {
+        var s = (text ?? "").Trim();
+        if (s.Length == 0 || s.Any(char.IsWhiteSpace)) return (false, false);
+
+        if (Uri.TryCreate(s, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            return (true, IsWhatnotHost(uri.Host));
+
+        // "www.whatnot.com/live/…" — the address bar copied without its scheme.
+        if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+            && Uri.TryCreate("https://" + s, UriKind.Absolute, out var bare))
+            return (true, IsWhatnotHost(bare.Host));
+
+        return (false, false);
+    }
+
+    /// <summary>
     /// Whether this address is a live show worth fetching, and — when it is not — what to say about
     /// it. Refusing here rather than fetching is the point: this read knows exactly one site's page
     /// shape, and pointing it at another site would either fail to parse or, far worse, parse some
