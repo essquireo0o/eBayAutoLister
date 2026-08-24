@@ -56,7 +56,9 @@ public class LiquidationParserTests
                       "timeLeft":"2h  0m  "}{{extra}}
           """;
 
-    private static List<ING_eBay_AutoLister.Models.LocalSupplyListing> Parse(string html) =>
+    // Nullable, because one of these tests passes null on purpose: ParsePage takes a string?
+    // and a scraped page that came back as nothing must yield an empty slice, not an exception.
+    private static List<ING_eBay_AutoLister.Models.LocalSupplyListing> Parse(string? html) =>
         LiquidationParser.ParsePage(html, Feed, Now);
 
     // ── ExtractState ─────────────────────────────────────────────────────────

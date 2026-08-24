@@ -68,8 +68,8 @@ public sealed class UnionMarketplaceRepository(
     public async Task<MarketplacePricingSummary> FindComparablesAsync(
         MarketplaceLookupRequest request, CancellationToken ct = default)
     {
-        var hostedSummary = await Safe(() => hosted.FindComparablesAsync(request, ct), null, "comparables");
-        var localSummary  = await Safe(() => local.FindComparablesAsync(request, ct), null, "comparables");
+        var hostedSummary = await SafeOrNull(() => hosted.FindComparablesAsync(request, ct), "comparables");
+        var localSummary  = await SafeOrNull(() => local.FindComparablesAsync(request, ct), "comparables");
 
         if (hostedSummary is null) return localSummary ?? new MarketplacePricingSummary { Query = request.Keywords ?? "" };
         if (localSummary  is null) return hostedSummary;
@@ -138,6 +138,24 @@ public sealed class UnionMarketplaceRepository(
             .ThenByDescending(r => r.SoldDate ?? DateTime.MinValue)
             .Take(limit)
             .ToList();
+    }
+
+    /// <summary>
+    /// The same rule as <see cref="Safe{T}"/> for a source that answers with an object: "down"
+    /// becomes null rather than an exception. Separate from Safe because inferring T as a NULLABLE
+    /// summary from a null fallback, while the source's own method promises a non-nullable one, is
+    /// a variance mismatch the compiler warned about on every build (CS8619) — and a warning
+    /// standing in the null-handling of the comps merge is one more place a real null can hide.
+    /// </summary>
+    private async Task<T?> SafeOrNull<T>(Func<Task<T>> call, string what) where T : class
+    {
+        try { return await call(); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            log.Add("Warning", $"One sold-comps source failed ({what})", ex.Message);
+            return null;
+        }
     }
 
     // One source being down is not the lookup failing — it is the other source's answer.
