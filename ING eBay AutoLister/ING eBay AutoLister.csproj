@@ -50,6 +50,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Pinned directly, though nothing here calls it: Microsoft.Data.Sqlite 10.0.8 pulls
+         SQLitePCLRaw 2.1.11, whose bundled SQLite carries GHSA-2m69-gcr7-jv3q (high), and
+         every build warned NU1903 about it. There is no Microsoft.Data.Sqlite release that
+         moves off it — 11.0.0 is preview-only — so the transitive is overridden here instead.
+         Remove this line when a stable Microsoft.Data.Sqlite brings 3.x of its own. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="Anthropic.SDK" Version="5.10.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
