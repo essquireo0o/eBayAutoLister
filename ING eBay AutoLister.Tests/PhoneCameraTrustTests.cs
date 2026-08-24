@@ -205,7 +205,9 @@ public class PhoneCameraTrustTests
 
         // Advice that only works in Chrome, given to somebody holding an iPhone.
         Assert.DoesNotContain("Tap <b>Show details</b>, then", html, StringComparison.Ordinal);
-        Assert.Contains("do the one-time setup", html, StringComparison.Ordinal);
+        Assert.Contains("optional live-studio setup", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no certificate, profile or browser permission is needed", html,
+                        StringComparison.OrdinalIgnoreCase);
         Assert.Contains("id=\"pb-trust-qr\"", html, StringComparison.Ordinal);
         // The step no installer is allowed to do for the seller, said plainly rather than left to
         // be discovered.

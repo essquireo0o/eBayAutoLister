@@ -74,6 +74,22 @@ public class PhoneCameraSetupIsNotHiddenTests
         AssetStamp.AtLeast(Html, "style.css?v=", 136);
     }
 
+    [Fact]
+    public void The_primary_instructions_start_with_the_certificate_free_workflow()
+    {
+        var panelStart = Html.IndexOf("<h3>Scan this with your iPhone</h3>", StringComparison.Ordinal);
+        var trustStart = Html.IndexOf("<section class=\"pb-phone-trust\"", panelStart, StringComparison.Ordinal);
+        Assert.True(panelStart >= 0 && trustStart > panelStart, "the phone instructions or optional trust block moved.");
+        var primary = Html[panelStart..trustStart];
+
+        Assert.Contains("Take a photo", primary, StringComparison.Ordinal);
+        Assert.Contains("Use Photo", primary, StringComparison.Ordinal);
+        Assert.Contains("no certificate, profile or browser permission is needed", primary,
+                        StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("optional", primary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("do the one-time setup first", primary, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>The pairing panel's trust section, isolated so the assertions cannot drift onto other markup.</summary>
     private static string TrustBlock()
     {

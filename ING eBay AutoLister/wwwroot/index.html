@@ -3087,42 +3087,27 @@
                   <div class="pb-phone-words">
                     <h3>Scan this with your iPhone</h3>
                     <ol>
-                      <li>Point the phone's camera at the code and open the link. It is an ordinary
-                          web address — no certificate is involved in opening it, on any phone.</li>
-                      <li><b>Quickest, and nothing to install:</b> tap <b>Take photos with this phone</b>.
-                          The iPhone's own camera opens, and every photo you take lands here. This works
-                          on Safari with no setup whatsoever.</li>
-                      <li><b>For the live viewfinder and the shutter on this screen</b> — watching the
-                          phone's lens here and pressing 📸 Snap from the computer — Safari needs to
-                          trust this computer's certificate first: the three steps at the bottom of this
-                          panel. Safari gives you no way to tap past that; "accept the warning" is advice
-                          that only works in Chrome, and on iPhone even accepting it leaves the camera
-                          blocked. Once done it never asks again on that phone.</li>
-                      <li>Then tap <b>Allow camera</b>, leave that page open, and press <b>📸 Snap</b> here.</li>
+                      <li>Point the iPhone camera at this code and open the link.</li>
+                      <li>Tap the large gold <b>Take a photo</b> button. Safari opens the iPhone camera
+                          immediately — no certificate, profile or browser permission is needed.</li>
+                      <li>Take the picture and tap <b>Use Photo</b>. Wait for <b>On your computer</b>,
+                          then take another or choose photos you already have.</li>
                     </ol>
+                    <p class="pb-plan-note"><b>That is the normal workflow.</b> The optional
+                      live-studio setup below is only for seeing the phone's viewfinder here and firing
+                      the shutter from the computer.</p>
                     <div class="pb-phone-link" id="pb-phone-url"></div>
                     <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
 
-                    <!-- The setup that makes Safari work. Its own code because it is served over
-                         plain HTTP on another port: the phone cannot be handed the certificate over
-                         the connection that the missing certificate is blocking.
-
-                         NOT a <details>, and that is the whole point of this block. It was folded —
-                         "once per phone, furniture every night after" — and the fold is why Safari
-                         never worked: the step above says "do the one-time setup first, the block
-                         below" while the block below is a collapsed grey line, so the one thing
-                         standing between an iPhone and a working camera was the thing nobody could
-                         see. Everything here was measured working on 2026-08-24 — the certificate
-                         chain verifies, the profile carries exactly the CA that signed it, and the
-                         setup port is reachable — which left the fold as the only thing wrong.
-                         The owner has ruled on this shape once already: hiding is not easy, and a
-                         <details> on AI Listing was reverted for the same reason. -->
+                    <!-- Optional live-studio setup stays visible because iOS requires every manual
+                         trust step to be explicit. Ordinary photo capture uses the first QR and none
+                         of this certificate flow. -->
                     <section class="pb-phone-trust" id="pb-phone-trust">
                       <h4 class="pb-phone-trust-head">📱 iPhone: do this once for the LIVE camera</h4>
                       <p class="pb-phone-trust-why">
                         Only needed for the viewfinder on this screen and the 📸 Snap button. If you just
-                        want photographs, tap <b>Take photos with this phone</b> on the page the code
-                        opens — that needs none of this. Safari will not run a live camera on a
+                        want photographs, use the first code and tap <b>Take a photo</b> — that needs
+                        none of this. Safari will not run a live camera on a
                         certificate this computer made for itself and will not let you tap past it, so
                         these three steps are the way in. About a minute, once per phone.
                       </p>
