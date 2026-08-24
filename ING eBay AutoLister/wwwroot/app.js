@@ -7378,6 +7378,13 @@
   let pbCountdown = null;
   let pbAutoEnhance = true;     // raw photo remains safe; the enhanced copy goes to the listing
   const pbEnhancedSnaps = new Set();
+  // enhanced url -> the untouched full-resolution capture it was made from.
+  //
+  // Load-bearing for Save. "AI Enhance after every snap" ships ON, so the URL this session carries
+  // for a photograph is usually the 1600x1600 studio crop, not the 3024x4032 frame the phone took.
+  // Saving that one to the Desktop would hand the seller a cut-out of their item on a grey
+  // background when what they asked for was their photo -- and it would read as still broken.
+  const pbOriginalOf = new Map();
   const pbShotPlan = [
     { name: 'Hero', title: 'Hero angle', tip: 'Fill the frame with the item at its most recognizable angle.' },
     { name: 'Back', title: 'Back view', tip: 'Show the full rear clearly, including ports, fasteners, or closures.' },
@@ -7880,6 +7887,7 @@
             enhanced = await pbEnhancePhoto(r.url);
             listingUrl = enhanced.url;
             pbEnhancedSnaps.add(listingUrl);
+            pbOriginalOf.set(listingUrl, r.url);
           } catch (enhanceError) {
             // A treatment can fail; a shutter press cannot be allowed to disappear with it. The
             // untouched full-resolution frame is already safe in the library and becomes the
@@ -7927,6 +7935,93 @@
       if (!(await pbShoot())) return;
       if (i < 2) await new Promise(r => setTimeout(r, 1200));
     }
+  }
+
+  // ── Getting the photograph out of the app ────────────────────────────────────
+  //
+  // The last step of the whole Photo Box, and the one that was missing: the capture worked, the
+  // enhancement worked, and the file still sat under %LOCALAPPDATA% with a GUID for a name. Nothing
+  // on this screen produced something the seller could attach to an email, which is what "I can't
+  // save it to my desktop" meant every time it was said.
+  //
+  // The desktop build writes the file itself, so the message can name it. The hosted build has no
+  // desktop to write to and says so on the refusal, and there the browser's own download is the
+  // honest answer rather than an error -- so the refusal is a fallback, not a failure.
+  async function pbSaveToDesktop(urls) {
+    const list = (urls || []).filter(Boolean);
+    const note = $('pb-snap-note');
+    if (!list.length) return;
+
+    const say = (text, cls) => {
+      if (!note) return;
+      note.classList.remove('hidden', 'pb-enhancing');
+      note.className = 'wn-video-status' + (cls ? ' ' + cls : '');
+      note.textContent = text;
+    };
+
+    // The untouched capture FIRST, and the studio version after it when there is one. The seller
+    // asked for the photograph they took; the enhanced crop is a second, useful thing and not a
+    // substitute for it, so both go out rather than the app choosing on their behalf.
+    const wanted = [];
+    for (const u of list) {
+      const original = pbOriginalOf.get(u);
+      if (original && !wanted.includes(original)) wanted.push(original);
+      if (!wanted.includes(u)) wanted.push(u);
+    }
+
+    say(wanted.length === 1 ? '💾 Saving to your Desktop…' : `💾 Saving ${wanted.length} photos to your Desktop…`);
+    try {
+      const res = await fetch('/api/photobox/save-to-desktop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: wanted }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (res.ok && r.saved) {
+        // Named, because a file the seller cannot find is the bug this is fixing.
+        say(r.message + (r.failed ? ` ${r.failed} could not be read.` : ''), 'wn-video-ok');
+        // And shown, because a sentence claiming a file exists is exactly what this screen has been
+        // producing while no file existed. One click puts the folder on screen with it highlighted.
+        if (note) {
+          const show = document.createElement('button');
+          show.type = 'button';
+          show.className = 'btn btn-ghost small';
+          show.style.marginLeft = '.5rem';
+          show.textContent = '📂 Show me the file';
+          show.addEventListener('click', async () => {
+            try {
+              const o = await fetch('/api/photobox/show-in-folder', { method: 'POST' });
+              const j = await o.json().catch(() => ({}));
+              if (!o.ok || j.opened === false) show.textContent = '📂 ' + (j.path || r.folder || 'your Desktop');
+            } catch { show.textContent = '📂 ' + (r.folder || 'your Desktop'); }
+          });
+          note.appendChild(show);
+        }
+        return;
+      }
+      // Hosted, or anything else the server declined: fall back to a plain browser download so the
+      // button always produces a file rather than an apology.
+      pbDownloadInstead(wanted);
+      say(wanted.length === 1
+        ? 'Your browser is downloading the photo — check its Downloads folder.'
+        : `Your browser is downloading ${wanted.length} photos — check its Downloads folder.`, 'wn-video-ok');
+    } catch (err) {
+      pbDownloadInstead(wanted);
+      say('Saved through your browser instead — check its Downloads folder. (' + errorText(err, '') + ')');
+    }
+  }
+
+  // The fallback: ask the browser to keep the file. One click per photo, spaced, because browsers
+  // treat a burst of programmatic downloads as something to block.
+  function pbDownloadInstead(urls) {
+    urls.forEach((u, i) => setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = u;
+      a.download = (u.split('/').pop() || 'ing-photo.jpg');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, i * 400));
   }
 
   // ── The session's photographs ────────────────────────────────────────────────
@@ -8022,6 +8117,8 @@
     strip.classList.toggle('hidden', n === 0);
     head?.classList.toggle('hidden', n === 0);
     $('pb-clear')?.classList.toggle('hidden', n === 0);
+    $('pb-save-all')?.classList.toggle('hidden', n === 0);
+    pbBtnLabel('pb-save-all', n > 1 ? `💾 Save ${n} photos to my computer` : '💾 Save to my computer');
     setText('pb-strip-count', n === 1 ? '1 photo' : `${n} photos`);
 
     const ai = $('pb-ai');
@@ -8056,6 +8153,7 @@
                 title="Remove Photo ${i + 1} from this listing. The file stays in your Photo Library."
                 aria-label="Remove photo ${i + 1} from this listing">&times;</button>
         <div class="pb-shot-tools">
+          <button type="button" data-act="save" title="Copy this photo to your Desktop as a normal file you can attach, upload or email">💾 Save</button>
           <button type="button" data-act="edit" title="Crop, rotate, adjust, draw, remove the background">Edit</button>
           <button type="button" data-act="enhance" ${pbEnhancedSnaps.has(u) ? 'disabled' : ''} title="Replace the background with a professional studio, then crop, brighten and sharpen">${pbEnhancedSnaps.has(u) ? 'Enhanced' : '✨ Enhance'}</button>
           <button type="button" data-act="bg" title="White background — the app removes it locally, no upload">Cut out</button>
@@ -8067,7 +8165,8 @@
       btn.addEventListener('click', () => {
         const shot = btn.closest('.pb-shot');
         const url = shot?.dataset.url || '';
-        if (btn.dataset.act === 'edit') pbEditShot(url);
+        if (btn.dataset.act === 'save') pbSaveToDesktop([url]);
+        else if (btn.dataset.act === 'edit') pbEditShot(url);
         else if (btn.dataset.act === 'drop') { pbSessionSnaps = pbSessionSnaps.filter(u => u !== url); pbEnhancedSnaps.delete(url); pbRenderFilmstrip(); }
         else if (btn.dataset.act === 'enhance') pbEnhanceShot(url, shot);
         else if (btn.dataset.act === 'bg') pbRework(url, shot, 'remove-bg', 'Cut-out');
@@ -8223,6 +8322,7 @@
     $('pb-full')?.addEventListener('click', pbToggleFullscreen);
     $('pb-library')?.addEventListener('click', () => navigateTo('photos'));
     $('pb-clear')?.addEventListener('click', () => { pbSessionSnaps = []; pbRenderFilmstrip(); pbSetupStatus('', ''); });
+    $('pb-save-all')?.addEventListener('click', () => pbSaveToDesktop(pbSessionSnaps.slice()));
 
     $('pb-zoom')?.addEventListener('input', e => pbSetZoom(parseFloat(e.target.value) || 1));
     $('pb-zoom-in')?.addEventListener('click', () => pbSetZoom(pbZoom + 0.5));
