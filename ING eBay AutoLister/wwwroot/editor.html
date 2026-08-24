@@ -179,6 +179,59 @@ select:focus{border-color:var(--gold)}
   transition:all .22s;pointer-events:none;z-index:60;white-space:nowrap}
 #pe-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* 2026 product-photo studio refresh. The editor is intentionally calm: one strong action,
+   readable tool names, and the photograph as the visual centre of gravity. */
+#pe-topbar{height:68px;padding:0 22px;background:rgba(8,24,27,.96);
+  box-shadow:0 12px 36px rgba(0,0,0,.24);backdrop-filter:blur(18px)}
+.pe-brand-mark{width:36px;height:36px;border-radius:10px;font-size:12px}
+.pe-heading{display:flex;flex-direction:column;min-width:0}
+#pe-title{font-size:15px;line-height:18px;color:var(--text);max-width:220px}
+.pe-subtitle{font-size:10px;line-height:14px;color:var(--text3);letter-spacing:.65px;text-transform:uppercase}
+.pe-safe{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;
+  border:1px solid rgba(74,222,128,.2);background:rgba(74,222,128,.07);color:#a7f3c0;
+  font-size:11px;font-weight:650;white-space:nowrap}
+.pe-safe::before{content:"";width:7px;height:7px;border-radius:50%;background:#46cf86;
+  box-shadow:0 0 0 4px rgba(70,207,134,.12)}
+.btn-cancel{height:38px;padding:0 18px;border-radius:10px}
+.btn-save{height:40px;padding:0 24px;border-radius:10px;background:linear-gradient(180deg,#e4ba58,#be8621);
+  box-shadow:0 8px 22px rgba(199,154,54,.26),inset 0 1px rgba(255,255,255,.42)}
+.btn-save:hover{background:linear-gradient(180deg,#efc86a,#cc9226);transform:translateY(-1px)}
+#pe-sidebar{width:88px;padding:14px 10px;gap:5px;background:#091c20}
+.tool-btn{width:68px;height:55px;border-radius:12px;gap:4px}
+.tool-btn:hover{transform:translateX(2px)}
+.tool-btn.active{background:linear-gradient(135deg,rgba(224,187,99,.18),rgba(199,154,54,.08));
+  box-shadow:inset 3px 0 var(--gold),0 7px 18px rgba(0,0,0,.16)}
+.t-icon{font-size:19px}.t-label{font-size:9px;letter-spacing:.7px}.sb-sep{width:52px;margin:4px 0}
+#pe-options{min-height:72px;padding:12px 20px;gap:14px;background:#10282d;
+  box-shadow:0 8px 26px rgba(0,0,0,.16);z-index:3}
+.opt-hint{font-size:12px;line-height:17px}.opt-group{padding:6px 10px;border:1px solid rgba(43,86,94,.65);
+  border-radius:10px;background:rgba(4,23,26,.45)}
+.tbtn,.tbtn-ghost,.tbtn-icon,.fbtn{min-height:34px;border-radius:9px;padding-left:14px;padding-right:14px}
+.tbtn{box-shadow:0 5px 15px rgba(199,154,54,.2)}
+#pe-area{background-color:#071316;background-image:
+  radial-gradient(circle at 50% 42%,rgba(43,86,94,.3),transparent 46%),
+  linear-gradient(135deg,#06171a,#091f23 52%,#06171a)}
+#pe-area::before{content:"";position:absolute;inset:22px;border:1px solid rgba(255,255,255,.045);
+  border-radius:20px;pointer-events:none}
+#pe-wrap{border-radius:4px;overflow:visible;box-shadow:0 25px 80px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.12)}
+#pe-help{position:absolute;left:24px;bottom:24px;z-index:4;max-width:300px;padding:12px 14px;
+  border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(8,24,27,.82);
+  box-shadow:0 12px 30px rgba(0,0,0,.28);backdrop-filter:blur(12px);pointer-events:none}
+#pe-help b{display:block;font-size:12px;color:var(--text);margin-bottom:3px}
+#pe-help span{display:block;font-size:11px;line-height:16px;color:var(--text2)}
+#pe-zoom-badge{bottom:24px;right:24px;padding:8px 12px;border-radius:10px}
+#pe-status{font-size:11px;color:var(--text3);white-space:nowrap}
+#pe-status.is-dirty{color:#f4cf76}
+@media(max-width:900px){
+  #pe-topbar{height:60px;padding:0 10px}.pe-subtitle,.pe-safe,#pe-status{display:none}
+  #pe-sidebar{width:68px;padding:8px 5px}.tool-btn{width:56px;height:50px}
+  #pe-options{min-height:62px;padding:8px 10px;overflow-x:auto;flex-wrap:nowrap}
+  #pe-help{display:none}.zoom-strip{display:none}.btn-save{padding:0 14px}
+}
+@media(max-height:850px){
+  #pe-sidebar{padding-top:8px;gap:2px}.tool-btn{height:47px}.sb-sep{margin:1px 0}
+}
+
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
@@ -189,7 +242,7 @@ select:focus{border-color:var(--gold)}
 <div id="pe-topbar">
   <div class="pe-brand">
     <div class="pe-brand-mark">ING</div>
-    <span id="pe-title">Photo Editor</span>
+    <div class="pe-heading"><span id="pe-title">Product Photo Studio</span><span class="pe-subtitle">Marketplace-ready editing</span></div>
   </div>
   <div class="vdiv"></div>
   <button class="ico-btn" id="btn-undo" title="Undo (Ctrl+Z)" disabled>↩</button>
@@ -202,8 +255,9 @@ select:focus{border-color:var(--gold)}
     <button class="ico-btn" id="btn-zoom-fit" style="width:22px;height:22px;font-size:11px" title="Fit to window">⊡</button>
   </div>
   <div class="spacer"></div>
+  <span class="pe-safe" id="pe-status">Original protected</span>
   <button class="btn-cancel" id="btn-cancel">Cancel</button>
-  <button class="btn-save"   id="btn-save">Save Photo</button>
+  <button class="btn-save"   id="btn-save">Save edited photo</button>
 </div>
 
 <div id="pe-body">
@@ -235,6 +289,7 @@ select:focus{border-color:var(--gold)}
         </div>
       </div>
       <div id="pe-load"><div class="spinner"></div>Loading image…</div>
+      <div id="pe-help"><b id="pe-help-title">Crop your listing photo</b><span id="pe-help-copy">Choose an eBay-ready shape or drag across the photo. Nothing changes until you apply it.</span></div>
       <div id="pe-toast"></div>
     </div>
   </div>
@@ -253,6 +308,7 @@ let liveFilter='';
 let shapeTool='rect', shapeColor='#c79a36', strokeWidth=3, shapeFill=false, shapeDrag=null;
 let textColor='#ffffff', textSize=36, textFont='Arial', textBold=true, textItalic=false, textPlacing=false;
 let imageRequested=false,readyTimer=null;
+let sourceModelKey='photo-box',isDirty=false;
 
 window.addEventListener('DOMContentLoaded', ()=>{
   canvas=document.getElementById('pe-canvas');
@@ -270,6 +326,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('btn-zoom-out').addEventListener('click',()=>setZoom(zoom/1.25));
   document.getElementById('btn-zoom-fit').addEventListener('click',resetZoom);
   document.getElementById('pe-zoom-pct').addEventListener('click',()=>setZoom(1));
+  window.addEventListener('resize',()=>{if(canvas?.width)resetZoom();});
 
   // Pointer events cover a mouse, pen and touch with one path. Capturing the pointer on press is
   // important: a crop that leaves the image for one pixel must still receive its final release.
@@ -306,6 +363,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
 async function loadImg(url,slot,label){
   slotIndex=slot;
+  sourceModelKey=modelKeyFromUrl(url)||'photo-box';
   document.getElementById('pe-load').classList.remove('gone');
   let dataUrl=url;
   if(url&&!url.startsWith('data:')){
@@ -313,19 +371,25 @@ async function loadImg(url,slot,label){
   }
   const img=new Image();
   img.onload=()=>{
-    const MAX=3000;
+    // Keep modern phone photos at their original resolution. Downsampling every 12 MP iPhone
+    // frame to 3000 px made saved listing photos softer before the seller touched a control.
+    const MAX=6000;
     let w=img.naturalWidth,h=img.naturalHeight;
     if(w>MAX||h>MAX){const s=MAX/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
     canvas.width=w;canvas.height=h;ov.width=w;ov.height=h;
     ctx.drawImage(img,0,0,w,h);
     undos=[];redos=[];adj={brightness:100,contrast:100,saturation:100};
     liveFilter='';canvas.style.filter='';
+    setDirty(false);
     document.getElementById('pe-load').classList.add('gone');
     if(label)document.getElementById('pe-title').textContent=label;
     calcFitZoom();resetZoom();setTool('crop');updateHistBtns();
   };
   img.onerror=()=>{document.getElementById('pe-load').innerHTML='<span style="color:#cf4b42">Could not load image.</span>';};
   img.src=dataUrl;
+}
+function modelKeyFromUrl(url){
+  try{const path=new URL(url,location.href).pathname;const m=path.match(/^\/photos\/([^/]+)\//);return m?decodeURIComponent(m[1]):'';}catch{return '';}
 }
 function blobToDataUrl(blob){
   return new Promise((ok,fail)=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.onerror=fail;fr.readAsDataURL(blob);});
@@ -343,10 +407,16 @@ function setZoom(z){
 }
 function resetZoom(){calcFitZoom();setZoom(fitZoom);}
 
-// Undo/Redo
-function pushUndo(){undos.push(ctx.getImageData(0,0,canvas.width,canvas.height));redos=[];if(undos.length>30)undos.shift();updateHistBtns();}
-function undo(){if(!undos.length)return;redos.push(ctx.getImageData(0,0,canvas.width,canvas.height));ctx.putImageData(undos.pop(),0,0);updateHistBtns();}
-function redo(){if(!redos.length)return;undos.push(ctx.getImageData(0,0,canvas.width,canvas.height));ctx.putImageData(redos.pop(),0,0);updateHistBtns();}
+// Undo/Redo — dimensions are part of history. A pixel-only snapshot cannot undo a crop or rotation.
+function takeSnapshot(){return{width:canvas.width,height:canvas.height,pixels:ctx.getImageData(0,0,canvas.width,canvas.height)};}
+function restoreSnapshot(s){
+  canvas.width=s.width;canvas.height=s.height;ov.width=s.width;ov.height=s.height;
+  ctx.putImageData(s.pixels,0,0);cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
+  liveFilter='';canvas.style.filter='';adj={brightness:100,contrast:100,saturation:100};resetZoom();
+}
+function pushUndo(snapshot){undos.push(snapshot||takeSnapshot());redos=[];if(undos.length>30)undos.shift();setDirty(true);updateHistBtns();}
+function undo(){if(!undos.length)return;redos.push(takeSnapshot());restoreSnapshot(undos.pop());setDirty(true);updateHistBtns();toast('Change undone');}
+function redo(){if(!redos.length)return;undos.push(takeSnapshot());restoreSnapshot(redos.pop());setDirty(true);updateHistBtns();toast('Change restored');}
 function updateHistBtns(){
   document.getElementById('btn-undo').disabled=!undos.length;
   document.getElementById('btn-redo').disabled=!redos.length;
@@ -355,6 +425,7 @@ function updateHistBtns(){
 // Tool switch
 function setTool(t){
   if(textPlacing)commitText();
+  if(t!==tool&&liveFilter&&(tool==='adjustment'||tool==='filter'))burnFilter();
   tool=t;
   document.querySelectorAll('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));
   renderOptions();
@@ -364,14 +435,37 @@ function setTool(t){
   if(t!=='crop'){cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);}
   if(t!=='adjustment'&&t!=='filter'){canvas.style.filter='';liveFilter='';}
   shapeDrag=null;
+  updateHelp();
+}
+
+function updateHelp(){
+  const copy={
+    crop:['Crop for eBay','Choose an eBay-ready shape or drag across the photo. Nothing changes until you apply it.'],
+    rotate:['Straighten the product','Rotate, flip, or fine-tune the horizon. Undo always restores the full original dimensions.'],
+    adjustment:['Make the item clear','Use Auto Brighten for a safe starting point, then fine-tune. Your preview is saved when you change tools.'],
+    filter:['Keep colour honest','Use filters lightly so buyers see the real condition and colour of the item.'],
+    text:['Add useful context','Add measurements or a short callout. Click the photo where the text should begin.'],
+    shape:['Point out details','Use an arrow or outline to identify wear, labels, ports, or included accessories.'],
+    markup:['Mark the photo','Draw directly on the image. Undo is always available in the top bar.'],
+    erase:['Erase markup','This erases pixels from the edited copy. The untouched original remains protected.'],
+    blur:['Protect private details','Blur serial numbers, addresses, or reflections before publishing.'],
+    background:['Remove distractions','Background removal is optional. If it fails, the current photo is left unchanged.']
+  }[tool]||['Edit photo','The untouched original remains protected.'];
+  document.getElementById('pe-help-title').textContent=copy[0];
+  document.getElementById('pe-help-copy').textContent=copy[1];
+}
+
+function setDirty(value){
+  isDirty=value;const s=document.getElementById('pe-status');if(!s)return;
+  s.textContent=value?'Unsaved edits':'Original protected';s.classList.toggle('is-dirty',value);
 }
 
 function renderOptions(){
   const p=document.getElementById('pe-options');
 
   if(tool==='crop'){
-    p.innerHTML=`<span class="opt-hint">Drag on the photo to select what to keep</span>
-      <button class="tbtn-icon" data-crop-preset="square">Square</button>
+    p.innerHTML=`<span class="opt-hint"><b style="color:var(--text)">Crop:</b> drag across the photo or choose a size</span>
+      <button class="tbtn-icon" data-crop-preset="square">eBay square</button>
       <button class="tbtn-icon" data-crop-preset="four-three">4:3</button>
       <button class="tbtn-icon" data-crop-preset="portrait">Portrait</button>
       <div class="spacer"></div>
@@ -656,6 +750,7 @@ function setCropPreset(kind){
   if(h>canvas.height){h=canvas.height;w=Math.round(h*ratio);}
   const x=Math.round((canvas.width-w)/2),y=Math.round((canvas.height-h)/2);
   cropDrag={sx:x,sy:y,ex:x+w,ey:y+h};cropRect=calcCropRect();drawCropUi();
+  document.querySelectorAll('[data-crop-preset]').forEach(b=>b.classList.toggle('on',b.dataset.cropPreset===kind));
   const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!cropRect;
 }
 function drawCropUi(){
@@ -803,12 +898,12 @@ async function doRemoveBg(){
   const btn=document.querySelector('#bg-btn');
   if(btn){btn.textContent='Working…';btn.disabled=true;}
   try{
-    pushUndo();
+    const before=takeSnapshot();
     const b64=canvas.toDataURL('image/png').split(',')[1];
     const res=await fetch('/api/photos/remove-bg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64:b64,mimeType:'image/png'})});
     const body=await res.json();if(!res.ok)throw new Error(body.error||'Failed');
     const img=new Image();
-    img.onload=()=>{canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;ov.width=img.naturalWidth;ov.height=img.naturalHeight;ctx.clearRect(0,0,img.naturalWidth,img.naturalHeight);ctx.drawImage(img,0,0);resetZoom();toast('Background removed');};
+    img.onload=()=>{pushUndo(before);canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;ov.width=img.naturalWidth;ov.height=img.naturalHeight;ctx.clearRect(0,0,img.naturalWidth,img.naturalHeight);ctx.drawImage(img,0,0);resetZoom();toast('Background removed');};
     img.src=body.url;
   }catch(err){toast('Failed: '+err.message);}
   finally{if(btn){btn.textContent='Remove Background';btn.disabled=false;}}
@@ -824,15 +919,16 @@ function toast(msg){
 // Save / Cancel
 async function doSave(){
   if(textPlacing)commitText();
-  const btn=document.getElementById('btn-save');btn.textContent='Saving…';btn.disabled=true;
+  const btn=document.getElementById('btn-save');btn.textContent='Saving to library…';btn.disabled=true;
   try{
     if(cropRect)applyCrop();if(liveFilter)burnFilter();
-    const b64=canvas.toDataURL('image/jpeg',0.92).split(',')[1];
-    const res=await fetch('/api/photos/save-uploaded',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64:b64,mimeType:'image/jpeg'})});
-    const d=res.ok?await res.json():null;
-    const url=d?.url||('data:image/jpeg;base64,'+b64);
-    hostMsg({type:'photo-editor-save',slotIndex,url});closeEditor();
-  }catch(err){toast('Save failed: '+err.message);btn.textContent='Save Photo';btn.disabled=false;}
+    const b64=canvas.toDataURL('image/jpeg',0.96).split(',')[1];
+    const res=await fetch('/api/photos/library/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modelKey:sourceModelKey,imageBase64:b64,mimeType:'image/jpeg'})});
+    let d={};try{d=await res.json();}catch{}
+    if(!res.ok||!d.url)throw new Error(d.error||`Photo Library returned ${res.status}`);
+    const url=d.url;setDirty(false);btn.textContent='✓ Saved to Photo Library';btn.disabled=false;
+    toast('Saved to Photo Library');hostMsg({type:'photo-editor-save',slotIndex,url});setTimeout(closeEditor,120);
+  }catch(err){toast('Could not save — your edit is still open. '+err.message);btn.textContent='Save edited photo';btn.disabled=false;}
 }
 function doCancel(){
   if(textPlacing){commitText();return;}

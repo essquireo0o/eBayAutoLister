@@ -49,6 +49,37 @@ public class PhotoEditorInteractionTests
         Assert.Contains("renderOptions();\n  toast('Filter applied');", Editor.Replace("\r\n", "\n"));
     }
 
+    [Fact]
+    public void Crop_and_rotation_history_restores_the_original_dimensions()
+    {
+        Assert.Contains("function takeSnapshot()", Editor);
+        Assert.Contains("width:canvas.width,height:canvas.height", Editor);
+        Assert.Contains("canvas.width=s.width;canvas.height=s.height", Editor);
+        Assert.Contains("redos.push(takeSnapshot())", Editor);
+        Assert.DoesNotContain("undos.push(ctx.getImageData", Editor);
+    }
+
+    [Fact]
+    public void Saving_places_a_real_high_quality_file_in_the_photo_library()
+    {
+        Assert.Contains("const MAX=6000", Editor);
+        Assert.Contains("canvas.toDataURL('image/jpeg',0.96)", Editor);
+        Assert.Contains("fetch('/api/photos/library/upload'", Editor);
+        Assert.Contains("modelKey:sourceModelKey", Editor);
+        Assert.Contains("if(!res.ok||!d.url)throw new Error", Editor);
+        Assert.DoesNotContain("d?.url||('data:image/jpeg", Editor);
+    }
+
+    [Fact]
+    public void Studio_layout_explains_the_current_tool_and_protects_the_original()
+    {
+        Assert.Contains("Marketplace-ready editing", Editor);
+        Assert.Contains("id=\"pe-help\"", Editor);
+        Assert.Contains("Original protected", Editor);
+        Assert.Contains("eBay square", Editor);
+        Assert.Contains("function updateHelp()", Editor);
+    }
+
     private static string ReadSource(string name)
     {
         var resource = $"ING_eBay_AutoLister.wwwroot.{name}";
