@@ -155,6 +155,34 @@ public class PhoneCameraTrustTests
     }
 
     [Fact]
+    public void The_primary_qr_is_a_safari_bootstrap_not_the_untrusted_https_page()
+    {
+        Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
+        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/start\"", Source, StringComparison.Ordinal);
+        Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
+        // The pairing secret stays behind HTTPS; it is never exposed by the HTTP bootstrap URL.
+        Assert.DoesNotContain("/start/{token}", Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trusted_safari_opens_automatically_and_untrusted_safari_gets_the_installer()
+    {
+        Assert.Contains("web.MapGet(\"/ready.gif\"", Source, StringComparison.Ordinal);
+        Assert.Contains("image.src = READY + '?t=' + Date.now();", Source, StringComparison.Ordinal);
+        Assert.Contains("location.replace(CAMERA);", Source, StringComparison.Ordinal);
+        Assert.Contains("showSetup();", Source, StringComparison.Ordinal);
+        Assert.Contains("visibilitychange", Source, StringComparison.Ordinal);
+        Assert.Contains("Check again and open camera", Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_https_root_finishes_the_pairing_route_instead_of_opening_a_dead_page()
+    {
+        Assert.Contains("ctx.Connection.LocalPort == Port", Source, StringComparison.Ordinal);
+        Assert.Contains("Results.Redirect(PublicUrl)", Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_port_is_proved_free_rather_than_assumed()
     {
         // Found the hard way on the machine this was written on: an antivirus service already held

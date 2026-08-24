@@ -277,7 +277,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     public Status Snapshot()
     {
         if (_app is null) return new(false, null, false, 0, [], null, null);
-        var url = PublicUrl;
+        // One QR works in Safari whether this phone has trusted the local authority yet or not.
+        // The HTTP bootstrap contains no pairing token: it probes the HTTPS certificate, passes a
+        // trusted phone straight through, and shows the one-time Apple setup when Safari refuses.
+        var url = LaunchUrl;
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
                    _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null,
                    _phoneEverConnected, _recording, [.. _videos], MaxVideoSeconds,
@@ -289,6 +292,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface
@@ -589,8 +593,17 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
 
     private void MapRoutes(WebApplication web)
     {
-        // Everything is under /p/{token}. A caller without it gets a flat 404 and learns nothing:
-        // this server is on the seller's network, and its whole security model is that one secret.
+        // The public surface is deliberately tiny: one blank pixel proves Safari accepts this
+        // machine's certificate, and / redirects to the paired camera only after that HTTPS
+        // connection already succeeded. The pairing token never crosses the HTTP bootstrap.
+        web.MapGet("/ready.gif", () => Results.File(
+            Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="), "image/gif"));
+        web.MapGet("/", (HttpContext ctx) => ctx.Connection.LocalPort == Port
+            ? Results.Redirect(PublicUrl)
+            : Results.Redirect("/start"));
+
+        // Every camera control and byte of imagery remains under /p/{token}. A caller without it
+        // gets a flat 404 and learns nothing.
         bool Ok(string token) => _token.Length > 0 && CryptographicOperations.FixedTimeEquals(
             System.Text.Encoding.ASCII.GetBytes(token.PadRight(64)[..64]),
             System.Text.Encoding.ASCII.GetBytes(_token.PadRight(64)[..64]));
@@ -779,7 +792,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
         // Settings — because iOS does not let any downloaded root become fully trusted without a
         // person saying so, and no installer on the computer can say it for them.
 
-        web.MapGet("/trust", () => Results.Content(TrustPageHtml(), "text/html; charset=utf-8"));
+        // The primary QR lands here. A trusted Safari is forwarded automatically; an untrusted one
+        // stays on the same useful page and gets the installer instead of a dead certificate error.
+        web.MapGet("/start", () => Results.Content(TrustPageHtml(autoStart: true), "text/html; charset=utf-8"));
+        web.MapGet("/trust", () => Results.Content(TrustPageHtml(autoStart: false), "text/html; charset=utf-8"));
 
         // The name matters: iOS decides what to do with this from the extension and the type.
         web.MapGet("/trust.mobileconfig", () =>
@@ -868,9 +884,11 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
     /// The page a phone lands on before it can open the camera. Written for somebody standing at a
     /// bench holding a phone: what to tap, in order, and what each step is for.
     /// </summary>
-    private static string TrustPageHtml()
+    private string TrustPageHtml(bool autoStart)
     {
         var camera = $"https://{LocalAddress()}:{Port}/";
+        var ready = $"https://{LocalAddress()}:{Port}/ready.gif";
+        var startScript = autoStart ? "tryCamera();" : "showSetup();";
         return $$"""
             <!DOCTYPE html>
             <html lang="en"><head>
@@ -883,7 +901,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
               body{background:#050707;color:#f7fbfb;font:16px/1.55 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
                    padding:calc(env(safe-area-inset-top) + 22px) 20px 40px;max-width:640px;margin:auto}
               h1{font-size:23px;line-height:1.25;letter-spacing:-.01em;margin-bottom:6px}
-              .sub{color:#9fb1b4;margin-bottom:26px}
+              .sub{color:#9fb1b4;margin-bottom:22px}
+              .check{padding:16px;border:1px solid #2b3a3d;border-radius:14px;background:#0d1213;margin-bottom:18px}
+              .check b{display:block;margin-bottom:3px}.check span{color:#9fb1b4;font-size:14px}
+              .hidden{display:none}
               ol{list-style:none;counter-reset:s}
               li{counter-increment:s;position:relative;padding:0 0 22px 46px;border-left:2px solid #1d2729;margin-left:14px}
               li:last-child{border-left-color:transparent}
@@ -895,16 +916,24 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                    font-weight:800;padding:16px;border-radius:14px;text-decoration:none;margin:6px 0 4px}
               .go{display:block;text-align:center;border:1px solid #2b3a3d;color:#f7fbfb;padding:15px;border-radius:14px;
                   text-decoration:none;margin-top:10px}
+              button.go{width:100%;background:#111719;font:inherit;cursor:pointer}
               .why{margin-top:30px;padding-top:18px;border-top:1px solid #1d2729;color:#9fb1b4;font-size:14px}
               code{background:#111719;padding:2px 6px;border-radius:6px;font-size:13px}
             </style></head><body>
-              <h1>One-time setup for this phone</h1>
-              <p class="sub">Your computer's camera page uses a certificate it made itself. iPhones don't
-                 trust those until you say so — and Safari won't let you skip past it. Three taps, once.</p>
+              <h1>ING Photo Box for Safari</h1>
+              <p class="sub">One QR checks the secure camera connection first. If this iPhone is already
+                 set up, the camera opens automatically.</p>
+              <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
+                <span id="check-note">Keep this page open for a moment.</span></div>
+              <section id="setup" class="hidden">
+              <h2>One-time setup for this iPhone</h2>
+              <p class="sub">Safari requires HTTPS before it will allow the camera. Apple does not let a
+                 downloaded local certificate become trusted silently, so these two Settings approvals
+                 are the only manual part.</p>
               <ol>
                 <li><b>Download the profile.</b>
                     <a class="btn" href="/trust.mobileconfig">Download the certificate</a>
-                    Safari will say a profile was downloaded. That's the right answer.</li>
+                    Safari will say <b>Profile Downloaded</b>. Install it within eight minutes.</li>
                 <li><b>Install it.</b> Open <b>Settings</b> — <b>Profile Downloaded</b> is near the top.
                     Tap it, then <b>Install</b>, and enter your passcode.</li>
                 <li><b>Turn trust on.</b> Still in Settings: <b>General</b> &rsaquo; <b>About</b> &rsaquo;
@@ -913,15 +942,56 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log) : IAsyncDis
                     <br>iPhones make you do this last step by hand for any certificate you install —
                     no app on your computer can do it for you.</li>
                 <li><b>Open the camera.</b>
-                    <a class="go" href="{{camera}}">Open the camera page &rsaquo;</a>
-                    Or just scan the QR code on your computer again. No more warnings, on Safari or
-                    anything else — and it stays that way on this phone.</li>
+                    <button class="go" id="retry" type="button">Check again and open camera &rsaquo;</button>
+                    Return to this Safari page after Settings. It checks again automatically, so the
+                    same QR keeps working after app updates and restarts.</li>
               </ol>
+              <p class="why"><b>If iOS blocks profile installation:</b> try again at a familiar location.
+                 Stolen Device Protection can delay security changes away from familiar locations.</p>
               <p class="why"><b>What you are trusting.</b> One certificate, made by the copy of ING
                  Listing Engine running on your own computer, naming only that computer's address on
                  your own network (<code>{{LocalAddress()}}</code>). It is not a password, it grants
                  nothing on the internet, and you can remove it any time under
                  Settings &rsaquo; General &rsaquo; VPN &amp; Device Management.</p>
+              </section>
+              <script>
+                const CAMERA = {{System.Text.Json.JsonSerializer.Serialize(camera)}};
+                const READY = {{System.Text.Json.JsonSerializer.Serialize(ready)}};
+                const setup = document.getElementById('setup');
+                const title = document.getElementById('check-title');
+                const note = document.getElementById('check-note');
+                let attempt = 0;
+                function showSetup() {
+                  setup.classList.remove('hidden');
+                  title.textContent = 'Safari needs the one-time certificate setup';
+                  note.textContent = 'Nothing is wrong with the camera. Complete the steps below, then return here.';
+                }
+                function tryCamera() {
+                  const mine = ++attempt;
+                  setup.classList.add('hidden');
+                  title.textContent = 'Checking the secure camera…';
+                  note.textContent = 'Already trusted phones open automatically.';
+                  const image = new Image();
+                  const timer = setTimeout(() => { if (mine === attempt) showSetup(); }, 2800);
+                  image.onload = () => {
+                    if (mine !== attempt) return;
+                    clearTimeout(timer);
+                    title.textContent = 'Secure connection ready';
+                    note.textContent = 'Opening the camera…';
+                    location.replace(CAMERA);
+                  };
+                  image.onerror = () => { if (mine === attempt) { clearTimeout(timer); showSetup(); } };
+                  image.src = READY + '?t=' + Date.now();
+                }
+                document.getElementById('retry').addEventListener('click', tryCamera);
+                document.addEventListener('visibilitychange', () => {
+                  if (!document.hidden && !setup.classList.contains('hidden')) setTimeout(tryCamera, 350);
+                });
+                window.addEventListener('focus', () => {
+                  if (!setup.classList.contains('hidden')) setTimeout(tryCamera, 350);
+                });
+                {{startScript}}
+              </script>
             </body></html>
             """;
     }
