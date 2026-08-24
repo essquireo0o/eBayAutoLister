@@ -24461,6 +24461,79 @@
     if (typeof nlUpdateDescCount === 'function') nlUpdateDescCount();
   }
 
+  // ── The photograph the ANALYSER gets, which is not the one the listing keeps ──────────────
+  //
+  // Measured on the owner's own capture, 2026-08-24: a phone photo is 3024x4032 and 2,009,014
+  // bytes, which is 2.7 MB once base64 inflates it by a third. Their uplink is ~20 Mbps with the
+  // Google Drive backup holding 12 of it, so that is ~2.7 seconds of pure upload before the model
+  // sees a single pixel — the largest single cost in "why is the AI analyser slow".
+  //
+  // And none of those pixels survive. Claude views an image in 28x28 patches and each model tier
+  // caps how many it will look at: Fable 5 is high-resolution tier, 2576 px long edge and 4784
+  // visual tokens, and anything larger is downscaled SERVER-SIDE before processing. A 3024x4032
+  // frame asks for 15,552 patches against a cap of 4784, so two thirds of the upload is discarded
+  // on arrival. Sending it is paying transfer time for detail the model is contractually going to
+  // throw away.
+  //
+  // So the copy is scaled to the largest size that still saturates the cap — 1657x2209 for a 3:4
+  // phone frame, 4,740 of 4,784 patches — and the request drops ~70% in bytes with no loss of any
+  // fidelity the model could have used. Quality stays high (0.92) deliberately: the docs warn that
+  // heavy JPEG compression damages text legibility, and a model number on a watch case is exactly
+  // the thing this app is reading.
+  //
+  // THE PART THAT MATTERS MORE THAN THE SPEED: this returns a COPY. nlImageBase64 is left at full
+  // resolution because it is not only the analyser's input — it is what renders Picture 1 of the
+  // listing when no library photo takes that slot (see setPhotoSlotUrl(0, ...) in the analyse
+  // handler). Shrinking the variable itself would quietly make the seller's lead photo a re-encode,
+  // which is the same failure c2af147 removed when auto-cutout was overwriting Picture 1 — arriving
+  // through a different door. The listing keeps the photograph; only the request is made smaller.
+  const AI_MAX_LONG_EDGE = 2576;   // high-resolution tier (Claude 4.7 and later)
+  const AI_MAX_PATCHES   = 4784;   // visual-token cap for that tier
+  const AI_PATCH         = 28;     // Claude reads images in 28x28 patches
+
+  function aiPatchesFor(w, h) { return Math.ceil(w / AI_PATCH) * Math.ceil(h / AI_PATCH); }
+
+  async function nlAnalysisCopy(base64, mime) {
+    // Any failure here falls back to the original bytes. A speed optimisation must never be the
+    // reason an analysis does not happen.
+    try {
+      if (!base64) return { base64, mime };
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('decode failed'));
+        i.src = `data:${mime || 'image/jpeg'};base64,${base64}`;
+      });
+
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return { base64, mime };
+      // Already inside both caps: send it untouched rather than burn a re-encode generation on it.
+      if (Math.max(w, h) <= AI_MAX_LONG_EDGE && aiPatchesFor(w, h) <= AI_MAX_PATCHES)
+        return { base64, mime };
+
+      // Largest scale that satisfies BOTH caps. The patch budget binds first on a tall phone
+      // frame, which is why long edge alone is not enough.
+      let scale = Math.min(1, AI_MAX_LONG_EDGE / Math.max(w, h));
+      while (scale > 0.05 && aiPatchesFor(Math.round(w * scale), Math.round(h * scale)) > AI_MAX_PATCHES)
+        scale -= 0.01;
+
+      const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+      const c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      const cx = c.getContext('2d');
+      cx.imageSmoothingEnabled = true;
+      cx.imageSmoothingQuality = 'high';
+      cx.drawImage(img, 0, 0, cw, ch);
+
+      const out = c.toDataURL('image/jpeg', 0.92).split(',')[1] || '';
+      // A re-encode that came out BIGGER is a re-encode worth discarding.
+      if (!out || out.length >= base64.length) return { base64, mime };
+      return { base64: out, mime: 'image/jpeg' };
+    } catch {
+      return { base64, mime };
+    }
+  }
+
   async function nlAnalyze() {
     if (!nlImageBase64) return;
 
@@ -24471,9 +24544,11 @@
     if ($('nl-ai-msg')) $('nl-ai-msg').textContent = 'Analyzing with AI…';
 
     try {
+      // The request carries a right-sized copy; nlImageBase64 keeps the photograph. See above.
+      const sending = await nlAnalysisCopy(nlImageBase64, nlMimeType);
       const { ok, failure, data } = await callApi('/api/analyze', {
         method: 'POST',
-        body: { imageBase64: nlImageBase64, mimeType: nlMimeType },
+        body: { imageBase64: sending.base64, mimeType: sending.mime },
         timeoutMs: AI_TIMEOUT_MS,
       });
 
