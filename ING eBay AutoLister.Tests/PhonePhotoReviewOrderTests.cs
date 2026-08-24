@@ -5,6 +5,7 @@ public class PhonePhotoReviewOrderTests
 {
     private static readonly string Html = ReadAsset("index.html");
     private static readonly string Css = ReadAsset("style.css");
+    private static readonly string Ux = ReadAsset("photobox-ux.js");
 
     [Fact]
     public void Captured_photo_review_is_immediately_after_the_viewfinder_and_before_controls()
@@ -31,6 +32,24 @@ public class PhonePhotoReviewOrderTests
     {
         Assert.Contains(".pb-review:has(#pb-filmstrip.hidden) { display: none; }", Css, StringComparison.Ordinal);
         AssetStamp.AtLeast(Html, "style.css?v=", 137);
+    }
+
+    [Fact]
+    public void The_first_result_is_brought_into_view_without_hijacking_later_scrolling()
+    {
+        Assert.Contains("hasPhotos && !hadPhotos", Ux, StringComparison.Ordinal);
+        Assert.Contains("review.scrollIntoView", Ux, StringComparison.Ordinal);
+        Assert.Contains("prefers-reduced-motion: reduce", Ux, StringComparison.Ordinal);
+        Assert.Contains("photobox-ux.js?v=1", Html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_empty_viewfinder_describes_the_actual_certificate_free_phone_flow()
+    {
+        const string copy = "Scan the code, tap Take a photo, then tap Use Photo.";
+        Assert.Contains(copy, Html, StringComparison.Ordinal);
+        Assert.Contains(copy, Ux, StringComparison.Ordinal);
+        Assert.DoesNotContain("allow the camera, and leave that page open", Html, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReadAsset(string name)

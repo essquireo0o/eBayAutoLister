@@ -18555,6 +18555,7 @@ body.is-hosted #wn-video-btn:hover:not(:disabled) {
 
 .pb-review {
   display: flex; flex-direction: column; gap: 12px;
+  scroll-margin-top: 88px;
   padding: 16px; border: 1px solid color-mix(in srgb, var(--gold) 42%, var(--line));
   border-radius: var(--r-lg);
   background: linear-gradient(145deg, color-mix(in srgb, var(--gold) 7%, var(--panel)), var(--panel));
