@@ -216,6 +216,20 @@ public class PhotoLibraryTests : IDisposable
             photos.ListPhotoUrls("L7"));
     }
 
+    [Fact]
+    public void The_library_screen_can_put_the_photo_just_taken_first_without_changing_gallery_order()
+    {
+        AddFile("L7", "front.jpg");
+        AddFile("L7", "new-shot.jpg");
+        var dir = PhotosDir("L7");
+        File.SetLastWriteTimeUtc(Path.Combine(dir, "front.jpg"), new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(Path.Combine(dir, "new-shot.jpg"), new DateTime(2026, 8, 24, 12, 1, 0, DateTimeKind.Utc));
+        var photos = NewLibrary();
+
+        Assert.Equal("/photos/L7/new-shot.jpg", photos.ListPhotoUrlsNewestFirst("L7")[0]);
+        Assert.Equal(["/photos/L7/front.jpg", "/photos/L7/new-shot.jpg"], photos.ListPhotoUrls("L7"));
+    }
+
     // ── Saving ──────────────────────────────────────────────────────────────
 
     [Fact]

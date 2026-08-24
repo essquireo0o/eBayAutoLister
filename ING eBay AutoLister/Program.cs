@@ -9376,7 +9376,7 @@ app.MapGet("/api/photos/default-folders", (PhotoLibrary photos) => Results.Ok(ph
 app.MapGet("/api/photos/library", (PhotoLibrary photos) =>
     Results.Ok(photos.GetAllFolders().Select(f => new
     {
-        f.ModelKey, f.ImageCount, f.NewestAtUtc, photos = photos.ListPhotoUrls(f.ModelKey),
+        f.ModelKey, f.ImageCount, f.NewestAtUtc, photos = photos.ListPhotoUrlsNewestFirst(f.ModelKey),
     })));
 
 // ── Photo Box Camera ──────────────────────────────────────────────────────────

@@ -128,6 +128,15 @@ public sealed class PhotoLibraryOpensWhereThePhotosAreTests : IDisposable
                         Js, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void The_newest_photo_is_requested_first_and_loaded_eagerly()
+    {
+        var program = ReadProjectFile("Program.cs");
+        Assert.Contains("photos.ListPhotoUrlsNewestFirst(f.ModelKey)", program, StringComparison.Ordinal);
+        Assert.Contains("loading=\"${index === 0 ? 'eager' : 'lazy'}\"", Js, StringComparison.Ordinal);
+        Assert.Contains("${index === 0 ? 'Newest · ' : ''}", Js, StringComparison.Ordinal);
+    }
+
     private static string ReadAsset(string name)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -138,6 +147,16 @@ public sealed class PhotoLibraryOpensWhereThePhotosAreTests : IDisposable
         var path = Path.Combine(dir!.FullName, "ING eBay AutoLister", "wwwroot", name);
         Assert.True(File.Exists(path), "missing web asset: " + path);
         return File.ReadAllText(path);
+    }
+
+    private static string ReadProjectFile(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ING eBay AutoLister.slnx")))
+            dir = dir.Parent;
+
+        Assert.True(dir is not null, "could not find the repository root above " + AppContext.BaseDirectory);
+        return File.ReadAllText(Path.Combine([dir!.FullName, "ING eBay AutoLister", .. parts]));
     }
 
     public void Dispose()

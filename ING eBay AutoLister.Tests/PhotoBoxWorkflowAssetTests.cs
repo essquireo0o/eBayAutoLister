@@ -53,6 +53,16 @@ public class PhotoBoxWorkflowAssetTests
     }
 
     [Fact]
+    public void UsingThePhoneShutterAddsTheSavedPhotoToTheDesktopFilmstrip()
+    {
+        Assert.Contains("if (!pbShooting) pbImportPhoneShots(st.shots);", Js);
+        Assert.Contains("const pbPhoneSeenSnaps = new Set();", Js);
+        Assert.Contains("if (!pbSessionSnaps.includes(url)) pbSessionSnaps.push(url);", Js);
+        Assert.Contains("const enhanced = await pbEnhancePhoto(url);", Js);
+        Assert.Contains("pbPhoneSeenSnaps.add(r.url);", Js);
+    }
+
+    [Fact]
     public void EnhancementUsesAiSubjectDetectionWithAnOfflineFallback()
     {
         Assert.Contains("MapPost(\"/api/photos/enhance\"", Program);

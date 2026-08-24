@@ -61,6 +61,24 @@ public sealed class PhotoLibrary(IWebHostEnvironment env)
             .ToList();
     }
 
+    /// <summary>
+    /// The Photo Library screen is a capture inbox, so the photograph just accepted from the phone
+    /// belongs first. This is deliberately separate from <see cref="ListPhotoUrls"/>: that method's
+    /// filename order is the stable eBay gallery order and must not move every time a file is edited.
+    /// </summary>
+    public IReadOnlyList<string> ListPhotoUrlsNewestFirst(string modelKey)
+    {
+        var key = Sanitize(modelKey);
+        var dir = Path.Combine(RootPath, key);
+        if (!Directory.Exists(dir)) return [];
+        return Directory.EnumerateFiles(dir)
+            .Where(f => ImageExtensions.Contains(Path.GetExtension(f)))
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ThenBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .Select(f => $"/photos/{key}/{Path.GetFileName(f)}")
+            .ToList();
+    }
+
     public string CreateFolder(string modelKey)
     {
         var key = Sanitize(modelKey);

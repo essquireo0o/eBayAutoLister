@@ -7363,6 +7363,10 @@
   let pbPhonePreview = null;   // viewfinder ticker
   let pbPhoneLive = false;     // a phone is holding its camera open right now
   let pbSessionSnaps = [];     // photo-library urls from this session, oldest first
+  // A phone-side shutter posts straight to PhoneCapture. The status response is the bridge back to
+  // this screen; without consuming its `shots` array, "Use photo" saved the file but the Capture
+  // Studio filmstrip stayed empty and made a successful save look like a lost photograph.
+  const pbPhoneSeenSnaps = new Set();
   let pbZoom = 1;              // what the phone has been told to do
   let pbZoomOptical = false;   // and which way it did it — the lens, or a crop of the frame
   let pbZoomSend = null;       // debounce for the slider
@@ -7512,6 +7516,7 @@
     }
 
     panel.classList.remove('hidden');
+    if (!pbShooting) pbImportPhoneShots(st.shots);
     pbBtnLabel('pb-phone', '📱 Stop using my phone');
     const qr = $('pb-phone-qr');
     if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url || ''; }
@@ -7579,6 +7584,51 @@
     } catch { /* the app going away is handled everywhere else */ }
   }
 
+  async function pbImportPhoneShots(shots) {
+    const fresh = (Array.isArray(shots) ? shots : []).filter(url => {
+      if (!url || pbPhoneSeenSnaps.has(url)) return false;
+      pbPhoneSeenSnaps.add(url); // claim it before awaiting, so the two-second poll cannot duplicate it
+      return true;
+    });
+    if (!fresh.length) return;
+
+    for (const url of fresh) {
+      if (!pbSessionSnaps.includes(url)) pbSessionSnaps.push(url);
+    }
+    pbRenderFilmstrip();
+
+    const note = $('pb-snap-note');
+    if (note) {
+      note.className = 'wn-video-status wn-video-ok';
+      note.textContent = `${fresh.length === 1 ? 'Photo' : `${fresh.length} photos`} saved from your phone and added below.`;
+    }
+
+    // The phone's own shutter is a real snap too. Give it the same automatic treatment as the
+    // desktop shutter, while keeping the original safely in the library if enhancement fails.
+    if (!pbAutoEnhance) return;
+    for (const url of fresh) {
+      try {
+        if (note) {
+          note.className = 'wn-video-status pb-enhancing';
+          note.textContent = '✨ AI Enhance — preparing the phone photo for its listing…';
+        }
+        const enhanced = await pbEnhancePhoto(url);
+        pbSessionSnaps = pbSessionSnaps.map(saved => saved === url ? enhanced.url : saved);
+        pbEnhancedSnaps.add(enhanced.url);
+        pbRenderFilmstrip();
+        if (note) {
+          note.className = 'wn-video-status wn-video-ok';
+          note.textContent = '✨ Phone photo saved, enhanced, and added below.';
+        }
+      } catch (err) {
+        if (note) {
+          note.className = 'wn-video-status wn-video-bad';
+          note.textContent = 'The original phone photo is saved and shown below. AI Enhance could not finish: ' + errorText(err, 'Try Enhance on the photo.');
+        }
+      }
+    }
+  }
+
   async function pbTogglePhone() {
     const btn = $('pb-phone');
     const running = $('pb-phone-panel') && !$('pb-phone-panel').classList.contains('hidden');
@@ -7589,6 +7639,7 @@
         if (pbPhonePoll) { clearInterval(pbPhonePoll); pbPhonePoll = null; }
         pbRenderPhone(null);
       } else {
+        pbPhoneSeenSnaps.clear();
         const r = await fetch('/api/photobox/phone/start', { method: 'POST' });
         const st = await r.json();
         if (!st.running) {
@@ -7813,6 +7864,9 @@
       const res = await fetch('/api/photobox/snap', { method: 'POST' });
       const r = await res.json();
       if (res.ok && r.url) {
+        // The next status tick carries this same URL. Mark it before the optional enhancement so a
+        // desktop shutter cannot appear twice (raw from status, enhanced from this request).
+        pbPhoneSeenSnaps.add(r.url);
         let listingUrl = r.url;
         let enhanced = null;
         if (pbAutoEnhance) {
@@ -18442,11 +18496,13 @@
     }
     const photos = folder.photos || [];
     grid.innerHTML = photos.length
-      ? photos.map(url => `
+      ? photos.map((url, index) => `
         <figure class="pl-photo">
-          <img src="${esc(url)}" alt="${esc(folder.modelKey)} representative photo" loading="lazy" data-view="${esc(url)}" />
+          <img src="${esc(url)}" alt="${esc(folder.modelKey)} representative photo"
+               loading="${index === 0 ? 'eager' : 'lazy'}" ${index === 0 ? 'fetchpriority="high"' : ''}
+               data-view="${esc(url)}" />
           <figcaption class="pl-photo-actions">
-            <span class="pl-photo-name">${esc(url.split('/').pop())}</span>
+            <span class="pl-photo-name">${index === 0 ? 'Newest · ' : ''}${esc(url.split('/').pop())}</span>
             <button class="btn btn-ghost small pl-photo-delete" type="button" data-delete="${esc(url)}">Delete</button>
           </figcaption>
         </figure>`).join('')
