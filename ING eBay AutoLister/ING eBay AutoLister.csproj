@@ -102,6 +102,7 @@
     <Content Remove="wwwroot\reauth.html" />
     <Content Remove="wwwroot\style.css" />
     <Content Remove="wwwroot\app.js" />
+    <Content Remove="wwwroot\photobox-ux.js" />
     <Content Remove="wwwroot\favicon.svg" />
     <Content Remove="wwwroot\editor.html" />
     <!-- The hosted build's sign-in and sign-up pages. Embedded in both builds rather than only
@@ -122,6 +123,7 @@
     <EmbeddedResource Include="wwwroot\reauth.html" />
     <EmbeddedResource Include="wwwroot\style.css" />
     <EmbeddedResource Include="wwwroot\app.js" />
+    <EmbeddedResource Include="wwwroot\photobox-ux.js" />
     <EmbeddedResource Include="wwwroot\favicon.svg" />
     <EmbeddedResource Include="wwwroot\editor.html" />
     <EmbeddedResource Include="wwwroot\signin.html" />

@@ -6,6 +6,7 @@ public class PhonePhotoReviewOrderTests
     private static readonly string Html = ReadAsset("index.html");
     private static readonly string Css = ReadAsset("style.css");
     private static readonly string Ux = ReadAsset("photobox-ux.js");
+    private static readonly string Project = ReadProject();
 
     [Fact]
     public void Captured_photo_review_is_immediately_after_the_viewfinder_and_before_controls()
@@ -41,6 +42,8 @@ public class PhonePhotoReviewOrderTests
         Assert.Contains("review.scrollIntoView", Ux, StringComparison.Ordinal);
         Assert.Contains("prefers-reduced-motion: reduce", Ux, StringComparison.Ordinal);
         Assert.Contains("photobox-ux.js?v=1", Html, StringComparison.Ordinal);
+        Assert.Contains("<EmbeddedResource Include=\"wwwroot\\photobox-ux.js\" />", Project,
+                        StringComparison.Ordinal);
     }
 
     [Fact]
@@ -52,6 +55,14 @@ public class PhonePhotoReviewOrderTests
         Assert.DoesNotContain("allow the camera, and leave that page open", Html, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void The_first_photo_exposes_an_unambiguous_ai_ebay_listing_action()
+    {
+        Assert.Contains("Create AI eBay Listing", Ux, StringComparison.Ordinal);
+        Assert.Contains("if (!aiButton || aiButton.disabled) return", Ux, StringComparison.Ordinal);
+        Assert.Contains("count > 1", Ux, StringComparison.Ordinal);
+    }
+
     private static string ReadAsset(string name)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -59,5 +70,14 @@ public class PhonePhotoReviewOrderTests
             dir = dir.Parent;
         Assert.True(dir is not null, $"could not find the repository root above {AppContext.BaseDirectory}");
         return File.ReadAllText(Path.Combine(dir!.FullName, "ING eBay AutoLister", "wwwroot", name));
+    }
+
+    private static string ReadProject()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ING eBay AutoLister.slnx")))
+            dir = dir.Parent;
+        Assert.True(dir is not null, $"could not find the repository root above {AppContext.BaseDirectory}");
+        return File.ReadAllText(Path.Combine(dir!.FullName, "ING eBay AutoLister", "ING eBay AutoLister.csproj"));
     }
 }

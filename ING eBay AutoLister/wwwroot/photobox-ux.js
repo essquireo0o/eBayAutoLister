@@ -7,6 +7,7 @@
   const strip = document.getElementById('pb-filmstrip');
   const review = strip?.closest('.pb-review');
   const emptyLine = document.getElementById('pb-empty-line');
+  const aiButton = document.getElementById('pb-ai');
   if (!strip || !review) return;
 
   let hadPhotos = !strip.classList.contains('hidden') && strip.children.length > 0;
@@ -15,6 +16,15 @@
   const makeEmptyCopyFriendly = () => {
     if (emptyLine && /allow the camera/i.test(emptyLine.textContent || ''))
       emptyLine.textContent = 'Scan the code, tap Take a photo, then tap Use Photo.';
+  };
+
+  const makeAiActionObvious = () => {
+    if (!aiButton || aiButton.disabled) return;
+    const count = strip.children.length;
+    const label = count > 1
+      ? `✨ Create AI eBay Listing (${count} photos)`
+      : '✨ Create AI eBay Listing';
+    if (aiButton.textContent !== label) aiButton.textContent = label;
   };
 
   const reactToPhotos = () => {
@@ -26,9 +36,11 @@
       }));
     }
     hadPhotos = hasPhotos;
+    makeAiActionObvious();
   };
 
   makeEmptyCopyFriendly();
+  makeAiActionObvious();
   new MutationObserver(() => {
     makeEmptyCopyFriendly();
     reactToPhotos();
