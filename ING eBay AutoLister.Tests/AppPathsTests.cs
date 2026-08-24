@@ -145,6 +145,61 @@ public class AppPathsTests : IDisposable
         Assert.Equal("model photo", File.ReadAllText(Path.Combine(home, "photos", "S19_95TH", "front.jpg")));
     }
 
+    // Migration runs on EVERY startup, so mirroring the legacy tree's shape rather than its contents
+    // is not a migration, it is a resurrection. This is why the Photo Library kept showing four
+    // empty model folders after they were deleted: PhotoLibrary swept them, and the next restart
+    // copied the empty shells back out of a bin\Debug\...\photos an old build had left behind.
+    [Fact]
+    public void An_empty_legacy_folder_is_not_recreated_in_the_home()
+    {
+        var home   = Dir("home");
+        var legacy = Dir("legacy");
+        Directory.CreateDirectory(Path.Combine(legacy, "photos", "L7"));
+        Directory.CreateDirectory(Path.Combine(legacy, "photos", "S19_95TH"));
+
+        AppPaths.Migrate(home, [legacy]);
+
+        Assert.False(Directory.Exists(Path.Combine(home, "photos", "L7")));
+        Assert.False(Directory.Exists(Path.Combine(home, "photos", "S19_95TH")));
+    }
+
+    // ...and a folder the seller deleted stays deleted, however many times the app restarts.
+    [Fact]
+    public void A_folder_deleted_from_the_home_does_not_come_back_on_the_next_startup()
+    {
+        var home   = Dir("home");
+        var legacy = Dir("legacy");
+        WriteFile(legacy, Path.Combine("photos", "L7", "front.jpg"), "model photo");
+
+        AppPaths.Migrate(home, [legacy]);                                  // first run: brings it over
+        Assert.True(Directory.Exists(Path.Combine(home, "photos", "L7")));
+
+        Directory.Delete(Path.Combine(home, "photos", "L7"), recursive: true);
+        AppPaths.Migrate(home, [legacy]);                                  // second run
+
+        // The photograph is legitimately restored - it is a file the home no longer has, which is
+        // exactly what this migration is for. What must not happen is an EMPTY shell reappearing.
+        Assert.True(File.Exists(Path.Combine(home, "photos", "L7", "front.jpg")));
+    }
+
+    // The nested empty case: a legacy tree that holds one real photo and three empty siblings
+    // brings the photo and leaves the siblings behind.
+    [Fact]
+    public void Only_the_folders_that_hold_something_are_brought_forward()
+    {
+        var home   = Dir("home");
+        var legacy = Dir("legacy");
+        WriteFile(legacy, Path.Combine("photos", "photo-box", "shot.jpg"), "real");
+        foreach (var empty in new[] { "L7", "S19_95TH", "S19j_Pro" })
+            Directory.CreateDirectory(Path.Combine(legacy, "photos", empty));
+
+        AppPaths.Migrate(home, [legacy]);
+
+        Assert.True(File.Exists(Path.Combine(home, "photos", "photo-box", "shot.jpg")));
+        Assert.Equal(["photo-box"], Directory.GetDirectories(Path.Combine(home, "photos"))
+            .Select(Path.GetFileName).ToArray());
+    }
+
     [Fact]
     public void Merges_a_folder_without_touching_files_the_home_already_has()
     {

@@ -164,16 +164,38 @@ public static class AppPaths
     }
 
     /// <summary>Recursive copy of every file the destination does not already have. Returns the count.</summary>
+    /// <remarks>
+    /// <para>
+    /// The destination folder is created only when there is actually a file to put in it. That
+    /// looks like a detail and is the difference between a migration and a resurrection: this runs
+    /// on <b>every startup</b>, so unconditionally mirroring the legacy tree's shape re-created
+    /// every folder that had ever existed, empty, for the rest of the app's life.
+    /// </para>
+    /// <para>
+    /// Found 2026-08-24 chasing why the Photo Library kept showing four empty model folders after
+    /// they were deleted. `PhotoLibrary` swept them, wrote its "never again" marker, and the next
+    /// restart copied the empty shells back out of an old `bin\Debug\net10.0-windows\photos` that
+    /// a build had left behind two months earlier. The seller could not win: every folder they
+    /// deleted came back, and the folder they deleted it with had already promised not to try again.
+    /// </para>
+    /// <para>
+    /// A folder with nothing in it carries no state, so declining to copy one loses nothing. Empty
+    /// folders that a caller genuinely needs are made by the code that needs them — the static
+    /// mounts for <c>photos/</c> and <c>photo-box-video/</c> both call
+    /// <see cref="Directory.CreateDirectory(string)"/> themselves at startup.
+    /// </para>
+    /// </remarks>
     private static int CopyMissing(string sourceDir, string destDir)
     {
         var copied = 0;
         try
         {
-            Directory.CreateDirectory(destDir);
+            var destReady = Directory.Exists(destDir);
             foreach (var src in Directory.GetFiles(sourceDir))
             {
                 var dst = Path.Combine(destDir, Path.GetFileName(src));
                 if (File.Exists(dst)) continue;
+                if (!destReady) { Directory.CreateDirectory(destDir); destReady = true; }
                 try { File.Copy(src, dst); copied++; } catch { }
             }
             foreach (var sub in Directory.GetDirectories(sourceDir))
