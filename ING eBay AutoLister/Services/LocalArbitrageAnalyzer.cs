@@ -441,6 +441,19 @@ public sealed class LocalArbitrageAnalyzer(
 
         ApplyResale(row, resale);
 
+        // Browse omits shipping on calculated, freight and some local-pickup listings. That is not
+        // free shipping. Without a delivered buy cost there is no honest profit, ROI or max-to-pay
+        // figure, so keep the sold evidence but refuse the money columns until the charge is known.
+        if (string.Equals(listing.Source, EbaySupplySource.SourceId, StringComparison.OrdinalIgnoreCase)
+            && !listing.PurchaseShippingCost.HasValue)
+        {
+            row.Verdict = "no_data";
+            row.VerdictNote = "The listing did not state its shipping cost, so delivered buy cost and profit cannot be calculated.";
+            row.EvidenceNote = "Sold comps were found, but inbound shipping is unknown — it was not treated as free.";
+            ApplyDaysToCash(row, resale);
+            return row;
+        }
+
         var expected = resale.ExpectedSale is > 0 ? resale.ExpectedSale!.Value : resale.Median!.Value;
 
         // Remaining cover, priced. This is the only place in the app where a listing's own prose can

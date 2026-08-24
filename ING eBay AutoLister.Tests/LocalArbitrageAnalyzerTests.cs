@@ -92,6 +92,22 @@ public class LocalArbitrageAnalyzerTests
     }
 
     [Fact]
+    public void Build_UnknownEbayInboundShippingIsNeverAssumedFree()
+    {
+        var shipped = Listing(100m);
+        shipped.Source = EbaySupplySource.SourceId;
+        shipped.PurchaseShippingCost = null;
+
+        var row = Analyzer.Build(shipped, Pricing(expected: 300m), Fees, retailSalesTaxPercent: 0m);
+
+        Assert.Equal("no_data", row.Verdict);
+        Assert.Null(row.NetProfit);
+        Assert.Null(row.RoiPercent);
+        Assert.Contains("shipping", row.VerdictNote, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not treated as free", row.EvidenceNote, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Build_NoResaleData_IsNoDataNotZeroProfit()
     {
         var row = Analyzer.Build(Listing(50m), resale: null, Fees);

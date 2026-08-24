@@ -22,6 +22,7 @@ public class OpportunityShippingAndSimilarCompsAssetTests
     {
         Assert.Contains("row.purchaseShippingCost != null", Js);
         Assert.Contains("inbound shipping", Js);
+        Assert.Contains("inbound shipping not stated — profit withheld", Js);
         Assert.Contains("money(row.localAsk)", Js);
     }
 

@@ -5679,6 +5679,10 @@
     }
     if (free) return '<span class="free-price">Free</span>';
 
+    if (row.source === 'ebay' && row.purchaseShippingCost == null) {
+      return `${money(row.localAsk)}<br /><span class="retail-tax">+ inbound shipping not stated — profit withheld</span>`;
+    }
+
     if (!(row.buyCostAllIn > 0)) return row.localAsk > 0 ? money(row.localAsk) : 'Free';
 
     const lot = row.liquidation;
