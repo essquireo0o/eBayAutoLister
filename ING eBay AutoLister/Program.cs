@@ -1,4 +1,4 @@
-using ING_eBay_AutoLister.Models;
+﻿using ING_eBay_AutoLister.Models;
 using ING_eBay_AutoLister.Services;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
@@ -383,6 +383,10 @@ builder.Services.AddSingleton<LiveCompsStore>();
 // Every AI resale estimate the app has made, so the same product is never paid for twice.
 builder.Services.AddSingleton<AiEstimateStore>();
 builder.Services.AddSingleton<LiveCompsLookup>();
+// The spot price of gold, silver, platinum and palladium, cached a minute at a time. Singleton
+// because the cache is the point: a scan of a coin auction reads one price for the whole board
+// rather than one per row. See PreciousMetalPricer and MeltAnchor.
+builder.Services.AddSingleton<PreciousMetalPricer>();
 // Both databases, merged — NOT one or the other. The live scraper writes into the LOCAL
 // SoldListings table, so selecting the hosted repository alone (the shipped configuration) meant
 // every freshly scraped comp landed somewhere the pricing path never read: three minutes of
@@ -625,7 +629,8 @@ builder.Services.AddSingleton<LocalArbitrageScan>(sp => (request, token) => Find
     sp.GetRequiredService<TerapeakService>(), sp.GetRequiredService<LocalArbitrageAnalyzer>(),
     sp.GetRequiredService<ActionLog>(), token,
     request.Coupons ? sp.GetRequiredService<CouponService>() : null,
-    ResaleCategoryCatalog.Resolve(request.CategoryId)));
+    ResaleCategoryCatalog.Resolve(request.CategoryId),
+    metals: sp.GetRequiredService<PreciousMetalPricer>()));
 builder.Services.AddSingleton<DealRadarService>();
 // Registered as the same instance twice: the hosted service that runs the loop, and the object the
 // endpoints ask "is a scan running" and "run this one now".
@@ -2582,7 +2587,8 @@ app.MapPost("/api/local/price-these", async (
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live, ActionLog log,
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live,
+    PreciousMetalPricer metals, ActionLog log,
     int? maxItems, int? terapeakBudget, int? liveBudget, CancellationToken ct) =>
 {
     try
@@ -2605,7 +2611,8 @@ app.MapPost("/api/local/price-these", async (
             // The live half of the sold-comps path — the part a Facebook feed never got. Same
             // lookup, same allowance and the board's own default of three products per scan; the
             // cards say what was fetched and what ran out. See LiveCompsPass.
-            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget),
+            metals: metals);
 
         return Results.Ok(result);
     }
@@ -2920,7 +2927,8 @@ app.MapGet("/api/ebay/scan", async (
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
     LocalArbitrageAnalyzer analyzer, CouponService couponService, ClaudeService claude,
-    AiEstimateStore aiEstimates, AiQuotaGate aiQuota, ActionLog log, CancellationToken ct) =>
+    AiEstimateStore aiEstimates, AiQuotaGate aiQuota, PreciousMetalPricer metals,
+    ActionLog log, CancellationToken ct) =>
 {
     // Whitelisted rather than passed through: these reach eBay's own filter syntax, and an
     // unrecognised value there is an error on the whole search rather than an ignored parameter.
@@ -2965,7 +2973,10 @@ app.MapGet("/api/ebay/scan", async (
             // hundred listings of things the comps database has never seen, and until this ran
             // most of them arrived as a dash and a link. See the AI pass in FindLocalArbitrageAsync.
             ai: claude, aiEstimates: aiEstimates, aiBudget: AiEstimateStore.PerScanCap,
-            aiQuota: aiQuota);
+            aiQuota: aiQuota,
+            // The board most likely to be pointed at a coin auction, and the one where a "1oz gold"
+            // scan left 106 of 120 products unpriced. See the metal pass in FindLocalArbitrageAsync.
+            metals: metals);
 
         var result = await Scan(q ?? "");
 
@@ -3171,7 +3182,8 @@ app.MapGet("/api/local/arbitrage", async (
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live, ActionLog log,
+    LocalArbitrageAnalyzer analyzer, CouponService couponService, LiveCompsLookup live,
+    PreciousMetalPricer metals, ActionLog log,
     CancellationToken ct) =>
 {
     try
@@ -3196,7 +3208,8 @@ app.MapGet("/api/local/arbitrage", async (
             ResaleCategoryCatalog.Resolve(category),
             // Then live eBay sold prices for the products stored comps left thin — the Facebook and
             // Craigslist rows' share of the path the eBay scanner's rows always had. See LiveCompsPass.
-            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget),
+            metals: metals);
 
         return Results.Ok(result);
     }
@@ -3295,7 +3308,8 @@ app.MapGet("/api/facebook/arbitrage", async (
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
     ConfidenceScoringService confidenceScorer, TerapeakMarketService terapeakMarket, TerapeakService terapeak,
-    LocalArbitrageAnalyzer analyzer, LiveCompsLookup live, ActionLog log, CancellationToken ct) =>
+    LocalArbitrageAnalyzer analyzer, LiveCompsLookup live, PreciousMetalPricer metals,
+    ActionLog log, CancellationToken ct) =>
 {
     try
     {
@@ -3309,7 +3323,8 @@ app.MapGet("/api/facebook/arbitrage", async (
             priceEstimator, sellThroughCalc, profitCalc, feeProfile, opportunityScorer, confidenceScorer, terapeakMarket,
             terapeak, analyzer, log, ct,
             // Facebook rows get the live half of the sold-comps path here too. See LiveCompsPass.
-            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget));
+            live: live, liveBudget: Math.Clamp(liveBudget ?? LiveCompsPass.DefaultBudget, 0, LiveCompsPass.MaxBudget),
+            metals: metals);
 
         return Results.Ok(result);
     }
@@ -6666,7 +6681,11 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
     // Whose allowance the AI pass spends from. Null, and on the desktop build unenforced, means
     // nothing is metered — the seller is spending their own key. On the hosted build it is the
     // OWNER's key paying for every user, which is the whole reason this argument exists.
-    AiQuotaGate? aiQuota = null)
+    AiQuotaGate? aiQuota = null,
+    // The spot price of gold and silver, for the lots that are a weight of a commodity rather than
+    // a product. Defaulted off so every caller that doesn't pass it is costed and priced exactly as
+    // it was — the pass is skipped entirely when it is absent. See MeltAnchor.
+    PreciousMetalPricer? metals = null)
 {
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var wanted = category ?? ResaleCategoryCatalog.Anything;
@@ -6855,7 +6874,59 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
             }
         }
 
-        // ── Pass 3: the model prices what nothing sold-based could ──────────────────────────────────
+        // ── Pass 3: the metal in it, where comps are the wrong instrument entirely ──────────────────
+        //
+        // Runs before the model tier for two reasons. It is free — the spot price is one cached HTTP
+        // read for the whole board, against one AI call per scan — and it is better evidence than
+        // anything the model can offer: weight × purity × a published price is arithmetic, not an
+        // opinion about a market. A metal lot answered here never reaches the AI budget at all.
+        //
+        // It is also the only pass that will OVERRULE a comps price rather than merely fill a gap,
+        // and it does so in exactly one direction: when the comps came out BELOW the metal. See
+        // MeltAnchor for why that asymmetry is the whole safety argument, and for the ask check
+        // that stops a $6.99 novelty bar being repriced as four figures of gold.
+        var meltByKey = new Dictionary<string, MeltVerdict>(StringComparer.OrdinalIgnoreCase);
+        if (metals is not null)
+        {
+            try
+            {
+                foreach (var group in groups)
+                {
+                    // Free and offline: the title either states a metal and a weight or it does not,
+                    // and only the ones that do ever cost a spot lookup.
+                    if (metals.Read(group.LookupTitle) is null) continue;
+                    if (await metals.ValueAsync(group.LookupTitle, ct) is not { } melt) continue;
+
+                    var verdict = MeltAnchor.Decide(group.LookupTitle, melt, pricing[group.Key], group.LowestAsk);
+                    if (verdict is null) continue;
+
+                    meltByKey[group.Key] = verdict;
+                    if (verdict is { SetsPrice: true, Pricing: { } priced }) pricing[group.Key] = priced;
+                }
+
+                if (meltByKey.Count > 0)
+                {
+                    var took = meltByKey.Values.Count(v => v.SetsPrice);
+                    var refused = meltByKey.Values.Count(v => v.Outcome == MeltOutcome.Contradicted);
+                    log.Add("Research", "Metal content priced against spot",
+                        $"{meltByKey.Count} product(s) state a metal and a weight — {took} priced off the metal, "
+                        + $"{refused} refused because the ask contradicts the title, "
+                        + $"{meltByKey.Count - took - refused} left on their comps with the melt stated as the floor.");
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The spot feed is not this board's reason to exist. Every comps-priced row is
+                // untouched and the scan carries on exactly as it did before this pass existed.
+                log.Add("Warning", "Metal spot pass failed", ex.Message);
+            }
+        }
+
+        // ── Pass 4: the model prices what nothing sold-based could ──────────────────────────────────
         //
         // The order the owner asked for, in the order it runs: live sold comps, then the stored
         // comps database, then this (2026-08-21: "calculate products using scraper first then AI …
@@ -6987,7 +7058,15 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
         // ── Rank ────────────────────────────────────────────────────────────────────────────────────
         var rows = groups
             .SelectMany(g => g.Listings.Select(l =>
-                analyzer.Build(l, pricing[g.Key], feeProfile, retailSalesTaxPercent, CouponsForListing(couponsByStore, l))))
+            {
+                var row = analyzer.Build(l, pricing[g.Key], feeProfile, retailSalesTaxPercent, CouponsForListing(couponsByStore, l));
+                // Stamped here rather than inside the analyzer's own ApplyEvidence, which is where
+                // this rule belongs and where it should move: that file is held by another session
+                // today (see .Codex/FROM-CLAUDE.md). Before Rank, so the ranking sorts on the tier
+                // the seller will actually read.
+                if (meltByKey.TryGetValue(g.Key, out var melted)) MeltAnchor.Apply(row, melted);
+                return row;
+            }))
             .ToList();
 
         result.Items = LocalArbitrageAnalyzer.Rank(rows, sort);

@@ -10,6 +10,12 @@ public static class ResaleValuationProviders
     public const string BulkyLocal = "bulky_local";
     /// <summary>Not a provider in the list — the third tier, which answers before they are asked.</summary>
     public const string AiEstimate = "ai_estimate";
+    /// <summary>
+    /// Also not a provider in the list: the spot price of the metal a lot states it contains. It
+    /// overrules the providers rather than joining them, because it does not depend on a comps
+    /// lookup being right — see <see cref="MeltAnchor"/>.
+    /// </summary>
+    public const string MetalMelt = "metal_melt";
 }
 
 /// <summary>A valuation: the price, when there is one, and always the sentence explaining it.</summary>

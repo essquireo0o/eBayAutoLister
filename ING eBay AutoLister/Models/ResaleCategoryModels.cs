@@ -117,7 +117,7 @@ public class ResaleValuation
     /// <summary>What that search asks for — "2011 Toyota Tundra", not the seller's ad copy.</summary>
     public string LookupQuery { get; set; } = "";
 
-    public bool HasPrice => Status is ValuationStatuses.Comps or ValuationStatuses.AiEstimate;
+    public bool HasPrice => Status is ValuationStatuses.Comps or ValuationStatuses.AiEstimate or ValuationStatuses.Melt;
 }
 
 public static class ValuationStatuses
@@ -133,6 +133,13 @@ public static class ValuationStatuses
     /// backed by real sold comps". A number the seller can argue with beats a dash.
     /// </summary>
     public const string AiEstimate = "ai";
+    /// <summary>
+    /// Priced off the metal in it — weight × purity × the published spot price — because the item
+    /// is a commodity and comps are the wrong instrument for one. Not a comps price and never
+    /// labelled as one: it rests on no sold listing at all, and it does not need to. See
+    /// <see cref="Services.MeltAnchor"/>.
+    /// </summary>
+    public const string Melt = "melt";
 }
 
 /// <summary>
