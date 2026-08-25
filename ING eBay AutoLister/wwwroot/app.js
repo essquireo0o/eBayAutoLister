@@ -19926,11 +19926,11 @@
   }
 
   async function checkTrialStatus() {
-    // Freeware — always active, hide trial badge, show Freeware badge
+    // Always active: the built-in key unlocks every feature, so there is no trial badge to show.
     const trialBadge   = $('trial-badge');
     const licenseBadge = $('license-badge');
     if (trialBadge) trialBadge.classList.add('hidden');
-    if (licenseBadge) { licenseBadge.textContent = 'Freeware'; licenseBadge.className = 'badge badge-on'; }
+    if (licenseBadge) { licenseBadge.textContent = 'Activated'; licenseBadge.className = 'badge badge-on'; }
     $('license-nag')?.classList.add('hidden');
   }
 
@@ -19947,7 +19947,7 @@
       if (dot) dot.className = `nav-license-dot ${status.tier === 'unverified' ? 'dot-warn' : 'dot-on'}`;
       $('license-nag')?.classList.add('hidden');
     } else {
-      if (badge) { badge.textContent = 'Freeware'; badge.className = 'badge badge-on'; }
+      if (badge) { badge.textContent = 'Activated'; badge.className = 'badge badge-on'; }
       if (dot) dot.className = 'nav-license-dot dot-on';
       $('license-nag')?.classList.add('hidden');
     }
@@ -19969,9 +19969,9 @@
     if (tierLabel) {
       tierLabel.textContent = status.valid
         ? (status.tier === 'pro' ? 'Pro License Active' : status.tier === 'free' ? 'Free License Active' : 'License Active (offline)')
-        : 'Freeware';
+        : 'Activated';
     }
-    if (statusMsg) statusMsg.textContent = status.message || (status.valid ? 'Your license is valid.' : 'ING Listing Engine™ is Freeware — use key ING-BETA-2025.');
+    if (statusMsg) statusMsg.textContent = status.message || (status.valid ? 'Your license is valid.' : 'ING Listing Engine™ — use key ING-BETA-2025 to activate every feature.');
     if (pageMsg && status.message) {
       pageMsg.textContent = status.message;
       pageMsg.className = 'sd-test-msg ' + (status.valid ? 'ok' : 'error');

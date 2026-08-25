@@ -140,12 +140,16 @@ public class OnboardingAssetTests
         var welcome = Between(Html, "<div id=\"welcome-overlay\"", "<div id=\"setup-overlay\"");
 
         // Leaving the price of an Anthropic key to be discovered on the settings screen is how a
-        // free beta ends up feeling like a paywall.
+        // first run ends up feeling like a paywall. What it costs, whose bill it is, and how long
+        // it takes — before anything is asked for.
         Assert.Contains("$5", welcome, StringComparison.Ordinal);
         Assert.Contains("Anthropic", welcome, StringComparison.Ordinal);
         Assert.Contains("eBay", welcome, StringComparison.Ordinal);
-        Assert.Contains("free", welcome, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("minutes", welcome, StringComparison.OrdinalIgnoreCase);
+
+        // Deliberately NOT asserting the word "free" any more. It used to be here because the app
+        // called itself a free beta; the beta framing came off the whole site on 2026-08-25, and a
+        // test that still demanded the word would quietly put it back.
     }
 
     [Fact]
