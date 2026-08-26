@@ -11,7 +11,8 @@
     Data     -> C:\ProgramData\ING AutoLister\  (app auto-creates on first run)
   Shortcuts: Desktop, Start Menu
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
 
   <Package Name="ING AutoLister"
            Manufacturer="ING Mining LLC"
@@ -47,6 +48,30 @@
                   Source="$(var.SourceDir)AutoListerB1.exe"
                   KeyPath="yes"
                   Checksum="yes" />
+
+            <!--
+              The phone camera's ports, declared rather than shelled out.
+
+              This used to be two CustomActions that ran "cmd.exe /c netsh advfirewall firewall
+              add rule ...". They worked. The trouble is what they look like: an UNSIGNED installer
+              that spawns an elevated command shell to add firewall rules is the behavioural
+              signature heuristic scanners are built to catch, and buyers were being shown a virus
+              warning for an app that has never been infected. Declaring the exception puts it in
+              the MSI's own tables, where Windows Installer applies it, an inspector can read it,
+              and Windows removes it on uninstall without a second command line.
+
+              9443 is the camera page. The range reaches 9455 because the trust page's port is
+              chosen at run time — 9444 is only a preference, and this machine found it held by an
+              antivirus service. Opening one port and listening on another leaves the phone timing
+              out with nothing to explain it. Scoped to the local subnet, and the listener only
+              runs while the seller has the phone camera switched on.
+            -->
+            <firewall:FirewallException Id="PhoneCameraPorts"
+                                        Name="ING Photo Box phone camera"
+                                        Port="9443-9455"
+                                        Protocol="tcp"
+                                        Scope="localSubnet"
+                                        Description="Lets a phone on the same wifi reach the ING Photo Box capture page." />
           </Component>
 
           <!--
@@ -201,25 +226,9 @@
       an antivirus service. Opening one port and then listening on another would leave the phone
       timing out on the one page that exists to stop phones timing out.
     -->
-    <CustomAction Id="AllowPhoneCameraPort"
-                  Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; &amp; netsh advfirewall firewall add rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot; dir=in action=allow protocol=TCP localport=9443-9455 remoteip=localsubnet&quot;"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="ignore" />
-
-    <CustomAction Id="RemovePhoneCameraPort"
-                  Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c &quot;netsh advfirewall firewall delete rule name=&quot;&quot;ING Photo Box phone camera&quot;&quot;&quot;"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="ignore" />
-
-    <InstallExecuteSequence>
+<InstallExecuteSequence>
       <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="AllowPhoneCameraPort" After="ReservePort9332" Condition="NOT REMOVE" />
       <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="RemovePhoneCameraPort" Before="UnreservePort9332" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <!-- Finish screen: a checked-by-default "Open ING AutoLister now" checkbox so the

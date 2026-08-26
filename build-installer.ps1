@@ -214,7 +214,7 @@ if ($wix) {
     # space in "ING eBay AutoLister" split the argument (wix then reports "Cannot find the
     # input file 'eBay'"). Doubling it (`\\"`) escapes to a single literal backslash and closes
     # the quote correctly, so WiX still gets a SourceDir/RepoDir ending in one backslash.
-    & wix build "$wxsSource" -arch x64 -ext WixToolset.UI.wixext -d "SourceDir=$distDir\\" -d "RepoDir=$PSScriptRoot\\" -o "$msiPath"
+    & wix build "$wxsSource" -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Firewall.wixext -d "SourceDir=$distDir\\" -d "RepoDir=$PSScriptRoot\\" -o "$msiPath"
     if ($LASTEXITCODE -eq 0) {
         Sign-ReleaseFile $msiPath
         Write-Host ""
