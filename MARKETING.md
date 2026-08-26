@@ -2,279 +2,365 @@
 
 Ready-to-post content for each platform. Copy, paste, post.
 
+**Last verified against the shipping product: 2026-08-26.** Every number below was measured, not
+estimated — see *Facts* at the bottom for where each one comes from. Screenshots for any post are in
+`Desktop\ING Listing Engine screenshots 2026-08-26\` (22 screens, full-page, 2x).
+
 ---
 
 ## Reddit — r/flipping
 
-**Title:** I built an AI tool that fills your entire eBay listing from a product URL — completely free (freeware)
+**Title:** I built a Windows app that writes your eBay listing from a photo and prices it against 927,000 real sold records — free
 
 **Post:**
-Hey r/flipping — I've been selling on eBay for years and got tired of the manual listing grind, so I built something.
+I've sold on eBay since 2009 and got tired of two things: writing listings, and guessing at prices.
+So I built the tool I wanted.
 
-**ING Listing Engine** — paste any product URL, it reads the page and auto-fills your entire eBay listing in ~10 seconds:
+**ING Listing Engine.** Point your phone at the item, or paste a product link. About ten seconds
+later you have a complete listing — title under 80 characters, full HTML description, category, 20+
+item specifics, condition, shipping dimensions, photos.
 
-- Title (keyword-optimized, under 80 chars)
-- Full HTML description with specs table
-- Category + item specifics (brand, model, compatibility, 20+ fields)
-- Condition, pricing, shipping dimensions
-- Pulls all product photos from the page
-- Publishes directly to eBay with one click
+The part I actually care about: **it prices against real sold listings, not guesses.** There are
+927,218 sold records in the local database that ships with it, and it will pull live sold comps for
+the exact thing you're listing. When there's nothing comparable it says so instead of inventing a
+number — and gives you an AI estimate clearly labelled as an estimate, never dressed up as sold data.
 
-**Bulk import:** paste a collection/category page URL and it processes every product on the page at once — each one opens as its own tab, all pre-filled.
+Other things it does, because the listing was only ever half the job:
 
-It runs on your Windows PC as a single .exe — no install, no subscription, no expiry. Freeware — download and use it forever.
+- **Opportunity Finder** — scans for underpriced items worth flipping, with the profit maths after
+  fees already done
+- **Photo Box** — your phone is the camera. Scan a code, shoot, the photos land on your PC. No app
+  to install, and it works on iPhone with no certificate setup
+- **Money Made / Tax Pack** — what you actually cleared after fees, and the numbers for your return
+- Offers to watchers, aging stock rescue, promoted-rate advice, shipping cost checks
 
-Works for any product category — electronics, clothing, tools, collectibles, sporting goods, whatever you sell.
+Publishes through eBay's official API. Windows 10 & 11. **No subscription, no per-listing fee, no
+card.** You bring your own Anthropic API key, so the AI costs go to Anthropic at cost — I don't mark
+them up and I never see your key.
 
-Download: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+Download: https://inglisting.com
 
-Happy to answer any questions. What features would make this more useful for your workflow?
+Happy to answer anything. What's the part of listing you'd most want automated?
 
 ---
 
 ## Reddit — r/Entrepreneur / r/SideProject
 
-**Title:** Launched an AI eBay listing tool — paste URL, AI writes the whole listing. Here's what I learned building it.
+**Title:** I shipped an eBay seller tool that prices listings off 927k real sold records. Here's what building it actually taught me.
 
 **Post:**
-Six months ago I was spending 20-30 minutes per eBay listing. Title research, description writing, finding the right category, filling 20+ item specifics fields — all manual.
+I was spending 20–30 minutes per eBay listing. Title research, description, category, 20+ item
+specifics, then guessing the price. So I built **ING Listing Engine**.
 
-So I built **ING Listing Engine**. Here's the core loop:
+The core loop is: photo or product URL → AI reads it → complete listing in about ten seconds.
 
-1. Paste any product URL (supplier page, manufacturer site, existing listing)
-2. Claude AI reads the page
-3. Your entire eBay listing appears in ~10 seconds — title, description, category, item specifics, pricing, photos, shipping
+**The hard part wasn't the AI. It was being honest about prices.**
 
-For bulk sellers there's a collection import mode — paste a category page, every product on it gets its own pre-filled tab simultaneously.
+Anyone can call a model and get a number. The problem is when the comps are wrong and the number is
+confident. Real examples that shaped the product:
 
-**What worked:** Making it a single Windows .exe with no install. Sellers don't want to deal with setup. Releasing it as freeware removed every barrier to adoption.
+- A $1,900 Saab priced at $150, because the only "Saab" records in the database were ECU modules.
+  The arithmetic was perfect and the product was wrong.
+- A one-ounce gold bar priced at $6.99, because the comps that matched were novelty replicas.
 
-**What's hard:** eBay's Sell API has a lot of edge cases. Item specifics vary wildly by category. Getting the AI prompts right for generic products (not just one niche) took a lot of iteration.
+Both are the same bug: the model answered a question it should have refused. So the app now grades
+its own evidence — how many comps actually priced this, whether they carry the item's own model
+number, and whether they describe the same *kind* of thing. A price backed by twenty matching sales
+and a price backed by one loose match do not get displayed the same way. Commodities get priced off
+the spot price instead of comps, because weight × purity × spot is arithmetic and a comp is an
+opinion.
 
-**Stack:** ASP.NET Core 10 backend, vanilla JS frontend, Claude API for analysis, eBay Sell API for publishing. Ships as a single self-contained exe.
+**What worked:** shipping a real installer instead of a zip. Making it work without a subscription.
+Letting people bring their own AI key so the running cost is transparent and I never touch it.
 
-Download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+**What's hard:** eBay's Sell API has a lot of edge cases. Item specifics vary wildly by category.
+And every "clever" pricing shortcut eventually prices something absurdly and costs a user real money.
 
-Happy to answer any questions about the build.
+**Stack:** ASP.NET Core 10, vanilla JS, Claude API, eBay Sell API, SQLite + MariaDB for the comps.
+Ships as a 52 MB Windows installer.
+
+https://inglisting.com
 
 ---
 
 ## Reddit — r/ecommerce
 
-**Title:** Built an AI tool that turns any product URL into a complete eBay listing — completely free, no subscription
+**Title:** Free Windows tool: AI listing writer + sold-comp pricing + arbitrage finder for eBay sellers
 
 **Post:**
-For anyone selling on eBay: I built **ING Listing Engine**.
+Built this for my own eBay business and it's free to use.
 
-Paste any product URL → Claude AI fills your entire listing automatically (title, description, item specifics, photos, pricing, shipping). Direct publish to eBay. Bulk import entire collections at once.
+**Listing:** photo or URL in, full listing out — title, description, category, item specifics,
+condition, shipping. Publishes through eBay's official API.
 
-Single Windows exe, no install required. Freeware — no subscription, no expiry.
+**Pricing:** 927,218 sold records locally, plus live sold-comp lookups. It tells you what evidence
+is behind every number, and refuses to price something it has no business pricing.
 
-https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+**Sourcing:** the Opportunity Finder scans marketplaces for items worth flipping and shows profit
+after eBay fees, shipping and tax — not gross margin.
 
-Works for any product type. Happy to answer questions.
+**After the sale:** Money Made tracks real profit; Tax Pack produces the numbers for your return;
+Offers to Watchers, Rescue Aging Stock and Ad Rate Advisor handle the listings that are sitting.
+
+Also does Amazon listings, and a live-auction bidding advisor for Whatnot that will tell you to stop
+bidding when the metal in a lot is worth less than the bid.
+
+Windows 10 & 11 · no subscription · bring your own AI key
+https://inglisting.com
 
 ---
 
 ## Hacker News — Show HN
 
-**Title:** Show HN: ING Listing Engine – AI fills eBay listings from a product URL
+**Title:** Show HN: eBay listing tool that grades its own pricing confidence
 
 **Post:**
-I built a Windows desktop app that takes any product URL and generates a complete, publish-ready eBay listing using Claude AI.
+I sell on eBay and built a Windows app that writes listings from a photo and prices them against
+real sold records — 927,218 of them locally, plus live lookups.
 
-The core flow: paste URL → Claude reads the page → title (under 80 chars, keyword-optimized), full HTML description, category ID, 20+ item specifics, photos pulled from the page, pricing estimate, shipping dimensions. One click publishes via eBay Sell API.
+The interesting engineering problem wasn't generating listings. It was **refusing to**.
 
-For bulk sellers: paste a collection page URL, every product gets processed in parallel into separate tabs.
+An early version priced a $1,900 Saab at $150. The comps database contained Saab ECU modules, not
+Saabs; the median was computed correctly over the wrong population. Another priced a one-ounce gold
+bar at $6.99 off two sold "gold bars" that were novelty replicas.
 
-**Technical details:**
-- ASP.NET Core 10 minimal API, serves embedded wwwroot via EmbeddedFileProvider (single-file exe)
-- No install — all state lives in a fixed `%LOCALAPPDATA%\ING AutoLister` home, so credentials survive single-file extraction, an update, or running a different copy of the exe
-- Claude Fable 5 with structured JSON prompts for listing data
-- eBay Sell API for inventory creation and OAuth token management
-- Freeware — no license enforcement, all features unlocked
+Both failures look identical from inside the code — a confident median over a healthy sample. So the
+app now carries an evidence grade alongside every price: how many comps actually produced the figure
+after outlier removal and identity checks, whether any of them carry the item's model or part number,
+and whether they describe the same category of object. Only a price that passes all three is allowed
+to present itself as a rate rather than a guess. For commodities it stops using comps entirely and
+prices off the spot metal price, because "1 oz of gold" has a published answer and a comp does not.
 
-The single-file exe challenge was the interesting part — standard PublishSingleFile doesn't embed wwwroot content. Had to mark UI files as EmbeddedResource and use EmbeddedFileProvider. Also had to pin ContentRootPath to the exe directory rather than the temp extraction dir so credentials.json persists.
+The lesson I keep relearning: for a tool people spend money on the output of, "I don't know" has to
+be a first-class answer, and it has to be cheaper to produce than a wrong number.
 
-Download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
-Source: https://github.com/essquireo0o/ING-eBay-Autolister
+Stack: ASP.NET Core 10, vanilla JS, Claude API for vision and copy, eBay Sell API, SQLite + MariaDB.
+52 MB Windows installer, no subscription, bring your own API key.
+
+https://inglisting.com
 
 ---
 
 ## eBay Community Forum — Seller Tools Board
 
-**Title:** Free AI listing tool — paste any URL and it fills your entire listing automatically (freeware, no subscription)
+**Subject:** Free tool I built — AI listing drafts + sold-comp pricing
 
-**Post:**
-Hey everyone — I wanted to share a tool I built specifically for eBay sellers.
+Hello all — I've been selling since 2009 and built a tool for my own store that I've made available
+free.
 
-**ING Listing Engine** automates the listing creation process using AI. Here's how it works:
+What it does:
 
-**Single product:** Paste any product URL (your supplier, the manufacturer's site, another marketplace listing) → AI reads the page and fills your entire eBay listing automatically:
-- Keyword-optimized title (80 chars)
-- Professional HTML description with spec table
-- eBay category selection
-- Item specifics (brand, model, compatibility, condition, and 20+ more)
-- Product photos pulled from the source page
-- Estimated price based on current eBay sold comps
-- Shipping package dimensions
+- Drafts the listing from a photo or a product link — title, description, category, item specifics,
+  condition, shipping dimensions
+- Prices it against real sold listings, and tells you how much evidence is behind the number
+- Finds underpriced items worth buying, with profit after fees
+- Tracks what you actually made, and produces tax-time figures
+- Sends offers to watchers, rescues aging stock, advises on promoted rates
 
-**Bulk import:** Paste a category or collection page URL → every product on the page gets processed into its own tab simultaneously. Review and publish each one.
+It publishes through eBay's official API — nothing is scraped from your account and no password is
+ever entered anywhere but eBay's own sign-in page.
 
-You connect your own eBay seller account via OAuth — it publishes directly using the eBay Sell API.
+Runs on your own Windows PC. Your listings, photos and cost basis stay on your machine. No
+subscription and no per-listing fee.
 
-Works for any product category. Completely freeware — no subscription, no expiry, no restrictions.
+https://inglisting.com
 
-Download here: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
-
-Windows only. No install required — double-click the .exe and you're running.
+Glad to answer questions or take feature requests.
 
 ---
 
 ## Facebook Group Post (eBay Sellers)
 
-**Post:**
-For anyone who lists on eBay — I built a tool that saves hours every week.
+🚀 **Free eBay tool — listing + pricing + sourcing**
 
-**ING Listing Engine** — paste any product URL, AI fills your entire eBay listing in about 10 seconds.
+📸 Photo or link in → complete listing out, about 10 seconds
+📊 Priced against 927,000+ real sold records, with the evidence shown
+🔍 Opportunity Finder — what's worth buying, profit after fees
+📱 Your phone is the camera — scan, shoot, photos land on your PC
+💰 Money Made + Tax Pack — real profit, and your tax numbers
+✅ No subscription · no per-listing fee · no card
+🖥️ Windows 10 & 11 · publishes through eBay's official API
 
-✅ Title, description, category, item specifics — all auto-filled
-✅ Pulls product photos from the source page
-✅ Bulk import — paste a collection URL, every product gets its own pre-filled tab
-✅ One click publishes directly to eBay
-✅ Works for ANY product — electronics, clothing, tools, collectibles, sports gear, anything
-✅ 100% Freeware — no subscription, no expiry, no restrictions
+Bring your own AI key — the running cost goes to Anthropic at cost, never marked up.
 
-👉 Download: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
-
-Windows only. Double-click to run — no install.
-
-Drop a comment if you have questions!
+👉 https://inglisting.com
 
 ---
 
 ## Twitter / X Thread
 
-**Tweet 1 (main):**
-I built an AI tool for eBay sellers. Paste any product URL → complete listing filled in 10 seconds. Title, description, category, 20+ item specifics, photos, pricing. One click publishes to eBay.
+**1/**
+I've sold on eBay since 2009. Listing an item took me 20–30 minutes.
 
-Freeware — no subscription: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+So I built a Windows app that does it in about ten seconds — from a photo.
 
-**Tweet 2:**
-The bulk import feature is wild — paste a supplier's category page URL and every product on it gets processed simultaneously, each in its own tab, all pre-filled and ready to publish.
+It's free. 🧵
 
-**Tweet 3:**
-Works for anything you sell. Electronics, clothing, tools, collectibles, sporting goods, auto parts — the AI adapts to any product category automatically.
+**2/**
+Photo or product link in. Out comes the whole listing: title under 80 chars, HTML description,
+category, 20+ item specifics, condition, shipping dimensions, photos.
 
-**Tweet 4:**
-Built on Claude AI + eBay Sell API. Ships as a single Windows .exe — no install, just double-click. Your credentials stay local, never leave your machine.
+Publishes through eBay's official API.
 
-**Tweet 5:**
-Completely freeware — no subscription, no expiry, no restrictions.
+**3/**
+The part that took longest wasn't the AI. It was making it refuse to answer.
 
-For eBay sellers who spend hours on listings — this is for you.
-👇 https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+An early build priced a $1,900 Saab at $150 — because the only "Saab" records it had were ECU
+modules. Perfect arithmetic, wrong product.
+
+**4/**
+Another priced a 1 oz gold bar at $6.99, off two sold "gold bars" that were novelty replicas.
+
+Same bug wearing a different hat: a confident median over the wrong population.
+
+**5/**
+So every price now carries its evidence: how many comps actually produced it, whether they carry the
+item's own model number, whether they're even the same kind of object.
+
+Fails any of those → it says so instead of pretending.
+
+**6/**
+For commodities it stops using comps entirely. 1 oz of gold is weight × purity × spot price — a
+published fact. A comp is somebody else's Tuesday.
+
+**7/**
+It also finds things worth buying, tracks what you actually made after fees, produces your tax
+numbers, and turns your phone into the studio camera.
+
+**8/**
+Windows 10 & 11. No subscription, no per-listing fee. Bring your own AI key so the cost is yours and
+transparent.
+
+https://inglisting.com
 
 ---
 
 ## LinkedIn Post
 
-**Post:**
-I spent 6 months building a product that solves a problem I had personally: eBay listings take forever to create manually.
+After 17 years selling on eBay, the two things that never got faster were writing listings and
+pricing them. So I built **ING Listing Engine**.
 
-**ING Listing Engine** uses Claude AI to turn any product URL into a complete, publish-ready eBay listing in about 10 seconds.
+Photo or product link in — complete listing out in about ten seconds. Title, description, category,
+20+ item specifics, condition, shipping. Published through eBay's official API.
 
-What it fills automatically:
-→ Keyword-optimized title (80 chars, eBay ranking matters)
-→ Professional HTML product description
-→ eBay category selection
-→ 20+ item specifics fields
-→ Product photos from the source page
-→ Price estimate from current eBay sold comps
-→ Shipping dimensions and packaging
+The engineering problem that actually mattered was pricing honesty.
 
-For sellers with large inventory: paste a collection page URL and every product gets processed in parallel — each into its own draft tab.
+An early version priced a $1,900 vehicle at $150, because the comparable-sales database held parts
+for that vehicle rather than the vehicle. The median was computed correctly over the wrong
+population — which is the most dangerous kind of wrong, because it looks exactly like being right.
 
-Built with ASP.NET Core 10 + Claude API + eBay Sell API. Ships as a single Windows exe with no install required.
+The product now grades its own evidence before it will state a price as a rate: how many comparable
+sales survived outlier removal and identity matching, whether they carry the item's model number,
+and whether they describe the same category of object. Commodities bypass comparables entirely and
+price off the published spot rate.
 
-Completely freeware — no subscription, no expiry, no restrictions.
+For a tool people commit money against, "I don't have enough evidence" has to be a first-class
+answer.
 
-If you sell on eBay or know someone who does: https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
+It also handles sourcing, profit tracking and tax figures — the listing was always only half the job.
 
-#ecommerce #ebay #AI #automation #freeware
+Free, Windows, no subscription: https://inglisting.com
 
 ---
 
 ## Indie Hackers Post
 
-**Title:** I automated the worst part of selling on eBay — the listing form
+**Title:** Shipped an eBay seller tool — the hard part was teaching it to say "I don't know"
 
-**Post:**
-**The problem:** Every eBay listing requires filling out 15–20 fields manually. Title research, description writing, finding the right category ID, item specifics (some categories have 30+ fields), condition notes, shipping dimensions. Multiply that by 50 products and it's a full-time job.
+Built **ING Listing Engine** for my own eBay business, now free for anyone.
 
-**What I built:** ING Listing Engine — paste a product URL, Claude AI reads the page and fills your entire listing. Takes about 10 seconds. One more click publishes to eBay directly via the Sell API.
+**Numbers:**
+- 52 MB Windows installer, v2.6.1
+- 927,218 sold records in the local pricing database (2.3 GB)
+- ~10 seconds from photo to filled listing
+- No subscription; users bring their own Anthropic key so AI cost is theirs, at cost
 
-**Numbers so far:**
-- Single exe file, 108 MB, bundles the entire .NET runtime
-- Works for any product category
-- Freeware — no subscription, no expiry, maximum adoption
-- Key `ING-BETA-2025` unlocks all features
+**What I got wrong first:** I optimised for always producing an answer. That is exactly the wrong
+target for a pricing tool. A confident wrong price costs a seller real money, and it is
+indistinguishable from a confident right one unless you show the evidence.
 
-**Interesting technical challenges:**
-1. Single-file .NET exe with embedded UI — had to use EmbeddedFileProvider instead of static files middleware, mark HTML/CSS/JS as EmbeddedResource in csproj
-2. ContentRootPath for single-file apps points to the temp extraction dir — credentials would be lost on restart. Fixed by pinning ContentRootPath to the exe directory explicitly
-3. Getting Claude to fill 25+ structured fields consistently required careful JSON schema prompting
-4. eBay item specifics vary by category — clothing needs Size/Color/Material, electronics need Connectivity/RAM/Storage, mining hardware needs Algorithm/Hashrate
+**What fixed it:** every price now carries a grade — comps that actually priced it, whether they
+match the item's identity, whether they're the same kind of object. Anything short of all three is
+labelled an estimate and cannot wear a confident badge. Commodities get priced off spot instead.
 
-**What's working:** The bulk import — paste a supplier's collection page and all products get processed simultaneously into separate tabs. Sellers love this.
+**What I'd do differently:** ship the installer signed from day one. An unsigned installer gets a
+SmartScreen warning that reads like a virus alert, and no amount of good software argues with that
+dialog.
 
-**Download / source:** https://github.com/essquireo0o/ING-eBay-Autolister
-
-Happy to answer any questions about the build or the eBay API.
+https://inglisting.com
 
 ---
 
 ## Product Hunt Launch Description
 
-**Tagline:** Paste any product URL → AI fills your entire eBay listing in 10 seconds
+**Tagline:** AI writes your eBay listing from a photo — and prices it against 927,000 real sold records
 
 **Description:**
-ING Listing Engine is a Windows app that automates eBay listing creation using Claude AI.
+ING Listing Engine turns a photo or a product link into a complete eBay listing in about ten seconds
+— title, description, category, 20+ item specifics, condition, shipping — and prices it against real
+sold listings rather than guesses.
 
-Paste any product URL — supplier page, manufacturer site, or existing listing. The AI reads the page and fills your complete eBay listing: keyword-optimized title, professional HTML description, category, 20+ item specifics, product photos, pricing estimate, and shipping dimensions. One click publishes directly to eBay.
+What makes it different is what it refuses to do. Every price carries its evidence: how many
+comparable sales actually produced it, whether they carry the item's own model number, whether
+they're even the same kind of object. When the evidence is thin it says so. Commodities are priced
+off the published spot rate instead of comparables, because an ounce of gold has a real answer.
 
-**Bulk import:** Paste a collection page URL and every product on it gets processed simultaneously — each into its own draft tab, ready to review and publish.
+Beyond listing: an Opportunity Finder that shows what's worth buying with profit after fees, a phone
+camera that needs no app installed, real profit tracking, tax-time figures, and tools for the
+listings that are just sitting there.
 
-Works for any product category. No install — just double-click the exe.
-
-Completely freeware — no subscription, no expiry, no restrictions.
+Runs on your own Windows PC. Your data stays local. No subscription, no per-listing fee — bring your
+own AI key.
 
 ---
 
 ## YouTube Video Description (for demo video)
 
-**Title:** AI Fills Your Entire eBay Listing From a URL — ING Listing Engine Demo
+ING Listing Engine — write and price an eBay listing in about ten seconds.
 
-**Description:**
-In this video I show how ING Listing Engine uses Claude AI to automatically fill a complete eBay listing from any product URL — title, description, category, item specifics, photos, pricing, and shipping. Then one click publishes it directly to eBay.
+In this video: photograph an item with your phone, watch the listing fill itself in, see it priced
+against real sold records, and publish it to eBay.
 
-I also demo the bulk import feature — paste a collection page URL and every product gets processed at once.
+⏱️ Chapters
+0:00 The problem — 20 minutes per listing
+0:35 Photo to filled listing
+2:10 Pricing against 927,000 sold records
+3:40 What it does when the evidence is thin
+5:00 Opportunity Finder — what's worth buying
+6:30 Money Made and Tax Pack
+7:45 Installing it
 
-🔗 Free download (freeware): https://github.com/essquireo0o/ING-eBay-Autolister/releases/latest
-📖 Setup guide: https://github.com/essquireo0o/ING-eBay-Autolister
+🔗 Download (free, Windows 10 & 11): https://inglisting.com
 
-Timestamps:
-0:00 - Intro
-0:30 - Single product URL import
-2:00 - AI-filled listing walkthrough
-3:30 - Item specifics
-4:30 - Publish to eBay
-5:30 - Bulk collection import
-7:00 - Draft management
-8:00 - Freeware & setup
-
-#ebay #reselling #aitools #ecommerce #flipping
+No subscription. No per-listing fee. Bring your own Anthropic API key — the AI cost is yours, at
+cost, and never passes through me.
 
 ---
 
-*All posts created for https://github.com/essquireo0o/ING-eBay-Autolister*
+## Facts — measured 2026-08-26
+
+Anything above that is a number came from here. Re-measure before reusing this doc; several of these
+change with every release.
+
+| Claim | Value | How it was measured |
+|---|---|---|
+| Version | 2.6.1 | `<Version>` in the csproj |
+| Installer size | 51.8 MB (54,296,696 bytes) | `ING-AutoLister-Setup.msi`, and the byte count served by inglisting.com |
+| Sold records | 927,218 | `SELECT COUNT(*) FROM SoldListings`, `C:\INGListing\Data\Marketplace.db` |
+| Pricing DB size | 2.3 GB | file size of the same database |
+| Demand signals | 14,041 | `SELECT COUNT(*) FROM DemandSignal` |
+| Download URL | https://inglisting.com | the site's own download button |
+| Platform | Windows 10 & 11 | installer target |
+
+**Claims deliberately removed from the previous version of this file**, because they had stopped
+being true:
+
+- *"Single .exe, 108 MB, no install"* — it is a 51.8 MB MSI installer now.
+- *"Download from GitHub releases"* — the canonical download is inglisting.com.
+- *"100% Freeware"* and *"free public beta"* — the site no longer uses either framing. The accurate
+  wording, and what the site says today, is **no subscription and no per-listing fee**.
+- *"Key ING-BETA-2025 unlocks all features"* — still true, still built in, but it is not a selling
+  point and reads oddly next to a product that no longer calls itself a beta.
+
+**Claims to avoid** unless someone re-measures them: any user count, revenue figure, or "X listings
+created" number. None is instrumented, so any figure would be invented.
