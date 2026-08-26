@@ -83,8 +83,15 @@ if ($LASTEXITCODE -ne 0) { Die "build-installer.ps1 failed." }
 $msi = Get-ChildItem "$root\installer-out" -Filter "*.msi" -ErrorAction SilentlyContinue |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $msi) { Die "No .msi produced in installer-out." }
+$signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
+if ($signature.Status -ne 'Valid') {
+    Die "Installer signature is $($signature.Status), not Valid. An unsigned or invalid MSI must never be uploaded."
+}
+if (-not $signature.TimeStamperCertificate) {
+    Die "Installer has no trusted timestamp. It would become invalid when the signing certificate expires."
+}
 $msiMb = [math]::Round($msi.Length / 1MB, 2)
-Ok "$($msi.Name)  $msiMb MB  built $($msi.LastWriteTime.ToString('HH:mm:ss'))"
+Ok "$($msi.Name)  $msiMb MB  signed by $($signature.SignerCertificate.Subject)"
 
 # What the public URL serves right now, so we can prove it changed afterwards.
 $publicUrl = "https://inglisting.com/ING-AutoLister-Setup.msi"

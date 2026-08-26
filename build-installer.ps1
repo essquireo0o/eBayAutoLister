@@ -18,13 +18,21 @@
 #      on this build machine. The folder-of-files output below is what installer.wxs expects.
 #   2. Install WiX 4 (for .msi):
 #        dotnet tool install --global wix
+#   3. Configure a trusted signing identity as documented in CODE_SIGNING.md.
+#      Public releases fail closed when neither Artifact Signing nor a certificate-store
+#      thumbprint is configured. Use -AllowUnsigned only for local packaging diagnostics.
 #
 # credentials.json (gitignored) must exist in the project folder.
 # eBay app credentials are embedded so OAuth works out-of-the-box.
 # Anthropic API key is NOT embedded — users enter their own at console.anthropic.com.
 
 param(
-    [string]$Version = "B1"
+    [string]$Version = "B1",
+    [string]$SigningThumbprint = $env:ING_CODESIGN_THUMBPRINT,
+    [string]$ArtifactSigningDlib = $env:ING_ARTIFACT_SIGNING_DLIB,
+    [string]$ArtifactSigningMetadata = $env:ING_ARTIFACT_SIGNING_METADATA,
+    [string]$TimestampUrl = $(if ($env:ING_CODESIGN_TIMESTAMP_URL) { $env:ING_CODESIGN_TIMESTAMP_URL } else { "http://timestamp.acs.microsoft.com/" }),
+    [switch]$AllowUnsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +44,80 @@ $credsSource = "$projectDir\credentials.json"
 $wxsSource   = "$PSScriptRoot\installer.wxs"
 $outDir      = "$PSScriptRoot\installer-out"
 $distDir     = "$outDir\dist"
+
+# Windows treats every new unsigned build as an unknown publisher, and Smart App Control can block
+# it outright. Signing is therefore a release requirement, not an optional finishing step. Two
+# identities are supported: Microsoft's Artifact Signing dlib + metadata file, or an Authenticode
+# code-signing certificate already held in the Windows certificate store. -AllowUnsigned exists
+# only for local packaging diagnostics; publish-update.ps1 never uses it.
+function Find-SignTool {
+    $tool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe `
+                -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+    if (-not $tool) { throw "SignTool was not found. Install the Windows SDK signing tools." }
+    return $tool.FullName
+}
+
+function Signing-Mode {
+    if ($ArtifactSigningDlib -or $ArtifactSigningMetadata) {
+        if (-not $ArtifactSigningDlib -or -not $ArtifactSigningMetadata) {
+            throw "Artifact Signing requires both ING_ARTIFACT_SIGNING_DLIB and ING_ARTIFACT_SIGNING_METADATA."
+        }
+        if (-not (Test-Path -LiteralPath $ArtifactSigningDlib)) { throw "Artifact Signing dlib not found: $ArtifactSigningDlib" }
+        if (-not (Test-Path -LiteralPath $ArtifactSigningMetadata)) { throw "Artifact Signing metadata not found: $ArtifactSigningMetadata" }
+        return "artifact"
+    }
+    if ($SigningThumbprint) { return "store" }
+    if ($AllowUnsigned) { return "unsigned" }
+    throw @"
+Release signing is not configured. An unsigned MSI displays Unknown publisher and cannot carry
+publisher reputation between releases. Configure Microsoft Artifact Signing with
+ING_ARTIFACT_SIGNING_DLIB + ING_ARTIFACT_SIGNING_METADATA, or set ING_CODESIGN_THUMBPRINT to a
+trusted Authenticode certificate in Cert:\CurrentUser\My or Cert:\LocalMachine\My.
+Use -AllowUnsigned only for a local packaging test; publish-update.ps1 intentionally fails closed.
+"@
+}
+
+$signingMode = Signing-Mode
+$signTool = if ($signingMode -eq "unsigned") { $null } else { Find-SignTool }
+
+function Sign-ReleaseFile([string]$Path) {
+    if ($signingMode -eq "unsigned") {
+        Write-Warning "UNSIGNED local diagnostic build: $Path"
+        return
+    }
+
+    $args = @("sign", "/v", "/fd", "SHA256", "/tr", $TimestampUrl, "/td", "SHA256",
+              "/d", "ING Listing Engine", "/du", "https://inglisting.com")
+    if ($signingMode -eq "artifact") {
+        $args += @("/dlib", $ArtifactSigningDlib, "/dmdf", $ArtifactSigningMetadata)
+    } else {
+        $thumb = ($SigningThumbprint -replace '\s', '').ToUpperInvariant()
+        $userCert = Get-ChildItem "Cert:\CurrentUser\My\$thumb" -ErrorAction SilentlyContinue
+        $machineCert = Get-ChildItem "Cert:\LocalMachine\My\$thumb" -ErrorAction SilentlyContinue
+        $cert = if ($userCert) { $userCert } else { $machineCert }
+        if (-not $cert -or -not $cert.HasPrivateKey) {
+            throw "Code-signing certificate $thumb with a private key was not found in the CurrentUser or LocalMachine My store."
+        }
+        if ($cert.EnhancedKeyUsageList.ObjectId.Value -notcontains "1.3.6.1.5.5.7.3.3") {
+            throw "Certificate $thumb is not valid for Code Signing."
+        }
+        if ($machineCert) { $args += "/sm" }
+        $args += @("/sha1", $thumb)
+    }
+
+    Write-Host "Signing $([IO.Path]::GetFileName($Path)) ($signingMode)..." -ForegroundColor Cyan
+    & $signTool @args $Path
+    if ($LASTEXITCODE -ne 0) { throw "SignTool failed for $Path (exit $LASTEXITCODE)." }
+
+    & $signTool verify /pa /all /v $Path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $Path (exit $LASTEXITCODE)." }
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne 'Valid') { throw "Signature on $Path is $($signature.Status), not Valid." }
+    if (-not $signature.TimeStamperCertificate) { throw "Signature on $Path has no trusted timestamp." }
+    Write-Host "  Verified publisher: $($signature.SignerCertificate.Subject)" -ForegroundColor Green
+}
 
 if (-not (Test-Path $exeSource)) {
     Write-Error "AutoListerB1.exe not found at: $exeSource`nBuild the project first with dotnet publish."
@@ -105,12 +187,18 @@ Copy-Item "$publishDir\*" $distDir -Recurse -Force
 $credsJson | Out-File -FilePath "$distDir\credentials.json" -Encoding UTF8 -Force
 Write-Host "  dist folder prepared: $distDir ($((Get-ChildItem $distDir -Recurse -File).Count) files)"
 
+# Sign the two ING-owned PE files before WiX hashes and packages them. Framework and third-party
+# files retain their vendors' signatures; modifying those would invalidate their provenance.
+Sign-ReleaseFile "$distDir\AutoListerB1.exe"
+Sign-ReleaseFile "$distDir\AutoListerB1.dll"
+
 # ── PRIMARY: WiX 4 MSI ────────────────────────────────────────────────────────
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if ($wix) {
     Write-Host ""
     Write-Host "Building MSI with WiX 4..." -ForegroundColor Cyan
     $msiPath = "$outDir\ING-AutoLister-Setup-$Version.msi"
+    if (Test-Path -LiteralPath $msiPath) { Remove-Item -LiteralPath $msiPath -Force }
 
     # Note: `& wix @wixArgs` (array splatting) mis-tokenizes paths containing spaces on this
     # toolchain — "ING eBay AutoLister\installer.wxs" gets split at the space, and wix reports
@@ -128,8 +216,10 @@ if ($wix) {
     # the quote correctly, so WiX still gets a SourceDir/RepoDir ending in one backslash.
     & wix build "$wxsSource" -arch x64 -ext WixToolset.UI.wixext -d "SourceDir=$distDir\\" -d "RepoDir=$PSScriptRoot\\" -o "$msiPath"
     if ($LASTEXITCODE -eq 0) {
+        Sign-ReleaseFile $msiPath
         Write-Host ""
         Write-Host "MSI created: $msiPath" -ForegroundColor Green
+
         Write-Host "To install:  msiexec /i `"$msiPath`"" -ForegroundColor Green
 
         # ── Copy to Desktop\eBay Autolister MSI folder ───────────────────────
@@ -245,6 +335,7 @@ if ($ps2exe) {
     ps2exe -inputFile $ps1Path -outputFile $installer `
            -title "ING AutoLister Setup" -version "1.0.0.$Version" -noConsole:$false
     Remove-Item $ps1Path -Force
+    Sign-ReleaseFile $installer
     Write-Host "Installer created: $installer" -ForegroundColor Green
 } else {
     $batPath = "$outDir\ING-AutoLister-Setup-$Version.bat"
