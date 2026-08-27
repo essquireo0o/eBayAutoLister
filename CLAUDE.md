@@ -31,3 +31,7 @@ time. Both read this file. The rules that keep that safe:
 - Hosted vs desktop is the compile-time `HOSTED` define; the MSI publish never sets it.
 - Ship = `publish-update.ps1` (site MSI upload + verify) + GitHub release with the
   version bumped in BOTH the csproj `<Version>` and installer.wxs.
+- **Before saying "shipped", run `pwsh -File check-shipped.ps1`.** Read-only, ~15s: compares
+  HEAD's version against what inglisting.com actually serves and what releases/latest offers,
+  by ProductVersion AND sha256. Exit 1 means something is behind. Being out of date has been
+  silent every single time - twice it went unnoticed for nine days.
