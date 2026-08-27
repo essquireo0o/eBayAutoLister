@@ -15,7 +15,7 @@
 
   const makeEmptyCopyFriendly = () => {
     if (emptyLine && /allow the camera/i.test(emptyLine.textContent || ''))
-      emptyLine.textContent = 'Scan the code, tap Take a photo, then tap Use Photo.';
+      emptyLine.textContent = "Scan once. Your phone's live camera appears right here.";
   };
 
   const makeAiActionObvious = () => {

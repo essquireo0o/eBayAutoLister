@@ -41,15 +41,15 @@ public class PhonePhotoReviewOrderTests
         Assert.Contains("hasPhotos && !hadPhotos", Ux, StringComparison.Ordinal);
         Assert.Contains("review.scrollIntoView", Ux, StringComparison.Ordinal);
         Assert.Contains("prefers-reduced-motion: reduce", Ux, StringComparison.Ordinal);
-        Assert.Contains("photobox-ux.js?v=1", Html, StringComparison.Ordinal);
+        Assert.Contains("photobox-ux.js?v=2", Html, StringComparison.Ordinal);
         Assert.Contains("<EmbeddedResource Include=\"wwwroot\\photobox-ux.js\" />", Project,
                         StringComparison.Ordinal);
     }
 
     [Fact]
-    public void The_empty_viewfinder_describes_the_actual_certificate_free_phone_flow()
+    public void The_empty_viewfinder_leads_with_the_live_phone_camera()
     {
-        const string copy = "Scan the code, tap Take a photo, then tap Use Photo.";
+        const string copy = "Scan once. Your phone's live camera appears right here.";
         Assert.Contains(copy, Html, StringComparison.Ordinal);
         Assert.Contains(copy, Ux, StringComparison.Ordinal);
         Assert.DoesNotContain("allow the camera, and leave that page open", Html, StringComparison.OrdinalIgnoreCase);
