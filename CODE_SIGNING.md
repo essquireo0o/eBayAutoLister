@@ -44,7 +44,11 @@ Use the timestamp URL supplied by the certificate authority. Never use a self-si
 for a public release; Windows gives it the same SmartScreen treatment as an unsigned file.
 
 For a local WiX packaging diagnostic only, `build-installer.ps1 -AllowUnsigned` remains available.
-That switch is intentionally absent from `publish-update.ps1`.
+`publish-update.ps1 -AllowUnsigned` passes it through and ships anyway. That is deliberate and it
+is not the default: it was added on 2026-08-27, after this gate held the public download at the
+18 August build for nine days while the certificate waited on identity validation. A warning on
+an installer is a smaller harm than silently serving people a build without the fixes they were
+promised. Delete the switch once signing works.
 
 ## False-positive submissions
 

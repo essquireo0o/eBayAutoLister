@@ -30,6 +30,7 @@
 # USAGE
 #   pwsh -File publish-update.ps1              # full release
 #   pwsh -File publish-update.ps1 -SkipTests   # only when you already ran them
+#   pwsh -File publish-update.ps1 -AllowUnsigned  # ship without a signature, on purpose
 #   pwsh -File publish-update.ps1 -WhatIf      # build + package, upload nothing
 #
 # Run with pwsh (7+), not powershell.exe 5.1 - build-installer.ps1 documents why.
@@ -37,7 +38,20 @@
 param(
     [switch]$SkipTests,
     [switch]$WhatIf,
-    [string]$Version = "B1"
+    [string]$Version = "B1",
+    # Ship without a signature. Signed stays the default and this switch is never implied.
+    #
+    # It exists because on 2026-08-27 the gate below stopped being a safety rail and became the
+    # reason nothing shipped. Trusted Signing was added on 08-26 and fails closed; the certificate
+    # behind it is still waiting on Microsoft's identity validation, which no amount of local work
+    # shortens. Meanwhile the site served the 18 August build for nine days and 138 commits while
+    # sessions kept "shipping" it. An unsigned installer warns; a nine-day-stale one silently hands
+    # people an app without the fixes they were told they were getting. The second is worse, and the
+    # gate was quietly choosing it.
+    #
+    # Remove this switch the day signing works. Until then, using it is a decision the owner makes
+    # per release, out loud, and it is recorded in the release commit.
+    [switch]$AllowUnsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,21 +91,40 @@ Ok "published to dist"
 
 # ---------------------------------------------------------------- 3. installer
 Step 3 "Building the installer"
-& pwsh -File "$root\build-installer.ps1" -Version $Version
+if ($AllowUnsigned) {
+    & pwsh -File "$root\build-installer.ps1" -Version $Version -AllowUnsigned
+} else {
+    & pwsh -File "$root\build-installer.ps1" -Version $Version
+}
 if ($LASTEXITCODE -ne 0) { Die "build-installer.ps1 failed." }
 
 $msi = Get-ChildItem "$root\installer-out" -Filter "*.msi" -ErrorAction SilentlyContinue |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $msi) { Die "No .msi produced in installer-out." }
-$signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
-if ($signature.Status -ne 'Valid') {
-    Die "Installer signature is $($signature.Status), not Valid. An unsigned or invalid MSI must never be uploaded."
-}
-if (-not $signature.TimeStamperCertificate) {
-    Die "Installer has no trusted timestamp. It would become invalid when the signing certificate expires."
-}
 $msiMb = [math]::Round($msi.Length / 1MB, 2)
-Ok "$($msi.Name)  $msiMb MB  signed by $($signature.SignerCertificate.Subject)"
+
+$signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
+if ($AllowUnsigned) {
+    # Say it at every step rather than once at the top, because the operator who scrolls back
+    # looking for why SmartScreen is shouting should hit this line before they hit a theory.
+    Warn "UNSIGNED RELEASE. Windows will call this an unrecognised app from an unknown publisher."
+    Warn "Signature status: $($signature.Status). Fix by finishing Trusted Signing (CODE_SIGNING.md)."
+} else {
+    if ($signature.Status -ne 'Valid') {
+        Die @"
+Installer signature is $($signature.Status), not Valid. An unsigned or invalid MSI must never be uploaded.
+
+If signing is not set up yet, this gate will block every release until it is, and a stale download
+is its own kind of harm - see -AllowUnsigned in this script's param block, and CODE_SIGNING.md.
+"@
+    }
+    if (-not $signature.TimeStamperCertificate) {
+        Die "Installer has no trusted timestamp. It would become invalid when the signing certificate expires."
+    }
+}
+
+if ($AllowUnsigned) { Ok "$($msi.Name)  $msiMb MB  UNSIGNED" }
+else                { Ok "$($msi.Name)  $msiMb MB  signed by $($signature.SignerCertificate.Subject)" }
 
 # What the public URL serves right now, so we can prove it changed afterwards.
 $publicUrl = "https://inglisting.com/ING-AutoLister-Setup.msi"
@@ -238,10 +271,41 @@ try {
     Die "Could not verify ingmining.com's download route: $($_.Exception.Message)"
 }
 
+# ---------------------------------------------------------------- 8. the third place
+Step 8 "Checking the GitHub release the in-app update banner reads"
+
+# There are THREE places a release lives, and updating one looks exactly like success.
+# The website file (steps 4-7) is what a NEW downloader gets. The GitHub release is what an
+# ALREADY-INSTALLED app compares itself against - UpdateChecker.cs reads releases/latest. Ship
+# the file without cutting the release and every existing user is told they are up to date
+# while the site serves something newer. That is not hypothetical: it is why 2.6.1 sat live
+# for nine days with nobody's app mentioning it.
+#
+# This step only reads. Cutting the release stays manual because the notes are written by hand,
+# so a mismatch here is a warning with the command attached, not a failed ship.
+try {
+    $rel = & gh release view --json tagName,assets 2>$null | ConvertFrom-Json
+    if (-not $rel) { throw "gh returned nothing" }
+    $asset = $rel.assets | Where-Object { $_.name -eq "ING-AutoLister-Setup.msi" } | Select-Object -First 1
+    $relSha = if ($asset.digest) { ($asset.digest -replace '^sha256:', '').ToUpperInvariant() } else { "" }
+
+    if ($relSha -eq $localHash) {
+        Ok "releases/latest is $($rel.tagName) and its asset is these exact bytes"
+    } else {
+        Warn "releases/latest is $($rel.tagName), and its asset is NOT this build."
+        Warn "Installed apps compare against that release, so they will not see this update."
+        Warn "  gh release create v<x.y.z> `"$($msi.FullName)`" --latest --target $(git rev-parse HEAD)"
+        Warn "  (the asset must be named exactly ING-AutoLister-Setup.msi - the URL matches the filename)"
+    }
+} catch {
+    Warn "Could not read the GitHub release ($($_.Exception.Message)). Check it by hand."
+}
+
 Write-Host "`nShipped." -ForegroundColor Green
 Write-Host "  $publicUrl"
 Write-Host "  $mineUrl  (302)"
 Write-Host "  $($msi.Name)  $msiMb MB"
+if ($AllowUnsigned) { Write-Host "  UNSIGNED - SmartScreen will warn. See CODE_SIGNING.md." -ForegroundColor Yellow }
 Write-Host "`nNot done for you, on purpose:" -ForegroundColor DarkGray
 Write-Host "  git push        - review the diff first" -ForegroundColor DarkGray
 Write-Host "  release notes   - the What's New page is written by hand" -ForegroundColor DarkGray
