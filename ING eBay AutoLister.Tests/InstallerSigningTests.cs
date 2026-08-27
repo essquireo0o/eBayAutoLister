@@ -37,7 +37,13 @@ public class InstallerSigningTests
     {
         Assert.Contains("Release signing is not configured", Build, StringComparison.Ordinal);
         Assert.Contains("[switch]$AllowUnsigned", Build, StringComparison.Ordinal);
-        Assert.DoesNotContain("AllowUnsigned", Publish, StringComparison.Ordinal);
+        // Unsigned packaging is an explicit, named emergency override; it must never become the
+        // default branch or be inferred when signing is unavailable.
+        Assert.Contains("[switch]$AllowUnsigned", Publish, StringComparison.Ordinal);
+        Assert.Contains("if ($AllowUnsigned)", Publish, StringComparison.Ordinal);
+        var normalizedPublish = Publish.Replace("\r\n", "\n", StringComparison.Ordinal);
+        Assert.Contains("} else {\n    & pwsh -File \"$root\\build-installer.ps1\" -Version $Version\n}",
+                        normalizedPublish, StringComparison.Ordinal);
         Assert.Contains("Get-AuthenticodeSignature", Publish, StringComparison.Ordinal);
         Assert.Contains("An unsigned or invalid MSI must never be uploaded", Publish, StringComparison.Ordinal);
         Assert.Contains("Installer has no trusted timestamp", Publish, StringComparison.Ordinal);
