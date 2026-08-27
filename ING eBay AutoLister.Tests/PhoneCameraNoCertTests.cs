@@ -92,18 +92,19 @@ public class PhoneCameraNoCertTests
         // Above the fold and before the three Settings steps, because the seller reading it is the
         // one for whom those steps have already failed.
         Assert.Contains("href=\"/c/{{_token}}\"", trust, StringComparison.Ordinal);
-        Assert.Contains("take photos with this phone", trust, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Take a photo now", trust, StringComparison.OrdinalIgnoreCase);
 
         // And the way back, for the seller who does want the viewfinder after all.
         Assert.Contains("href=\"/trust\"", Page, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void The_primary_qr_opens_the_working_no_certificate_camera_immediately()
+    public void The_primary_qr_prefers_live_camera_and_keeps_no_certificate_capture_one_tap_away()
     {
-        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/c/{_token}\";", Source,
+        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
                         StringComparison.Ordinal);
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
+        Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
         Assert.Contains("href=\"/c/{{_token}}\"", Source, StringComparison.Ordinal);
     }
@@ -113,7 +114,7 @@ public class PhoneCameraNoCertTests
     {
         // No live preview and no desktop shutter. A seller who is told this up front is choosing;
         // one who finds out by waiting for a viewfinder that never comes is stuck again.
-        Assert.Contains("You tap the shutter instead of the computer.",
+        Assert.Contains("only the live desktop view and remote shutter are skipped.",
                         Between(Source, "private string TrustPageHtml", "// ── Why there is an authority here"),
                         StringComparison.Ordinal);
     }

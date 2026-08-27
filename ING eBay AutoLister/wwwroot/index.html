@@ -2869,8 +2869,8 @@
                       <circle cx="12" cy="13.5" r="3.4"/>
                     </svg>
                     <p class="pb-empty-title">Your phone is the camera</p>
-                    <p class="pb-empty-line" id="pb-empty-line">Scan the code, tap Take a photo, then tap Use Photo.</p>
-                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">📱 Use my phone</button>
+                    <p class="pb-empty-line" id="pb-empty-line">Scan once. Your phone's live camera appears right here.</p>
+                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">📱 Start live camera</button>
                   </div>
                 </div>
               </div>
@@ -3069,33 +3069,32 @@
                     <div id="pb-cam-status" class="pb-rail-status">No camera yet.</div>
                   </div>
                 </div>
-                <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Use my phone</button>
+                <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Start live camera</button>
                 <div id="pb-phone-panel" class="pb-phone-panel hidden">
                   <div class="pb-phone-qr" id="pb-phone-qr"></div>
                   <div class="pb-phone-words">
-                    <h3>Scan this with your iPhone</h3>
+                    <h3>Scan for the live studio</h3>
                     <ol>
                       <li>Point the iPhone camera at this code and open the link.</li>
-                      <li>Tap the large gold <b>Take a photo</b> button. Safari opens the iPhone camera
-                          immediately — no certificate, profile or browser permission is needed.</li>
-                      <li>Take the picture and tap <b>Use Photo</b>. Wait for <b>On your computer</b>,
-                          then take another or choose photos you already have.</li>
+                      <li>If this phone was set up before, its camera opens automatically and the live
+                          picture appears in the large viewfinder on this page.</li>
+                      <li>Leave the phone camera open. Frame the product here, then press <b>Snap</b>
+                          on either the computer or the phone.</li>
                     </ol>
-                    <p class="pb-plan-note"><b>That is the normal workflow.</b> The optional
-                      live-studio setup below is only for seeing the phone's viewfinder here and firing
-                      the shutter from the computer.</p>
+                    <p class="pb-plan-note"><b>First time on this iPhone?</b> The phone page walks you
+                      through the one-time live-camera setup and also offers <b>Take a photo now</b>
+                      when you do not need the live view.</p>
                     <div class="pb-phone-link" id="pb-phone-url"></div>
                     <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
 
-                    <!-- Optional live-studio setup stays visible because iOS requires every manual
-                         trust step to be explicit. Ordinary photo capture uses the first QR and none
-                         of this certificate flow. -->
+                    <!-- The main QR attempts this live path first. These explicit steps remain here
+                         because iOS never permits a local camera certificate to be trusted silently. -->
                     <section class="pb-phone-trust" id="pb-phone-trust">
-                      <h4 class="pb-phone-trust-head">📱 iPhone: do this once for the LIVE camera</h4>
+                      <h4 class="pb-phone-trust-head">📱 First time? Unlock the live camera once</h4>
                       <p class="pb-phone-trust-why">
-                        Only needed for the viewfinder on this screen and the 📸 Snap button. If you just
-                        want photographs, use the first code and tap <b>Take a photo</b> — that needs
-                        none of this. Safari will not run a live camera on a
+                        This enables the smooth viewfinder on this screen and the 📸 Snap button. If you
+                        only need one photo, choose <b>Take a photo now</b> on the phone — that needs none
+                        of this. Safari will not run a live camera on a
                         certificate this computer made for itself and will not let you tap past it, so
                         these three steps are the way in. About a minute, once per phone.
                       </p>

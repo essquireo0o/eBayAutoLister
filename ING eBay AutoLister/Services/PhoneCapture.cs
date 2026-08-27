@@ -296,7 +296,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         if (_app is null) return new(false, null, false, 0, [], null, null);
         // One QR works in Safari whether this phone has trusted the local authority yet or not.
         // The HTTP bootstrap contains no pairing token: it probes the HTTPS certificate, passes a
-        // trusted phone straight through, and shows the one-time Apple setup when Safari refuses.
+        // trusted phone straight into the live camera, and offers instant single-photo capture when
+        // Safari has not been set up yet. The viewfinder is the primary experience; /c is the escape
+        // hatch, never a dead end.
         var url = LaunchUrl;
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
                    _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null,
@@ -310,10 +312,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
-    // The primary QR must always take a photograph. Safari can open its native camera from this
-    // plain-HTTP file-input page with no profile or certificate; the optional /trust route remains
-    // available from that page for sellers who specifically want the desktop live viewfinder.
-    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/c/{_token}";
+    // Start on plain HTTP so every iPhone can open the QR. /start probes the secure listener: a
+    // phone that already trusts this computer moves straight into the live camera, while every
+    // other phone sees both the one-time live setup and a certificate-free Take Photo Now button.
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface
@@ -1320,14 +1322,15 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               .why{margin-top:30px;padding-top:18px;border-top:1px solid #1d2729;color:#9fb1b4;font-size:14px}
               code{background:#111719;padding:2px 6px;border-radius:6px;font-size:13px}
             </style></head><body>
-              <h1>ING Photo Box for Safari</h1>
-              <p class="sub">One QR checks the secure camera connection first. If this iPhone is already
-                 set up, the camera opens automatically.</p>
+              <h1>Turn this iPhone into your live studio camera</h1>
+              <p class="sub">Keep this page open and the live view appears on your computer. If this
+                 iPhone has connected before, the camera opens automatically.</p>
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
-              <a class="go" href="/c/{{_token}}" style="margin-bottom:4px">Skip all this — take photos with this phone &rsaquo;</a>
-              <p class="sub" style="font-size:14px;margin-bottom:22px">Uses the iPhone's own camera. No certificate,
-                 nothing to install, works right now. You tap the shutter instead of the computer.</p>
+              <a class="go" href="/c/{{_token}}" style="margin-bottom:4px">Take a photo now — no setup &rsaquo;</a>
+              <p class="sub" style="font-size:14px;margin-bottom:22px">Need one picture immediately? This opens
+                 the iPhone's own camera without a certificate. The photo still lands on your computer;
+                 only the live desktop view and remote shutter are skipped.</p>
               <section id="setup" class="hidden">
               <h2>One-time setup for this iPhone</h2>
               <p class="sub">Safari requires HTTPS before it will allow the camera. Apple does not let a
@@ -1366,21 +1369,21 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 let attempt = 0;
                 function showSetup() {
                   setup.classList.remove('hidden');
-                  title.textContent = 'Safari needs the one-time certificate setup';
-                  note.textContent = 'Nothing is wrong with the camera. Complete the steps below, then return here.';
+                  title.textContent = 'One-time setup unlocks the live desktop view';
+                  note.textContent = 'Or use Take a photo now above—the picture will still land on your computer.';
                 }
                 function tryCamera() {
                   const mine = ++attempt;
                   setup.classList.add('hidden');
                   title.textContent = 'Checking the secure camera…';
-                  note.textContent = 'Already trusted phones open automatically.';
+                  note.textContent = 'Already connected phones open the live studio automatically.';
                   const image = new Image();
                   const timer = setTimeout(() => { if (mine === attempt) showSetup(); }, 2800);
                   image.onload = () => {
                     if (mine !== attempt) return;
                     clearTimeout(timer);
                     title.textContent = 'Secure connection ready';
-                    note.textContent = 'Opening the camera…';
+                    note.textContent = 'Opening the live studio…';
                     location.replace(CAMERA);
                   };
                   image.onerror = () => { if (mine === attempt) { clearTimeout(timer); showSetup(); } };

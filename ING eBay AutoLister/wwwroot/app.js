@@ -7519,10 +7519,10 @@
 
     if (!st || !st.running) {
       panel.classList.add('hidden');
-      pbBtnLabel('pb-phone', '📱 Use my phone');
+      pbBtnLabel('pb-phone', '📱 Start live camera');
       pbPhoneLive = false;
       pbStopPhonePreview();
-      pbNoCamera('Scan the code with your phone, allow the camera, and leave that page open.');
+      pbNoCamera("Scan the code once. Your phone's live camera will appear here.");
       return;
     }
 
@@ -7558,7 +7558,7 @@
             + `📸 Snap is for the live camera and needs the one-time setup below.`
           : st.phoneWasConnected
             ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
-            : 'Waiting for the phone to open the page…';
+            : 'Waiting for your phone to open the live studio…';
       state.className = 'pb-phone-state ' + (st.phoneConnected || st.phoneSending ? 'wn-video-ok' : 'wn-video-busy');
     }
 
@@ -7586,7 +7586,7 @@
       pbRenderCamera(st);
       pbShowPhonePreview();
     } else {
-      if (status) status.textContent = st.phoneSending ? 'Your phone is sending photos.' : 'Waiting for the phone…';
+      if (status) status.textContent = st.phoneSending ? 'Your phone is sending photos.' : 'Waiting for the live camera…';
       // The dot is green for sending too: something IS working, and a grey light beside arriving
       // photographs is the panel disagreeing with the filmstrip next to it.
       $('pb-connect-dot')?.classList.toggle('is-live', !!st.phoneSending);
@@ -7600,7 +7600,7 @@
           + 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.'
         : st.phoneWasConnected
           ? 'The phone stopped sending — wake its screen and the picture comes back.'
-          : 'Scan the code with your phone, allow the camera, and leave that page open.');
+          : "Scan the code once. Your phone's live camera will appear here.");
     }
   }
 

@@ -155,10 +155,10 @@ public class PhoneCameraTrustTests
     }
 
     [Fact]
-    public void The_primary_qr_is_the_certificate_free_camera_and_keeps_live_setup_optional()
+    public void The_primary_qr_is_live_first_and_keeps_certificate_free_capture_available()
     {
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
-        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/c/{_token}\"", Source, StringComparison.Ordinal);
+        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/start\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
         // The old certificate bootstrap never put a pairing secret in a discoverable /start path.
@@ -205,9 +205,8 @@ public class PhoneCameraTrustTests
 
         // Advice that only works in Chrome, given to somebody holding an iPhone.
         Assert.DoesNotContain("Tap <b>Show details</b>, then", html, StringComparison.Ordinal);
-        Assert.Contains("optional live-studio setup", html, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("no certificate, profile or browser permission is needed", html,
-                        StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Scan for the live studio", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Take a photo now", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("id=\"pb-trust-qr\"", html, StringComparison.Ordinal);
         // The step no installer is allowed to do for the seller, said plainly rather than left to
         // be discovered.
