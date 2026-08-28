@@ -7414,10 +7414,6 @@
   function pbBtnLabel(id, text) {
     const b = $(id);
     if (b && b.firstChild) b.firstChild.nodeValue = text;
-    // The viewfinder carries its own copy of the phone button, because the middle of the picture is
-    // where somebody is already looking. Two buttons that do one thing must never disagree about
-    // what that thing currently is.
-    if (id === 'pb-phone') pbBtnLabel('pb-phone-stage', text);
   }
 
   function pbSetupStatus(text, kind) {
@@ -7520,6 +7516,7 @@
     if (!st || !st.running) {
       panel.classList.add('hidden');
       pbBtnLabel('pb-phone', '📱 Start live camera');
+      pbBtnLabel('pb-phone-stage', '📱 Start live camera');
       pbPhoneLive = false;
       pbStopPhonePreview();
       pbNoCamera("Scan the code once. Your phone's live camera will appear here.");
@@ -7529,6 +7526,7 @@
     panel.classList.remove('hidden');
     if (!pbShooting) pbImportPhoneShots(st.shots);
     pbBtnLabel('pb-phone', '📱 Stop using my phone');
+    pbBtnLabel('pb-phone-stage', st.phoneConnected ? '● iPhone live' : '▦ Show connection code');
     const qr = $('pb-phone-qr');
     if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url || ''; }
     // The one-time trust setup, on its own code. Painted the same way and for the same reason:
@@ -7551,6 +7549,7 @@
       // all, so it can never be "connected" — and the panel used to answer that with "Waiting for
       // the phone to open the page" while the phone was actively sending. Pictures arriving and
       // the desk saying nothing is here is what "using my phone no longer works" looked like.
+      const quickPhotoOpen = /asked for \/c\//i.test(st.lastContact || '');
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
         : st.phoneSending
@@ -7558,6 +7557,8 @@
             + `📸 Snap is for the live camera and needs the one-time setup below.`
           : st.phoneWasConnected
             ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
+            : quickPhotoOpen
+              ? 'Quick Photo is open on the phone. That mode cannot stream. Scan the code again and finish Live Studio setup to use this viewfinder and the desktop Snap button.'
             : 'Waiting for your phone to open the live studio…';
       state.className = 'pb-phone-state ' + (st.phoneConnected || st.phoneSending ? 'wn-video-ok' : 'wn-video-busy');
     }
@@ -7595,13 +7596,28 @@
       // Snap and Burst stay disabled here and that is correct — the certificate-free page has no
       // command channel, so a shutter pressed on this screen would sit and then time out. The
       // panel says why instead of leaving two dead buttons to be interpreted.
+      const quickPhotoOpen = /asked for \/c\//i.test(st.lastContact || '');
       pbNoCamera(st.phoneSending
         ? 'Your phone is the camera and photos are arriving — they appear below as you shoot. '
           + 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.'
         : st.phoneWasConnected
           ? 'The phone stopped sending — wake its screen and the picture comes back.'
+          : quickPhotoOpen
+            ? 'Quick Photo cannot stream. Scan the code again and open Live Studio for the live view and desktop shutter.'
           : "Scan the code once. Your phone's live camera will appear here.");
     }
+  }
+
+  async function pbStagePhone() {
+    const panel = $('pb-phone-panel');
+    if (!panel || panel.classList.contains('hidden')) {
+      await pbTogglePhone();
+      return;
+    }
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    panel.classList.remove('pb-connect-pulse');
+    void panel.offsetWidth;
+    panel.classList.add('pb-connect-pulse');
   }
 
   async function pbPhoneRefresh() {
@@ -8415,7 +8431,7 @@
     $('pb-home')?.addEventListener('click', () => showDashboard());
     $('pb-close')?.addEventListener('click', () => closeWorkspacePage('photobox'));
     $('pb-phone')?.addEventListener('click', pbTogglePhone);
-    $('pb-phone-stage')?.addEventListener('click', pbTogglePhone);
+    $('pb-phone-stage')?.addEventListener('click', pbStagePhone);
     $('pb-snap')?.addEventListener('click', pbSnap);
     $('pb-burst')?.addEventListener('click', pbBurst);
     $('pb-ai')?.addEventListener('click', pbAiListing);

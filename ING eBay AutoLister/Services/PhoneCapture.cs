@@ -1327,10 +1327,6 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                  iPhone has connected before, the camera opens automatically.</p>
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
-              <a class="go" href="/c/{{_token}}" style="margin-bottom:4px">Take a photo now — no setup &rsaquo;</a>
-              <p class="sub" style="font-size:14px;margin-bottom:22px">Need one picture immediately? This opens
-                 the iPhone's own camera without a certificate. The photo still lands on your computer;
-                 only the live desktop view and remote shutter are skipped.</p>
               <section id="setup" class="hidden">
               <h2>One-time setup for this iPhone</h2>
               <p class="sub">Safari requires HTTPS before it will allow the camera. Apple does not let a
@@ -1359,6 +1355,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                  your own network (<code>{{LocalAddress()}}</code>). It is not a password, it grants
                  nothing on the internet, and you can remove it any time under
                  Settings &rsaquo; General &rsaquo; VPN &amp; Device Management.</p>
+              <p class="why"><b>Only need a quick photo?</b> <a href="/c/{{_token}}" style="color:#f0c453">Take a photo now</a>
+                 opens the iPhone camera without setup; only the live desktop view and remote shutter are skipped.
+                 Use Live Studio above when you are shooting from the computer.</p>
               </section>
               <script>
                 const CAMERA = {{System.Text.Json.JsonSerializer.Serialize(camera)}};
@@ -1369,8 +1368,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 let attempt = 0;
                 function showSetup() {
                   setup.classList.remove('hidden');
-                  title.textContent = 'One-time setup unlocks the live desktop view';
-                  note.textContent = 'Or use Take a photo now above—the picture will still land on your computer.';
+                  title.textContent = 'Finish this once to open Live Studio';
+                  note.textContent = 'Live preview and the desktop Snap button require Safari to trust this computer.';
                 }
                 function tryCamera() {
                   const mine = ++attempt;
