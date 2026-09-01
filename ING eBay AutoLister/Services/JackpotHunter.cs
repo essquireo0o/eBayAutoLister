@@ -392,6 +392,73 @@ public sealed partial class JackpotHunter(ProfitCalculator profitCalc)
     }
 
     /// <summary>
+    /// Whether a listing a KEYWORD search returned is an accessory, a part or a service FOR the
+    /// thing that was searched for, rather than the thing itself. The reason comes back so the row
+    /// can say why it was set aside; null means the listing is credibly the thing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sibling of <see cref="IsPlausibleSupply"/>, and deliberately a smaller test. That one
+    /// answers "is this the product I am already pricing", so it can demand an exact model match.
+    /// A sourcing scan has no such product — the seller typed a word — and demanding the model
+    /// would throw away the S19j Pro that a search for "antminer s19" is supposed to find. So only
+    /// the checks that need nothing but the search term run here.
+    /// </para>
+    /// <para>
+    /// Every check compares against the SEARCH's own words rather than a blocklist, which is what
+    /// makes a deliberate accessory hunt still work: search "antminer psu" and a PSU is the
+    /// product, so "psu" cannot be the reason to set it aside. Search "antminer" and the same
+    /// listing is a cable someone has to be stopped from reading as a miner.
+    /// </para>
+    /// </remarks>
+    public static string? AccessoryForSearch(string? listingTitle, string? searchTerm)
+    {
+        var normalized = MarketplaceMatcher.Normalize(listingTitle);
+        var normalizedSearch = MarketplaceMatcher.Normalize(searchTerm);
+        // No search term is no opinion. A board with no keyword behind it (a category sweep) has
+        // nothing to call these listings an accessory TO.
+        if (normalized.Length == 0 || normalizedSearch.Length == 0) return null;
+
+        var words = MarketplaceMatcher.Words(normalized);
+        var searchWords = MarketplaceMatcher.Words(normalizedSearch);
+        if (searchWords.Count == 0) return null;
+
+        // The seller is shopping for parts on purpose. Answered by saying nothing at all rather
+        // than by matching noun for noun: someone hunting "antminer psu cable" is served listings
+        // that also say "cord", "adapter" or "fits", and a check that demanded their exact words
+        // would hide the very rows they asked for. One search naming any part, or any fit-for
+        // wording, settles the question for the whole board.
+        if (searchWords.Any(w => ComponentNouns.Contains(w, StringComparer.Ordinal))
+            || searchWords.Any(w => CompatibilityWords.Contains(w, StringComparer.Ordinal))
+            || CompatibilityMarkers.Any(m => normalizedSearch.Contains(m, StringComparison.Ordinal))
+            || searchWords.Any(w => ServiceWords.Contains(w, StringComparer.Ordinal)))
+            return null;
+
+        // "Replacement", "fits", "compatible" — the listing claiming it merely goes WITH something.
+        if (CompatibilityMarkers.Any(m => normalized.Contains(m, StringComparison.Ordinal)))
+            return "sold as a fit-for accessory";
+
+        if (CompatibilityWords.Any(w => words.Contains(w, StringComparer.Ordinal)))
+            return "sold as a fit-for accessory";
+
+        var anchor = IdentityTokens(searchTerm).FirstOrDefault();
+
+        // "Filters for iRobot Roomba" — the product itself does not say "for <brand>".
+        if (anchor is not null && normalized.Contains($"for {anchor}", StringComparison.Ordinal))
+            return $"listed as an item for a {anchor}, not the {anchor} itself";
+
+        // A cable, a fan, a PSU — named when the search did not name one.
+        var component = ComponentNouns.FirstOrDefault(n => words.Contains(n, StringComparer.Ordinal));
+        if (component is not null)
+            return anchor is null ? $"a {component}, not the item searched for" : $"a {component}, not a {anchor}";
+
+        var service = ServiceWords.FirstOrDefault(w => words.Contains(w, StringComparer.Ordinal));
+        if (service is not null) return $"a {service} listing, not an item you can resell";
+
+        return null;
+    }
+
+    /// <summary>
     /// Cross-checks the two independent reads of the same product's sold history: the cluster the
     /// sweep built from one probe (several comps, one model signature) and the per-product lookup
     /// that priced it. A big disagreement means one of them matched a different product — a $150

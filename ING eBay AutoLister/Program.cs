@@ -7154,6 +7154,14 @@ static async Task<LocalArbitrageResult> FindLocalArbitrageAsync(
                 // today (see .Codex/FROM-CLAUDE.md). Before Rank, so the ranking sorts on the tier
                 // the seller will actually read.
                 if (meltByKey.TryGetValue(g.Key, out var melted)) MeltAnchor.Apply(row, melted);
+
+                // Is this the thing that was searched for, or something sold FOR it? A keyword
+                // search for "antminer" returns power cords, fan ducts and PSU cables that name the
+                // brand and the model, price honestly against cord comps, and therefore land at the
+                // top of the board on ROI — $72 net on an $18 cable is 410%. The arithmetic was
+                // never wrong; the row just isn't a miner. Labelled rather than dropped, and hidden
+                // behind a count in the browser, so a parts hunt still works — see AccessoryFor.
+                row.AccessoryFor = JackpotHunter.AccessoryForSearch(row.Title, q) ?? "";
                 return row;
             }))
             .ToList();

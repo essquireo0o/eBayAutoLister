@@ -188,6 +188,17 @@ public class LocalArbitrageOpportunity
     public string Verdict { get; set; } = "no_data";
     public string VerdictNote { get; set; } = "";
 
+    // Why this row is an accessory, a part or a service FOR the thing the seller searched for
+    // rather than the thing itself — "a cable, not a antminer" — or empty when it is credibly the
+    // thing. Set from the scan's own keyword, so it is an answer to what was actually asked; a
+    // board with no keyword behind it leaves every row blank. See JackpotHunter.AccessoryForSearch.
+    //
+    // It is a LABEL and not a deletion: the row keeps its real, correctly-computed figures, because
+    // a $72 flip on an $18 cable is a small win rather than a lie, and a seller hunting parts
+    // deliberately is entitled to see them. The board hides these behind a count by default because
+    // a search for "antminer" that answers with four power cords reads as a broken product.
+    public string AccessoryFor { get; set; } = "";
+
     // ── The buy side ─────────────────────────────────────────────────────────
     // What to open at, where to stop, and the message to send — anchored on the same comps that
     // produced the numbers above. Null on rows that couldn't be priced: there is nothing honest to

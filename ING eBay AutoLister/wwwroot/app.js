@@ -2665,7 +2665,7 @@
     // A bar the seller set by hand is remembered across scans and visits: the two strict ones are
     // on by default now, and somebody who deliberately turns one off should not have to do it
     // again on every search.
-    for (const id of ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'])
+    for (const id of ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-real-item-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'])
       on(id, 'change', () => { arbFiltersTouched = true; arbSaveFilters(); renderArbitrageRows(); });
     on('ebay-scan-btn', 'click', runEbayScan);
     document.querySelectorAll('.opp-query-chip').forEach(chip => chip.addEventListener('click', () => {
@@ -4146,7 +4146,7 @@
   // The four bars, remembered. Saved whenever the seller sets one by hand; put back on every scan
   // so the board opens the way they left it. Nothing saved means the defaults in the markup — the
   // two strict bars on — and the auto-relax may still loosen the two preference bars.
-  const ARB_FILTER_IDS = ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'];
+  const ARB_FILTER_IDS = ['fb-arb-hide-losers', 'fb-arb-proven-only', 'fb-arb-real-item-only', 'fb-arb-fast-only', 'fb-arb-warranty-only'];
 
   function arbSaveFilters() {
     try {
@@ -4181,6 +4181,7 @@
     const sort = $('fb-arb-sort')?.value || 'balanced';
     let hideLosers = !!$('fb-arb-hide-losers')?.checked;
     let provenOnly = !!$('fb-arb-proven-only')?.checked;
+    let realItemOnly = !!$('fb-arb-real-item-only')?.checked;
     let fastOnly = !!$('fb-arb-fast-only')?.checked;
     let warrantyOnly = !!$('fb-arb-warranty-only')?.checked;
     const category = $('fb-arb-category')?.value || '';
@@ -4198,6 +4199,7 @@
       const survives = (hl, po, fo, wo) => arbitrageData.items.filter(r =>
         (!hl || (r.netProfit != null && r.netProfit > PROFITABLE_NET)) &&
         (!po || r.evidenceTier === 'confident') &&
+        (!realItemOnly || !r.accessoryFor) &&
         (!fo || r.speedTier === 'fast') &&
         (!wo || (r.warranty && r.warranty.kind !== 'none' && r.warranty.monthsRemaining > 0))).length;
 
@@ -4217,6 +4219,7 @@
         const set = (id, v) => { const el = $(id); if (el) el.checked = v; };
         set('fb-arb-hide-losers', hideLosers);
         set('fb-arb-proven-only', provenOnly);
+        set('fb-arb-real-item-only', realItemOnly);
         set('fb-arb-fast-only', fastOnly);
         set('fb-arb-warranty-only', warrantyOnly);
       }
@@ -4261,6 +4264,16 @@
         id: 'fb-arb-proven-only',
         back: n => `Show ${n} priced off thinner comps`,
         keep: r => r.evidenceTier === 'confident',
+      },
+      // The thing searched for, not things sold FOR it. A keyword search for "antminer" returns
+      // power cords, fan ducts and PSU cables that name the brand and the model; they are priced
+      // correctly against cord comps and therefore lead the board on ROI, because $72 net on an
+      // $18 cable is 410%. Hidden rather than dropped: a seller hunting parts unticks this and
+      // gets them all back, and the server only ever labels a row it can name a reason for.
+      realItemOnly && {
+        id: 'fb-arb-real-item-only',
+        back: n => `Show ${n} accessories and parts`,
+        keep: r => !r.accessoryFor,
       },
       // "Money back in 3 weeks" is the server's own fast tier, not a number re-derived here.
       fastOnly && {
@@ -4451,7 +4464,7 @@
               // An empty board under these two filters is an ANSWER, not a malfunction, and it has
               // to say which bar did the cutting — otherwise it reads as the tool being broken,
               // which is exactly how a board full of unchecked $800 fantasies got trusted instead.
-              : (hideLosers || provenOnly) && arbitrageData.items.length
+              : (hideLosers || provenOnly || realItemOnly) && arbitrageData.items.length
                 ? emptyUnderTheBarMessage()
                 : 'Nothing here clears its fees. That is a real answer — this search has no local flip worth driving to.'}</td></tr>`;
 
