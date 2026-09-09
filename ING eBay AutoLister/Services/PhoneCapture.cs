@@ -55,6 +55,19 @@ public sealed record PhoneCaps(
     bool WhiteBalance = false, bool Tap = false, bool MultiCamera = false,
     double ZoomMin = 1, double ZoomMax = 1, string? Lenses = null, bool ZoomOptical = false);
 
+/// <summary>
+/// Where the phone's zoom IS — after a pinch on the picture or a lens button on the phone — and
+/// whether the lens moved to get there or the frame was cropped.
+/// </summary>
+/// <remarks>
+/// A report, not a request: it is recorded so the desk's slider follows the hand and so the next
+/// settings reply carries the phone's own number back rather than a stale one. It must never bump
+/// the settings sequence. When it did (as a side effect of a caps refresh), the phone was answered
+/// with the desk's old zoom, obeyed it, and reported the change again: the picture zoomed in and
+/// out until both ends happened to agree.
+/// </remarks>
+public sealed record PhoneZoomReport(double Zoom, bool Optical = false);
+
 /// <summary>What the desktop's camera controls send. Null means "leave that one alone".</summary>
 /// <remarks>
 /// Null-means-unchanged is what lets six controls share one endpoint without any of them
@@ -812,6 +825,29 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 }
             }
             catch { /* a phone that cannot describe itself still takes photographs */ }
+            return Results.Ok(new { ok = true });
+        });
+
+        // The phone's own zoom — a pinch, a lens button — recorded so the desk's slider follows
+        // the hand. Deliberately NOT a settings bump (see PhoneZoomReport): the phone is saying
+        // where it already is, and answering that with "go there" was the zoom-in-zoom-out loop.
+        web.MapPost("/p/{token}/zoom", async (string token, HttpRequest req) =>
+        {
+            if (!Ok(token)) return Results.NotFound();
+            _lastSeen = DateTimeOffset.UtcNow;
+            _phoneEverConnected = true;
+            try
+            {
+                var report = await System.Text.Json.JsonSerializer.DeserializeAsync<PhoneZoomReport>(
+                    req.Body, new System.Text.Json.JsonSerializerOptions(
+                        System.Text.Json.JsonSerializerDefaults.Web));
+                if (report is { Zoom: > 0 })
+                {
+                    _zoom = Math.Clamp(report.Zoom, 1.0, 8.0);
+                    _zoomOptical = report.Optical;
+                }
+            }
+            catch { /* a report that cannot be read leaves the last one standing */ }
             return Results.Ok(new { ok = true });
         });
 
@@ -1751,6 +1787,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         let taken = 0, running = false, wakeLock = null;
         let pendingPhoto = null, pendingPhotoUrl = '', lastPhotoUrl = '', reviewCommitted = false, capturing = false;
         let settingsSeq = -1;              // which settings this page has already applied
+        // The zoom the DESK last sent. Every settings reply carries the whole camera, and the
+        // zoom in it is re-applied only when it differs from this; see poll() for the loop
+        // that gating closes.
+        let deskZoom = 1;
         const zEl = document.getElementById('z');
 
         // Pinch on the picture, the way a camera app works. The desk's slider and this end up in
@@ -1928,6 +1968,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               zoomOptical = lensFactor > 1.01 && cropZoom < 1.01;
             } catch (e) { /* refused outright; cropZoom above already covers the whole zoom */ }
           }
+          syncZoomSlider();
           zoomNote(zoom, zoomOptical);
           reportZoom();
         }
@@ -1936,15 +1977,41 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
           zEl.textContent = z > 1.01 ? (z.toFixed(1) + '× ' + (optical ? 'lens' : 'crop')) : '';
         }
 
-        // The desktop's zoom chip used to print the number the desktop had asked for, which is
-        // how "1.9x" sat over a picture at 1x for as long as it did. Now it prints what the phone
-        // actually did. Sent only when the KIND changes — lens to crop or back — because that is
-        // the only part the desk does not already know.
-        let zoomReported = null;
+        // A pinch and a lens button change the zoom without touching the slider; the slider
+        // catches up here so it never argues with the picture.
+        function syncZoomSlider() {
+          const zr = document.getElementById('zr');
+          if (zr && Math.abs(parseFloat(zr.value) - zoom) > 0.01) zr.value = zoom;
+        }
+
+        // What the phone actually did — the number AND whether the lens moved or the frame was
+        // cropped — told to the desk so its slider and chip follow the hand.
+        //
+        // THE ZOOM-IN-ZOOM-OUT LOOP (2026-09-09, "my screen zooms in and zooms out"). This used
+        // to be sendCaps(), and only when the kind changed. Caps bump the settings sequence, and
+        // every settings reply carries the desk's zoom — which the desk had not changed. So a
+        // pinch to 3x (or a lens button to 2x) announced "lens", the next reply said "1x", the
+        // phone obeyed, that flipped the kind back to "crop", which announced itself again... one
+        // pinch, and the picture went in and out until the two ends happened to agree.
+        //
+        // Now the phone reports where it IS to an endpoint that records it without bumping the
+        // sequence, and poll() re-applies a zoom only when the desk's number has actually moved.
+        // Debounced because a pinch is fifty events and the desk only needs the one it ends on.
+        let zoomReported = '', zoomReportTimer = null;
         function reportZoom() {
-          if (zoomReported === zoomOptical) return;
-          zoomReported = zoomOptical;
-          try { sendCaps(); } catch (e) { /* the picture is right either way */ }
+          const key = zoom.toFixed(2) + (zoomOptical ? 'L' : 'C');
+          if (key === zoomReported) return;
+          zoomReported = key;
+          if (zoomReportTimer) clearTimeout(zoomReportTimer);
+          zoomReportTimer = setTimeout(() => {
+            zoomReportTimer = null;
+            // The desk will echo this back on its next settings bump; it is not a new instruction.
+            deskZoom = zoom;
+            fetch('/p/' + TOKEN + '/zoom', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ zoom: zoom, optical: zoomOptical })
+            }).catch(() => { /* the picture is right either way */ });
+          }, 150);
         }
 
         async function applyTorch(on) {
@@ -2175,7 +2242,17 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
             // also turn off the crop that was standing in for it. See applyZoom.
             const got = (t.getSettings && t.getSettings().zoom);
             const moved = typeof got === 'number' && Math.abs(got - target) < Math.max(0.05, (hi - lo) * 0.02);
-            if (moved) { cropZoom = 1; zoomOptical = true; reportZoom(); }
+            if (moved) {
+              // The lens is now at `got`; in our units (1x = the lens at its widest) that is a
+              // zoom, and the number has to say so — a "1.0x" over a lens at 2x is the same lie
+              // the chip used to tell, and a zoom the phone forgot it had is one the desk's next
+              // reply would take away again.
+              cropZoom = 1; zoomOptical = true;
+              zoom = clamp(got / (lo || 1), 1, 8);
+              syncZoomSlider();
+              zoomNote(zoom, true);
+              reportZoom();
+            }
           }
           catch (e) { /* the lens stays where it was, and so does the crop */ }
           paintLenses();
@@ -2537,7 +2614,13 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               if (j.maxVideoSeconds) maxSecs = j.maxVideoSeconds;
               if (typeof j.seq === 'number' && j.seq !== settingsSeq) {
                 settingsSeq = j.seq;
-                if (typeof j.zoom === 'number') await applyZoom(j.zoom);
+                // Only a zoom the desk CHANGED. A torch, an exposure step, a caps refresh — every
+                // one of them bumps the sequence and carries the whole camera, and re-applying the
+                // desk's old number on each was how a pinch on this phone got undone. See reportZoom.
+                if (typeof j.zoom === 'number' && Math.abs(j.zoom - deskZoom) > 0.001) {
+                  deskZoom = j.zoom;
+                  await applyZoom(j.zoom);
+                }
                 // The old torch switch still works: it is a lamp held on, which is a different
                 // thing from a flash and is genuinely useful for lining a shot up in a dim room.
                 if (flashMode === 'off') await applyTorch(!!j.torch);
