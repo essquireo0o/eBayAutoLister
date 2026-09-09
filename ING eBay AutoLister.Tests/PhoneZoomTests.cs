@@ -73,7 +73,14 @@ public class PhoneZoomTests
     {
         // Same bug, second site: picking 0.5x / 1x / 2x also zeroed the crop on a resolve.
         Assert.Contains("const moved = typeof got === 'number' && Math.abs(got - target) < Math.max(0.05, (hi - lo) * 0.02);", Phone);
-        Assert.Contains("if (moved) { cropZoom = 1; zoomOptical = true; reportZoom(); }", Phone);
+        // Measured first, then the crop comes off and the zoom is set to where the lens IS —
+        // see PhoneZoomLoopTests for why the number has to move with the lens.
+        var lens = Phone[Phone.IndexOf("async function applyLens(which) {", StringComparison.Ordinal)..];
+        lens = lens[..lens.IndexOf("async function applyFacing", StringComparison.Ordinal)];
+        Assert.Contains("if (moved) {", lens);
+        Assert.Contains("cropZoom = 1; zoomOptical = true;", lens);
+        Assert.True(lens.IndexOf("const moved", StringComparison.Ordinal) < lens.IndexOf("cropZoom = 1;", StringComparison.Ordinal),
+            "the crop must come off only after the lens was measured to have moved");
     }
 
     [Fact]
@@ -88,11 +95,14 @@ public class PhoneZoomTests
     }
 
     [Fact]
-    public void The_report_is_sent_when_the_kind_changes_and_not_on_every_nudge()
+    public void The_report_is_sent_when_the_zoom_or_its_kind_changes_and_not_on_every_nudge()
     {
-        // Dragging a slider is a stream of values; the desk only needs to hear the one thing it
-        // cannot work out for itself, and only when it changes.
-        Assert.Contains("if (zoomReported === zoomOptical) return;", Phone);
+        // Dragging a slider is a stream of values; the desk hears only a change, and only after
+        // the hand has settled. (It used to be the kind alone — which left the desk holding a
+        // stale number to send back; PhoneZoomLoopTests has that story.)
+        Assert.Contains("const key = zoom.toFixed(2) + (zoomOptical ? 'L' : 'C');", Phone);
+        Assert.Contains("if (key === zoomReported) return;", Phone);
+        Assert.Contains("zoomReportTimer = setTimeout(", Phone);
     }
 
     [Fact]
