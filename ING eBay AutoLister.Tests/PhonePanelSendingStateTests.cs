@@ -48,8 +48,12 @@ public class PhonePanelSendingStateTests
         var line = Slice(Js, "state.className = 'pb-phone-state", ";");
         Assert.Contains("st.phoneSending", line, StringComparison.Ordinal);
 
+        // The dot is now lit by pbNoCamera from its `live` argument, and the else branch passes the
+        // sending flag through as that argument. Either half missing is a dark dot beside photos.
+        var call = Slice(Js, "pbNoCamera(st.phoneSending", "async function pbStagePhone");
+        Assert.Contains("rail, !!st.phoneSending);", call, StringComparison.Ordinal);
         var dot = Slice(Js, "$('pb-connect-dot')?.classList.toggle('is-live'", ";");
-        Assert.Contains("st.phoneSending", dot, StringComparison.Ordinal);
+        Assert.Contains("!!live", dot, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -62,7 +66,7 @@ public class PhonePanelSendingStateTests
         Assert.Contains("['pb-snap', 'pb-burst'].forEach(id => $(id)?.removeAttribute('disabled'))",
                         enable, StringComparison.Ordinal);
 
-        var elseBranch = Slice(Js, "if (status) status.textContent = st.phoneSending", "async function pbPhoneRefresh");
+        var elseBranch = Slice(Js, "const rail = st.phoneSending", "async function pbPhoneRefresh");
         Assert.DoesNotContain("removeAttribute('disabled')", elseBranch, StringComparison.Ordinal);
         // And it explains itself rather than leaving two grey buttons to be interpreted.
         Assert.Contains("need the one-time iPhone setup", elseBranch, StringComparison.Ordinal);

@@ -7438,7 +7438,12 @@
 
   // The viewfinder with no camera behind it. One place, so "the phone stopped" and "the phone was
   // never started" cannot drift into saying different things about the same empty box.
-  function pbNoCamera(message) {
+  // `rail` and `live` are what the CAMERA CONNECTION box on the right says and whether its dot is
+  // lit. They are parameters because this function used to end by writing "No camera yet." and
+  // switching the dot off unconditionally — after the caller had just written "Your phone is
+  // sending photos" and lit it. The rail on the owner's screen therefore read "No camera yet."
+  // beside a filmstrip of photographs that had just arrived from the phone.
+  function pbNoCamera(message, rail = 'No camera yet.', live = false) {
     const img = $('pb-stream');
     const empty = $('pb-stream-empty');
     if (img) { img.src = ''; img.style.display = 'none'; }
@@ -7451,9 +7456,9 @@
     }
     ['pb-snap', 'pb-burst'].forEach(id => $(id)?.setAttribute('disabled', ''));
     ['pb-live-chip', 'pb-res-chip', 'pb-zoom-chip'].forEach(id => $(id)?.classList.add('hidden'));
-    $('pb-connect-dot')?.classList.remove('is-live');
+    $('pb-connect-dot')?.classList.toggle('is-live', !!live);
     const status = $('pb-cam-status');
-    if (status) status.textContent = 'No camera yet.';
+    if (status) status.textContent = rail;
   }
 
   // While the phone is the camera the viewfinder is the phone's own frames, pushed down one open
@@ -7566,11 +7571,22 @@
       // stays only as a fallback for a status from an older build. Matching the last request alone
       // broke the moment the first photo arrived, because that request is /p/.../photo, not /c/.
       const quickPhotoOpen = !!st.quickPhotoOpen || /asked for \/c\//i.test(st.lastContact || '');
+      // The phone opened this computer's secure port and hung up without asking for a page: Safari
+      // saw the certificate and refused it. That is the one state the desk can actually diagnose,
+      // and it is the exact state the owner was in — "no live feed" with photographs arriving —
+      // so it names the three taps on the phone instead of pointing vaguely at "setup".
+      const trustSteps = 'On the iPhone: Settings › General › VPN & Device Management › install the ING Photo Box profile, '
+        + 'then Settings › General › About › Certificate Trust Settings › turn on ING Photo Box camera authority. '
+        + 'Then scan the code again and the live view opens by itself.';
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
         : st.phoneSending
           ? `Your phone is sending photos${st.shotCount ? ` — ${st.shotCount} so far` : ''}. Shoot from the phone; `
-            + `📸 Snap is for the live camera and needs the one-time setup below.`
+            + (st.secureRefused
+                ? `there is no live view because the phone does not trust this computer yet (it refused the certificate, ${st.secureRefusedBy}). ${trustSteps}`
+                : `📸 Snap is for the live camera and needs the one-time setup below.`)
+          : st.secureRefused
+            ? `Your iPhone found this computer but refused its certificate (${st.secureRefusedBy}), so there is no live view yet. ${trustSteps}`
           : st.phoneWasConnected
             ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
             : quickPhotoOpen
@@ -7604,25 +7620,36 @@
       pbRenderCamera(st);
       pbShowPhonePreview();
     } else {
-      if (status) status.textContent = st.phoneSending ? 'Your phone is sending photos.' : 'Waiting for the live camera…';
-      // The dot is green for sending too: something IS working, and a grey light beside arriving
-      // photographs is the panel disagreeing with the filmstrip next to it.
-      $('pb-connect-dot')?.classList.toggle('is-live', !!st.phoneSending);
       $('pb-camera')?.classList.add('hidden');
       pbStopPhonePreview();
       // Snap and Burst stay disabled here and that is correct — the certificate-free page has no
       // command channel, so a shutter pressed on this screen would sit and then time out. The
       // panel says why instead of leaving two dead buttons to be interpreted.
       const quickPhotoOpen = !!st.quickPhotoOpen || /asked for \/c\//i.test(st.lastContact || '');
+      // The rail text and its dot travel WITH the viewfinder message, because pbNoCamera writes the
+      // rail last — written here first, they were overwritten with "No camera yet." on every tick.
+      // The dot is green for sending too: something IS working, and a grey light beside arriving
+      // photographs is the panel disagreeing with the filmstrip next to it.
+      const rail = st.phoneSending
+        ? 'Your phone is sending photos.'
+        : st.secureRefused
+          ? 'Phone found — certificate not trusted yet.'
+          : 'Waiting for the live camera…';
       pbNoCamera(st.phoneSending
         ? 'Your phone is the camera and photos are arriving — they appear below as you shoot. '
-          + 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.'
+          + (st.secureRefused
+              ? 'There is no live view because the iPhone has not trusted this computer\'s certificate yet — the three Settings taps are in the panel on the right.'
+              : 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.')
+        : st.secureRefused
+          ? 'Your iPhone found this computer but has not trusted its certificate yet, so it cannot stream. '
+            + 'Do the three Settings taps in the panel on the right, then scan the code again.'
         : st.phoneWasConnected
           ? 'The phone stopped sending — wake its screen and the picture comes back.'
           : quickPhotoOpen
             ? 'Your phone is on Take a photo now, which cannot stream. Photos it takes still land below. '
               + 'For the live view here, do the one-time setup under that button on the phone.'
-          : "Scan the code once. Your phone's live camera will appear here.");
+          : "Scan the code once. Your phone's live camera will appear here.",
+        rail, !!st.phoneSending);
     }
   }
 

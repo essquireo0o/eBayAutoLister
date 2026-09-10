@@ -140,6 +140,19 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     /// <summary>When each device was last written to the log, so one phone cannot flood it.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _contactSeen = new();
 
+    /// <summary>
+    /// Every TCP connection a device opened to the HTTPS camera port, and every HTTP request that
+    /// then arrived on that port — kept apart, because the gap between them is the one fact the
+    /// desk could never see. A phone that connects to the secure port and hangs up without asking
+    /// for anything has looked at this computer's certificate and refused it: that is what "not
+    /// trusted yet" looks like from here, and its fix (three taps in Settings on the phone) is the
+    /// opposite of the fix for "never reached the port at all" (network, firewall). Before this,
+    /// both read as "No camera yet" while the same phone was happily uploading Quick Photos.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _secureOpened = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _secureSpoke = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _refusalLogged = new();
+
     private string _token = "";
     private DateTimeOffset _lastSeen;
     private TaskCompletionSource<bool>? _shutter;   // completed when the desktop presses Snap
@@ -279,7 +292,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         // the desk explains that and points at the one-time setup instead of saying "No camera yet".
         // Sticky for an hour rather than three minutes: the seller who put the phone down between
         // items has not changed which page it is on.
-        bool QuickPhotoOpen = false);
+        bool QuickPhotoOpen = false,
+        // A phone opened the secure camera port and hung up without asking for a page: Safari
+        // looked at this computer's certificate and refused it. This is the ONLY way the desk can
+        // tell "the profile is not installed or not trusted yet" from "the phone never reached the
+        // port" — and the two need opposite fixes. See SecureRefusal().
+        bool SecureRefused = false, string SecureRefusedBy = "");
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -327,6 +345,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         // Safari has not been set up yet. The viewfinder is the primary experience; /c is the escape
         // hatch, never a dead end.
         var url = LaunchUrl;
+        var refusal = SecureRefusal();
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
                    _shots.Count, [.. _shots], QrCode.ToSvg(url), null, LatestPreview() is not null,
                    _phoneEverConnected, _recording, [.. _videos], MaxVideoSeconds,
@@ -336,7 +355,54 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                    _zoomMin, _zoomMax, _lenses,
                    TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical, _lastContact,
                    PhoneSending: DateTimeOffset.UtcNow - _phoneSending < TimeSpan.FromMinutes(3),
-                   QuickPhotoOpen: DateTimeOffset.UtcNow - _quickPhoto < TimeSpan.FromHours(1));
+                   QuickPhotoOpen: DateTimeOffset.UtcNow - _quickPhoto < TimeSpan.FromHours(1),
+                   SecureRefused: refusal is not null,
+                   SecureRefusedBy: refusal is { } r ? $"{r.Ip} at {r.At:HH:mm:ss}" : "");
+    }
+
+    /// <summary>An address as the phone would write it: the IPv4 behind Kestrel's dual-stack mapping.</summary>
+    private static string Canonical(IPAddress address) =>
+        (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+
+    /// <summary>The desk probing its own listener is not a phone, and must never read as one refusing.</summary>
+    private static bool IsThisMachine(string ip) =>
+        IPAddress.TryParse(ip, out var parsed)
+        && (IPAddress.IsLoopback(parsed) || LocalAddresses().Any(a => a.Equals(parsed)));
+
+    /// <summary>
+    /// The device that most recently opened the secure port and hung up without asking for
+    /// anything, or null when nobody has in the last ten minutes.
+    /// </summary>
+    /// <remarks>
+    /// The whole test is the absence of a request after a connection. Five seconds of grace covers
+    /// a handshake that is still running; a request on the port at or after the connection (two
+    /// seconds of slack for clocks and pipelining) clears it. Once a phone is trusted it opens
+    /// connections and asks on them within milliseconds, so a trusted phone never trips this.
+    /// </remarks>
+    private (string Ip, DateTimeOffset At)? SecureRefusal()
+    {
+        var now = DateTimeOffset.Now;
+        (string Ip, DateTimeOffset At)? latest = null;
+        foreach (var (ip, opened) in _secureOpened)
+        {
+            if (now - opened > TimeSpan.FromMinutes(10)) continue;   // stale: the phone has moved on
+            if (now - opened < TimeSpan.FromSeconds(5)) continue;    // the handshake may still be running
+            if (IsThisMachine(ip)) continue;
+            if (_secureSpoke.TryGetValue(ip, out var spoke) && spoke >= opened - TimeSpan.FromSeconds(2)) continue;
+            if (latest is null || opened > latest.Value.At) latest = (ip, opened);
+        }
+
+        if (latest is { } found
+            && (!_refusalLogged.TryGetValue(found.Ip, out var logged) || now - logged > TimeSpan.FromMinutes(10)))
+        {
+            _refusalLogged[found.Ip] = now;
+            log.Add("Info", "Phone refused the secure connection",
+                $"{found.Ip} opened the secure camera port {Port} and hung up without asking for a page: it does not "
+                + "trust this computer's certificate yet, so there can be no live view. On the iPhone: Settings > General > "
+                + "VPN & Device Management > install the ING Photo Box profile, then Settings > General > About > "
+                + "Certificate Trust Settings > turn on ING Photo Box camera authority. Then scan the code again.");
+        }
+        return latest;
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -420,7 +486,19 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k =>
             {
-                k.ListenAnyIP(Port, o => o.UseHttps(Certificate()));
+                k.ListenAnyIP(Port, o =>
+                {
+                    // Sits BEFORE the TLS handshake, so it sees the connection whether or not the
+                    // phone goes on to accept the certificate. The request middleware in MapRoutes
+                    // records the other half. See SecureRefusal() for what the gap means.
+                    o.Use(next => conn =>
+                    {
+                        if (conn.RemoteEndPoint is IPEndPoint ep)
+                            _secureOpened[Canonical(ep.Address)] = DateTimeOffset.Now;
+                        return next(conn);
+                    });
+                    o.UseHttps(Certificate());
+                });
                 // ── The chicken and the egg ──────────────────────────────────────────────────
                 // The camera page is HTTPS because a browser gives no camera to an insecure page.
                 // Its certificate is local, so the phone does not trust it, so the phone has to be
@@ -670,6 +748,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
             var now  = DateTimeOffset.Now;
 
             _lastContact = $"{ip} asked for {path} on port {ctx.Connection.LocalPort} at {now:HH:mm:ss}";
+            // A request on the secure port is proof the phone accepted the certificate.
+            if (ctx.Connection.LocalPort == Port && ctx.Connection.RemoteIpAddress is { } accepted)
+                _secureSpoke[Canonical(accepted)] = now;
 
             // First sight of a device, then at most once a minute after that. A phone polling the
             // viewfinder would otherwise write a log line every second and bury everything else.
@@ -691,6 +772,20 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         web.MapGet("/", (HttpContext ctx) => ctx.Connection.LocalPort == Port
             ? Results.Redirect(PublicUrl)
             : Results.Redirect("/start"));
+
+        // What the secure port saw from THIS phone while /start probed it. Plain HTTP, no token,
+        // nothing about the pairing in the answer: two booleans that let the start page say which
+        // of the two things went wrong instead of a message that fits both and fixes neither.
+        web.MapGet("/secure-check", (HttpContext ctx) =>
+        {
+            if (ctx.Connection.LocalPort != TrustPort) return Results.NotFound();
+            var ip  = ctx.Connection.RemoteIpAddress is { } a ? Canonical(a) : "";
+            var now = DateTimeOffset.Now;
+            var reached = _secureOpened.TryGetValue(ip, out var opened) && now - opened < TimeSpan.FromMinutes(2);
+            var trusted = _secureSpoke.TryGetValue(ip, out var spoke) && now - spoke < TimeSpan.FromMinutes(2);
+            ctx.Response.Headers.CacheControl = "no-store";
+            return Results.Json(new { reached, trusted, port = Port });
+        });
 
         // Every camera control and byte of imagery remains under /p/{token}. A caller without it
         // gets a flat 404 and learns nothing.
@@ -1430,6 +1525,22 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                   setup.classList.remove('hidden');
                   title.textContent = 'Tap Take a photo now to use the camera';
                   note.textContent = 'The live desktop view is optional and needs the one-time setup below it.';
+                  // Say WHICH of the two things went wrong. The computer watched its secure port
+                  // while the probe ran: a connection that opened and asked for nothing is Safari
+                  // refusing the certificate; no connection at all is the network or a firewall.
+                  fetch('/secure-check', { cache: 'no-store' })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(c => {
+                      if (!c || setup.classList.contains('hidden')) return;
+                      if (c.reached && !c.trusted) {
+                        title.textContent = 'This iPhone does not trust this computer yet';
+                        note.textContent = 'Take a photo now works right away. For the live desktop view, do the one-time setup below once; after that the camera opens by itself.';
+                      } else if (!c.reached) {
+                        title.textContent = 'This iPhone could not reach the secure camera port';
+                        note.textContent = 'Take a photo now still works. For the live view the phone must be on the same Wi-Fi as the computer, and the computer\'s firewall must allow port ' + c.port + '.';
+                      }
+                    })
+                    .catch(() => {});
                 }
                 function tryCamera() {
                   const mine = ++attempt;
