@@ -20,7 +20,16 @@
 }
 #photobox-section h2 { letter-spacing: -.035em; }
 #photobox-section .pb-header-sub { color: var(--studio-muted); max-width: 56ch; }
-#photobox-section .pb-body { padding: 24px; }
+#photobox-section .opportunity-overlay-header-left { min-width: 0; }
+#photobox-section .opportunity-overlay-header-left > div { min-width: 0; }
+#photobox-section .opportunity-overlay-header h2,
+#photobox-section .pb-header-sub { overflow-wrap: anywhere; }
+#photobox-section .pb-body {
+  padding: 24px;
+  background: #0b121a;
+  min-width: 0;
+  overflow-x: hidden;
+}
 #photobox-section .pb-studio { gap: 24px; }
 #photobox-section .pb-stage-col { gap: 16px; }
 #photobox-section .pb-stage {
@@ -79,6 +88,20 @@
 }
 #photobox-section .pb-session-head { color: #dce7ef; }
 #photobox-section .pb-session-head span { color: var(--studio-muted); }
+#photobox-section .pb-rail-card {
+  background: var(--studio-surface);
+  color: #e5edf4;
+  border: 1px solid var(--studio-border);
+  border-radius: 18px;
+  box-shadow: none;
+}
+#photobox-section .pb-rail-status,
+#photobox-section .pb-tips { color: var(--studio-muted); }
+#photobox-section .pb-empty-inner {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
 @media (max-width: 760px) {
   #photobox-section .opportunity-overlay-header { padding: 16px; }
   #photobox-section .pb-body { padding: 12px; }
