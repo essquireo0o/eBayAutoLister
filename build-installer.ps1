@@ -230,10 +230,14 @@ if ($wix) {
         Write-Host "Copied to Desktop: $destMsi" -ForegroundColor Green
 
         # ── Copy uninstaller to same folder ──────────────────────────────────
-        $uninstallSrc = "$PSScriptRoot\Uninstall-INGAutoLister.bat"
-        if (Test-Path $uninstallSrc) {
-            Copy-Item $uninstallSrc "$desktopMsiDir\Uninstall-INGAutoLister.bat" -Force
-            Write-Host "Uninstaller: $desktopMsiDir\Uninstall-INGAutoLister.bat" -ForegroundColor Green
+        # Two files: the .bat only elevates and calls the .ps1, which does the removal and
+        # the verification. They have to travel together.
+        foreach ($name in @('Uninstall-INGAutoLister.bat', 'Uninstall-INGAutoLister.ps1')) {
+            $uninstallSrc = "$PSScriptRoot\$name"
+            if (Test-Path $uninstallSrc) {
+                Copy-Item $uninstallSrc "$desktopMsiDir\$name" -Force
+                Write-Host "Uninstaller: $desktopMsiDir\$name" -ForegroundColor Green
+            }
         }
 
         exit 0

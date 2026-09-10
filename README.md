@@ -203,7 +203,14 @@ In **Settings → Listing Defaults**, pre-fill your postal code, default handlin
   `%ProgramData%\ING AutoLister` instead — it runs as the system account, which has no user folder.)
 
 **Uninstalling**
-- Use **Add or Remove Programs** → **ING AutoLister** → Uninstall, or run `Uninstall-INGAutoLister.bat`
+- **Add or Remove Programs** → **ING AutoLister** → Uninstall removes what the installer put
+  there: the program folder, shortcuts, the startup entry, the Photo Box firewall rule and the
+  port-9332 reservation. It does not know about the data folder the app made at first run.
+- `Uninstall-INGAutoLister.bat` (with `Uninstall-INGAutoLister.ps1` beside it) does all of that
+  AND sweeps every leftover — hand-made shortcuts, stray startup entries, scratch files — then
+  re-checks each location and prints PASS or LEFT. It asks before deleting
+  `%LOCALAPPDATA%\ING AutoLister` (listings, photos, API keys, eBay tokens); pass `-RemoveData`
+  or `-KeepData` to skip the question, or `-Audit` to only report, which needs no admin rights.
 
 ---
 

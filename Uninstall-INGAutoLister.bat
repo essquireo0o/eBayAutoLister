@@ -1,27 +1,34 @@
 @echo off
 :: ING AutoLister Uninstaller
-:: Self-elevates to admin, then removes all installed versions by product name.
+:: Asks for administrator rights, then runs Uninstall-INGAutoLister.ps1 next to this file,
+:: which removes the program AND every leftover it can find, then verifies each location.
+::
+::   Uninstall-INGAutoLister.bat              remove, asking about your data folder
+::   Uninstall-INGAutoLister.bat -RemoveData  remove everything including your data, no questions
+::   Uninstall-INGAutoLister.bat -KeepData    remove the program, keep your data, no questions
+::   Uninstall-INGAutoLister.bat -Audit       only report what is on this machine (no admin needed)
+
+setlocal
+set "SCRIPT=%~dp0Uninstall-INGAutoLister.ps1"
+if not exist "%SCRIPT%" (
+    echo Uninstall-INGAutoLister.ps1 is missing. Keep it next to this file.
+    pause
+    exit /b 1
+)
+
+echo %* | find /i "-Audit" >nul
+if %errorLevel% EQU 0 goto run
 
 net session >nul 2>&1
 if %errorLevel% NEQ 0 (
     echo Requesting administrator access...
-    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
     exit /b
 )
 
+:run
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %*
+set "RC=%errorLevel%"
 echo.
-echo  ING AutoLister Uninstaller
-echo  ==========================
-echo.
-
-powershell -ExecutionPolicy Bypass -NonInteractive -Command ^
-  "$products = Get-WmiObject Win32_Product | Where-Object { $_.Name -eq 'ING AutoLister' };" ^
-  "if (-not $products) { Write-Host '  ING AutoLister is not installed.' -ForegroundColor Yellow; Read-Host '  Press Enter to close'; exit }" ^
-  "Write-Host \"  Found $($products.Count) installation(s). Uninstalling...\" -ForegroundColor Cyan;" ^
-  "foreach ($p in $products) {" ^
-  "  Write-Host \"  Removing: $($p.Name) $($p.Version) [$($p.IdentifyingNumber)]\";" ^
-  "  Start-Process msiexec.exe -ArgumentList \"/x $($p.IdentifyingNumber) /qb\" -Wait" ^
-  "};" ^
-  "Write-Host '';" ^
-  "Write-Host '  Uninstall complete.' -ForegroundColor Green;" ^
-  "Read-Host '  Press Enter to close'"
+pause
+exit /b %RC%
