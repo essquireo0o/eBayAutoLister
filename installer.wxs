@@ -12,15 +12,58 @@
   Shortcuts: Desktop, Start Menu
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
-     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="ING AutoLister"
            Manufacturer="ING Mining LLC"
-           Version="2.6.4.0"
+           Version="2.6.5.0"
            UpgradeCode="{7A8F9B2C-3D4E-5F60-A1B2-C3D4E5F6A7B8}"
            Scope="perMachine">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of ING AutoLister is already installed." />
+    <!--
+      afterInstallInitialize, not the default afterInstallValidate, for two reasons. The old
+      version is then removed INSIDE the install transaction, so a failed upgrade rolls the old
+      one back instead of leaving the machine with nothing. And it puts RemoveExistingProducts
+      after InstallInitialize, which is the earliest point a deferred action can run — the
+      running app has to be stopped (CloseRunningApp, below) BEFORE the old product's uninstall
+      tries to delete its exe, or that uninstall queues the locked file for deletion at the next
+      reboot and the reboot then deletes the NEW exe sitting at the same path.
+    -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ING AutoLister is already installed."
+                  Schedule="afterInstallInitialize" />
+
+    <!--
+      Windows Installer's Restart Manager is switched off for this package. The app is a tray
+      icon with no window, so Restart Manager can neither close it nor list it, and what the
+      seller saw was its dead end: "The setup was unable to automatically close all requested
+      applications" with OK doing nothing and Cancel abandoning the upgrade. The
+      util:CloseApplication step below stops the app itself, so Restart Manager has no job here.
+    -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <!--
+      Stop the running app before its files are touched. Upgrades used to hit the
+      Restart Manager dialog above and then fail to replace the exe, because the app is
+      a tray icon: it runs for as long as the seller is logged in (HKLM Run key), and
+      nothing in the install ever asked it to leave.
+
+      Order of attempts: WM_CLOSE and an end-session message first, which the app's
+      tray window is free to honour; if it has not exited after Timeout seconds the
+      process is terminated (exit code 0, so the app's own crash accounting stays
+      quiet). The SQLite database is journaled, so a hard stop costs nothing but the
+      seller's tray icon, which the finish screen brings straight back.
+      RebootPrompt="no": the whole point is that no reboot is ever needed.
+    -->
+    <util:CloseApplication Id="CloseRunningApp"
+                           Target="AutoListerB1.exe"
+                           Description="ING AutoLister"
+                           CloseMessage="yes"
+                           EndSessionMessage="yes"
+                           TerminateProcess="0"
+                           Timeout="5"
+                           RebootPrompt="no" />
+
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <!--
@@ -227,6 +270,14 @@
       timing out on the one page that exists to stop phones timing out.
     -->
 <InstallExecuteSequence>
+      <!--
+        The Util extension puts its close-applications step just before InstallFiles, which is
+        AFTER RemoveExistingProducts has already run the old version's uninstall against a
+        still-running exe. Pull it forward so the app is gone before anything touches its files.
+        (Its deferred half, the one that actually terminates the process, is scheduled at run
+        time straight after this immediate action, so moving this row moves both.)
+      -->
+      <Custom Action="override Wix4CloseApplications_X64" Before="RemoveExistingProducts" Condition="VersionNT &gt; 400" />
       <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
