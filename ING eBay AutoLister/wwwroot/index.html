@@ -58,6 +58,144 @@
       document.documentElement.setAttribute('data-theme-choice', choice);
     })();
   </script>
+<style id="camera-studio-theme">
+/* Camera studio: scoped presentation, preserving all connection and capture behavior. */
+#photobox-section .studio-steps { display:flex; gap:32px; max-width:1320px; padding:0 0 24px; color:#afbdca; font-size:13px; }
+#photobox-section .studio-steps span { display:flex; align-items:center; gap:10px; }
+#photobox-section .studio-steps b { color:#8de0cb; border:1px solid #36594f; border-radius:50%; padding:7px; font-size:11px; }
+#photobox-section .pb-studio { grid-template-columns:minmax(0,1fr) 320px; }
+#photobox-section .pb-stage { min-height:380px; aspect-ratio:16/10; }
+#photobox-section .studio-options { border:1px solid #334454; background:#111b25; border-radius:16px; }
+#photobox-section .studio-options > summary { padding:18px; cursor:pointer; font-weight:650; }
+#photobox-section .studio-options > summary span { color:#afbdca; font-size:12px; margin-left:12px; font-weight:400; }
+#photobox-section .studio-options-body { padding:0 18px 18px; display:grid; gap:16px; }
+#photobox-section .studio-extra-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+#photobox-section .studio-capture-hint { color:#afbdca; font-size:13px; }
+#photobox-section .pb-review { background:#111b25; border:1px solid #334454; border-radius:18px; padding:18px; }
+#photobox-section .pb-rail { display:flex; flex-direction:column; gap:16px; }
+#photobox-section .pb-rail > .pb-shot-plan { order:2; }
+#photobox-section .pb-rail > .pb-tips { order:3; }
+#photobox-section .pb-enhance-bar { background:#16232e; border:1px solid #334454; box-shadow:none; color:#e5edf4; }
+#photobox-section .pb-enhance-copy span { color:#afbdca; }
+@media(max-width:1100px) { #photobox-section .pb-studio { grid-template-columns:minmax(0,1fr); } #photobox-section .pb-rail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) { #photobox-section .studio-steps { gap:12px; flex-wrap:wrap; } #photobox-section .pb-stage { min-height:280px; } #photobox-section .pb-rail { display:flex; } #photobox-section .studio-options > summary span { display:block; margin:8px 0 0; } }
+#photobox-section {
+  --studio-surface: #111b25;
+  --studio-border: #334454;
+  --studio-muted: #afbdca;
+  --studio-accent: #8de0cb;
+  background: #0b121a;
+  color: #f1f6fa;
+}
+#photobox-section .opportunity-overlay-header {
+  padding: 24px 28px;
+  background: #101923;
+  border-bottom: 1px solid var(--studio-border);
+}
+#photobox-section .eyebrow {
+  color: var(--studio-accent);
+  letter-spacing: .14em;
+  font-size: 11px;
+  font-weight: 750;
+}
+#photobox-section h2 { letter-spacing: -.035em; }
+#photobox-section .pb-header-sub { color: var(--studio-muted); max-width: 56ch; }
+#photobox-section .opportunity-overlay-header-left { min-width: 0; }
+#photobox-section .opportunity-overlay-header-left > div { min-width: 0; }
+#photobox-section .opportunity-overlay-header h2,
+#photobox-section .pb-header-sub { overflow-wrap: anywhere; }
+#photobox-section .pb-body {
+  padding: 24px;
+  background: #0b121a;
+  min-width: 0;
+  overflow-x: hidden;
+}
+#photobox-section .pb-studio { gap: 24px; }
+#photobox-section .pb-stage-col { gap: 16px; }
+#photobox-section .pb-stage {
+  border: 1px solid #405365;
+  border-radius: 24px;
+  background: radial-gradient(ellipse at 50% 30%, #203344, #0b1118 75%);
+  box-shadow: 0 20px 55px #0005;
+  overflow: hidden;
+}
+#photobox-section .pb-stage::after { pointer-events: none; }
+#photobox-section .pb-empty-inner { max-width: 390px; padding: 28px 20px; }
+#photobox-section .pb-empty-glyph {
+  width: 56px; height: 56px; color: var(--studio-accent);
+  margin-bottom: 16px;
+}
+#photobox-section .pb-empty-title { font-size: clamp(24px, 3vw, 36px); letter-spacing: -.04em; line-height: 1.15; }
+#photobox-section .pb-empty-line { color: #bdcad5; font-size: 15px; line-height: 1.6; }
+#photobox-section .btn-primary {
+  background: var(--studio-accent); color: #09271f;
+  border: 1px solid #a6efdd; border-radius: 12px;
+  box-shadow: 0 4px 16px #0003; font-weight: 750;
+}
+#photobox-section .btn-primary:hover:not(:disabled) { background: #b2efde; }
+#photobox-section button:disabled { opacity: .45; cursor: not-allowed; }
+#photobox-section .btn-secondary,
+#photobox-section .btn-ghost {
+  background: #15212d; color: #d6e2ec;
+  border: 1px solid var(--studio-border); border-radius: 10px;
+}
+#photobox-section button:focus-visible,
+#photobox-section a:focus-visible,
+#photobox-section input:focus-visible,
+#photobox-section select:focus-visible {
+  outline: 3px solid var(--studio-accent); outline-offset: 4px;
+}
+#photobox-section .pb-chip {
+  background: #0d1723e8; color: #dce7ef;
+  border: 1px solid #46596b; border-radius: 8px;
+  box-shadow: none; font-size: 12px;
+}
+#photobox-section .pb-chip-live { color: #a6efdd; border-color: #498d7b; }
+#photobox-section .pb-shutter-row {
+  padding: 16px; background: var(--studio-surface);
+  border: 1px solid var(--studio-border); border-radius: 18px;
+  gap: 12px; flex-wrap: wrap;
+}
+#photobox-section .pb-shutter { min-height: 54px; min-width: 160px; font-size: 17px; }
+#photobox-section .pb-zoombar { background: transparent; border-color: var(--studio-border); }
+#photobox-section .pb-rail .pb-phone-panel {
+  background: var(--studio-surface); border: 1px solid var(--studio-border);
+  border-radius: 18px; padding: 18px; box-shadow: none;
+}
+#photobox-section .pb-session {
+  background: var(--studio-surface); border: 1px solid var(--studio-border);
+  padding: 18px; border-radius: 18px;
+}
+#photobox-section .pb-session-head { color: #dce7ef; }
+#photobox-section .pb-session-head span { color: var(--studio-muted); }
+#photobox-section .pb-rail-card {
+  background: var(--studio-surface);
+  color: #e5edf4;
+  border: 1px solid var(--studio-border);
+  border-radius: 18px;
+  box-shadow: none;
+}
+#photobox-section .pb-rail-status,
+#photobox-section .pb-tips { color: var(--studio-muted); }
+#photobox-section .pb-empty-inner {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+@media (max-width: 760px) {
+  #photobox-section .opportunity-overlay-header { padding: 16px; }
+  #photobox-section .pb-body { padding: 12px; }
+  #photobox-section .pb-studio { gap: 16px; }
+  #photobox-section .pb-stage { border-radius: 16px; }
+  #photobox-section .pb-shutter { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #photobox-section *, #photobox-section *::before, #photobox-section *::after {
+    animation: none !important; transition: none !important;
+  }
+}
+
+</style>
 </head>
 <body>
   <!-- Icon set. Emoji were rendering as OS-coloured pictures at inconsistent
@@ -2833,8 +2971,8 @@
             <button id="pb-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
             <div>
               <div class="eyebrow">Photo Box</div>
-              <h2>Capture studio</h2>
-              <p class="pb-header-sub">Build a complete, buyer-ready photo set without leaving your listing workflow.</p>
+              <h2>From photo to listing.</h2>
+              <p class="pb-header-sub">Connect your phone. Capture your item. Review your listing.</p>
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
@@ -2843,7 +2981,7 @@
         </div>
 
         <div class="opportunity-overlay-body pb-body">
-          <div class="pb-studio">
+          <nav class="studio-steps" aria-label="Photo to listing workflow"><span><b>01</b> Connect phone</span><span><b>02</b> Capture item</span><span><b>03</b> Review listing</span></nav><div class="pb-studio">
             <div class="pb-stage-col">
 
               <!-- The viewfinder, given the room a viewfinder needs. Everything that describes
@@ -2874,9 +3012,9 @@
                       <path d="M4 8.5h3.1l1.5-2.2h6.8l1.5 2.2H20a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1v-8a1 1 0 011-1z"/>
                       <circle cx="12" cy="13.5" r="3.4"/>
                     </svg>
-                    <p class="pb-empty-title">Your phone is the camera</p>
-                    <p class="pb-empty-line" id="pb-empty-line">Scan once. Your phone's live camera appears right here.</p>
-                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">📱 Start live camera</button>
+                    <p class="pb-empty-title">Your next listing starts here</p>
+                    <p class="pb-empty-line" id="pb-empty-line">Connect your phone to see a live preview. Position your item, then capture.</p>
+                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">Connect phone</button>
                   </div>
                 </div>
               </div>
@@ -2884,30 +3022,17 @@
               <!-- The result comes before the machinery. Once a photo exists this is the first
                    block below the viewfinder: inspect it at useful size, edit or save it, then
                    reach for camera controls only if another shot needs changing. -->
-              <section class="pb-review" aria-label="Captured photo review">
-                <div class="pb-strip-head hidden" id="pb-strip-head">
-                  <div class="pb-review-title">
-                    <span>Photo review</span>
-                    <strong id="pb-strip-count">0 photos</strong>
-                  </div>
-                  <span class="pb-strip-hint">Newest last. Tap a photo to edit it. Press ✕ to leave it off the listing — it stays in your Photo Library.</span>
-                </div>
-                <div class="pb-filmstrip hidden" id="pb-filmstrip"></div>
 
-                <div class="pb-actions">
-                  <button id="pb-ai" class="btn btn-primary" type="button" disabled
-                          title="Send this session's photos to the AI Listing screen — it writes the listing and prices it from sold comps">✨ Create AI eBay Listing</button>
-                  <button id="pb-save-all" class="btn btn-secondary hidden" type="button"
-                          title="Copy this session's photos to your Desktop, where you can attach or upload them like any other file">💾 Save to my computer</button>
-                  <button id="pb-library" class="btn btn-ghost" type="button">🖼 Photo Library</button>
-                  <button id="pb-clear" class="btn btn-ghost hidden" type="button" title="Start a new item — the photos stay in the library">Start a new item</button>
-                </div>
-              </section>
 
               <!-- Zoom. The phone does it: its lens where the lens will move, a crop of a
                    twelve-megapixel frame where it will not — either way the viewfinder and the
                    saved photo are the same picture. -->
-              <div class="pb-zoombar" id="pb-zoombar">
+              <div class="pb-shutter-row">
+                <button id="pb-snap" class="btn btn-primary pb-shutter" type="button" disabled>📸 Snap<span class="pb-key">space</span></button>
+                <span class="studio-capture-hint">Capture a clear photo of your item</span>
+              </div>
+
+              <details class="studio-options"><summary>Camera settings <span>Zoom, timer, lighting &amp; enhancement</span></summary><div class="studio-options-body"><div class="pb-zoombar" id="pb-zoombar">
                 <button id="pb-zoom-out" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom out">−</button>
                 <input id="pb-zoom" type="range" min="1" max="8" step="0.1" value="1" aria-label="Zoom" />
                 <button id="pb-zoom-in" class="btn btn-ghost pb-zoom-btn" type="button" aria-label="Zoom in">+</button>
@@ -2919,9 +3044,7 @@
                 </div>
               </div>
 
-              <div class="pb-shutter-row">
-                <button id="pb-snap" class="btn btn-primary pb-shutter" type="button" disabled>📸 Snap<span class="pb-key">space</span></button>
-                <button id="pb-burst" class="btn btn-secondary" type="button" disabled
+              <div class="studio-extra-controls"><button id="pb-burst" class="btn btn-secondary" type="button" disabled
                         title="Three photos in a row — move the item between them and you have three angles">⚡ Burst ×3</button>
                 <label class="pb-select" title="Hands-free: the countdown runs here, the phone takes the photo at zero">
                   <span>Timer</span>
@@ -2934,9 +3057,7 @@
                 <button id="pb-grid-btn" class="btn btn-ghost" type="button" title="Rule-of-thirds grid over the viewfinder">▦ Grid<span class="pb-key">g</span></button>
                 <button id="pb-torch" class="btn btn-ghost hidden" type="button" title="The phone's own light">🔦 Light<span class="pb-key">t</span></button>
                 <button id="pb-full" class="btn btn-ghost" type="button" title="Fill the screen with the viewfinder">⛶ Full screen<span class="pb-key">f</span></button>
-              </div>
-
-              <div class="pb-enhance-bar" id="pb-enhance-bar">
+              </div><div class="pb-enhance-bar" id="pb-enhance-bar">
                 <div class="pb-enhance-mark" aria-hidden="true">✨</div>
                 <div class="pb-enhance-copy">
                   <strong>AI Enhance after every snap</strong>
@@ -3037,6 +3158,26 @@
                 </div>
               </div>
 
+              </div></details>
+<section class="pb-review" aria-label="Captured photo review">
+                <div class="pb-strip-head hidden" id="pb-strip-head">
+                  <div class="pb-review-title">
+                    <span>Photo review</span>
+                    <strong id="pb-strip-count">0 photos</strong>
+                  </div>
+                  <span class="pb-strip-hint">Newest last. Tap a photo to edit it. Press ✕ to leave it off the listing — it stays in your Photo Library.</span>
+                </div>
+                <div class="pb-filmstrip hidden" id="pb-filmstrip"></div>
+
+                <div class="pb-actions">
+                  <button id="pb-ai" class="btn btn-primary" type="button" disabled
+                          title="Send this session's photos to the AI Listing screen — it writes the listing and prices it from sold comps">✨ Create AI eBay Listing</button>
+                  <button id="pb-save-all" class="btn btn-secondary hidden" type="button"
+                          title="Copy this session's photos to your Desktop, where you can attach or upload them like any other file">💾 Save to my computer</button>
+                  <button id="pb-library" class="btn btn-ghost" type="button">🖼 Photo Library</button>
+                  <button id="pb-clear" class="btn btn-ghost hidden" type="button" title="Start a new item — the photos stay in the library">Start a new item</button>
+                </div>
+              </section>
               <div id="pb-setup-status" class="wn-video-status hidden" role="status" aria-live="polite"></div>
               <div id="pb-snap-note" class="wn-video-status hidden" role="status" aria-live="polite"></div>
 
@@ -3048,7 +3189,7 @@
                 <div class="pb-plan-head">
                   <div>
                     <div class="pb-card-eyebrow">Listing photo set</div>
-                    <h3 id="pb-plan-title">Six shots. Zero guesswork.</h3>
+                    <h3 id="pb-plan-title">Build your photo set</h3>
                   </div>
                   <strong class="pb-plan-score" id="pb-plan-score">0/6</strong>
                 </div>
@@ -5935,7 +6076,7 @@
 
   <!-- Trial paywall removed -->
 
-  <script src="app.js?v=168"></script>
+  <script src="app.js?v=169"></script>
   <script src="photobox-ux.js?v=2"></script>
 </body>
 </html>

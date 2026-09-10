@@ -1,4 +1,23 @@
 /* Camera studio: scoped presentation, preserving all connection and capture behavior. */
+#photobox-section .studio-steps { display:flex; gap:32px; max-width:1320px; padding:0 0 24px; color:#afbdca; font-size:13px; }
+#photobox-section .studio-steps span { display:flex; align-items:center; gap:10px; }
+#photobox-section .studio-steps b { color:#8de0cb; border:1px solid #36594f; border-radius:50%; padding:7px; font-size:11px; }
+#photobox-section .pb-studio { grid-template-columns:minmax(0,1fr) 320px; }
+#photobox-section .pb-stage { min-height:380px; aspect-ratio:16/10; }
+#photobox-section .studio-options { border:1px solid #334454; background:#111b25; border-radius:16px; }
+#photobox-section .studio-options > summary { padding:18px; cursor:pointer; font-weight:650; }
+#photobox-section .studio-options > summary span { color:#afbdca; font-size:12px; margin-left:12px; font-weight:400; }
+#photobox-section .studio-options-body { padding:0 18px 18px; display:grid; gap:16px; }
+#photobox-section .studio-extra-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+#photobox-section .studio-capture-hint { color:#afbdca; font-size:13px; }
+#photobox-section .pb-review { background:#111b25; border:1px solid #334454; border-radius:18px; padding:18px; }
+#photobox-section .pb-rail { display:flex; flex-direction:column; gap:16px; }
+#photobox-section .pb-rail > .pb-shot-plan { order:2; }
+#photobox-section .pb-rail > .pb-tips { order:3; }
+#photobox-section .pb-enhance-bar { background:#16232e; border:1px solid #334454; box-shadow:none; color:#e5edf4; }
+#photobox-section .pb-enhance-copy span { color:#afbdca; }
+@media(max-width:1100px) { #photobox-section .pb-studio { grid-template-columns:minmax(0,1fr); } #photobox-section .pb-rail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) { #photobox-section .studio-steps { gap:12px; flex-wrap:wrap; } #photobox-section .pb-stage { min-height:280px; } #photobox-section .pb-rail { display:flex; } #photobox-section .studio-options > summary span { display:block; margin:8px 0 0; } }
 #photobox-section {
   --studio-surface: #111b25;
   --studio-border: #334454;
