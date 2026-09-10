@@ -277,6 +277,7 @@
     -->
 <InstallExecuteSequence>
       <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="LaunchApplication" After="InstallFinalize" Condition="AUTOUPDATE=1 AND NOT Installed AND NOT REMOVE" />
       <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
@@ -284,6 +285,12 @@
          user lands in the app immediately and knows how to open it. It launches the
          installed exe with the open-browser flag, which only opens the web UI (no port
          bind), so it never fights the background service that already owns port 9332. -->
+    <!-- Set by the app's own updater (AutoUpdater.cs) when it runs this package passively. A
+         passive install has no finish screen, and the install has just stopped the app, so this
+         is what brings it back: the same launch action, scheduled after InstallFinalize. Secure,
+         or Windows Installer would drop a command-line property on the way to the elevated half. -->
+    <Property Id="AUTOUPDATE" Secure="yes" />
+
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open ING AutoLister now" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <CustomAction Id="LaunchApplication"

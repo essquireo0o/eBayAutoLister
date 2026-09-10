@@ -35,6 +35,9 @@ public sealed class UpdateChecker(IHttpClientFactory httpFactory, ActionLog log)
     /// <summary>Where an update is actually downloaded. publish-update.ps1 keeps this current.</summary>
     public const string DownloadUrl = "https://inglisting.com/";
 
+    /// <summary>The release asset the automatic updater installs. publish-update.ps1 names it so.</summary>
+    public const string InstallerAssetName = "ING-AutoLister-Setup.msi";
+
     private static readonly TimeSpan CacheFor = TimeSpan.FromHours(6);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -87,20 +90,12 @@ public sealed class UpdateChecker(IHttpClientFactory httpFactory, ActionLog log)
             if (!res.IsSuccessStatusCode)
                 return new UpdateStatus(current, null, false, DownloadUrl, null);
 
-            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-            var tag = doc.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
-            var notes = doc.RootElement.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var status = Parse(await res.Content.ReadAsStringAsync(ct), current);
 
-            if (string.IsNullOrWhiteSpace(tag))
-                return new UpdateStatus(current, null, false, DownloadUrl, null);
+            if (status.UpdateAvailable)
+                log.Add("Info", "Update available", $"{current} installed, {status.Latest} released.");
 
-            var latest = Normalize(tag);
-            var newer = IsNewer(latest, current);
-
-            if (newer)
-                log.Add("Info", "Update available", $"{current} installed, {latest} released.");
-
-            return new UpdateStatus(current, latest, newer, DownloadUrl, notes);
+            return status;
         }
         catch (Exception ex)
         {
@@ -109,6 +104,46 @@ public sealed class UpdateChecker(IHttpClientFactory httpFactory, ActionLog log)
             log.Add("Info", "Update check skipped", ex.Message);
             return new UpdateStatus(current, null, false, DownloadUrl, null);
         }
+    }
+
+    /// <summary>
+    /// Reads GitHub's release JSON. Besides the tag, it picks out the installer asset — its download
+    /// URL and the SHA-256 digest GitHub records for it — which is what lets <see cref="AutoUpdater"/>
+    /// install the file without trusting the bytes it was handed. A release with no such asset, or
+    /// one whose digest is not a sha256, leaves those null: the update is still announced, only
+    /// never installed on its own.
+    /// </summary>
+    public static UpdateStatus Parse(string json, string current)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
+        var notes = root.TryGetProperty("name", out var n) ? n.GetString() : null;
+
+        if (string.IsNullOrWhiteSpace(tag))
+            return new UpdateStatus(current, null, false, DownloadUrl, null);
+
+        string? url = null, sha = null;
+        long? bytes = null;
+        if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var asset in assets.EnumerateArray())
+            {
+                var name = asset.TryGetProperty("name", out var an) ? an.GetString() : null;
+                if (!string.Equals(name, InstallerAssetName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
+                var digest = asset.TryGetProperty("digest", out var d) ? d.GetString() : null;
+                if (digest is not null && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                    sha = digest["sha256:".Length..].Trim().ToLowerInvariant();
+                if (asset.TryGetProperty("size", out var sz) && sz.TryGetInt64(out var size))
+                    bytes = size;
+                break;
+            }
+        }
+
+        var latest = Normalize(tag);
+        return new UpdateStatus(current, latest, IsNewer(latest, current), DownloadUrl, notes, url, sha, bytes);
     }
 
     /// <summary>Strips a leading "v" and anything after the numbers: "v2.2.0-beta" -> "2.2.0".</summary>
@@ -151,5 +186,9 @@ public sealed class UpdateChecker(IHttpClientFactory httpFactory, ActionLog log)
 /// <param name="UpdateAvailable">Only true when a newer version is genuinely known to exist.</param>
 /// <param name="DownloadUrl">Where to get it — the download page, not the git tag.</param>
 /// <param name="ReleaseName">The release's title, when it has one.</param>
+/// <param name="InstallerUrl">The release's installer asset, when the release carries one.</param>
+/// <param name="InstallerSha256">Its SHA-256 as GitHub recorded it, lower-case hex; what a download must match.</param>
+/// <param name="InstallerBytes">Its size, for a progress figure.</param>
 public sealed record UpdateStatus(
-    string Current, string? Latest, bool UpdateAvailable, string DownloadUrl, string? ReleaseName);
+    string Current, string? Latest, bool UpdateAvailable, string DownloadUrl, string? ReleaseName,
+    string? InstallerUrl = null, string? InstallerSha256 = null, long? InstallerBytes = null);

@@ -308,6 +308,12 @@ builder.Services.AddSingleton<ListingCategoryCache>();
 // Singleton so the six-hour cache is shared: one install asks GitHub four times a day, not once
 // per page load. See UpdateChecker for why that limit matters.
 builder.Services.AddSingleton<UpdateChecker>();
+#if !HOSTED
+// Desktop only: downloads the newer release, checks it against the digest the release publishes,
+// and installs it once the seller has left the app alone. The hosted app has no installer to run.
+builder.Services.AddSingleton<AutoUpdater>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoUpdater>());
+#endif
 // Local sourcing — Facebook Marketplace has no public search API, so this uses the same
 // saved-browser-session pattern as Terapeak (one visible login to the seller's own account,
 // then headless reads). User-driven only: never scheduled, never a side effect of anything
@@ -667,6 +673,17 @@ HostedAuth.AddAccounts(builder);
 var app = builder.Build();
 
 app.UseCors();
+
+#if !HOSTED
+// The automatic updater installs only when the seller has left the app alone; this is how it
+// knows. Writes and page opens count as activity, a tab's background polling does not.
+var autoUpdater = app.Services.GetRequiredService<AutoUpdater>();
+app.Use(async (ctx, next) =>
+{
+    using var _ = autoUpdater.TrackRequest(ctx.Request.Method, ctx.Request.Path.Value ?? "/");
+    await next();
+});
+#endif
 
 // Reads the session cookie before any static file is served, so the photo mounts below can be
 // closed. Must come before them; a no-op in the desktop build.
@@ -9089,6 +9106,19 @@ app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest r
 // failure — a version check is never worth interrupting someone's listing session over.
 app.MapGet("/api/update/check", async (UpdateChecker updates, bool? force, CancellationToken ct) =>
     Results.Ok(await updates.CheckAsync(force ?? false, ct)));
+
+#if !HOSTED
+// Where the automatic install stands (downloading, ready, installing, refused), for the banner.
+app.MapGet("/api/update/status", (AutoUpdater auto) => Results.Ok(auto.Snapshot()));
+
+// The banner's "Install now". Returns at once; the install itself stops this process and the
+// installer starts the new version, so the page finds out by the app coming back.
+app.MapPost("/api/update/install", (AutoUpdater auto) =>
+{
+    _ = auto.RequestInstallAsync();
+    return Results.Accepted(null, auto.Snapshot());
+});
+#endif
 
 // Which build is answering. Not the version number — that only moves on a release, and the UI
 // inside the exe changes on every build — but the timestamp of the executable that is serving this
