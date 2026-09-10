@@ -69,3 +69,8 @@ wordpress-plugin/
 ING eBay AutoLister/ebay-callback-relay.php
 
 firmware/photobox/build/
+
+# Build/test artifacts that debugging passes leave behind
+__pycache__/
+*.pyc
+ING eBay AutoLister.Tests/TestResults/
