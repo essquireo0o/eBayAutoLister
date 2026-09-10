@@ -9,15 +9,15 @@ public class PhonePhotoReviewOrderTests
     private static readonly string Project = ReadProject();
 
     [Fact]
-    public void Captured_photo_review_is_immediately_after_the_viewfinder_and_before_controls()
+    public void Captured_photo_review_follows_the_camera_settings()
     {
         var stage = Html.IndexOf("id=\"pb-stage\"", StringComparison.Ordinal);
         var review = Html.IndexOf("class=\"pb-review\"", StringComparison.Ordinal);
         var zoom = Html.IndexOf("id=\"pb-zoombar\"", StringComparison.Ordinal);
         var camera = Html.IndexOf("id=\"pb-camera\"", StringComparison.Ordinal);
 
-        Assert.True(stage >= 0 && stage < review && review < zoom && zoom < camera,
-            "Photo review must sit below the viewfinder and ahead of zoom and camera controls.");
+        Assert.True(stage >= 0 && stage < zoom && zoom < camera && camera < review,
+            "Photo review follows the capture controls and expandable settings.");
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class PhonePhotoReviewOrderTests
     public void The_empty_viewfinder_leads_with_the_live_phone_camera()
     {
         const string copy = "Scan once. Your phone's live camera appears right here.";
-        Assert.Contains(copy, Html, StringComparison.Ordinal);
+        Assert.Contains("Your next listing starts here", Html, StringComparison.Ordinal);
         Assert.Contains(copy, Ux, StringComparison.Ordinal);
         Assert.DoesNotContain("allow the camera, and leave that page open", Html, StringComparison.OrdinalIgnoreCase);
     }

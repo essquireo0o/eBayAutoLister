@@ -3208,6 +3208,17 @@
       const u = await res.json();
       if (!u.updateAvailable || !u.latest) return;
 
+      // The desktop app installs updates on its own (AutoUpdater on the server); the banner then
+      // says where that stands and offers to do it now. The hosted app has no installer, so it
+      // has no /api/update/status and keeps the link.
+      let auto = null;
+      try {
+        const r = await fetch('/api/update/status');
+        if (r.ok) auto = await r.json();
+      } catch { /* treated as the link banner below */ }
+
+      if (auto) { renderAutoUpdate(el, u, auto); return; }
+
       // Dismissal is per version: "not now" on 2.3.0 must not hide 2.4.0 six weeks later.
       if (localStorage.getItem('updateDismissed') === u.latest) return;
 
@@ -3224,6 +3235,47 @@
       });
     } catch {
       // Offline, or the app is mid-restart. Neither is worth a word on screen.
+    }
+  }
+
+  // The automatic update, in the seller's words. Never dismissible: it is not asking for anything,
+  // it is telling them what is about to happen to the app under their tab.
+  function renderAutoUpdate(el, u, auto) {
+    const phase = auto.phase;
+    const busy = phase === 'Installing' || phase === 'Downloading';
+    let line;
+    if (phase === 'Installing') line = 'Installing it now. If Windows asks for permission, say yes; the app restarts by itself.';
+    else if (phase === 'Downloading') line = 'Downloading it in the background.';
+    else if (phase === 'Ready') line = auto.automatic
+      ? 'Downloaded. It installs itself once you have left the app alone for 20 minutes, or right now:'
+      : 'Downloaded and ready:';
+    else if (phase === 'NeedsPermission') line = 'Windows was asked for permission and said no. Try again:';
+    else if (phase === 'Failed') line = auto.detail || 'The automatic install did not go through. Try again:';
+    else line = auto.automatic ? 'It downloads and installs itself; nothing to do.' : '';
+
+    el.innerHTML =
+      `<strong>Version ${esc(u.latest)} is out.</strong> ` +
+      `You're running ${esc(u.current)}. ${esc(line)} ` +
+      (busy ? '' : `<button type="button" id="update-install" class="btn btn-primary small">Install now</button>`);
+    el.classList.remove('hidden');
+
+    on('update-install', 'click', async () => {
+      const btn = $('update-install');
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+      try { await fetch('/api/update/install', { method: 'POST' }); } catch { /* restarting */ }
+      setTimeout(() => refreshAutoUpdate(el, u), 1500);
+    });
+
+    if (busy) setTimeout(() => refreshAutoUpdate(el, u), 5000);
+  }
+
+  async function refreshAutoUpdate(el, u) {
+    try {
+      const r = await fetch('/api/update/status');
+      if (r.ok) renderAutoUpdate(el, u, await r.json());
+    } catch {
+      // The app is on its way down and back up as the new version; the stale-build banner takes
+      // over from here.
     }
   }
 

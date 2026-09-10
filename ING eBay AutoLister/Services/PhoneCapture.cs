@@ -1476,20 +1476,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
               <section id="setup" class="hidden">
-              <!--
-                The camera button comes FIRST, full size, before any mention of a certificate. Version
-                2.6.3 moved this link under the Settings steps, and the owner's report was "my phone
-                stopped working - before it said use the camera, now it says save a certificate".
-                A seller holding an item does not read past a download button to find the camera.
-                The live studio setup is still here, below, for whoever wants the desktop viewfinder.
-              -->
-              <a class="btn" id="quick" href="/c/{{_token}}">Take a photo now &rsaquo;</a>
-              <p class="sub" style="font-size:14px;margin-bottom:26px">Opens this iPhone's own camera with no
-                 setup. Every photo lands on your computer; only the live desktop view and remote shutter are skipped.</p>
-              <h2>Optional: one-time setup for the live desktop view</h2>
-              <p class="sub">Safari requires HTTPS before it will stream the camera to your computer.
-                 Apple does not let a downloaded local certificate become trusted silently, so these
-                 two Settings approvals are the only manual part.</p>
+              <a class="btn" id="live" href="{{camera}}">Open live camera &rsaquo;</a>
+              <p class="sub">See the live view on your computer and take photos with its Snap button.</p>
+              <h2>First-time iPhone setup</h2>
+              <p class="sub">If the live camera does not open, complete these steps once, then return here.</p>
               <ol>
                 <li><b>Download the profile.</b>
                     <a class="btn" href="/trust.mobileconfig">Download the certificate</a>
@@ -1506,6 +1496,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                     Return to this Safari page after Settings. It checks again automatically, so the
                     same QR keeps working after app updates and restarts.</li>
               </ol>
+              <details class="why"><summary>Send individual photos instead</summary>
+                <p>This alternative uploads photos only. For a live view and desktop Snap, use Open live camera above.</p>
+                <a class="go" id="quick" href="/c/{{_token}}">Take a photo now &rsaquo;</a>
+              </details>
               <p class="why"><b>If iOS blocks profile installation:</b> try again at a familiar location.
                  Stolen Device Protection can delay security changes away from familiar locations.</p>
               <p class="why"><b>What you are trusting.</b> One certificate, made by the copy of ING
@@ -1523,8 +1517,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 let attempt = 0;
                 function showSetup() {
                   setup.classList.remove('hidden');
-                  title.textContent = 'Tap Take a photo now to use the camera';
-                  note.textContent = 'The live desktop view is optional and needs the one-time setup below it.';
+                  title.textContent = 'Open the live camera to connect to your computer';
+                  note.textContent = 'Use Open live camera above the setup steps. Individual photo upload is a separate alternative.';
                   // Say WHICH of the two things went wrong. The computer watched its secure port
                   // while the probe ran: a connection that opened and asked for nothing is Safari
                   // refusing the certificate; no connection at all is the network or a firewall.
