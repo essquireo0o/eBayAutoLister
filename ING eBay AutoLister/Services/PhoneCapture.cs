@@ -147,6 +147,15 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
 
     /// <summary>When a photograph last arrived from a phone that has no live channel. See PhoneSending.</summary>
     private DateTimeOffset _phoneSending = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// When a phone last opened the certificate-free camera page or sent a photo from it. The desk
+    /// used to infer this by pattern-matching the last request that reached the listeners, which
+    /// stops being true the moment the phone posts its first photo (and the moment this computer
+    /// probes its own trust page): the panel then fell back to "No camera yet" beside a filmstrip
+    /// of photos that were arriving. See QuickPhotoOpen on Status.
+    /// </summary>
+    private DateTimeOffset _quickPhoto = DateTimeOffset.MinValue;
     private bool _phoneEverConnected;
 
     // What the desktop has asked the camera to do. The phone applies these; it does not decide
@@ -265,7 +274,12 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         // and a working desktop shutter, and a file input has neither. It is still very much here —
         // photographs are arriving — and reporting that as "No camera yet" is why the feature read
         // as dead while it was working. Two states, because there genuinely are two.
-        bool PhoneSending = false);
+        bool PhoneSending = false,
+        // The phone is on the certificate-free page. It uploads photographs and cannot stream, so
+        // the desk explains that and points at the one-time setup instead of saying "No camera yet".
+        // Sticky for an hour rather than three minutes: the seller who put the phone down between
+        // items has not changed which page it is on.
+        bool QuickPhotoOpen = false);
 
     /// <summary>The last viewfinder frame the phone sent, or null if it has not sent one lately.</summary>
     public byte[]? LatestPreview() =>
@@ -321,7 +335,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                    _canExposure, _canFocus, _canMacro, _canWhiteBalance, _canTap, _canMultiCamera,
                    _zoomMin, _zoomMax, _lenses,
                    TrustUrl(), QrCode.ToSvg(TrustUrl()), _zoomOptical, _lastContact,
-                   PhoneSending: DateTimeOffset.UtcNow - _phoneSending < TimeSpan.FromMinutes(3));
+                   PhoneSending: DateTimeOffset.UtcNow - _phoneSending < TimeSpan.FromMinutes(3),
+                   QuickPhotoOpen: DateTimeOffset.UtcNow - _quickPhoto < TimeSpan.FromHours(1));
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
@@ -919,6 +934,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
             // Lighting it up here would make Snap time out on "the phone didn't send a photo",
             // which is a button that lies instead of a panel that under-reports.
             _phoneSending = DateTimeOffset.UtcNow;
+            _quickPhoto = _phoneSending;
             var url = await photos.SavePhotoAsync(PhotoLibrary.PhotoBoxFolder, bytes, "jpg");
             _shots.Add(url);
             _shotArrived.Set();
@@ -1003,6 +1019,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
         web.MapGet("/c/{token}", (string token, HttpContext ctx) =>
         {
             if (!Ok(token)) return Results.NotFound();
+            _quickPhoto = DateTimeOffset.UtcNow;
             ctx.Response.Headers.CacheControl = "no-store";
             return Results.Content(CameraFreePageHtml(), "text/html; charset=utf-8");
         });

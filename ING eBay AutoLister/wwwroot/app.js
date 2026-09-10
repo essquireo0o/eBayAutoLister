@@ -7562,7 +7562,10 @@
       // all, so it can never be "connected" — and the panel used to answer that with "Waiting for
       // the phone to open the page" while the phone was actively sending. Pictures arriving and
       // the desk saying nothing is here is what "using my phone no longer works" looked like.
-      const quickPhotoOpen = /asked for \/c\//i.test(st.lastContact || '');
+      // The server remembers which page the phone is on (quickPhotoOpen); the request-text match
+      // stays only as a fallback for a status from an older build. Matching the last request alone
+      // broke the moment the first photo arrived, because that request is /p/.../photo, not /c/.
+      const quickPhotoOpen = !!st.quickPhotoOpen || /asked for \/c\//i.test(st.lastContact || '');
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
         : st.phoneSending
@@ -7571,7 +7574,8 @@
           : st.phoneWasConnected
             ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
             : quickPhotoOpen
-              ? 'Quick Photo is open on the phone. That mode cannot stream. Scan the code again and finish Live Studio setup to use this viewfinder and the desktop Snap button.'
+              ? `Your phone is on Take a photo now${st.shotCount ? ` — ${st.shotCount} sent` : ''}. That page cannot stream to this screen. `
+                + 'For the live view and the 📸 Snap button, do the one-time setup under the camera button on the phone (it is also below).'
             : 'Waiting for your phone to open the live studio…';
       state.className = 'pb-phone-state ' + (st.phoneConnected || st.phoneSending ? 'wn-video-ok' : 'wn-video-busy');
     }
@@ -7609,14 +7613,15 @@
       // Snap and Burst stay disabled here and that is correct — the certificate-free page has no
       // command channel, so a shutter pressed on this screen would sit and then time out. The
       // panel says why instead of leaving two dead buttons to be interpreted.
-      const quickPhotoOpen = /asked for \/c\//i.test(st.lastContact || '');
+      const quickPhotoOpen = !!st.quickPhotoOpen || /asked for \/c\//i.test(st.lastContact || '');
       pbNoCamera(st.phoneSending
         ? 'Your phone is the camera and photos are arriving — they appear below as you shoot. '
           + 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.'
         : st.phoneWasConnected
           ? 'The phone stopped sending — wake its screen and the picture comes back.'
           : quickPhotoOpen
-            ? 'Quick Photo cannot stream. Scan the code again and open Live Studio for the live view and desktop shutter.'
+            ? 'Your phone is on Take a photo now, which cannot stream. Photos it takes still land below. '
+              + 'For the live view here, do the one-time setup under that button on the phone.'
           : "Scan the code once. Your phone's live camera will appear here.");
     }
   }

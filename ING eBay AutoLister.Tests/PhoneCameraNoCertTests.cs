@@ -99,6 +99,24 @@ public class PhoneCameraNoCertTests
     }
 
     [Fact]
+    public void The_desk_is_told_which_page_the_phone_is_on_rather_than_guessing_from_the_last_request()
+    {
+        // 2026-09-10, during the owner's eBay presentation: photos arriving from the phone and the
+        // desk saying "No camera yet". The panel inferred Quick Photo by matching the LAST request
+        // against /c/, which is true for one page load and false from the first photo onward
+        // (/p/.../photo), and false again whenever this computer probes its own trust page. So the
+        // server remembers it, for an hour, and the desk reads the flag.
+        Assert.Contains("bool QuickPhotoOpen = false", Source, StringComparison.Ordinal);
+        Assert.Contains("QuickPhotoOpen: DateTimeOffset.UtcNow - _quickPhoto < TimeSpan.FromHours(1)", Source, StringComparison.Ordinal);
+        Assert.Contains("_quickPhoto = _phoneSending;", Source, StringComparison.Ordinal);
+
+        var js = ReadSource(Path.Combine("wwwroot", "app.js"));
+        Assert.Contains("!!st.quickPhotoOpen", js, StringComparison.Ordinal);
+        // And the words say what to do, not just what is wrong.
+        Assert.Contains("one-time setup under", js, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_camera_button_comes_before_any_mention_of_a_certificate()
     {
         // 2026-09-10. Version 2.6.3 moved the quick-camera link under the three Settings steps and
