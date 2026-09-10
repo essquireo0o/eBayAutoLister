@@ -15,7 +15,8 @@ public class PhotoBoxWorkflowAssetTests
     [Fact]
     public void StudioExplainsTheSixShotWorkflow()
     {
-        Assert.Contains("Six shots. Zero guesswork.", Html);
+        // The studio heading moved from "Six shots. Zero guesswork." to this in d5466cb.
+        Assert.Contains("Build your photo set", Html);
         Assert.Contains("id=\"pb-plan-progress\"", Html);
         Assert.Contains("id=\"pb-plan-grid\"", Html);
         Assert.Contains("id=\"pb-next-shot\"", Html);
