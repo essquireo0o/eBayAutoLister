@@ -3806,8 +3806,7 @@ app.MapPost("/api/whatsnot/bid", async (
         try
         {
             if (await metals.ValueAsync(title, ct) is { } metal)
-                melt = MeltAnchor.Decide(title, metal,
-                    analysis is null ? null : ResalePricing.From(analysis, terms.Query),
+                melt = MeltAnchor.Decide(title, metal, ResalePricing.From(analysis, terms.Query),
                     req.CurrentBid ?? 0m, askIsFirm: false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -3966,7 +3965,9 @@ app.MapPost("/api/whatsnot/rebid", async (
         {
             if (await metals.ValueAsync(quote.Item, ct) is { } metal)
                 melt = MeltAnchor.Decide(quote.Item, metal,
-                    quote.Analysis is null ? null : ResalePricing.From(quote.Analysis, quote.Search.Query),
+                    // Same fallback as LiveBidAdvisor.Build: a quote held before the search was
+                    // recorded is priced under what the typed name would be searched as.
+                    ResalePricing.From(quote.Analysis, (quote.Search ?? LiveSearchQuery.Build(quote.Item)).Query),
                     req.CurrentBid ?? 0m, askIsFirm: false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

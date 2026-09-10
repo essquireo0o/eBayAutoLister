@@ -197,7 +197,7 @@ public class AppPathsTests : IDisposable
 
         Assert.True(File.Exists(Path.Combine(home, "photos", "photo-box", "shot.jpg")));
         Assert.Equal(["photo-box"], Directory.GetDirectories(Path.Combine(home, "photos"))
-            .Select(Path.GetFileName).ToArray());
+            .Select(d => Path.GetFileName(d)).ToArray());
     }
 
     [Fact]
