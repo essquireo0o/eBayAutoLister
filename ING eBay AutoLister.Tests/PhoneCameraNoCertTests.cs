@@ -99,6 +99,30 @@ public class PhoneCameraNoCertTests
     }
 
     [Fact]
+    public void The_camera_button_comes_before_any_mention_of_a_certificate()
+    {
+        // 2026-09-10. Version 2.6.3 moved the quick-camera link under the three Settings steps and
+        // shrank it to fine print, and the owner's report was "my phone stopped working - before it
+        // said use the camera, now it says save a certificate". On 2.6.2 the QR landed on the camera
+        // itself. So the untrusted phone's page is pinned: a full-size button to the camera first,
+        // the certificate download after it, and the status line naming the button, not the setup.
+        var trust = Between(Source, "private string TrustPageHtml", "// ── Why there is an authority here");
+        var setup = trust.IndexOf("<section id=\"setup\"", StringComparison.Ordinal);
+        Assert.True(setup >= 0, "the untrusted-phone section is gone from the start page");
+
+        var camera = trust.IndexOf("class=\"btn\" id=\"quick\" href=\"/c/{{_token}}\"", setup, StringComparison.Ordinal);
+        var download = trust.IndexOf("href=\"/trust.mobileconfig\"", setup, StringComparison.Ordinal);
+        Assert.True(camera > setup, "the camera is no longer a full-size button on the start page");
+        Assert.True(download > camera, "the certificate download comes before the camera button again");
+
+        // The button is a .btn — the gold full-width style the download used to have to itself —
+        // and the certificate steps are introduced as optional.
+        Assert.Contains("Optional: one-time setup for the live desktop view", trust, StringComparison.Ordinal);
+        Assert.Contains("title.textContent = 'Tap Take a photo now to use the camera';", trust, StringComparison.Ordinal);
+        Assert.DoesNotContain("Finish this once to open Live Studio", trust, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_primary_qr_prefers_live_camera_and_keeps_no_certificate_capture_one_tap_away()
     {
         Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,

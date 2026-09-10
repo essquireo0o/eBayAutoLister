@@ -1364,10 +1364,20 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
               <div class="check" id="check"><b id="check-title">Checking the secure camera…</b>
                 <span id="check-note">Keep this page open for a moment.</span></div>
               <section id="setup" class="hidden">
-              <h2>One-time setup for this iPhone</h2>
-              <p class="sub">Safari requires HTTPS before it will allow the camera. Apple does not let a
-                 downloaded local certificate become trusted silently, so these two Settings approvals
-                 are the only manual part.</p>
+              <!--
+                The camera button comes FIRST, full size, before any mention of a certificate. Version
+                2.6.3 moved this link under the Settings steps, and the owner's report was "my phone
+                stopped working - before it said use the camera, now it says save a certificate".
+                A seller holding an item does not read past a download button to find the camera.
+                The live studio setup is still here, below, for whoever wants the desktop viewfinder.
+              -->
+              <a class="btn" id="quick" href="/c/{{_token}}">Take a photo now &rsaquo;</a>
+              <p class="sub" style="font-size:14px;margin-bottom:26px">Opens this iPhone's own camera with no
+                 setup. Every photo lands on your computer; only the live desktop view and remote shutter are skipped.</p>
+              <h2>Optional: one-time setup for the live desktop view</h2>
+              <p class="sub">Safari requires HTTPS before it will stream the camera to your computer.
+                 Apple does not let a downloaded local certificate become trusted silently, so these
+                 two Settings approvals are the only manual part.</p>
               <ol>
                 <li><b>Download the profile.</b>
                     <a class="btn" href="/trust.mobileconfig">Download the certificate</a>
@@ -1391,9 +1401,6 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                  your own network (<code>{{LocalAddress()}}</code>). It is not a password, it grants
                  nothing on the internet, and you can remove it any time under
                  Settings &rsaquo; General &rsaquo; VPN &amp; Device Management.</p>
-              <p class="why"><b>Only need a quick photo?</b> <a href="/c/{{_token}}" style="color:#f0c453">Take a photo now</a>
-                 opens the iPhone camera without setup; only the live desktop view and remote shutter are skipped.
-                 Use Live Studio above when you are shooting from the computer.</p>
               </section>
               <script>
                 const CAMERA = {{System.Text.Json.JsonSerializer.Serialize(camera)}};
@@ -1404,8 +1411,8 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
                 let attempt = 0;
                 function showSetup() {
                   setup.classList.remove('hidden');
-                  title.textContent = 'Finish this once to open Live Studio';
-                  note.textContent = 'Live preview and the desktop Snap button require Safari to trust this computer.';
+                  title.textContent = 'Tap Take a photo now to use the camera';
+                  note.textContent = 'The live desktop view is optional and needs the one-time setup below it.';
                 }
                 function tryCamera() {
                   const mine = ++attempt;
