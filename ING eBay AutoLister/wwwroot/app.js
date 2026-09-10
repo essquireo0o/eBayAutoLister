@@ -1128,6 +1128,7 @@
     bindSniper();
     bindEarnings();
     bindTax();
+    bindStorePlan();
     bindPricePosition();
     bindPipeline();
     bindHomeButtons();
@@ -1215,7 +1216,13 @@
     // icon, which arrives as type 'navigate' — still lands on the dashboard, as asked in August.
     const navType = performance.getEntriesByType?.('navigation')?.[0]?.type || '';
     const refreshedPage = location.hash.slice(1);
-    if (refreshedPage && refreshedPage !== 'dashboard'
+    if (nlBulkPending()) {
+      // A catalog import was cut off by this reload (or by the tab closing). Whatever page this
+      // open would otherwise land on, the seller's work is on the AI page, so that is where it
+      // opens and where the import carries on from the item it stopped at. See nlBulkResume.
+      handleNav('ai');
+      nlBulkResume();
+    } else if (refreshedPage && refreshedPage !== 'dashboard'
         && (navType === 'reload' || navType === 'back_forward')
         && WORKSPACE_PAGES[refreshedPage]) {
       handleNav(refreshedPage);
@@ -1405,6 +1412,7 @@
     // Not refreshed on every return: the listing count behind it is an eBay round trip, and this
     // screen's answer moves on a scale of months, not minutes. "Recount my listings" is the button
     // that goes back to eBay, and it is in the header where the seller can see it.
+    storeplan:   { section: 'storeplan-section',     open: showStorePlanSection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
@@ -1818,7 +1826,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
@@ -10718,6 +10726,251 @@
     setText('tx-1099-figure', moneyExact(check.expectedGross || 0));
     const el = $('tx-1099');
     if (el) el.innerHTML = (check.notes || []).map(n => `<p>${esc(n)}</p>`).join('');
+  }
+
+  // ── The Store Plan ────────────────────────────────────────────────────────
+  // The third screen built on "what do you actually keep", and the only one whose answer is a single
+  // click on eBay that then pays every month for as long as the seller trades.
+  //
+  // Three rules, all of which are easy to "tidy" into their opposite:
+  //   * The hero is the ANNUAL saving. $17 a month reads as noise; $204 a year is what gets somebody
+  //     to open eBay's subscription page. The monthly figure is on the side, where it belongs.
+  //   * Every row prints its own arithmetic. The rate card lives in code and eBay changes it, so a
+  //     row a seller cannot check against eBay's fee page is a row they are right to distrust.
+  //   * This screen changes nothing on eBay, and says so on the screen rather than in a tooltip. It
+  //     is a recommendation about a subscription, and one that could start a $299/mo commitment on
+  //     its own should not exist.
+  let storePlan = null;
+  let storePlanRates = null;
+
+  function showStorePlanSection() {
+    hideOverlaySections();
+    $('storeplan-section')?.classList.remove('hidden');
+    setActiveNavItem('storeplan');
+    markWorkspaceTabOpen('storeplan');
+    if (!storePlan) loadStorePlan(); else renderStorePlan();
+  }
+
+  function closeStorePlanSection() { closeWorkspacePage('storeplan'); }
+
+  function bindStorePlan() {
+    on('sp-close', 'click', closeStorePlanSection);
+    on('sp-home', 'click', goHome);
+    on('sp-refresh', 'click', () => loadStorePlan());
+    on('sp-save', 'click', saveStorePlanSettings);
+
+    // The plan and the billing cycle are two-option choices; making the seller press Apply after
+    // picking one is a step with nothing in it. The listing box still needs Apply — re-costing on
+    // every keystroke of "1200" would flash three different answers on the way.
+    on('sp-plan', 'change', saveStorePlanSettings);
+    on('sp-billing', 'change', saveStorePlanSettings);
+    on('sp-listings', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveStorePlanSettings(); } });
+
+    on('sp-rates-toggle', 'click', () => {
+      const card = $('sp-rates-card'), btn = $('sp-rates-toggle');
+      if (!card || !btn) return;
+      const shown = !card.classList.toggle('hidden');
+      btn.textContent = shown ? 'Hide eBay\'s rate card' : 'Show eBay\'s rate card';
+      btn.setAttribute('aria-expanded', shown ? 'true' : 'false');
+      if (shown) loadStorePlanRates();
+    });
+  }
+
+  async function loadStorePlan() {
+    // The only path that asks eBay for the listing count. Everything else on this screen re-costs
+    // from the count already in hand, so changing a plan is instant and eBay is asked once.
+    try {
+      const res = await fetch('/api/store-plan');
+      if (!res.ok) throw new Error('Could not work out your store plan.');
+      storePlan = await res.json();
+      renderStorePlan();
+    } catch (err) {
+      setStorePlanNote(errorText(err, 'Could not work out your store plan.'), true);
+    }
+  }
+
+  async function loadStorePlanRates() {
+    if (storePlanRates) return;
+    try {
+      const res = await fetch('/api/store-plan/rates');
+      if (!res.ok) return;
+      storePlanRates = await res.json();
+      renderStorePlanRates();
+    } catch { /* the card is a cross-check, not the feature — a failed fetch stays quiet */ }
+  }
+
+  async function saveStorePlanSettings() {
+    const typed = num('sp-listings');
+    const body = {
+      planKey: $('sp-plan')?.value || 'none',
+      annualBilling: ($('sp-billing')?.value || 'annual') === 'annual',
+      // Zero and empty are the same gesture — "stop planning against a number I made up".
+      listingsOverride: typed !== null && typed > 0 ? Math.round(typed) : 0,
+      // What the screen already knows, so eBay is not asked again for a figure nothing changed.
+      // Null when eBay never answered: sending a 0 would have the server report a count it never
+      // measured as measured, and put the wrong footnote under the whole screen.
+      activeListings: storePlan?.listingCountMeasured ? (storePlan.activeListings ?? 0) : null,
+    };
+
+    try {
+      const res = await fetch('/api/store-plan/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text() || 'That could not be saved.');
+      storePlan = await res.json();
+      renderStorePlan();
+    } catch (err) {
+      setStorePlanNote(errorText(err, 'That could not be saved.'), true);
+    }
+  }
+
+  function setStorePlanNote(text, isError) {
+    const el = $('sp-controls-note');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('sp-note-error', !!isError);
+  }
+
+  function renderStorePlan() {
+    if (!storePlan) return;
+    const p = storePlan;
+    const known = p.listingsPerMonth > 0;
+
+    $('sp-results')?.classList.toggle('hidden', known);
+    $('sp-plans-card')?.classList.toggle('hidden', !known);
+    $('sp-detail')?.classList.toggle('hidden', !known);
+    $('sp-honesty')?.classList.toggle('hidden', !(p.honesty || []).length);
+
+    renderStorePlanControls(p);
+    renderStorePlanHero(p, known);
+
+    setText('sp-next', known ? (p.nextStep || '') : '');
+    const detail = $('sp-detail');
+    if (detail) detail.textContent = p.detail || '';
+
+    renderStorePlanBillingWin(p, known);
+
+    const honesty = $('sp-honesty');
+    if (honesty) honesty.innerHTML = (p.honesty || []).map(line => `<p>${esc(line)}</p>`).join('');
+
+    if (!known) { const host = $('sp-plans'); if (host) host.innerHTML = ''; return; }
+    renderStorePlanRows(p);
+  }
+
+  function renderStorePlanControls(p) {
+    const select = $('sp-plan');
+    if (select && !select.options.length) {
+      // Built from the options the server costed, so the picker can never offer a tier the
+      // comparison below does not have a row for.
+      select.innerHTML = (p.options || [])
+        .map(o => `<option value="${esc(o.key)}">${esc(o.name)}</option>`).join('');
+    }
+    if (select && document.activeElement !== select) select.value = p.currentPlanKey || 'none';
+
+    const billing = $('sp-billing');
+    if (billing && document.activeElement !== billing) billing.value = p.billingCycle || 'annual';
+
+    const listings = $('sp-listings');
+    if (listings && document.activeElement !== listings)
+      listings.value = p.usingOverride ? p.listingsPerMonth : '';
+
+    if (p.status === 'ebay_unavailable') {
+      setStorePlanNote('eBay could not be reached, so the listing count could not be read. '
+        + 'Type how many listings you keep live and everything on this screen works from that.', true);
+      return;
+    }
+
+    setStorePlanNote('Nothing here changes anything on eBay. Switching plans is done on eBay\'s own '
+      + 'Store page — this only tells you which one to be on.', false);
+  }
+
+  function renderStorePlanHero(p, known) {
+    const worth = p.totalAnnualSaving || 0;
+
+    setText('sp-hero-label', worth > 0 ? 'Worth switching, over a year' : 'You are on the right plan');
+    setText('sp-hero-figure', moneyExact(worth));
+    setText('sp-hero-sub', p.headline || '');
+    setText('sp-hero-listings', known ? p.listingsPerMonth.toLocaleString() : '—');
+    setText('sp-hero-now', known ? `${moneyExact(p.currentMonthlyCost || 0)}/mo` : '—');
+    setText('sp-hero-best', known ? p.bestPlanName || '—' : '—');
+
+    // Gold when there is money on the table, plain when there is not. A hero that always looks
+    // urgent is one a seller stops reading.
+    $('storeplan-section')?.querySelector('.sp-hero')?.classList.toggle('sp-hero-win', worth > 0);
+  }
+
+  function renderStorePlanBillingWin(p, known) {
+    const el = $('sp-billing-win');
+    if (!el) return;
+    const show = known && (p.billingMonthlySaving || 0) > 0 && !!p.billingNote;
+    el.classList.toggle('hidden', !show);
+    if (show) el.textContent = p.billingNote;
+  }
+
+  function renderStorePlanRows(p) {
+    const host = $('sp-plans');
+    if (!host) return;
+
+    host.innerHTML = (p.options || []).map(o => {
+      const tags = [
+        o.isCurrent ? '<span class="sp-tag sp-tag-current">You are here</span>' : '',
+        o.isBest ? '<span class="sp-tag sp-tag-best">Cheapest for you</span>' : '',
+        o.annualBillingOnly ? '<span class="sp-tag sp-tag-note">Annual only</span>' : '',
+      ].join('');
+
+      // The delta is the number the seller acts on, so it is signed and stated in plain words
+      // rather than left as a bare figure they have to work out the direction of.
+      const delta = o.isCurrent
+        ? '<span class="sp-delta sp-delta-flat">what you pay today</span>'
+        : (o.monthlyDelta < 0
+          ? `<span class="sp-delta sp-delta-down">${moneyExact(Math.abs(o.monthlyDelta))} a month less</span>`
+          : (o.monthlyDelta > 0
+            ? `<span class="sp-delta sp-delta-up">${moneyExact(o.monthlyDelta)} a month more</span>`
+            : '<span class="sp-delta sp-delta-flat">the same as today</span>'));
+
+      return `
+        <div class="sp-plan${o.isCurrent ? ' is-current' : ''}${o.isBest ? ' is-best' : ''}">
+          <div class="sp-plan-head">
+            <span class="sp-plan-name">${esc(o.name)}</span>
+            ${tags}
+          </div>
+          <div class="sp-plan-cost">${moneyExact(o.monthlyCost)}<span class="sp-plan-per">/mo</span></div>
+          <div class="sp-plan-year">${moneyExact(o.annualCost)} a year</div>
+          ${delta}
+          <p class="sp-basis">${esc(o.basis)}</p>
+          <p class="sp-band">${esc(storePlanBand(o))}</p>
+          <p class="sp-unlocks">${esc(o.unlocks)}</p>
+        </div>`;
+    }).join('');
+  }
+
+  // The band is the half of this screen that keeps working after the switch: it says where the next
+  // change lands, so a seller grows into a new tier on purpose rather than finding it in a statement.
+  function storePlanBand(o) {
+    if (o.neverCheapest)
+      return 'Never the cheapest plan at any listing count — something else always beats it.';
+    if (o.cheapestTo === null || o.cheapestTo === undefined)
+      return `Cheapest from ${o.cheapestFrom.toLocaleString()} listings up, with nothing above it.`;
+    return `Cheapest between ${o.cheapestFrom.toLocaleString()} and ${o.cheapestTo.toLocaleString()} listings.`;
+  }
+
+  function renderStorePlanRates() {
+    const host = $('sp-rates');
+    if (!host || !storePlanRates) return;
+
+    host.innerHTML = (storePlanRates.tiers || []).map(t => `
+      <div class="sp-rate">
+        <span class="sp-rate-name">${esc(t.name)}</span>
+        <span class="sp-rate-cell">${t.annualBilling > 0 ? `${moneyExact(t.annualBilling)}/mo billed annually` : 'free'}</span>
+        <span class="sp-rate-cell">${t.monthlyBilling === null || t.monthlyBilling === undefined
+          ? 'annual commitment only'
+          : (t.monthlyBilling > 0 ? `${moneyExact(t.monthlyBilling)}/mo billed monthly` : 'free')}</span>
+        <span class="sp-rate-cell">${t.freeListings.toLocaleString()} free listings a month</span>
+        <span class="sp-rate-cell">${moneyExact(t.insertionFeeAfter)} each after that</span>
+      </div>`).join('')
+      + `<p class="sp-rates-note">${esc(storePlanRates.note || '')}</p>`;
   }
 
   // ── Price Position ────────────────────────────────────────────────────────
@@ -23670,7 +23923,7 @@
 
     // Global paste — load image when clipboard contains an image
     // Only skip if focus is in a text-entry field that legitimately consumes text paste
-    const TEXT_PASTE_IDS = new Set(['nl-title','nl-description','nl-desc-text','nl-ai-modify-input','nl-url-input','nl-bulk-input']);
+    const TEXT_PASTE_IDS = new Set(['nl-title','nl-description','nl-desc-text','nl-ai-modify-input','nl-url-input','nl-bulk-url-input']);
     document.addEventListener('paste', e => {
       const imageItem = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
       if (!imageItem) return;
@@ -23728,6 +23981,7 @@
     on('nl-sold-comps-connect-btn', 'click', nlSoldCompsConnect);
     on('nl-bulk-go', 'click', nlBulkImport);
     on('nl-bulk-url-input', 'keydown', e => { if (e.key === 'Enter') nlBulkImport(); });
+    bindNlBulkFileImport();
     on('nl-ai-modify-go', 'click', nlAiModify);
     on('nl-ai-modify-input', 'keydown', e => { if (e.key === 'Enter') nlAiModify(); });
 
@@ -23875,6 +24129,7 @@
       ['nl-secondary-category-id', ''], ['nl-condition', 'USED_EXCELLENT'], ['nl-condition-desc', ''],
       ['nl-brand', ''], ['nl-mpn', ''], ['nl-upc', ''], ['nl-ean', ''], ['nl-isbn', ''],
       ['nl-description', ''], ['nl-price', ''], ['nl-quantity', '1'], ['nl-qty-limit', ''],
+      ['nl-unit-cost', ''], ['nl-ship-cost', ''], ['nl-buyer-shipping', ''],
       ['nl-auto-accept', ''], ['nl-auto-decline', ''], ['nl-package-type', 'PACKAGE_THICK_ENVELOPE'],
       ['nl-handling-time', '1'], ['nl-weight-lbs', '0'], ['nl-weight-oz', '0'],
       ['nl-length', ''], ['nl-width', ''], ['nl-height', ''], ['nl-location-zip', ''],
@@ -24127,87 +24382,244 @@
     }
   }
 
+  let nlBulkFile = null;
+  const NL_BULK_FILE_LIMIT = 20 * 1024 * 1024;
+
+  function nlBulkAcceptsFile(file) {
+    const mime = (file?.type || '').toLowerCase();
+    const name = file?.name || '';
+    return mime === 'application/pdf' || mime.startsWith('image/') || /\.(pdf|jpe?g|png|webp|gif)$/i.test(name);
+  }
+
+  function nlBulkClipboardFile(data) {
+    const direct = [...(data?.files || [])]
+      .find(nlBulkAcceptsFile);
+    if (direct) return direct;
+    return [...(data?.items || [])]
+      .filter(i => i.kind === 'file')
+      .map(i => i.getAsFile())
+      .find(nlBulkAcceptsFile) || null;
+  }
+
+  function nlBulkClearFile() {
+    nlBulkFile = null;
+    const picker = $('nl-bulk-file-input');
+    const status = $('nl-bulk-file-status');
+    if (picker) picker.value = '';
+    if (status) {
+      status.textContent = 'You can also drop a file here or paste it with Ctrl+V.';
+      status.classList.remove('has-file');
+    }
+    $('nl-bulk-file-clear')?.classList.add('hidden');
+  }
+
+  function nlBulkLoadFile(file) {
+    const mime = (file?.type || '').toLowerCase();
+    const name = file?.name || (mime === 'application/pdf' ? 'Pasted catalog.pdf' : 'Pasted catalog image');
+    if (!file || !nlBulkAcceptsFile(file)) {
+      toast('Choose a JPG, PNG, WEBP, GIF, or PDF file.', { kind: 'warning', title: 'File not supported' });
+      return;
+    }
+    if (file.size > NL_BULK_FILE_LIMIT) {
+      toast('Choose a picture or PDF smaller than 20 MB.', { kind: 'warning', title: 'File is too large' });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = String(ev.target?.result || '');
+      const base64 = dataUrl.split(',')[1] || '';
+      if (!base64) return;
+      nlBulkFile = { base64, mimeType: mime === 'application/pdf' || /\.pdf$/i.test(name) ? 'application/pdf' : (mime || 'image/png'), name };
+      if ($('nl-bulk-url-input')) $('nl-bulk-url-input').value = '';
+      const status = $('nl-bulk-file-status');
+      if (status) { status.textContent = `Ready: ${name}`; status.classList.add('has-file'); }
+      $('nl-bulk-file-clear')?.classList.remove('hidden');
+      addActivity('Catalog file ready', name);
+      // Choosing or pasting the file IS the import action. Requiring a second, unrelated click on
+      // Import All left a perfectly valid file parked at “Ready” with one blank New Draft tab.
+      setTimeout(() => nlBulkImport(), 0);
+    };
+    reader.onerror = () => toastErr('Windows could not read that file. Choose it again.', { title: 'File could not be opened' });
+    reader.readAsDataURL(file);
+  }
+
+  function bindNlBulkFileImport() {
+    const zone = $('nl-bulk-drop-zone');
+    const input = $('nl-bulk-url-input');
+    const picker = $('nl-bulk-file-input');
+
+    on('nl-bulk-file-btn', 'click', () => picker?.click());
+    on('nl-bulk-file-clear', 'click', nlBulkClearFile);
+    picker?.addEventListener('change', () => { if (picker.files?.[0]) nlBulkLoadFile(picker.files[0]); });
+
+    // Clipboard files are consumed here before the document-level photo listener can route the
+    // same paste into the single-product photo box.
+    input?.addEventListener('paste', e => {
+      const file = nlBulkClipboardFile(e.clipboardData);
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      nlBulkLoadFile(file);
+    });
+    input?.addEventListener('input', () => { if (input.value.trim() && nlBulkFile) nlBulkClearFile(); });
+
+    zone?.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone?.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over'); });
+    zone?.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = [...(e.dataTransfer?.files || [])]
+        .find(nlBulkAcceptsFile);
+      if (file) nlBulkLoadFile(file);
+    });
+  }
+
   async function nlBulkImport() {
     const input = $('nl-bulk-url-input');
     const btn   = $('nl-bulk-go');
-    const url   = input?.value.trim();
-    if (!url || !url.startsWith('http')) return;
+    const url   = input?.value.trim() || '';
+    const file  = nlBulkFile;
+    if (!file && !/^https?:\/\//i.test(url)) {
+      toast('Paste a catalog URL, picture, or PDF first.', { kind: 'warning', title: 'Nothing to import' });
+      input?.focus();
+      return;
+    }
 
-    if (btn) { btn.disabled = true; btn.textContent = 'Clearing old drafts…'; }
-
-    // Always wipe old drafts and tabs before importing a new collection
-    await clearAllSavedDrafts();
-    draftTabs = [];
-    activeDraftTabId = null;
-    const blankTab = newDraftTab();
-    activeDraftTabId = blankTab.id;
-    nlClearAll();
-    renderDraftTabs();
-
-    if (btn) { btn.textContent = 'Scanning…'; }
+    if (btn) { btn.disabled = true; btn.textContent = file ? 'Reading file…' : 'Scanning page…'; }
 
     try {
-      const res2 = await fetch('/api/bulk-import/extract-links', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
-      if (!res2.ok) throw new Error('Could not extract product links from that page');
-      const { links } = await res2.json();
-      if (!links?.length) throw new Error('No product links found on that page');
+      let work = [];
+      if (file) {
+        const { ok, data, failure } = await callApi('/api/bulk-import/extract-products', {
+          method: 'POST', body: { imageBase64: file.base64, mimeType: file.mimeType }, timeoutMs: AI_TIMEOUT_MS,
+        });
+        if (!ok) throw new Error(failure?.whatToDo || failure?.headline || 'The catalog file could not be read.');
+        work = (data.products || [])
+          .map(p => ({
+            kind: 'name',
+            value: p.searchQuery || p.productName,
+            unitCost: Number(p.wholesaleCostUsd) > 0 ? Number(p.wholesaleCostUsd) : null,
+          }))
+          .filter(item => item.value);
+        if (!work.length) throw new Error('No products could be identified in that picture or PDF.');
+      } else {
+        const { ok, data, failure } = await callApi('/api/bulk-import/extract-links', {
+          method: 'POST', body: { url },
+        });
+        if (!ok) throw new Error(failure?.whatToDo || failure?.headline || 'Could not extract product links from that page.');
+        work = (data.links || []).map(productUrl => ({ kind: 'url', value: productUrl }));
+        if (!work.length) throw new Error('No product links were found on that page.');
+      }
 
-      addActivity(`Bulk import started`, `Found ${links.length} products on page`);
-      if (btn) btn.textContent = `Importing 0 / ${links.length}…`;
+      if (btn) btn.textContent = 'Clearing old drafts…';
+      await clearAllSavedDrafts();
+      draftTabs = [];
+      activeDraftTabId = null;
+      const blankTab = newDraftTab();
+      activeDraftTabId = blankTab.id;
+      nlClearAll();
+      renderDraftTabs();
 
-      let done = 0;
-      for (const productUrl of links) {
+      const source = file ? file.name : 'catalog page';
+      addActivity('Bulk import started', `Found ${work.length} product${work.length === 1 ? '' : 's'} in ${source}`);
+
+      // From here on the job is on disk, not just in this tab. See nlBulkRun.
+      const job = { work, next: 0, done: 0, source, startedAt: Date.now() };
+      nlBulkJobWrite(job);
+      await nlBulkRun(job);
+    } catch (e) {
+      toastErr(errorText(e, 'Unknown error.'), { title: 'Bulk import failed' });
+      if (btn) { btn.disabled = false; btn.textContent = 'Import All'; }
+    }
+  }
+
+  // ── The import survives a refresh ─────────────────────────────────────────────
+  //
+  // This loop used to exist only inside nlBulkImport, in this tab: F5, a closed tab or a browser
+  // crash ended it in the middle of a catalog, and the seller came back to an AI page with no sign
+  // it had ever been running (2026-09-10, mid-catalog: "when it does the task you were doing
+  // ends"). The catalog was read once, so nothing on the server knew there was more to do.
+  //
+  // So the work list and the position in it are written to localStorage before the first item
+  // and after every item. On load, a job with items left is picked up on the AI page, from the
+  // item it stopped at, without reading the catalog again and without clearing the drafts that
+  // were already saved — those are the part that worked. An item that was mid-request when the
+  // page went away is simply run again; its draft had not been saved yet, so nothing doubles.
+  const NL_BULK_JOB_KEY = 'nlBulkJob';
+  const NL_BULK_JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;   // a catalog from last week is not "in progress"
+
+  function nlBulkJobRead() {
+    try {
+      const job = JSON.parse(localStorage.getItem(NL_BULK_JOB_KEY) || 'null');
+      return job && Array.isArray(job.work) && job.work.length && Number.isInteger(job.next) ? job : null;
+    } catch { return null; }
+  }
+  function nlBulkJobWrite(job) { try { localStorage.setItem(NL_BULK_JOB_KEY, JSON.stringify(job)); } catch { /* private mode: the tab still finishes */ } }
+  function nlBulkJobClear() { try { localStorage.removeItem(NL_BULK_JOB_KEY); } catch { } }
+
+  // The cut-off job with items still to do, or null. Stale ones are dropped here, not resumed.
+  function nlBulkPending() {
+    const job = nlBulkJobRead();
+    if (!job) return null;
+    if (job.next >= job.work.length || Date.now() - (job.startedAt || 0) > NL_BULK_JOB_MAX_AGE_MS) { nlBulkJobClear(); return null; }
+    return job;
+  }
+
+  async function nlBulkResume() {
+    const job = nlBulkPending();
+    if (!job) return;
+    addActivity('Bulk import resumed', `${job.done} of ${job.work.length} from ${job.source} were saved before the page reloaded — continuing`);
+    toast(`${job.done} of ${job.work.length} were done when the page reloaded. Carrying on from there.`, { title: 'Bulk import resumed' });
+    await nlBulkRun(job);
+  }
+
+  async function nlBulkRun(job) {
+    const btn = $('nl-bulk-go');
+    if (btn) { btn.disabled = true; btn.textContent = `Importing ${job.done} / ${job.work.length}…`; }
+    try {
+      const work = job.work;
+      // The position is written after every item, success or not, so a reload lands on the next
+      // one. The item being worked on when the tab went away is the one that runs again.
+      for (; job.next < work.length; job.next++, nlBulkJobWrite(job)) {
+        const item = work[job.next];
         try {
-          const r = await fetch('/api/analyze-url', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: productUrl })
-          });
-          if (!r.ok) continue;
-          const data = await r.json();
+          const endpoint = item.kind === 'url' ? '/api/analyze-url' : '/api/quick-fill';
+          const body = item.kind === 'url' ? { url: item.value } : { itemName: item.value };
+          const { ok, data } = await callApi(endpoint, { method: 'POST', body, timeoutMs: AI_TIMEOUT_MS });
+          if (!ok || !data) continue;
 
-          // Image code — same as single-URL browser
           let imageUrls = data.imageUrls || [];
           const firstImgUrl = imageUrls.find(u => u && (u.startsWith('http') || u.startsWith('/')));
-          if (firstImgUrl && firstImgUrl.startsWith('http')) {
-            try {
-              const fr = await fetch('/api/photos/fetch-url', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: firstImgUrl })
-              });
-              if (fr.ok) {
-                const { url: localUrl } = await fr.json();
-                imageUrls = [window.location.origin + localUrl, ...imageUrls.filter(u => u !== firstImgUrl)];
-              }
-            } catch { /* non-fatal */ }
-          } else if (firstImgUrl && firstImgUrl.startsWith('/')) {
+          if (firstImgUrl?.startsWith('http')) {
+            const fetched = await callApi('/api/photos/fetch-url', { method: 'POST', body: { url: firstImgUrl } });
+            if (fetched.ok && fetched.data?.url)
+              imageUrls = [window.location.origin + fetched.data.url, ...imageUrls.filter(u => u !== firstImgUrl)];
+          } else if (firstImgUrl?.startsWith('/')) {
             imageUrls = [window.location.origin + firstImgUrl, ...imageUrls.filter(u => u !== firstImgUrl)];
           }
 
-          // Save as draft
           const draft = {
-            title: data.title || productUrl,
-            data: { ...data, imageUrls, listingFormat: 'FIXED_PRICE', durationDays: 30,
+            title: data.title || item.value,
+            data: { ...data, imageUrls, unitCost: item.unitCost, listingFormat: 'FIXED_PRICE', durationDays: 30,
                     fulfillmentPolicyId: '236920894018', bestOfferEnabled: true,
-                    itemLocationCountry: data.itemLocationCountry || 'CN',
-                    weightLbs: data.weightLbs || 32 },
+                    itemLocationCountry: data.itemLocationCountry || 'CN', weightLbs: data.weightLbs || 32 },
             visualDescription: data.visualDescription || ''
           };
-          await fetch('/api/local-drafts/save', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(draft)
-          });
-          done++;
-          if (btn) btn.textContent = `Importing ${done} / ${links.length}…`;
-          addActivity('Draft saved', data.title || productUrl);
-        } catch { /* skip failed product */ }
+          const saved = await callApi('/api/local-drafts/save', { method: 'POST', body: draft });
+          if (!saved.ok) continue;
+          job.done++;
+          if (btn) btn.textContent = `Importing ${job.done} / ${work.length}…`;
+          addActivity('Draft saved', data.title || item.value);
+        } catch { /* one unreadable product must not discard the rest of the catalog */ }
       }
 
-      addActivity(`Bulk import complete`, `${done} of ${links.length} saved as drafts — opening all as tabs`);
+      nlBulkJobClear();
+      if (!job.done) throw new Error('The products were found, but no listing drafts could be generated.');
+      addActivity('Bulk import complete', `${job.done} of ${work.length} saved as drafts — opening all as tabs`);
       await loadAllDraftsAsTabs();
     } catch (e) {
+      nlBulkJobClear();
       toastErr(errorText(e, 'Unknown error.'), { title: 'Bulk import failed' });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Import All'; }
@@ -24998,6 +25410,9 @@
     set('nl-price', d.price || '');
     set('nl-quantity', d.quantity || 1);
     set('nl-qty-limit', d.quantityLimitPerBuyer || '');
+    if (Object.hasOwn(d, 'unitCost')) set('nl-unit-cost', d.unitCost ?? '');
+    if (Object.hasOwn(d, 'shipCost')) set('nl-ship-cost', d.shipCost ?? '');
+    if (Object.hasOwn(d, 'buyerShipping')) set('nl-buyer-shipping', d.buyerShipping ?? '');
     set('nl-package-type', d.packageType || 'PACKAGE_THICK_ENVELOPE');
     set('nl-weight-lbs', d.weightLbs || 0);
     set('nl-weight-oz', d.weightOz || 0);
@@ -25069,6 +25484,9 @@
       price: parseFloat($('nl-price')?.value) || 0,
       quantity: parseInt($('nl-quantity')?.value, 10) || 1,
       quantityLimitPerBuyer: parseInt($('nl-qty-limit')?.value, 10) || null,
+      unitCost: $('nl-unit-cost')?.value === '' ? null : thNum('nl-unit-cost'),
+      shipCost: $('nl-ship-cost')?.value === '' ? null : thNum('nl-ship-cost'),
+      buyerShipping: $('nl-buyer-shipping')?.value === '' ? null : thNum('nl-buyer-shipping'),
       bestOfferEnabled: $('nl-best-offer')?.checked || false,
       autoAcceptPrice: $('nl-best-offer')?.checked ? parseFloat($('nl-auto-accept')?.value) || null : null,
       autoDeclinePrice: $('nl-best-offer')?.checked ? parseFloat($('nl-auto-decline')?.value) || null : null,
