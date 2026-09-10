@@ -27,10 +27,13 @@ public class InstallerCloseAppTests
     public void The_app_is_stopped_before_the_old_version_is_removed()
     {
         // RemoveExistingProducts runs the OLD product's uninstall; against a live exe that uninstall
-        // queues a delete-on-reboot of the path the NEW exe is about to occupy. The default place the
-        // extension puts this step (just before InstallFiles) is too late.
-        Assert.Contains(@"<Custom Action=""override Wix4CloseApplications_X64"" Before=""RemoveExistingProducts""", Wxs);
-        Assert.Contains(@"Schedule=""afterInstallInitialize""", Slice(Wxs, "<MajorUpgrade", "/>"));
+        // queues a delete-on-reboot of the path the NEW exe is about to occupy. The close step is
+        // deferred (it must be, to terminate), Windows Installer refuses RemoveExistingProducts after
+        // a deferred action anywhere before InstallExecute (error 2613), so the removal goes after
+        // InstallExecute. Rescheduling the close step ahead of the removal is the tempting fix that
+        // produces 2613; leave the extension's default slot alone.
+        Assert.Contains(@"Schedule=""afterInstallExecute""", Slice(Wxs, "<MajorUpgrade", "/>"));
+        Assert.DoesNotContain("override Wix4CloseApplications", Wxs);
     }
 
     [Fact]

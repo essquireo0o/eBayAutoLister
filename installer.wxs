@@ -22,16 +22,18 @@
            Scope="perMachine">
 
     <!--
-      afterInstallInitialize, not the default afterInstallValidate, for two reasons. The old
-      version is then removed INSIDE the install transaction, so a failed upgrade rolls the old
-      one back instead of leaving the machine with nothing. And it puts RemoveExistingProducts
-      after InstallInitialize, which is the earliest point a deferred action can run — the
-      running app has to be stopped (CloseRunningApp, below) BEFORE the old product's uninstall
-      tries to delete its exe, or that uninstall queues the locked file for deletion at the next
-      reboot and the reboot then deletes the NEW exe sitting at the same path.
+      afterInstallExecute, not the default afterInstallValidate. The running app has to be stopped
+      (CloseRunningApp, below) BEFORE the old version's uninstall tries to delete its exe, or that
+      uninstall queues the locked file for deletion at the next reboot and the reboot then deletes
+      the NEW exe sitting at the same path. Stopping it is a deferred action, and Windows Installer
+      refuses (error 2613, seen 2026-09-10) to run RemoveExistingProducts after any deferred action
+      unless it comes after InstallExecute — so the new files go in first, the old product is
+      removed after, and MSI's component reference counting keeps the shared files. The removal is
+      inside the transaction, so a failed upgrade rolls the old version back rather than leaving
+      the machine with nothing.
     -->
     <MajorUpgrade DowngradeErrorMessage="A newer version of ING AutoLister is already installed."
-                  Schedule="afterInstallInitialize" />
+                  Schedule="afterInstallExecute" />
 
     <!--
       Windows Installer's Restart Manager is switched off for this package. The app is a tray
@@ -54,6 +56,10 @@
       quiet). The SQLite database is journaled, so a hard stop costs nothing but the
       seller's tray icon, which the finish screen brings straight back.
       RebootPrompt="no": the whole point is that no reboot is ever needed.
+
+      The Util extension sequences this just before InstallFiles, which is exactly where it is
+      needed: after InstallInitialize (a deferred action cannot run earlier) and before both the
+      new files and, with the MajorUpgrade schedule above, the old version's removal.
     -->
     <util:CloseApplication Id="CloseRunningApp"
                            Target="AutoListerB1.exe"
@@ -270,14 +276,6 @@
       timing out on the one page that exists to stop phones timing out.
     -->
 <InstallExecuteSequence>
-      <!--
-        The Util extension puts its close-applications step just before InstallFiles, which is
-        AFTER RemoveExistingProducts has already run the old version's uninstall against a
-        still-running exe. Pull it forward so the app is gone before anything touches its files.
-        (Its deferred half, the one that actually terminates the process, is scheduled at run
-        time straight after this immediate action, so moving this row moves both.)
-      -->
-      <Custom Action="override Wix4CloseApplications_X64" Before="RemoveExistingProducts" Condition="VersionNT &gt; 400" />
       <Custom Action="ReservePort9332" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="UnreservePort9332" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
