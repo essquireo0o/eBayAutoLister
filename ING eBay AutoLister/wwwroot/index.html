@@ -274,7 +274,11 @@
              is intentionally not presented as a separate customer-facing workflow. -->
         <button class="nav-item wn-desk" type="button" data-page="photobox"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo → eBay Listing</button>
         <button class="nav-item" type="button" data-page="ebay"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing eBay</button>
-        <button class="nav-item" type="button" data-page="amazon"><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing Amazon</button>
+        <!-- Hidden 2026-09-10 at the owner's request: Amazon is not connected (the sandbox serves
+             canned data and production is blocked on credentials), so a door to it only confuses.
+             Everything behind it stays wired; remove `hidden` here and on the .nl-market switch
+             in the listing editor to bring it back. -->
+        <button class="nav-item" type="button" data-page="amazon" hidden><svg class="nav-icon" aria-hidden="true"><use href="#i-ai"/></svg>AI Listing Amazon</button>
         <button class="nav-item" type="button" data-page="photos"><svg class="nav-icon" aria-hidden="true"><use href="#i-photos"/></svg>Photo Library</button>
         <!-- What is live now, and the tool that improves it. Daily, but only after something has
              been listed — so directly under the listing loop rather than inside it. -->
@@ -1381,7 +1385,11 @@
                  button beside it, and touches nothing in the form — the fields the AI filled
                  are the same fields either way, which is the whole reason this is a switch
                  and not a second screen. -->
-            <div class="nl-market" role="group" aria-label="Where to send this listing">
+            <!-- Hidden 2026-09-10 with the Amazon sidebar door above: with one destination there
+                 is nothing to switch, and the eBay chip alone was one more thing to read. The
+                 switch, the Amazon panel and its submit button are all still here for the day
+                 Amazon is connected; the market stays eBay while this is hidden. -->
+            <div class="nl-market" role="group" aria-label="Where to send this listing" hidden>
               <span class="nl-market-label">Send to</span>
               <button type="button" id="nl-market-ebay" class="nl-market-tab is-active" aria-pressed="true">
                 <span class="nl-market-name">eBay</span>
