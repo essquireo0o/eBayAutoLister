@@ -17,7 +17,7 @@
 
   <Package Name="ING AutoLister"
            Manufacturer="ING Mining LLC"
-           Version="2.6.5.0"
+           Version="2.6.6.0"
            UpgradeCode="{7A8F9B2C-3D4E-5F60-A1B2-C3D4E5F6A7B8}"
            Scope="perMachine">
 
