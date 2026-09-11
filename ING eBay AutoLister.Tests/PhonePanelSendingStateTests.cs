@@ -69,7 +69,7 @@ public class PhonePanelSendingStateTests
         var elseBranch = Slice(Js, "const rail = st.phoneSending", "async function pbPhoneRefresh");
         Assert.DoesNotContain("removeAttribute('disabled')", elseBranch, StringComparison.Ordinal);
         // And it explains itself rather than leaving two grey buttons to be interpreted.
-        Assert.Contains("need the one-time iPhone setup", elseBranch, StringComparison.Ordinal);
+        Assert.Contains("Take photos on the phone", elseBranch, StringComparison.Ordinal);
     }
 
     [Fact]

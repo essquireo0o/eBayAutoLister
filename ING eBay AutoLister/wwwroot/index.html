@@ -3028,8 +3028,8 @@
                       <circle cx="12" cy="13.5" r="3.4"/>
                     </svg>
                     <p class="pb-empty-title">Your next listing starts here</p>
-                    <p class="pb-empty-line" id="pb-empty-line">Connect your phone to see a live preview. Position your item, then capture.</p>
-                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">Connect phone</button>
+                    <p class="pb-empty-line" id="pb-empty-line">Use your iPhone camera, take the photo, and it appears here automatically.</p>
+                    <button id="pb-phone-stage" class="btn btn-primary pb-empty-btn" type="button">Use iPhone camera</button>
                   </div>
                 </div>
               </div>
@@ -3228,54 +3228,24 @@
                   <span class="pb-connect-dot" id="pb-connect-dot" aria-hidden="true"></span>
                   <div>
                     <span class="pb-card-eyebrow">Camera connection</span>
-                    <div id="pb-cam-status" class="pb-rail-status">No camera yet.</div>
+                    <div id="pb-cam-status" class="pb-rail-status">Ready for iPhone photos.</div>
                   </div>
                 </div>
-                <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Start live camera</button>
+                <button id="pb-phone" class="btn btn-primary pb-rail-btn" type="button">📱 Use iPhone camera</button>
                 <div id="pb-phone-panel" class="pb-phone-panel hidden">
                   <div class="pb-phone-qr" id="pb-phone-qr"></div>
                   <div class="pb-phone-words">
-                    <h3>Scan for the live studio</h3>
+                    <h3>Scan to take photos</h3>
                     <ol>
                       <li>Point the iPhone camera at this code and open the link.</li>
-                      <li>If this phone was set up before, its camera opens automatically and the live
-                          picture appears in the large viewfinder on this page.</li>
-                      <li>Leave the phone camera open. Frame the product here, then press <b>Snap</b>
-                          on either the computer or the phone.</li>
+                      <li>Tap <b>Take a photo</b>. Your iPhone opens its normal rear camera.</li>
+                      <li>Shoot as many photos as you need. Each one appears in the photo strip on
+                          this computer automatically.</li>
                     </ol>
-                    <p class="pb-plan-note"><b>First time on this iPhone?</b> The phone page opens with a
-                      big <b>Take a photo now</b> button: tap it and shoot, every photo lands here, no
-                      setup. Below that button is the optional one-time Safari approval that unlocks
-                      the live view on this screen and the desktop Snap button.</p>
+                    <p class="pb-plan-note"><b>No certificate and no setup.</b> Keep the phone page open
+                      while photographing the item. You can also choose pictures already in Photos.</p>
                     <div class="pb-phone-link" id="pb-phone-url"></div>
                     <div class="pb-phone-state" id="pb-phone-state">Waiting for the phone…</div>
-
-                    <!-- The main QR attempts this live path first. These explicit steps remain here
-                         because iOS never permits a local camera certificate to be trusted silently. -->
-                    <section class="pb-phone-trust" id="pb-phone-trust">
-                      <h4 class="pb-phone-trust-head">📱 First time? Unlock the live camera once</h4>
-                      <p class="pb-phone-trust-why">
-                        This enables the smooth viewfinder on this screen and the 📸 Snap button. Safari
-                        will not run a live camera on a
-                        certificate this computer made for itself and will not let you tap past it, so
-                        these three steps are the way in. About a minute, once per phone.
-                      </p>
-                      <div class="pb-phone-trust-body">
-                        <div class="pb-phone-qr" id="pb-trust-qr"></div>
-                        <ol>
-                          <li>Scan this second code and tap <b>Download the certificate</b>.</li>
-                          <li>Open <b>Settings</b> — <b>Profile Downloaded</b> is near the top.
-                              Tap <b>Install</b> and enter your passcode.</li>
-                          <li class="pb-phone-trust-last"><b>Settings &rsaquo; General &rsaquo; About
-                              &rsaquo; Certificate Trust Settings</b>, and switch on
-                              <b>ING Photo Box camera authority</b>.
-                              <span class="pb-phone-trust-note">This is the step people miss, and it is
-                              the one that actually turns the camera on. iPhones make you do it by hand:
-                              no installer on this computer is allowed to do it for you.</span></li>
-                        </ol>
-                        <div class="pb-phone-link" id="pb-trust-url"></div>
-                      </div>
-                    </section>
                   </div>
                 </div>
               </div>
@@ -6218,7 +6188,7 @@
 
   <!-- Trial paywall removed -->
 
-  <script src="app.js?v=171"></script>
+  <script src="app.js?v=172"></script>
   <script src="photobox-ux.js?v=2"></script>
 </body>
 </html>

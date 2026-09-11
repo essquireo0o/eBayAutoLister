@@ -70,16 +70,16 @@ public class PhoneTrustRefusedTests
     }
 
     [Fact]
-    public void The_desk_names_the_three_taps_instead_of_saying_no_camera_yet()
+    public void The_default_desk_flow_does_not_send_the_seller_back_to_certificate_setup()
     {
-        var state = Between(Js, "const trustSteps = ", "state.className = 'pb-phone-state");
-        Assert.Contains("st.secureRefused", state, StringComparison.Ordinal);
-        Assert.Contains("VPN & Device Management", state, StringComparison.Ordinal);
-        Assert.Contains("Certificate Trust Settings", state, StringComparison.Ordinal);
-        Assert.Contains("${trustSteps}", state, StringComparison.Ordinal);
+        var state = Between(Js, "state.textContent = st.phoneConnected", "state.className = 'pb-phone-state");
+        Assert.Contains("Take photos on the phone", state, StringComparison.Ordinal);
+        Assert.Contains("No certificate is required", state, StringComparison.Ordinal);
+        Assert.DoesNotContain("Certificate Trust Settings", state, StringComparison.Ordinal);
 
-        var rail = Between(Js, "const rail = st.phoneSending", "pbNoCamera(st.phoneSending");
-        Assert.Contains("certificate not trusted yet", rail, StringComparison.Ordinal);
+        var rail = Between(Js, "const rail = st.phoneSending", "async function pbPhoneRefresh");
+        Assert.Contains("iPhone camera ready", rail, StringComparison.Ordinal);
+        Assert.DoesNotContain("certificate not trusted", rail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

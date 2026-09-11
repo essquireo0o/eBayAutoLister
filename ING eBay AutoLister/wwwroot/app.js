@@ -7593,18 +7593,18 @@
 
     if (!st || !st.running) {
       panel.classList.add('hidden');
-      pbBtnLabel('pb-phone', '📱 Start live camera');
-      pbBtnLabel('pb-phone-stage', '📱 Start live camera');
+      pbBtnLabel('pb-phone', '📱 Use iPhone camera');
+      pbBtnLabel('pb-phone-stage', '📱 Use iPhone camera');
       pbPhoneLive = false;
       pbStopPhonePreview();
-      pbNoCamera("Scan the code once. Your phone's live camera will appear here.");
+      pbNoCamera('Scan the code, then take photos with your iPhone. They will appear below.');
       return;
     }
 
     panel.classList.remove('hidden');
     if (!pbShooting) pbImportPhoneShots(st.shots);
     pbBtnLabel('pb-phone', '📱 Stop using my phone');
-    pbBtnLabel('pb-phone-stage', st.phoneConnected ? '● iPhone live' : '▦ Show connection code');
+    pbBtnLabel('pb-phone-stage', st.phoneConnected ? '● iPhone live' : '▦ Show iPhone QR');
     const qr = $('pb-phone-qr');
     if (qr && st.qrSvg && qr.dataset.url !== st.url) { qr.innerHTML = st.qrSvg; qr.dataset.url = st.url || ''; }
     // The one-time trust setup, on its own code. Painted the same way and for the same reason:
@@ -7631,28 +7631,15 @@
       // stays only as a fallback for a status from an older build. Matching the last request alone
       // broke the moment the first photo arrived, because that request is /p/.../photo, not /c/.
       const quickPhotoOpen = !!st.quickPhotoOpen || /asked for \/c\//i.test(st.lastContact || '');
-      // The phone opened this computer's secure port and hung up without asking for a page: Safari
-      // saw the certificate and refused it. That is the one state the desk can actually diagnose,
-      // and it is the exact state the owner was in — "no live feed" with photographs arriving —
-      // so it names the three taps on the phone instead of pointing vaguely at "setup".
-      const trustSteps = 'On the iPhone: Settings › General › VPN & Device Management › install the ING Photo Box profile, '
-        + 'then Settings › General › About › Certificate Trust Settings › turn on ING Photo Box camera authority. '
-        + 'Then scan the code again and the live view opens by itself.';
       state.textContent = st.phoneConnected
         ? `Phone connected — press 📸 Snap and it will take the photo.${st.shotCount ? ` ${st.shotCount} sent so far.` : ''}`
         : st.phoneSending
-          ? `Your phone is sending photos${st.shotCount ? ` — ${st.shotCount} so far` : ''}. Shoot from the phone; `
-            + (st.secureRefused
-                ? `there is no live view because the phone does not trust this computer yet (it refused the certificate, ${st.secureRefusedBy}). ${trustSteps}`
-                : `📸 Snap is for the live camera and needs the one-time setup below.`)
-          : st.secureRefused
-            ? `Your iPhone found this computer but refused its certificate (${st.secureRefusedBy}), so there is no live view yet. ${trustSteps}`
+          ? `Your phone is sending photos${st.shotCount ? ` — ${st.shotCount} so far` : ''}. Take photos on the phone; every one lands below.`
+          : quickPhotoOpen
+            ? `Your iPhone camera is ready${st.shotCount ? ` — ${st.shotCount} sent` : ''}. Take photos on the phone and they will appear below.`
           : st.phoneWasConnected
             ? 'The phone stopped answering — its screen probably locked. Wake it and the camera page picks up again on its own.'
-            : quickPhotoOpen
-              ? `Your phone is on Take a photo now${st.shotCount ? ` — ${st.shotCount} sent` : ''}. That page cannot stream to this screen. `
-                + 'For the live view and the 📸 Snap button, do the one-time setup under the camera button on the phone (it is also below).'
-            : 'Waiting for your phone to open the live studio…';
+            : 'Scan the code to open your iPhone camera. No certificate is required.';
       state.className = 'pb-phone-state ' + (st.phoneConnected || st.phoneSending ? 'wn-video-ok' : 'wn-video-busy');
     }
 
@@ -7691,24 +7678,17 @@
       // The dot is green for sending too: something IS working, and a grey light beside arriving
       // photographs is the panel disagreeing with the filmstrip next to it.
       const rail = st.phoneSending
-        ? 'Your phone is sending photos.'
-        : st.secureRefused
-          ? 'Phone found — certificate not trusted yet.'
-          : 'Waiting for the live camera…';
+        ? 'iPhone photos are arriving.'
+        : quickPhotoOpen
+          ? 'iPhone camera ready.'
+          : 'Scan to use your iPhone camera.';
       pbNoCamera(st.phoneSending
-        ? 'Your phone is the camera and photos are arriving — they appear below as you shoot. '
-          + (st.secureRefused
-              ? 'There is no live view because the iPhone has not trusted this computer\'s certificate yet — the three Settings taps are in the panel on the right.'
-              : 'The live viewfinder and the 📸 Snap button need the one-time iPhone setup in this panel.')
-        : st.secureRefused
-          ? 'Your iPhone found this computer but has not trusted its certificate yet, so it cannot stream. '
-            + 'Do the three Settings taps in the panel on the right, then scan the code again.'
+        ? 'Your phone is sending photos. Take photos on the phone and they will appear below automatically.'
         : st.phoneWasConnected
           ? 'The phone stopped sending — wake its screen and the picture comes back.'
           : quickPhotoOpen
-            ? 'Your phone is on Take a photo now, which cannot stream. Photos it takes still land below. '
-              + 'For the live view here, do the one-time setup under that button on the phone.'
-          : "Scan the code once. Your phone's live camera will appear here.",
+            ? 'Your iPhone camera is ready. Take photos on the phone and they will appear below automatically.'
+          : 'Scan the code, tap Take a photo, and shoot with your iPhone. No certificate is required.',
         rail, !!st.phoneSending);
     }
   }

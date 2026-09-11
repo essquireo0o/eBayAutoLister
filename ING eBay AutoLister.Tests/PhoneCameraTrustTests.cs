@@ -155,14 +155,11 @@ public class PhoneCameraTrustTests
     }
 
     [Fact]
-    public void The_primary_qr_is_live_first_and_keeps_certificate_free_capture_available()
+    public void The_primary_qr_uses_certificate_free_capture()
     {
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
-        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/start\"", Source, StringComparison.Ordinal);
-        Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
+        Assert.Contains("$\"http://{LocalAddress()}:{TrustPort}/c/{_token}\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
-        // The old certificate bootstrap never put a pairing secret in a discoverable /start path.
-        Assert.DoesNotContain("/start/{token}", Source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -199,20 +196,16 @@ public class PhoneCameraTrustTests
     }
 
     [Fact]
-    public void The_screen_stops_telling_iPhone_users_to_tap_through_the_warning()
+    public void The_screen_leads_with_the_certificate_free_iPhone_camera()
     {
         var html = ReadAsset("index.html");
 
         // Advice that only works in Chrome, given to somebody holding an iPhone.
         Assert.DoesNotContain("Tap <b>Show details</b>, then", html, StringComparison.Ordinal);
-        Assert.Contains("Scan for the live studio", html, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Take a photo now", html, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("id=\"pb-trust-qr\"", html, StringComparison.Ordinal);
-        // The step no installer is allowed to do for the seller, said plainly rather than left to
-        // be discovered.
-        // Asserted on the words rather than on where the line happens to wrap.
-        Assert.Contains("Certificate Trust", html, StringComparison.Ordinal);
-        Assert.Contains("ING Photo Box camera authority", html, StringComparison.Ordinal);
+        Assert.Contains("Scan to take photos", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Use iPhone camera", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No certificate and no setup", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("id=\"pb-trust-qr\"", html, StringComparison.Ordinal);
     }
 
     private static int CountOf(string haystack, string needle)

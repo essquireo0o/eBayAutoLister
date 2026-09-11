@@ -94,8 +94,7 @@ public class PhoneCameraNoCertTests
         Assert.Contains("href=\"/c/{{_token}}\"", trust, StringComparison.Ordinal);
         Assert.Contains("Take a photo now", trust, StringComparison.OrdinalIgnoreCase);
 
-        // And the way back, for the seller who does want the viewfinder after all.
-        Assert.Contains("href=\"/trust\"", Page, StringComparison.Ordinal);
+        Assert.Contains("no certificate is required", Page, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -113,39 +112,26 @@ public class PhoneCameraNoCertTests
         var js = ReadSource(Path.Combine("wwwroot", "app.js"));
         Assert.Contains("!!st.quickPhotoOpen", js, StringComparison.Ordinal);
         // And the words say what to do, not just what is wrong.
-        Assert.Contains("one-time setup under", js, StringComparison.Ordinal);
+        Assert.Contains("Take photos on the phone", js, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Live_camera_is_primary_and_photo_only_capture_is_an_explicit_alternative()
+    public void The_phone_page_leads_with_the_native_camera_without_certificate_setup()
     {
-        var trust = Between(Source, "private string TrustPageHtml", "// ── Why there is an authority here");
-        var live = trust.IndexOf("id=\"live\" href=\"{{camera}}\"", StringComparison.Ordinal);
-        var quick = trust.IndexOf("id=\"quick\" href=\"/c/{{_token}}\"", StringComparison.Ordinal);
-        Assert.True(live >= 0 && quick > live);
-        Assert.Contains("Send individual photos instead", trust, StringComparison.Ordinal);
-        Assert.Contains("Open live camera", trust, StringComparison.Ordinal);
+        Assert.Contains("No certificate, no setup", Page, StringComparison.Ordinal);
+        Assert.Contains("id=\"shoot\"", Page, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/trust\"", Page, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void The_primary_qr_prefers_live_camera_and_keeps_no_certificate_capture_one_tap_away()
+    public void The_primary_qr_opens_certificate_free_capture_directly()
     {
-        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
+        Assert.Contains("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/c/{_token}\";", Source,
                         StringComparison.Ordinal);
         Assert.Contains("var url = LaunchUrl;", Source, StringComparison.Ordinal);
-        Assert.Contains("web.MapGet(\"/start\"", Source, StringComparison.Ordinal);
         Assert.Contains("web.MapGet(\"/c/{token}\"", Source, StringComparison.Ordinal);
-        Assert.Contains("href=\"/c/{{_token}}\"", Source, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void It_says_what_it_costs_rather_than_pretending_the_two_routes_are_the_same()
-    {
-        // No live preview and no desktop shutter. A seller who is told this up front is choosing;
-        // one who finds out by waiting for a viewfinder that never comes is stuck again.
-        Assert.Contains("This alternative uploads photos only.",
-                        Between(Source, "private string TrustPageHtml", "// ── Why there is an authority here"),
-                        StringComparison.Ordinal);
+        Assert.DoesNotContain("private string LaunchUrl => $\"http://{LocalAddress()}:{TrustPort}/start\";", Source,
+                              StringComparison.Ordinal);
     }
 
     /// <summary>The slice of the source between two markers, so a page's assertions cannot pass on another page's text.</summary>

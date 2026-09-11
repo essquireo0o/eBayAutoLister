@@ -339,11 +339,9 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     public Status Snapshot()
     {
         if (_app is null) return new(false, null, false, 0, [], null, null);
-        // One QR works in Safari whether this phone has trusted the local authority yet or not.
-        // The HTTP bootstrap contains no pairing token: it probes the HTTPS certificate, passes a
-        // trusted phone straight into the live camera, and offers instant single-photo capture when
-        // Safari has not been set up yet. The viewfinder is the primary experience; /c is the escape
-        // hatch, never a dead end.
+        // The primary QR opens the certificate-free capture page directly. Safari's ordinary file
+        // input can launch the iPhone camera on plain HTTP, so taking and uploading a photograph does
+        // not depend on installing or trusting anything on the phone.
         var url = LaunchUrl;
         var refusal = SecureRefusal();
         return new(true, url, _phoneEverConnected && DateTimeOffset.UtcNow - _lastSeen < TimeSpan.FromSeconds(20),
@@ -406,10 +404,10 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
     }
 
     private string PublicUrl => $"https://{LocalAddress()}:{Port}/p/{_token}";
-    // Start on plain HTTP so every iPhone can open the QR. /start probes the secure listener: a
-    // phone that already trusts this computer moves straight into the live camera, while every
-    // other phone sees both the one-time live setup and a certificate-free Take Photo Now button.
-    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/start";
+    // This is deliberately the native-camera page, not /start. /start leads toward the optional
+    // HTTPS live studio and therefore toward iPhone certificate trust; normal capture must work
+    // immediately on every phone on the same Wi-Fi.
+    private string LaunchUrl => $"http://{LocalAddress()}:{TrustPort}/c/{_token}";
 
     /// <summary>
     /// The address a phone on the same wifi can reach this machine at. Picked from the interface
@@ -1293,8 +1291,7 @@ public sealed class PhoneCapture(PhotoLibrary photos, ActionLog log, ClaudeServi
           <div id="shots"></div>
 
           <p class="why">Keep this page open and shoot as many as you like — each one appears on the
-             computer as it arrives. For the live viewfinder and a shutter button on the computer,
-             the one-time certificate setup is <a href="/trust">on this page</a>.</p>
+             computer as it arrives. Nothing is installed on your iPhone and no certificate is required.</p>
 
           <script>
             const TOKEN = {{System.Text.Json.JsonSerializer.Serialize(_token)}};
