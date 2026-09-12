@@ -59,6 +59,9 @@ public class LocalSupplyListing
     public string SellerUsername { get; set; } = "";
     public int? SellerFeedbackScore { get; set; }
     public decimal? SellerFeedbackPercent { get; set; }
+    public string? BuyingOption { get; set; }
+    public int? BidCount { get; set; }
+    public DateTime? AuctionEndUtc { get; set; }
 
     // ── Retail supply (deal feeds) ────────────────────────────────────────────
     // A clearance item bought from Amazon and a drill bought off a stranger for cash are the same

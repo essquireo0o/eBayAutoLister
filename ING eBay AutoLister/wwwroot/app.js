@@ -2666,6 +2666,18 @@
     on('fb-query-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-zip-input', 'keydown', e => { if (e.key === 'Enter') runLocalArbitrage(); });
     on('fb-arb-sort', 'change', renderArbitrageRows);
+    const huntSort = $('fb-arb-sort');
+    if (huntSort && !$('fb-arb-hunt')) {
+      const hunt = document.createElement('select');
+      hunt.id = 'fb-arb-hunt'; hunt.setAttribute('aria-label', 'Hunt for');
+      hunt.innerHTML = '<option value="all">All deal types</option><option value="quiet">Auctions with 0–2 bids</option><option value="low-feedback">Sellers with 0–25 feedback</option><option value="auction">All auctions</option><option value="fixed">Buy It Now</option>';
+      huntSort.after(hunt);
+      hunt.addEventListener('change', renderArbitrageRows);
+      for (const [value, label] of [['ending','Auctions ending soonest'],['bids','Fewest bids'],['feedback','Lowest seller feedback']]) {
+        const option = document.createElement('option'); option.value=value; option.textContent=label; huntSort.append(option);
+      }
+    }
+
     on('fb-arb-category', 'change', renderArbitrageRows);
     on('fb-arb-price', 'change', renderArbitrageRows);
     // Touching any quality bar switches the board out of auto-relax for good — see
@@ -3854,7 +3866,7 @@
     // run — and it is the one that most needs it: every row on the board below is a buy/pass call
     // made against these comps. One scrape for the term, never one per result.
     // keepOpen so the lookup's bar isn't hidden a beat before the scan repurposes it as a sweep.
-    await runLiveLookup(query, 'es', { keepOpen: true });
+    const livePrices = await runLiveLookup(query, 'es', { keepOpen: true });
 
     // The real wait is here — following every eBay result page (up to the 10,000 listings Browse
     // exposes) and pricing the complete collected set. Sweep the same bar so
@@ -3892,6 +3904,9 @@
       }
     }
 
+    if (!['ok', 'fresh'].includes(livePrices?.outcome)) {
+      data.liveLookupNote = 'Fresh sold prices were not retrieved for this search. These estimates use stored comparisons. ' + (livePrices?.message || '');
+    }
     renderArbitrage(data);
   }
 
@@ -3982,7 +3997,7 @@
     // What the scan actually covered, from the sources that ran — not from the form, which may
     // have moved since.
     const scannedIds = (data.sources || []).map(s => s.id);
-    const scope = scopeTextFor(scannedIds, data.radiusMiles, data.zipCode);
+    const scope = scannedIds.length === 1 && scannedIds[0] === 'ebay' ? 'eBay nationwide' : scopeTextFor(scannedIds, data.radiusMiles, data.zipCode);
 
     if (!data.localListingsFound) {
       setLocalStatus(data.error
@@ -4016,8 +4031,8 @@
       data.goldmineCount ? `<strong class="fb-arb-hit">${data.goldmineCount} goldmine${data.goldmineCount === 1 ? '' : 's'}</strong>` : 'no goldmines this time',
       // Capital that comes back inside three weeks is capital that can buy the next one — worth its
       // own headline next to the total, which says nothing about when any of it arrives.
-      data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} that ${data.fastCashCount === 1 ? 'pays' : 'pay'} back inside 3 weeks</strong>` : '',
-      `${money(data.totalPotentialProfit)} total profit if you bought every profitable one`,
+      data.fastCashCount ? `<strong class="fb-arb-hit">${data.fastCashCount} estimated to sell inside 3 weeks</strong>` : '',
+      `${money(data.totalPotentialProfit)} combined estimated margin before auction prices change — not guaranteed profit`,
       // Which site to open first next weekend — the decision a sourcing seller repeats more often
       // than any other, and one no single row can answer. Only said when there is more than one
       // site in the ranking: "best site: Craigslist" with Craigslist the only site searched is a
@@ -4286,6 +4301,14 @@
     }
 
     let rows = arbitrageData.items.slice();
+    const huntMode = $('fb-arb-hunt')?.value || 'all';
+    const auctionRow = r => String(r.buyingOption || '').includes('AUCTION');
+    rows = rows.filter(r => !r.auctionEndUtc || Date.parse(r.auctionEndUtc) > Date.now());
+    if (huntMode === 'quiet') rows = rows.filter(r => auctionRow(r) && r.bidCount != null && r.bidCount <= 2);
+    if (huntMode === 'auction') rows = rows.filter(auctionRow);
+    if (huntMode === 'fixed') rows = rows.filter(r => String(r.buyingOption || '').includes('FIXED_PRICE'));
+    if (huntMode === 'low-feedback') rows = rows.filter(r => r.sellerFeedbackScore != null && r.sellerFeedbackScore <= 25);
+
     // What KIND of thing, applied first: it is the widest cut and the one the seller picked most
     // deliberately. Server-side ids, so the filter and the fee model can't disagree about what a
     // row is.
@@ -4392,6 +4415,9 @@
       return base * sellerFactor;
     };
     const cmp = {
+      ending: (a,b) => (a.auctionEndUtc == null)-(b.auctionEndUtc == null) || (Date.parse(a.auctionEndUtc)-Date.parse(b.auctionEndUtc)) || paidFor(a)-paidFor(b),
+      bids: (a,b) => (a.bidCount == null)-(b.bidCount == null) || (a.bidCount-b.bidCount) || paidFor(a)-paidFor(b),
+      feedback: (a,b) => (a.sellerFeedbackScore == null)-(b.sellerFeedbackScore == null) || (a.sellerFeedbackScore-b.sellerFeedbackScore) || paidFor(a)-paidFor(b),
       // Net dollars weighed against ROI (and damped for thin comps) — the row that makes the most
       // money for what it ties up leads. Losers and unpriced rows stay below, same as every mode.
       balanced: (a, b) => ((b.netProfit > 0) - (a.netProfit > 0))
@@ -4981,6 +5007,7 @@
       row.distanceMiles != null ? `${row.distanceMiles} mi` : '',
       row.location ? esc(row.location) : '',
       row.postedAgo ? esc(row.postedAgo) : '',
+      String(row.buyingOption || '').includes('AUCTION') ? '<strong>Current bid — final price can rise</strong>' : '',
       // On a retail row the struck-through figure is the retail list price, not a seller who
       // changed their mind — saying "price dropped" about Amazon would be nonsense.
       row.originalPrice

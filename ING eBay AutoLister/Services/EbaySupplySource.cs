@@ -70,8 +70,8 @@ public record EbayScanFilters(
         parts.Add(ListingType switch
         {
             "AUCTION"     => "auctions ending soonest",
-            "FIXED_PRICE" => "Buy It Now, best match",
-            _             => "auctions and Buy It Now, best match",
+            "FIXED_PRICE" => "Buy It Now, cheapest and best match",
+            _             => "auctions and Buy It Now, cheapest and ending soon",
         });
         if (!string.IsNullOrWhiteSpace(Condition))
             parts.Add(Condition.Replace('_', ' ').ToLowerInvariant());
@@ -181,12 +181,27 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
         List<EbayOpportunityItem> found;
         try
         {
-            // Sort follows the listing type — see EbayScanFilters.Sort for why cheapest-first is
-            // the right order for a supply search and soonest-ending is right for auctions.
-            found = await ebay.SearchEndingSoonAsync(
-                query, minFeedback: _filters.MinFeedback, limit: SearchPageSize, category: null,
-                condition: _filters.Condition, minPrice: _filters.MinPrice, maxPrice: _filters.MaxPrice,
-                listingType: _filters.ListingType, sortOverride: _filters.Sort);
+            // Separate live passes keep Best Match from burying cheap or quiet auctions.
+            // Bound each pass; the board must never imply this is every listing on eBay.
+            var passes = _filters.ListingType switch
+            {
+                "AUCTION" => new[] { ("AUCTION", "endingSoonest"), ("AUCTION", "price") },
+                "FIXED_PRICE" => new[] { ("FIXED_PRICE", "price"), ("FIXED_PRICE", EbayScanFilters.BestMatch) },
+                _ => new[] { ("AUCTION", "endingSoonest"), ("AUCTION", "price"), ("FIXED_PRICE", "price"), ("FIXED_PRICE", EbayScanFilters.BestMatch) },
+            };
+            found = [];
+            foreach (var (type, order) in passes)
+            {
+                ct.ThrowIfCancellationRequested();
+                found.AddRange(await ebay.SearchEndingSoonAsync(
+                    query, minFeedback: _filters.MinFeedback, limit: 200, category: null,
+                    condition: _filters.Condition, minPrice: _filters.MinPrice, maxPrice: _filters.MaxPrice,
+                    listingType: type, sortOverride: order));
+            }
+            found = found.Where(x => !x.EndDate.HasValue || x.EndDate.Value.ToUniversalTime() > DateTime.UtcNow)
+                .DistinctBy(x => string.IsNullOrWhiteSpace(x.ItemId) ? x.Url : x.ItemId).ToList();
+            result.ScopeLabel = $"eBay live search — {_filters.Describe()}; {passes.Length} passes, up to 200 listings each; relevance screened";
+
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -251,6 +266,9 @@ public class EbaySupplySource(EbayService ebay, CredentialsStore creds, ActionLo
             SellerUsername = item.SellerUsername,
             SellerFeedbackScore = item.SellerFeedbackScore,
             SellerFeedbackPercent = item.SellerFeedbackPercent,
+            BuyingOption = item.BuyingOption,
+            BidCount = isAuction ? item.BidCount : null,
+            AuctionEndUtc = isAuction ? item.EndDate : null,
 
             PostedAgo = BuildTimingText(item, isAuction),
         };

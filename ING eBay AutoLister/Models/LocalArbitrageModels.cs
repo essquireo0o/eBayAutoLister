@@ -36,6 +36,9 @@ public class LocalArbitrageOpportunity
     public string SellerUsername { get; set; } = "";
     public int? SellerFeedbackScore { get; set; }
     public decimal? SellerFeedbackPercent { get; set; }
+    public string? BuyingOption { get; set; }
+    public int? BidCount { get; set; }
+    public DateTime? AuctionEndUtc { get; set; }
     public string PostedAgo { get; set; } = "";
     // Only the sources that publish a real timestamp set this (Craigslist does, Facebook doesn't).
     public DateTime? PostedUtc { get; set; }
@@ -400,6 +403,9 @@ public class RepriceRowRequest
     public string SellerUsername { get; set; } = "";
     public int? SellerFeedbackScore { get; set; }
     public decimal? SellerFeedbackPercent { get; set; }
+    public string? BuyingOption { get; set; }
+    public int? BidCount { get; set; }
+    public DateTime? AuctionEndUtc { get; set; }
     public string PostedAgo { get; set; } = "";
     public DateTime? PostedUtc { get; set; }
     public bool IsRetail { get; set; }
