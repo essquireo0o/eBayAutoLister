@@ -250,6 +250,23 @@ html,body{width:100%;max-width:100%;height:100dvh;min-width:0;min-height:0;}
 .btn-save{background:#a5e2d1;color:#102923;box-shadow:none;white-space:nowrap;}
 .tool-btn.active{background:#304942;box-shadow:inset 3px 0 #a5e2d1;}
 @media(max-width:650px){#pe-title{max-width:100px;}#pe-topbar{padding:8px;height:auto;flex-wrap:wrap;}#pe-options{flex-wrap:wrap;}.pe-brand-mark{display:none;}}
+
+/* Photo-first editor with a readable tool rail and restrained chrome. */
+:root{--bg:#171b20;--panel:#20262d;--panel2:#29313a;--border:#343e48;--border2:#465461;--gold:#a8dfd0;--gold-lt:#c1eee2;--gold-dk:#73b7a4;--on-gold:#132c26;--text:#f2f5f7;--text2:#c0cad2;--text3:#8998a4;}
+#pe-topbar{height:64px;padding:0 20px;background:#171b20;border-bottom:1px solid #343e48;}
+.pe-brand-mark{background:#a8dfd0;color:#16382d;box-shadow:none;border-radius:8px;}
+#pe-title{font-weight:600;font-size:16px;}
+#pe-sidebar{width:164px;padding:16px 10px;gap:4px;background:#20262d;border-right:1px solid #343e48;}
+.tool-btn{width:144px;height:44px;flex-direction:row;justify-content:flex-start;gap:12px;padding:0 14px;border-radius:7px;flex-shrink:0;}
+.t-icon{width:22px;font-size:19px;text-align:center;}.t-label{font-size:13px;letter-spacing:0;text-transform:none;font-weight:500;}
+.tool-btn:hover{background:#303a44;transform:none;}.tool-btn.active{background:#334c46;color:#d7f4e9;box-shadow:inset 3px 0 #a8dfd0;border-color:transparent;}
+.sb-sep{width:120px;background:#343e48;margin:8px auto;}
+#pe-options{min-height:66px;padding:12px 18px;gap:10px;background:#252d35;border-bottom:1px solid #3d4853;}
+.opt-hint{font-style:normal;color:#bcc8d1;font-size:13px;}.opt-group{background:#20262d;border-color:#3d4853;border-radius:6px;}
+.tbtn,.tbtn-icon,.tbtn-ghost,.fbtn{border-radius:6px;box-shadow:none;}.tbtn{background:#a8dfd0;color:#132c26;}
+.btn-save{border-radius:7px;background:#a8dfd0;color:#132c26;box-shadow:none;}.btn-save:hover{background:#c1eee2;transform:none;}.btn-cancel{border-radius:7px;}
+#pe-area{background:#353e47!important;}#pe-wrap{box-shadow:0 10px 35px #0005;border-radius:0;}
+@media(max-width:700px){#pe-sidebar{width:78px;padding:10px 5px;}.tool-btn{width:66px;height:53px;padding:4px;flex-direction:column;justify-content:center;gap:3px;}.t-label{font-size:10px;}.sb-sep{width:44px;}#pe-topbar{padding:8px 10px;}#pe-options{padding:10px;}}
 </style>
 </head>
 <body>
@@ -280,8 +297,8 @@ html,body{width:100%;max-width:100%;height:100dvh;min-width:0;min-height:0;}
     <button class="tool-btn active" data-tool="crop"       title="Crop"><span class="t-icon">✂</span><span class="t-label">Crop</span></button>
     <button class="tool-btn"        data-tool="rotate"     title="Rotate &amp; Flip"><span class="t-icon">↺</span><span class="t-label">Rotate</span></button>
     <div class="sb-sep"></div>
-    <button class="tool-btn"        data-tool="adjustment" title="Adjustments"><span class="t-icon">◑</span><span class="t-label">Adjust</span></button>
-    <button class="tool-btn"        data-tool="filter"     title="Filters"><span class="t-icon">✦</span><span class="t-label">Filter</span></button>
+    <button class="tool-btn"        data-tool="adjustment" title="Adjustments"><span class="t-icon">◑</span><span class="t-label">Light & color</span></button>
+    <button class="tool-btn"        data-tool="filter"     title="Filters"><span class="t-icon">✦</span><span class="t-label">Filters</span></button>
     <div class="sb-sep"></div>
     <button class="tool-btn"        data-tool="text"       title="Add Text"><span class="t-icon" style="font-weight:900;font-size:20px">T</span><span class="t-label">Text</span></button>
     <button class="tool-btn"        data-tool="shape"      title="Shapes"><span class="t-icon">◻</span><span class="t-label">Shape</span></button>
@@ -290,7 +307,7 @@ html,body{width:100%;max-width:100%;height:100dvh;min-width:0;min-height:0;}
     <button class="tool-btn"        data-tool="erase"      title="Eraser"><span class="t-icon">⌫</span><span class="t-label">Erase</span></button>
     <button class="tool-btn"        data-tool="blur"       title="Blur / Sharpen"><span class="t-icon">◎</span><span class="t-label">Blur</span></button>
     <div class="sb-sep"></div>
-    <button class="tool-btn"        data-tool="background" title="Remove Background"><span class="t-icon">⊕</span><span class="t-label">BG</span></button>
+    <button class="tool-btn"        data-tool="background" title="Remove Background"><span class="t-icon">⊕</span><span class="t-label">Background</span></button>
   </div>
 
   <div id="pe-right">
