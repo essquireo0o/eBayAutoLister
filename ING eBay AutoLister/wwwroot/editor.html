@@ -314,7 +314,7 @@ html,body{width:100%;max-width:100%;height:100dvh;min-width:0;min-height:0;}
 let canvas,ctx,ov,oCtx,textInput;
 let slotIndex=-1, tool='crop', zoom=1, fitZoom=1;
 let undos=[], redos=[];
-let cropDrag=null, cropRect=null;
+let cropGesture=null, cropRect=null;
 let drawing=false, lastPt=null;
 let drawColor='#ff0000', drawSize=10, eraseSize=24;
 let blurMode='blur', blurSize=20, blurStrength=6;
@@ -349,10 +349,12 @@ window.addEventListener('DOMContentLoaded', ()=>{
   ov.addEventListener('pointermove',onMove);
   ov.addEventListener('pointerup',onUp);
   ov.addEventListener('pointercancel',onUp);
+  ov.addEventListener('dblclick',()=>{if(tool==='crop'&&cropRect)applyCrop();});
   ov.addEventListener('wheel',e=>{e.preventDefault();setZoom(zoom*(e.deltaY<0?1.1:0.9));},{passive:false});
 
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){if(textPlacing)commitText();else doCancel();}
+    if(e.key==='Enter'&&tool==='crop'&&cropRect&&!textPlacing){e.preventDefault();applyCrop();}
     if((e.ctrlKey||e.metaKey)&&e.key==='z'&&!e.shiftKey)undo();
     if((e.ctrlKey||e.metaKey)&&(e.key==='y'||(e.key==='z'&&e.shiftKey)))redo();
     if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();doSave();}
@@ -426,7 +428,7 @@ function resetZoom(){calcFitZoom();setZoom(fitZoom);}
 function takeSnapshot(){return{width:canvas.width,height:canvas.height,pixels:ctx.getImageData(0,0,canvas.width,canvas.height)};}
 function restoreSnapshot(s){
   canvas.width=s.width;canvas.height=s.height;ov.width=s.width;ov.height=s.height;
-  ctx.putImageData(s.pixels,0,0);cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
+  ctx.putImageData(s.pixels,0,0);cropGesture=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
   liveFilter='';canvas.style.filter='';adj={brightness:100,contrast:100,saturation:100};resetZoom();
 }
 function pushUndo(snapshot){undos.push(snapshot||takeSnapshot());redos=[];if(undos.length>30)undos.shift();setDirty(true);updateHistBtns();}
@@ -447,7 +449,7 @@ function setTool(t){
   const interactive=['crop','markup','erase','blur','shape','text'].includes(t);
   ov.style.pointerEvents=interactive?'auto':'none';
   ov.style.cursor=t==='text'?'text':interactive?'crosshair':'default';
-  if(t!=='crop'){cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);}
+  if(t!=='crop'){cropGesture=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);}
   if(t!=='adjustment'&&t!=='filter'){canvas.style.filter='';liveFilter='';}
   shapeDrag=null;
   updateHelp();
@@ -455,7 +457,7 @@ function setTool(t){
 
 function updateHelp(){
   const copy={
-    crop:['Crop for eBay','Choose an eBay-ready shape or drag across the photo. Nothing changes until you apply it.'],
+    crop:['Crop for eBay','Drag a box or pick a size, then drag its edges to adjust. Press Enter or Apply Crop to commit.'],
     rotate:['Straighten the product','Rotate, flip, or fine-tune the horizon. Undo always restores the full original dimensions.'],
     adjustment:['Make the item clear','Use Auto Brighten for a safe starting point, then fine-tune. Your preview is saved when you change tools.'],
     filter:['Keep colour honest','Use filters lightly so buyers see the real condition and colour of the item.'],
@@ -479,7 +481,7 @@ function renderOptions(){
   const p=document.getElementById('pe-options');
 
   if(tool==='crop'){
-    p.innerHTML=`<span class="opt-hint"><b style="color:var(--text)">Crop:</b> drag across the photo or choose a size</span>
+    p.innerHTML=`<span class="opt-hint"><b style="color:var(--text)">Crop:</b> drag a box or pick a size, then drag the edges. Enter applies.</span>
       <button class="tbtn-icon" data-crop-preset="square">eBay square</button>
       <button class="tbtn-icon" data-crop-preset="four-three">4:3</button>
       <button class="tbtn-icon" data-crop-preset="portrait">Portrait</button>
@@ -490,8 +492,7 @@ function renderOptions(){
     p.querySelectorAll('[data-crop-preset]').forEach(b=>
       b.addEventListener('click',()=>setCropPreset(b.dataset.cropPreset)));
     p.querySelector('#t-crop-rst').addEventListener('click',()=>{
-      cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
-      p.querySelector('#t-crop-ok').disabled=true;
+      cropGesture=null;setCropRect(null);
     });
 
   } else if(tool==='rotate'){
@@ -749,28 +750,65 @@ function doStraighten(deg){
   resetZoom();toast('Straightened '+deg+'°');
 }
 
-// Crop
-function calcCropRect(){
-  if(!cropDrag)return null;
-  const x1=Math.max(0,Math.min(canvas.width,Math.min(cropDrag.sx,cropDrag.ex)));
-  const y1=Math.max(0,Math.min(canvas.height,Math.min(cropDrag.sy,cropDrag.ey)));
-  const x2=Math.max(0,Math.min(canvas.width,Math.max(cropDrag.sx,cropDrag.ex)));
-  const y2=Math.max(0,Math.min(canvas.height,Math.max(cropDrag.sy,cropDrag.ey)));
-  const x=Math.round(x1),y=Math.round(y1),w=Math.round(x2-x1),h=Math.round(y2-y1);
-  return(w<4||h<4)?null:{x,y,w,h};
+// Crop — a selection you can draw, then move and resize by its edges before applying.
+function clampRect(r){
+  let{x,y,w,h}=r;
+  if(w<0){x+=w;w=-w;} if(h<0){y+=h;h=-h;}
+  x=Math.max(0,Math.min(canvas.width,x)); y=Math.max(0,Math.min(canvas.height,y));
+  w=Math.max(0,Math.min(canvas.width-x,w)); h=Math.max(0,Math.min(canvas.height-y,h));
+  return{x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
+}
+// The single source of truth for the selection. Everything else reads cropRect and calls this.
+function setCropRect(r){
+  const c=r?clampRect(r):null;
+  cropRect=(c&&c.w>=4&&c.h>=4)?c:null;
+  drawCropUi();
+  const b=document.querySelector('#t-crop-ok'); if(b)b.disabled=!cropRect;
+}
+// Handle grab radius in canvas pixels, so it feels the same at any zoom (~12 screen px).
+function handleTol(){ return Math.max(6,12/(zoom||1)); }
+// Which part of the selection the point is on: a resize handle, 'move' (inside), or null (outside).
+function cropHandleAt(pt){
+  if(!cropRect)return null;
+  const{x,y,w,h}=cropRect,t=handleTol();
+  const nearL=Math.abs(pt.x-x)<=t,nearR=Math.abs(pt.x-(x+w))<=t;
+  const nearT=Math.abs(pt.y-y)<=t,nearB=Math.abs(pt.y-(y+h))<=t;
+  const inX=pt.x>=x-t&&pt.x<=x+w+t,inY=pt.y>=y-t&&pt.y<=y+h+t;
+  if(nearT&&nearL)return'nw'; if(nearT&&nearR)return'ne';
+  if(nearB&&nearL)return'sw'; if(nearB&&nearR)return'se';
+  if(nearT&&inX)return'n'; if(nearB&&inX)return's';
+  if(nearL&&inY)return'w'; if(nearR&&inY)return'e';
+  if(pt.x>x&&pt.x<x+w&&pt.y>y&&pt.y<y+h)return'move';
+  return null;
+}
+const CROP_CURSORS={nw:'nwse-resize',se:'nwse-resize',ne:'nesw-resize',sw:'nesw-resize',n:'ns-resize',s:'ns-resize',e:'ew-resize',w:'ew-resize',move:'move'};
+// Apply the live gesture (new draw / move / resize) to the selection.
+function updateCropGesture(pt){
+  const g=cropGesture;if(!g)return;
+  if(g.mode==='new'){ setCropRect({x:g.start.x,y:g.start.y,w:pt.x-g.start.x,h:pt.y-g.start.y}); return; }
+  if(g.mode==='move'){
+    const o=g.orig;
+    let x=o.x+(pt.x-g.start.x),y=o.y+(pt.y-g.start.y);
+    x=Math.max(0,Math.min(canvas.width-o.w,x)); y=Math.max(0,Math.min(canvas.height-o.h,y));
+    setCropRect({x,y,w:o.w,h:o.h}); return;
+  }
+  // resize: move only the edges named by the handle
+  const o=g.orig,H=g.handle; let x=o.x,y=o.y,x2=o.x+o.w,y2=o.y+o.h;
+  if(H.includes('w'))x=pt.x; if(H.includes('e'))x2=pt.x;
+  if(H.includes('n'))y=pt.y; if(H.includes('s'))y2=pt.y;
+  setCropRect({x:Math.min(x,x2),y:Math.min(y,y2),w:Math.abs(x2-x),h:Math.abs(y2-y)});
 }
 function setCropPreset(kind){
   const ratio=kind==='square'?1:kind==='four-three'?4/3:4/5;
   let w=canvas.width,h=Math.round(w/ratio);
   if(h>canvas.height){h=canvas.height;w=Math.round(h*ratio);}
   const x=Math.round((canvas.width-w)/2),y=Math.round((canvas.height-h)/2);
-  cropDrag={sx:x,sy:y,ex:x+w,ey:y+h};cropRect=calcCropRect();drawCropUi();
+  setCropRect({x,y,w,h});
   document.querySelectorAll('[data-crop-preset]').forEach(b=>b.classList.toggle('on',b.dataset.cropPreset===kind));
-  const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!cropRect;
 }
 function drawCropUi(){
   oCtx.clearRect(0,0,ov.width,ov.height);
-  const r=calcCropRect();if(!r)return;
+  const r=cropRect;if(!r)return;
   oCtx.fillStyle='rgba(0,0,0,0.55)';oCtx.fillRect(0,0,ov.width,ov.height);
   oCtx.clearRect(r.x,r.y,r.w,r.h);
   oCtx.strokeStyle='#c79a36';oCtx.lineWidth=2;oCtx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
@@ -779,21 +817,23 @@ function drawCropUi(){
     oCtx.beginPath();oCtx.moveTo(r.x+r.w*i/3,r.y);oCtx.lineTo(r.x+r.w*i/3,r.y+r.h);oCtx.stroke();
     oCtx.beginPath();oCtx.moveTo(r.x,r.y+r.h*i/3);oCtx.lineTo(r.x+r.w,r.y+r.h*i/3);oCtx.stroke();
   }
-  [[r.x,r.y],[r.x+r.w,r.y],[r.x,r.y+r.h],[r.x+r.w,r.y+r.h]].forEach(([cx,cy])=>{
-    oCtx.fillStyle='#c79a36';oCtx.fillRect(cx-5,cy-5,10,10);
+  // Eight handles — corners and edge midpoints — sized in screen px so they stay grabbable when zoomed out.
+  const hs=Math.max(8,12/(zoom||1));
+  [[r.x,r.y],[r.x+r.w/2,r.y],[r.x+r.w,r.y],[r.x+r.w,r.y+r.h/2],
+   [r.x+r.w,r.y+r.h],[r.x+r.w/2,r.y+r.h],[r.x,r.y+r.h],[r.x,r.y+r.h/2]].forEach(([cx,cy])=>{
+    oCtx.fillStyle='#c79a36';oCtx.fillRect(cx-hs/2,cy-hs/2,hs,hs);
   });
-  oCtx.fillStyle='rgba(255,195,0,.9)';oCtx.font='bold 12px Arial';oCtx.textAlign='left';
-  oCtx.fillText(`${r.w} × ${r.h}`,r.x+4,r.y-6);
+  oCtx.fillStyle='rgba(255,195,0,.9)';oCtx.font=`bold ${Math.max(12,14/(zoom||1))}px Arial`;oCtx.textAlign='left';
+  oCtx.fillText(`${r.w} \u00d7 ${r.h}`,r.x+4,r.y-6);
 }
 function applyCrop(){
-  const r=cropRect||calcCropRect();if(!r)return;
+  const r=cropRect;if(!r||r.w<4||r.h<4)return;
   pushUndo();
   const tmp=document.createElement('canvas');tmp.width=r.w;tmp.height=r.h;
   tmp.getContext('2d').drawImage(canvas,r.x,r.y,r.w,r.h,0,0,r.w,r.h);
   canvas.width=r.w;canvas.height=r.h;ov.width=r.w;ov.height=r.h;
-  ctx.drawImage(tmp,0,0);cropDrag=null;cropRect=null;oCtx.clearRect(0,0,ov.width,ov.height);
-  const b=document.querySelector('#t-crop-ok');if(b)b.disabled=true;
-  resetZoom();toast(`Cropped to ${r.w}×${r.h}`);
+  ctx.drawImage(tmp,0,0);cropGesture=null;setCropRect(null);
+  resetZoom();toast(`Cropped to ${r.w}\u00d7${r.h}`);
 }
 
 // Text
@@ -870,7 +910,7 @@ function onDown(e){
   e.preventDefault();
   if(typeof e.pointerId==='number')ov.setPointerCapture(e.pointerId);
   const pt=toCanvas(e);
-  if(tool==='crop'){cropDrag={sx:pt.x,sy:pt.y,ex:pt.x,ey:pt.y};const b=document.querySelector('#t-crop-ok');if(b)b.disabled=true;}
+  if(tool==='crop'){const hd=cropHandleAt(pt);if(hd){cropGesture={mode:hd==='move'?'move':'resize',handle:hd,start:pt,orig:{...cropRect}};}else{cropGesture={mode:'new',start:pt};setCropRect(null);}}
   else if(tool==='text'){if(textPlacing)commitText();else placeTextInput(pt.x,pt.y);}
   else if(tool==='markup'){pushUndo();drawing=true;lastPt=pt;dot(pt,drawColor,drawSize,'source-over');}
   else if(tool==='erase'){pushUndo();drawing=true;lastPt=pt;dot(pt,'rgba(0,0,0,1)',eraseSize,'destination-out');}
@@ -878,10 +918,11 @@ function onDown(e){
   else if(tool==='shape'){shapeDrag={sx:pt.x,sy:pt.y,ex:pt.x,ey:pt.y};}
 }
 function onMove(e){
-  if(!cropDrag&&!drawing&&!shapeDrag)return;
+  if(tool==='crop'&&!cropGesture){const pt=toCanvas(e);ov.style.cursor=cropRect?(CROP_CURSORS[cropHandleAt(pt)]||'crosshair'):'crosshair';}
+  if(!cropGesture&&!drawing&&!shapeDrag)return;
   e.preventDefault();
   const pt=toCanvas(e);
-  if(tool==='crop'&&cropDrag){cropDrag.ex=pt.x;cropDrag.ey=pt.y;drawCropUi();const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!calcCropRect();}
+  if(tool==='crop'&&cropGesture){updateCropGesture(pt);}
   else if(tool==='markup'&&drawing){line(lastPt,pt,drawColor,drawSize,'source-over');lastPt=pt;}
   else if(tool==='erase'&&drawing){line(lastPt,pt,'rgba(0,0,0,1)',eraseSize,'destination-out');lastPt=pt;}
   else if(tool==='blur'&&drawing){applyBlurBrush(pt);}
@@ -893,7 +934,7 @@ function onMove(e){
 function onUp(e){
   if(typeof e.pointerId==='number'&&ov.hasPointerCapture(e.pointerId))ov.releasePointerCapture(e.pointerId);
   const pt=toCanvas(e);
-  if(tool==='crop'&&cropDrag){cropDrag.ex=pt.x;cropDrag.ey=pt.y;drawCropUi();cropRect=calcCropRect();const b=document.querySelector('#t-crop-ok');if(b)b.disabled=!cropRect;}
+  if(tool==='crop'&&cropGesture){updateCropGesture(pt);cropGesture=null;}
   else if(tool==='shape'&&shapeDrag){shapeDrag.ex=pt.x;shapeDrag.ey=pt.y;pushUndo();drawShapeOv(shapeDrag,ctx);oCtx.clearRect(0,0,ov.width,ov.height);shapeDrag=null;}
   drawing=false;lastPt=null;
 }

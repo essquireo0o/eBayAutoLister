@@ -50,6 +50,27 @@ public class PhotoEditorInteractionTests
     }
 
     [Fact]
+    public void A_drawn_crop_box_can_be_moved_resized_and_committed_without_the_far_button()
+    {
+        // 2026-09-12: the owner, mid-listing, "the crop does not work." The crop MATH was fine in
+        // every headless reproduction; what was missing was that a drawn box could not be adjusted
+        // (the corner squares only started a new tiny selection) and the only way to commit was a
+        // distant Apply Crop button. So: handle hit-testing, move/resize, and Enter/double-click.
+        Assert.Contains("function cropHandleAt(pt)", Editor);
+        Assert.Contains("function updateCropGesture(pt)", Editor);
+        Assert.Contains("function setCropRect(r)", Editor);
+        // Move and resize modes exist and the gesture drives them.
+        Assert.Contains("mode:hd==='move'?'move':'resize'", Editor);
+        Assert.Contains("if(H.includes('w'))x=pt.x;", Editor);
+        // Two quick commit paths that need no far-off button.
+        Assert.Contains("if(e.key==='Enter'&&tool==='crop'&&cropRect", Editor);
+        Assert.Contains("ov.addEventListener('dblclick',()=>{if(tool==='crop'&&cropRect)applyCrop();});", Editor);
+        // The old draw-only model is gone.
+        Assert.DoesNotContain("cropDrag", Editor);
+        Assert.DoesNotContain("function calcCropRect()", Editor);
+    }
+
+    [Fact]
     public void Crop_and_rotation_history_restores_the_original_dimensions()
     {
         Assert.Contains("function takeSnapshot()", Editor);
