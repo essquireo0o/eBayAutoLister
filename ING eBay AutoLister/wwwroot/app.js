@@ -29276,7 +29276,14 @@
     overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d1117;';
 
     const iframe = document.createElement('iframe');
-    iframe.src = '/editor.html';
+    // Cache-bust the editor document itself. Every other asset on the page is versioned
+    // (style.css?v=NNN), but this iframe used to load a bare '/editor.html', so after the app
+    // updated a browser could keep serving the editor it had cached — and clicking Rotate, Adjust
+    // or any tool in that stale copy did nothing, which is exactly "none of these features work".
+    // seenBuild is the running exe's timestamp (from /api/app/build) and changes on every update,
+    // so it caches within a build and refetches across one; Date.now() covers the moment before
+    // the first build check has answered.
+    iframe.src = '/editor.html?v=' + (seenBuild || Date.now());
     iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;';
     overlay.appendChild(iframe);
     document.body.appendChild(overlay);
