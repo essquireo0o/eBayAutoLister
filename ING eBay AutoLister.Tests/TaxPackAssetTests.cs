@@ -41,6 +41,13 @@ public class TaxPackAssetTests
     {
         // The two screens are two halves of one sentence — what you made, and how much of it was
         // never yours. Filed away under a tools heading it becomes the feature nobody opens.
+        //
+        // Next to Money Made, but not near the top. The Sell group is ordered by how often a
+        // seller opens each screen (the owner, 2026-08-21: "put the most important stuff towards
+        // the top — think about the user"): the listing loop that runs many times a day comes
+        // first, and the money already made — read at the end of a month — sits under it. So this
+        // pair sits directly below the last daily screen, Listing Copilot, and nothing about the
+        // day's work sits below them.
         var sell = Section(Html,
             "<p class=\"nav-group-label\">Sell</p>",
             "<p class=\"nav-group-label\">Grow</p>");
@@ -50,6 +57,8 @@ public class TaxPackAssetTests
 
         Assert.Contains("tax", order);
         Assert.Equal(order.IndexOf("earnings") + 1, order.IndexOf("tax"));
+        Assert.True(order.IndexOf("earnings") > order.IndexOf("copilot"),
+            "Money Made and the Tax Pack are monthly reading; they belong below the daily listing loop");
     }
 
     [Fact]

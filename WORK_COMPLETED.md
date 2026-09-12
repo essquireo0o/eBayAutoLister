@@ -15250,3 +15250,52 @@ when one does.
   the other session's was committed from here.
 - Free ($0, not `isFree`) Facebook picks still render an empty money slot — `screened` drops a
   zero price that isn't flagged free; pre-existing, out of scope.
+
+---
+
+## 2026-09-12 — Sidebar ordered by what a seller does most (owner request of 2026-08-21)
+
+The owner circled the Sell group and said: "Organize these and put the most important stuff
+towards the top — think about the user, what they want." The Sell reorder itself had already
+landed in `dd56652` on the day; this pass records it, pins the intent in tests rather than in
+index arithmetic alone, and gives the Account group the same rule.
+
+### The order, and why
+
+| Group | Order | Rule |
+|---|---|---|
+| Sell | Dashboard · Photo → eBay Listing · AI Listing eBay · (AI Listing Amazon, hidden) · Photo Library · Listings · Listing Copilot · **Money Made · Tax Pack · Business Profitability** | One item's journey first — photograph, AI writes and prices, publish, improve what is live — because that loop runs many times a day. The three money screens are month-end reading, so they are the floor of the group, kept together. |
+| Grow | unchanged (WhatsNot · Opportunity Finder · Spend My Budget · Price Position · Offers · Rescue · Ad Rate · Ship Smart) | Sourcing, then allocation, then the diagnosis above its three treatments, then the cost under all of it. Already ordered that way and pinned by `PricePositionBoardAssetTests`; two stale comments describing buttons removed at the seller's request were dropped so the block stops claiming a screen that is not there "sits first in Grow". |
+| Account | **Settings** · Activity · Logs · License | Settings is the door for reconnecting eBay and changing a key, opened whenever something needs fixing; Logs is read only afterwards. License stays last for its status dot. |
+
+No feature was removed or renamed, and no group label changed: "Sell" still describes selling
+and what selling made, "Grow" the sourcing and pricing boards, "Account" the app's own doors.
+
+### Files
+
+| File | Change |
+|---|---|
+| `ING eBay AutoLister/wwwroot/index.html` | Account group reordered (Settings first) with a comment carrying the rule; two orphan Grow comments removed. Nav block only — the other session's uncommitted Store Plan hunks in this file were left in the tree and out of the commit. |
+| `ING eBay AutoLister.Tests/TaxPackAssetTests.cs` | `Sitting_it_next_to_money_made…` now also asserts the pair sits *below* Listing Copilot, and its comment says why, instead of only pinning `tax == earnings + 1`. |
+| `ING eBay AutoLister.Tests/SidebarOrderAssetTests.cs` | New: the Sell group runs camera → bank in day order; nothing daily sits below the monthly floor; Settings above Logs and License last. |
+| `WORK_COMPLETED.md` | This entry. |
+
+`StorePlanAssetTests.It_sits_with_the_other_two_screens…` (`storeplan == tax + 1`) still describes
+the intent — the Store plan is the third month-end answer — and is untracked work of the Store Plan
+lane, so it was left as is. `WorkspaceTabsAssetTests` still holds: every `data-page` in the nav is
+registered in `WORKSPACE_PAGES`.
+
+### Verified
+
+- `dotnet build` clean (0 warnings). `dotnet test`: 5948 passed, 2 failed - both in
+  `PhoneAiListingTests`, broken at HEAD before this pass by `4c4f549` (another session removed the
+  phone page's manual AI-listing action; the lane file already records it as that lane's call).
+  Nothing in this pass touches `PhoneCapture.cs`. The 3 new `SidebarOrderAssetTests` and the
+  extended Tax Pack assertion pass; `WorkspaceTabsAssetTests` passes.
+- Running desktop app at http://localhost:9332 (`verification/sidebar-order.mjs`): all 21 visible
+  sidebar entries clicked by script; each lit its own nav item, set its own route and showed its
+  own section (Activity and Listings focus the Dashboard region by design; the AI Listing door
+  routes to the shared `#ai` tab and shows `new-listing-overlay`). The process on 9332 was NOT
+  restarted from here: while this ran, the comp-matcher lane claimed the rebuild + restart of 9332
+  and Codex deferred to it, so restarting too would have been two hands on one resource. The
+  `bin/Debug` build made here at 10:12 already embeds this nav, so that restart carries it.

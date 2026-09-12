@@ -296,14 +296,6 @@
              seller can price what's on screen against real eBay costs without leaving the app. The
              live analysis is built on top over time; this entry opens the embedded feed. -->
         <button class="nav-item" type="button" data-page="whatsnot"><svg class="nav-icon" aria-hidden="true"><use href="#i-radar"/></svg>WhatsNot</button>
-        <!-- The only screen meant to be used away from the desk. Every board below it answers
-             "what should I go and buy"; this one answers "should I buy THIS", about the thing
-             already in the seller's hand. It sits first in Grow because it is the one that has to
-             be found in three seconds on a phone. -->
-        <!-- The only board in Grow that isn't looking at the market. Every other one answers "is
-             this worth buying" about something it found; this one answers "what should I be looking
-             FOR", out of the seller's own completed sales — and that question comes first, which is
-             why it sits directly under the screen they use with the item already in their hand. -->
         <!-- The only screen in the app that works when nobody is looking at it. Every other
              sourcing board is a button someone has to remember to press; this one is that same
              scan, saved with a profit bar on it, running on its own. It sits first in Grow
@@ -346,9 +338,13 @@
              that deep-links to it still works. Put a button back and the feature returns as it was. -->
 
         <p class="nav-group-label">Account</p>
+        <!-- Same rule as Sell: by how often it is opened. Settings is the door for connecting eBay
+             and changing a key, so it is opened whenever something needs fixing; Activity is a
+             glance at what the app did today; Logs is only read when something has gone wrong.
+             License stays last because its status dot is what the seller is looking for down there. -->
+        <button class="nav-item" type="button" data-page="settings"><svg class="nav-icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</button>
         <button class="nav-item" type="button" data-page="activity"><svg class="nav-icon" aria-hidden="true"><use href="#i-activity"/></svg>Activity</button>
         <button class="nav-item" type="button" data-page="logs"><svg class="nav-icon" aria-hidden="true"><use href="#i-logs"/></svg>Logs</button>
-        <button class="nav-item" type="button" data-page="settings"><svg class="nav-icon" aria-hidden="true"><use href="#i-settings"/></svg>Settings</button>
         <button class="nav-item nav-license" id="nav-license-btn" type="button" data-page="license"><svg class="nav-icon" aria-hidden="true"><use href="#i-license"/></svg>License<span id="nav-license-dot" class="nav-license-dot dot-off"></span></button>
       </nav>
       <div class="sidebar-footer">
