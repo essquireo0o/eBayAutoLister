@@ -646,6 +646,48 @@ builder.Services.AddSingleton<DealRadarService>();
 // endpoints ask "is a scan running" and "run this one now".
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DealRadarService>());
 
+// ── eBay Auto-Buy ────────────────────────────────────────────────────────────
+// Rules that watch eBay and, when the seller has armed them and turned on live buying, buy on
+// their own inside per-rule and global caps. Ships disarmed and simulate-only (AutoBuyStore seeds
+// it so). The two delegates are the only seam to eBay: one search, one placement — everything that
+// decides whether to spend lives in AutoBuyService, not here.
+builder.Services.AddSingleton<AutoBuyStore>();
+builder.Services.AddSingleton<AutoBuyListingSource>(sp => async (rule, ct) =>
+{
+    var ebay = sp.GetRequiredService<EbayService>();
+    var listingType = rule.Mode == AutoBuyMode.AuctionBid ? "AUCTION" : "FIXED_PRICE";
+    IReadOnlyList<EbayOpportunityItem> results = await ebay.SearchEndingSoonAsync(
+        rule.Query,
+        minFeedback: rule.MinSellerFeedback,
+        limit: 50,
+        category: null,
+        condition: string.IsNullOrWhiteSpace(rule.Condition) ? null : rule.Condition,
+        minPrice: null,
+        maxPrice: rule.MaxItemPrice,
+        listingType: listingType);
+    return results;
+});
+builder.Services.AddSingleton<AutoBuyPlacer>(sp => async (rule, item, price, ct) =>
+{
+    var ebay = sp.GetRequiredService<EbayService>();
+    try
+    {
+        switch (rule.Mode)
+        {
+            case AutoBuyMode.BuyItNow:   await ebay.PlaceBuyItNowAsync(item.ItemId); break;
+            case AutoBuyMode.BestOffer:  await ebay.PlaceBestOfferAsync(item.ItemId, price); break;
+            case AutoBuyMode.AuctionBid: await ebay.PlaceMaxBidAsync(item.ItemId, price); break;
+        }
+        return new AutoBuyPlacement(true, $"eBay accepted the {AutoBuyService.ModeVerb(rule.Mode)}.");
+    }
+    catch (Exception ex)
+    {
+        return new AutoBuyPlacement(false, ex.Message);
+    }
+});
+builder.Services.AddSingleton<AutoBuyService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoBuyService>());
+
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
 // owner API cross-origin. The owner/stats endpoint is still gated by the admin
 // key, so opening it to any origin only exposes what an admin-key holder can
@@ -9445,6 +9487,7 @@ AmazonListingFillEndpoints.Map(app);
 // because on Amazon it is a separate question asked minutes later — what became of either. A
 // submission that came back 200 ACCEPTED is queued, not published. See AmazonSubmissionWords.
 AmazonSubmitEndpoints.Map(app);
+AutoBuyEndpoints.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {

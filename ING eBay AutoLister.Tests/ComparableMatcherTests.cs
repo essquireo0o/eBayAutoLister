@@ -161,4 +161,80 @@ public class ComparableMatcherTests
 
         Assert.True(match.Excluded);
     }
+
+    // ── ASIC miner disambiguation ───────────────────────────────────────────────────────────
+    // "90T" is a substring of "190T", the hashrate is not one of the tracked spec fields, and the
+    // S19/T21 series token is not always filed under Model — so a T21 190TH priced an S19 90TH.
+
+    [Fact]
+    public void Match_S19_90TH_DoesNotMatch_T21_190TH()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S19 90TH/S ASIC Bitcoin BTC Miner");
+
+        var match = matcher.Match(target, Candidate("1", "New Antminer T21 190T 3610W SHA-256 Bitmain BTC Miner"));
+
+        Assert.True(match.Excluded);
+        Assert.Contains("conflict", match.ExclusionReason ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Match_S19_90TH_DoesNotMatch_S19_95TH()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S19 90TH/S Bitcoin Miner");
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer S19 95TH ASIC Bitcoin Miner"));
+
+        Assert.True(match.Excluded);
+        Assert.Contains("hashrate", match.ExclusionReason ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Match_S19_90TH_DoesNotMatch_Z15_DifferentSeries()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S19 90TH/S Bitcoin Miner");
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer Z15 420KSol/s ASIC Miner for Zcash ZEC"));
+
+        Assert.True(match.Excluded);
+        Assert.Contains("series", match.ExclusionReason ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Match_S19_90TH_DoesNotMatch_L7_DogeMiner()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S19 90TH/S Bitcoin Miner");
+
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer L7 9.05Gh 3260W Litecoin Doge Miner"));
+
+        Assert.True(match.Excluded);
+        Assert.Contains("conflict", match.ExclusionReason ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Match_S19_90TH_StillMatches_AnotherS19_90TH()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        var target = normalizer.Normalize("Bitmain Antminer S19 90TH/S ASIC Bitcoin Miner");
+
+        // Same machine, same rated hashrate — the guards must not exclude a real comp.
+        var match = matcher.Match(target, Candidate("1", "Bitmain Antminer S19 90Th/s 3100W BTC Mining Machine"));
+
+        Assert.False(match.Excluded);
+    }
+
+    [Fact]
+    public void Match_HashrateGuard_DoesNotFireOutsideMinerContext()
+    {
+        var (normalizer, matcher) = CreateMatcher();
+        // "4TB" must never be read as a 4 TH/s hashrate — no miner context here.
+        var target = normalizer.Normalize("Samsung 990 Pro 4TB NVMe SSD");
+
+        var match = matcher.Match(target, Candidate("1", "Samsung 990 Pro 4TB NVMe M.2 Solid State Drive"));
+
+        Assert.False(match.Excluded);
+    }
 }

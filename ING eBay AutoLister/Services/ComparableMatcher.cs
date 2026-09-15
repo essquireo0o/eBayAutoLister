@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ING_eBay_AutoLister.Models;
 
 namespace ING_eBay_AutoLister.Services;
@@ -51,6 +52,29 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
 
         var keywordCoverage = KeywordCoverage(target.ImportantKeywords, candidateProduct.ImportantKeywords);
         score += keywordCoverage * KeywordPoints;
+
+        // Same ASIC miner is strong model-level evidence, but the normalizer files a miner's
+        // hashrate ("90TH") and wattage ("3100W") into the Model field, so ExactMatch on Model
+        // under-scores two identical S19 90TH units down below the acceptance floor. Score the
+        // miner identity directly: series match earns the model tier, matching rated hashrate the
+        // spec points — the positive mirror of the series/hashrate conflict guards below.
+        if (LooksLikeMiner(target.RawText) || LooksLikeMiner(candidate.Title))
+        {
+            var ts = MinerSeries(target.RawText);
+            if (ts is not null && ts == MinerSeries(candidate.Title) && !modelHit)
+            {
+                score += ExactModelPoints;
+                modelHit = true;
+            }
+            var th = MinerHashrate(target.RawText, true);
+            var ch = MinerHashrate(candidate.Title, true);
+            if (th is not null && ch is not null && th.Value.Unit == ch.Value.Unit
+                && Math.Abs(th.Value.Value - ch.Value.Value) <= 0.5 && !specHit)
+            {
+                score += SpecPoints;
+                specHit = true;
+            }
+        }
 
         // ── Hard exclusions — a "match" here would actively mislead the price estimate ──────
         string? exclusionReason = null;
@@ -140,9 +164,26 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
         // descriptive prose, not a model number. Two disjoint model designators (e.g. "S19" vs
         // "S21") are a real conflict; "ControlLogix Processor" vs "PLC" isn't — it just means the
         // candidate doesn't state a specific model, which is weaker evidence, not a contradiction.
+        // Skipped for ASIC miners: the normalizer leaks the hashrate ("90TH") and wattage
+        // ("3100W") into the Model field, so two IDENTICAL S19 90TH units read as conflicting
+        // models. Miners are disambiguated below by series + rated hashrate instead, which is
+        // exact where the generic Model comparison is noise.
         if (exclusionReason is null && HasDigit(target.Model) && HasDigit(candidateProduct.Model) &&
+            !LooksLikeMiner(target.RawText) && !LooksLikeMiner(candidate.Title) &&
             ConflictingValue(target.Model, candidateProduct.Model))
             exclusionReason = "Model number conflict";
+
+        // ── ASIC miner disambiguation ──────────────────────────────────────────────────────
+        // A whole class of comps priced an Antminer S19 90TH off a T21 190TH, a Z15, or an L7,
+        // because "90T" is a SUBSTRING of "190T", the hashrate isn't one of the tracked spec
+        // fields, and the S19/T21/Z15 series token isn't always what the normalizer files under
+        // Model. The result priced a used 90T (~$150-250) at ~$556, so the finder told the owner
+        // to buy one at $250 for "$92 profit". Two guards, both only firing when a side looks like
+        // a miner and both sides actually state the value — same "conflict, not absence" rule as
+        // Generation/Capacity above, so a comp that simply omits its hashrate is not excluded.
+        if (exclusionReason is null)
+            exclusionReason = MinerHashrateConflict(target.RawText, candidate.Title)
+                           ?? MinerSeriesConflict(target.RawText, candidate.Title);
         // Strict here too, and for the same reason: under the tolerant comparison two part numbers
         // sharing a prefix were not merely scored as a match, they were not even recognised as a
         // conflict, so nothing downstream got the chance to exclude the comp.
@@ -312,5 +353,77 @@ public sealed class ComparableMatcher(ProductNormalizer normalizer)
         var candidateSet = new HashSet<string>(candidateKeywords, StringComparer.OrdinalIgnoreCase);
         var matched = targetKeywords.Count(candidateSet.Contains);
         return (double)matched / targetKeywords.Count;
+    }
+
+    // ── ASIC miner disambiguation ──────────────────────────────────────────────────────────
+    private static readonly string[] MinerContext =
+        ["antminer", "whatsminer", "bitmain", "avalon", "goldshell", "iceriver", "jasminer",
+         "ipollo", "sealminer", "asic miner", "th/s", "gh/s", "mh/s", "ph/s"];
+
+    private static bool LooksLikeMiner(string? text) =>
+        !string.IsNullOrEmpty(text) && MinerContext.Any(k => text.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+    // The rated hashrate as (number, unit), e.g. "90TH/s" -> (90,'T'), "9.05 Gh" -> (9.05,'G').
+    // Explicit unit ("TH","Gh","MH/s") first; a bare "<n>T" is only read as a hashrate in miner
+    // context, so "4TB" and a "90 min" spec elsewhere are never mistaken for one. First hashrate
+    // in the title wins — it is the machine's rated figure ("S19 90TH ... 100TH on board").
+    private static readonly Regex HashrateExplicit =
+        new(@"(\d+(?:\.\d+)?)\s*([TGMP])[Hh](?:/?s)?\b", RegexOptions.Compiled);
+    private static readonly Regex HashrateBareT =
+        new(@"(\d+(?:\.\d+)?)\s*[Tt]\b", RegexOptions.Compiled);
+
+    private static (double Value, char Unit)? MinerHashrate(string? text, bool isMiner)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        var m = HashrateExplicit.Match(text);
+        if (m.Success && double.TryParse(m.Groups[1].Value, out var v))
+            return (v, char.ToUpperInvariant(m.Groups[2].Value[0]));
+        if (isMiner)
+        {
+            var b = HashrateBareT.Match(text);
+            if (b.Success && double.TryParse(b.Groups[1].Value, out var bv)) return (bv, 'T');
+        }
+        return null;
+    }
+
+    private static string? MinerHashrateConflict(string? targetText, string? candidateText)
+    {
+        var tMiner = LooksLikeMiner(targetText);
+        var cMiner = LooksLikeMiner(candidateText);
+        if (!tMiner && !cMiner) return null;
+        var a = MinerHashrate(targetText, tMiner || cMiner);
+        var b = MinerHashrate(candidateText, tMiner || cMiner);
+        if (a is null || b is null) return null;
+        if (a.Value.Unit != b.Value.Unit || Math.Abs(a.Value.Value - b.Value.Value) > 0.5)
+            return $"Hashrate conflict ({a.Value.Value:0.##}{a.Value.Unit}H vs {b.Value.Value:0.##}{b.Value.Unit}H)";
+        return null;
+    }
+
+    // The model/series token anchored on a known ASIC prefix (S19, T21, Z15, L7, E9, A1246, M50S,
+    // KS3, KA3, KD6). Anchoring on the prefix keeps "SHA256", "3260W" and "PSU" from ever reading
+    // as a model, and first-match returns the model that sits right after the brand.
+    private static readonly Regex MinerSeriesToken =
+        new(@"\b((?:KS|KA|KD|DZ|M|S|T|L|Z|E|X|A)\d{1,4}[A-Za-z]{0,3}\d{0,2})\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static string? MinerSeries(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        var m = MinerSeriesToken.Match(text);
+        return m.Success ? m.Groups[1].Value.ToUpperInvariant() : null;
+    }
+
+    private static string? MinerSeriesConflict(string? targetText, string? candidateText)
+    {
+        if (!LooksLikeMiner(targetText) && !LooksLikeMiner(candidateText)) return null;
+        var a = MinerSeries(targetText);
+        var b = MinerSeries(candidateText);
+        if (a is null || b is null) return null;
+        // Prefix-tolerant, like ExactMatch on a model: a bare "S19" query must still find "S19j"
+        // (broad discovery, and their hashrates are what separate them below), while "S19" vs
+        // "T21"/"Z15"/"S21" — neither a prefix of the other — is a genuinely different machine.
+        if (a == b || a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal))
+            return null;
+        return $"Miner series conflict ({a} vs {b})";
     }
 }
