@@ -37,6 +37,27 @@ public class LiveCompsTests
     // ── Normalising what the API sends ───────────────────────────────────────────────────────
 
     [Fact]
+    public void Parse_SoldEndpoint_WithNullTotalResults_ReturnsRowsInsteadOfFailing()
+    {
+        // The sold-items search returns "total_results": null (it is only a number on the active
+        // search). TryGetInt32 throws on a null element — not a JsonException — so this used to
+        // fail every single sold lookup, which is why the live source never once answered in the
+        // app while the collector hit the same API fine.
+        const string body = """
+            {"data":{"total_results":null,"products":[
+               {"item_id":"111","title":"Bitmain Antminer S19 90TH","price":"250","caption":"Sold Sep 1, 2026"},
+               {"item_id":"222","title":"Bitmain Antminer S19 90TH","price":"199","caption":"Sold Sep 2, 2026"}
+            ]}}
+            """;
+
+        var fetch = OpenWebNinjaClient.Parse(body, 200);
+
+        Assert.True(fetch.Ok);
+        Assert.Equal(2, fetch.Rows.Count);
+        Assert.Equal(0, fetch.TotalResults);
+    }
+
+    [Fact]
     public void Free_shipping_is_zero_and_unknown_shipping_stays_unknown()
     {
         // Free delivery is part of what the buyer paid: it is 0.00, not "we don't know".

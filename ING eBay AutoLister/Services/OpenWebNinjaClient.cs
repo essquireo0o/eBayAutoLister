@@ -154,7 +154,14 @@ public sealed class OpenWebNinjaClient(IHttpClientFactory httpFactory, Credentia
                 data.ValueKind != JsonValueKind.Object)
                 return LiveCompsFetch.Failed(status, "The API answered without a data object.");
 
-            var total = data.TryGetProperty("total_results", out var t) && t.TryGetInt32(out var totalValue)
+            // total_results comes back as JSON null on the SOLD endpoint (it is only a number on
+            // the active-items search). TryGetInt32 does NOT guard the ValueKind — its "Try" only
+            // covers overflow — so on a null element it throws InvalidOperationException, which is
+            // not a JsonException and so escaped the catch below and failed every single sold
+            // lookup. Guard the kind first: no total is 0, not a crash.
+            var total = data.TryGetProperty("total_results", out var t)
+                        && t.ValueKind == JsonValueKind.Number
+                        && t.TryGetInt32(out var totalValue)
                 ? totalValue
                 : 0;
 
@@ -170,9 +177,12 @@ public sealed class OpenWebNinjaClient(IHttpClientFactory httpFactory, Credentia
 
             return new LiveCompsFetch(true, status, "", rows, total);
         }
-        catch (JsonException ex)
+        catch (Exception ex)
         {
-            return LiveCompsFetch.Failed(status, "The API answered with something that is not JSON: " + ex.Message);
+            // Broad on purpose: a JsonException is the expected shape, but an unexpected value type
+            // in one field (see total_results) throws InvalidOperationException, and one weird
+            // field must not take down a whole page of good comps or the source with it.
+            return LiveCompsFetch.Failed(status, "The API answer could not be read: " + ex.Message);
         }
     }
 

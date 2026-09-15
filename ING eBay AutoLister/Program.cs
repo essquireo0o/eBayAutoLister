@@ -553,6 +553,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<EarningsAutoImport
 // much of it the seller keeps. It reads the same flips and deliberately reaches a different net
 // profit — see TaxPackCalculator for why both numbers are right.
 builder.Services.AddSingleton<TaxPackCalculator>();
+// Business Profitability prices the eBay Store subscription against the seller's live inventory.
+builder.Services.AddSingleton<StorePlanOptimizer>();
 // The Deal Pipeline — the thread that joins all of the above. Every other money service answers
 // one question about one moment; this one carries a single flip from the sourcing forecast that
 // justified the buy, through the cash that left the bank, to the sale in EarningsStore that
@@ -2277,7 +2279,7 @@ app.MapGet("/api/opportunities/search", async (string? q, string? seller, string
     TerapeakMarketService terapeakMarket, IMarketplaceRepository marketplace, ProductNormalizer normalizer,
     ComparableMatcher matcher, MarketPriceEstimator priceEstimator, SellThroughCalculator sellThroughCalc,
     ProfitCalculator profitCalc, FeeProfile feeProfile, OpportunityScoringService opportunityScorer,
-    ConfidenceScoringService confidenceScorer, LiquidityScoringConfig liquidityConfig, ActionLog log, CancellationToken ct) =>
+    ConfidenceScoringService confidenceScorer, LiquidityScoringConfig liquidityConfig, LiveCompsLookup live, ActionLog log, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(q) && string.IsNullOrWhiteSpace(seller))
         return Results.BadRequest(new { error = "A keyword or a seller username is required." });
@@ -2287,7 +2289,7 @@ app.MapGet("/api/opportunities/search", async (string? q, string? seller, string
     {
         result = await FindOpportunitiesAsync(q ?? "", category, condition, minPrice, maxPrice, listingType ?? "AUCTION",
             ebay, terapeakMarket, marketplace, normalizer, matcher, priceEstimator, sellThroughCalc, profitCalc,
-            feeProfile, opportunityScorer, confidenceScorer, log, seller: seller, ct: ct);
+            feeProfile, opportunityScorer, confidenceScorer, live, log, seller: seller, ct: ct);
     }
     catch (Exception ex)
     {
@@ -5506,6 +5508,79 @@ static TaxPackResult BuildTaxPack(
     return tax.Build(computed, feeProfile, incomeRatePercent, year, DateTimeOffset.Now);
 }
 
+// ── Business Profitability / Store Plan ─────────────────────────────────────────────────────
+// This reports the least expensive Store tier for the seller's live listing count. It does not
+// change anything on eBay; the published rate card and every part of the calculation stay visible.
+app.MapGet("/api/store-plan", async (EbayService ebay, EarningsStore earnings,
+    FeeProfileStore feeStore, StorePlanOptimizer optimizer, ActionLog log) =>
+{
+    var settings = feeStore.LoadStorePlan();
+
+    try
+    {
+        var live = await ebay.GetListingsAsync();
+        var active = live.Count(l =>
+            (l.Status is "ACTIVE" or "PUBLISHED" || string.IsNullOrWhiteSpace(l.Status))
+            && !string.IsNullOrWhiteSpace(l.Title));
+
+        return Results.Ok(optimizer.Evaluate(BuildStorePlanInputs(settings, active, true, earnings)));
+    }
+    catch (Exception ex)
+    {
+        log.Add("Warning", "Business profitability check could not read eBay listings", ex.Message);
+        var result = optimizer.Evaluate(BuildStorePlanInputs(settings, 0, false, earnings));
+        result.Status = "ebay_unavailable";
+        result.Error = ex.Message;
+        return Results.Ok(result);
+    }
+});
+
+app.MapPost("/api/store-plan/settings", (
+    StorePlanSettingsRequest body, EarningsStore earnings, FeeProfileStore feeStore,
+    StorePlanOptimizer optimizer, ActionLog log) =>
+{
+    if (body.PlanKey is not null && StorePlanCatalog.Find(body.PlanKey) is null)
+        return Results.BadRequest("That is not one of eBay's Store tiers.");
+    if (body.ListingsOverride is int typed && (typed < 0 || typed > StorePlanCatalog.LadderCeiling))
+        return Results.BadRequest($"Enter a listing count between 0 and {StorePlanCatalog.LadderCeiling:N0}.");
+
+    var existing = feeStore.LoadStorePlan();
+    var saved = feeStore.SaveStorePlan(new StorePlanSettings
+    {
+        PlanKey = body.PlanKey ?? existing.PlanKey,
+        AnnualBilling = body.AnnualBilling ?? existing.AnnualBilling,
+        ListingsOverride = body.ListingsOverride ?? existing.ListingsOverride,
+    });
+
+    log.Add("Info", "Business profitability settings updated",
+        $"{StorePlanCatalog.Resolve(saved.PlanKey).Name}, billed {(saved.AnnualBilling ? "annually" : "monthly")}");
+
+    return Results.Ok(optimizer.Evaluate(BuildStorePlanInputs(
+        saved, Math.Max(0, body.ActiveListings ?? 0), body.ActiveListings is not null, earnings)));
+});
+
+app.MapGet("/api/store-plan/rates", () => Results.Ok(StorePlanCatalog.Describe()));
+
+static StorePlanInputs BuildStorePlanInputs(
+    StorePlanSettings settings, int activeListings, bool measured, EarningsStore earnings) => new()
+{
+    ActiveListings = activeListings,
+    ListingCountMeasured = measured,
+    ListingsOverride = settings.ListingsOverride,
+    CurrentPlanKey = settings.PlanKey,
+    AnnualBilling = settings.AnnualBilling,
+    MonthlySales = StorePlanMonthlySales(earnings, DateTimeOffset.UtcNow),
+};
+
+static decimal StorePlanMonthlySales(EarningsStore earnings, DateTimeOffset now)
+{
+    var since = now.AddDays(-90);
+    var gross = earnings.GetAll()
+        .Where(f => f.SoldUtc >= since && EarningsStore.NormalizeStatus(f.Status) == "paid")
+        .Sum(f => f.SalePrice * Math.Max(1, f.Quantity) + f.ShippingCharged);
+
+    return Math.Round(gross / 3m, 2, MidpointRounding.AwayFromZero);
+}
 
 // ── The Deal Pipeline — Sourced → Bought → Listed → Sold ──────────────────────────────────────
 // Everything above answers one question about one moment. This carries a single flip end to end:
@@ -7911,7 +7986,7 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
     EbayService ebay, TerapeakMarketService terapeakMarket, IMarketplaceRepository marketplace,
     ProductNormalizer normalizer, ComparableMatcher matcher, MarketPriceEstimator priceEstimator,
     SellThroughCalculator sellThroughCalc, ProfitCalculator profitCalc, FeeProfile feeProfile,
-    OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer, ActionLog log,
+    OpportunityScoringService opportunityScorer, ConfidenceScoringService confidenceScorer, LiveCompsLookup live, ActionLog log,
     int terapeakRecheckLimit = 5, string? seller = null, CancellationToken ct = default)
 {
     // Price the same combined keyword+category search that's actually being run below.
@@ -7959,6 +8034,39 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
             log.Add("Warning", "Opportunity local market lookup failed", ex.Message);
         }
 
+        // The finder's live scrape is now OpenWebNinja (the API the collector uses), not the dead
+        // browser-Terapeak path. When the stored comps are thin, fetch fresh sold prices while the
+        // seller waits and re-read the local store — which is exactly where LiveCompsLookup saves
+        // them. Self-rationed: Start() honours the 24-hour cache, the per-user daily budget and the
+        // circuit breaker, so a search never over-spends the monthly allowance.
+        var liveSourceUsed = false;
+        if ((localBroad is null || localBroad.MatchCount < 3) && live.IsAvailable && live.ShouldAttempt)
+        {
+            try
+            {
+                var run = await live.FetchAsync(priceQuery, ct);
+                if (run.Outcome is "ok" or "fresh")
+                {
+                    localBroad = await marketplace.FindComparablesAsync(new MarketplaceLookupRequest
+                    {
+                        PartNumber     = broadTarget.PartNumber,
+                        Model          = broadTarget.Model,
+                        Brand          = broadTarget.Brand,
+                        Category       = broadTarget.Category,
+                        Keywords       = priceQuery,
+                        Condition      = condition,
+                        MaxComparables = 20
+                    }, ct);
+                    liveSourceUsed = run.Outcome == "ok";
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                log.Add("Warning", "Opportunity live comps lookup failed", ex.Message);
+            }
+        }
+
         // Require a few matches before trusting the local database over a live scrape — one or
         // two comps aren't enough to call it a reliable market estimate.
         if (localBroad is { MatchCount: >= 3 })
@@ -7966,7 +8074,7 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
             marketValue   = localBroad.MedianPrice ?? localBroad.AveragePrice ?? 0;
             averagePrice  = localBroad.AveragePrice ?? 0;
             avgShipping   = localBroad.AverageShipping ?? 0;
-            soldSource    = "local_market_data";
+            soldSource    = liveSourceUsed ? "live_openwebninja" : "local_market_data";
             // No live active-listing count is fetched on this path, so a true sold/(sold+active)
             // sell-through ratio (what Terapeak reports) isn't computable here. LiquidityScore is
             // already a comparable 0-100 measure of how fast this sells (see
@@ -8071,6 +8179,7 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
     if (terapeakRecheckLimit > 0)
     {
         var realScrapesUsed = 0;
+        var liveLookupsUsed = 0;
         // With no broad keyword (seller-only search) nothing has a ProfitPercent yet to rank
         // candidates by — recheck every listing in whatever order the API returned instead of
         // filtering down to an empty set.
@@ -8081,6 +8190,22 @@ static async Task<OpportunitySearchResult> FindOpportunitiesAsync(
         foreach (var candidate in candidates)
         {
             if (string.IsNullOrWhiteSpace(candidate.Title)) continue;
+
+            // Fresh OpenWebNinja sold comps for THIS specific item before it is priced, so the
+            // recheck sees this exact model's recent sales rather than only what the database
+            // already held. FetchAsync saves into the local store AnalyzeProductAsync reads next.
+            // Same per-search cap as the Terapeak recheck and self-rationed (a 24-hour-cached model
+            // returns "fresh" and spends nothing), so it never drains the monthly allowance.
+            if (live.IsAvailable && live.ShouldAttempt && liveLookupsUsed < terapeakRecheckLimit)
+            {
+                try
+                {
+                    var run = await live.FetchAsync(candidate.Title, ct);
+                    if (run.Outcome is not ("fresh" or "busy" or "unavailable")) liveLookupsUsed++;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { log.Add("Warning", "Opportunity live comps recheck failed", ex.Message); }
+            }
 
             // Cache-only pre-check (allowRealTerapeakScrape: false — never scrapes) so a cache
             // hit doesn't consume the real-scrape budget; AnalyzeProductAsync below re-checks the
@@ -10195,6 +10320,32 @@ app.MapPost("/api/bulk-import/extract-links", async (AnalyzeUrlRequest req, IHtt
     {
         return Results.BadRequest(new { error = ex.Message });
     }
+});
+
+// A catalog copied from Explorer or a browser never has a URL for the link extractor above to
+// crawl. Read the uploaded picture/PDF into a short, factual product list first; the client then
+// sends each name through the existing quick-fill pipeline so both kinds of bulk import produce
+// the same saved listing drafts.
+app.MapPost("/api/bulk-import/extract-products", async (AnalyzeSupplierFileRequest req,
+    ClaudeService claude, CredentialsStore store, LicenseService license, ActionLog log) =>
+{
+    if (TrialGuard(store, license) is { } blocked) return blocked;
+    if (string.IsNullOrWhiteSpace(req.ImageBase64))
+        return BadInputJson("No catalog file reached the app",
+            "The picture or PDF did not arrive with the request.",
+            "Paste it again, or use Choose picture or PDF.");
+
+    var mime = (req.MimeType ?? "").Trim().ToLowerInvariant();
+    if (mime != "application/pdf" && !mime.StartsWith("image/"))
+        return BadInputJson("That file type cannot be read",
+            "Bulk Catalog Import accepts pictures and PDF documents.",
+            "Choose a JPG, PNG, WEBP, GIF, or PDF file.");
+
+    return await Guarded(FailureDomain.Ai, "AI catalog-file extraction", log, async () =>
+    {
+        var products = await claude.AnalyzeSupplierFileAsync(req.ImageBase64, mime);
+        return new { products };
+    });
 });
 
 app.MapGet("/api/ebay/category-children", async (string? id, EbayService ebay) =>

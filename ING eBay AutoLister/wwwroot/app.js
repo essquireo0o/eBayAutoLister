@@ -1368,7 +1368,45 @@
   // Every route in this app is a workspace tab now, so navigation is one line: open the tab, or
   // switch to it if it is already open.
   function handleNav(page) {
+    // Auto-Buy is a standalone console served at its own URL, opened over the app rather than as a
+    // workspace tab — it is a self-contained page with its own polling, and it spends money, so it
+    // deserves a screen that is unmistakably its own. It is not in WORKSPACE_PAGES on purpose.
+    if (page === 'autobuy') { openAutoBuyConsole(); return; }
     openWorkspaceTab(page || 'dashboard');
+  }
+
+  // The eBay Auto-Buy console, full-screen over the app. Cache-busted the same way the photo editor
+  // is (seenBuild), so a self-update can never leave a stale copy of it loaded.
+  function openAutoBuyConsole() {
+    if (document.getElementById('autobuy-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'autobuy-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d1117;';
+
+    const iframe = document.createElement('iframe');
+    iframe.src = '/autobuy.html?v=' + (seenBuild || Date.now());
+    iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;';
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '✕ Close';
+    close.style.cssText = 'position:absolute;top:14px;right:18px;z-index:2;background:rgba(15,23,42,.72);' +
+      'color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:8px 14px;' +
+      'font:600 14px system-ui,sans-serif;cursor:pointer';
+
+    const done = () => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      if (location.hash === '#autobuy') history.replaceState(null, '', location.pathname + location.search);
+    };
+    const onKey = e => { if (e.key === 'Escape') done(); };
+    close.addEventListener('click', done);
+    document.addEventListener('keydown', onKey);
+
+    overlay.appendChild(iframe);
+    overlay.appendChild(close);
+    document.body.appendChild(overlay);
   }
 
   // Setting the hash to what it already is fires no hashchange, so the click would do nothing at
