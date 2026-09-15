@@ -1368,45 +1368,7 @@
   // Every route in this app is a workspace tab now, so navigation is one line: open the tab, or
   // switch to it if it is already open.
   function handleNav(page) {
-    // Auto-Buy is a standalone console served at its own URL, opened over the app rather than as a
-    // workspace tab — it is a self-contained page with its own polling, and it spends money, so it
-    // deserves a screen that is unmistakably its own. It is not in WORKSPACE_PAGES on purpose.
-    if (page === 'autobuy') { openAutoBuyConsole(); return; }
     openWorkspaceTab(page || 'dashboard');
-  }
-
-  // The eBay Auto-Buy console, full-screen over the app. Cache-busted the same way the photo editor
-  // is (seenBuild), so a self-update can never leave a stale copy of it loaded.
-  function openAutoBuyConsole() {
-    if (document.getElementById('autobuy-overlay')) return;
-
-    const overlay = document.createElement('div');
-    overlay.id = 'autobuy-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#0d1117;';
-
-    const iframe = document.createElement('iframe');
-    iframe.src = '/autobuy.html?v=' + (seenBuild || Date.now());
-    iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;';
-
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.textContent = '✕ Close';
-    close.style.cssText = 'position:absolute;top:14px;right:18px;z-index:2;background:rgba(15,23,42,.72);' +
-      'color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:8px 14px;' +
-      'font:600 14px system-ui,sans-serif;cursor:pointer';
-
-    const done = () => {
-      document.removeEventListener('keydown', onKey);
-      overlay.remove();
-      if (location.hash === '#autobuy') history.replaceState(null, '', location.pathname + location.search);
-    };
-    const onKey = e => { if (e.key === 'Escape') done(); };
-    close.addEventListener('click', done);
-    document.addEventListener('keydown', onKey);
-
-    overlay.appendChild(iframe);
-    overlay.appendChild(close);
-    document.body.appendChild(overlay);
   }
 
   // Setting the hash to what it already is fires no hashchange, so the click would do nothing at
@@ -27081,7 +27043,17 @@
     removeBtn.title = 'Remove';
     removeBtn.addEventListener('click', e => { e.stopPropagation(); clearPhotoSlot(index); });
 
-    slot.append(fileInput, ph, img, label, removeBtn);
+    // Pull a photo you already shot from the Photo Library, without leaving this screen or
+    // finding the file on disk. Only shown while the slot is empty (CSS hides it once filled);
+    // clicking the slot itself still opens the file picker, so nothing that worked stops working.
+    const libBtn = document.createElement('button');
+    libBtn.type = 'button';
+    libBtn.className = 'slot-lib';
+    libBtn.innerHTML = '📚 Library';
+    libBtn.title = 'Add a photo from your Photo Library';
+    libBtn.addEventListener('click', e => { e.stopPropagation(); openLibraryPickerForSlot(index); });
+
+    slot.append(fileInput, ph, img, label, removeBtn, libBtn);
 
     slot.addEventListener('click', () => {
       if (slot.classList.contains('has-image')) openPhotoEditor(index);
@@ -27134,6 +27106,62 @@
     delete slot.dataset.url;
     slot.classList.remove('has-image');
     nlRunReadiness();
+  }
+
+  // Pick a photo from the Photo Library straight into listing photo slot `index`. Uses the same
+  // /api/photos/library the sidebar Photo Library reads (folders of representative photos), so a
+  // shot taken once for a model can be dropped onto any listing of that model without re-uploading.
+  async function openLibraryPickerForSlot(index) {
+    let ov = document.getElementById('nl-lib-picker');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'nl-lib-picker';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML = `
+      <div class="nl-lib-panel" role="dialog" aria-label="Choose a photo from your library">
+        <div class="nl-lib-head">
+          <strong>Add to Picture ${index + 1} from your Photo Library</strong>
+          <button type="button" class="nl-lib-close" title="Close" aria-label="Close">✕</button>
+        </div>
+        <div class="nl-lib-body"><p class="opportunity-empty">Loading your Photo Library…</p></div>
+      </div>`;
+    const close = () => ov.remove();
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    ov.querySelector('.nl-lib-close').addEventListener('click', close);
+    document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } });
+    document.body.appendChild(ov);
+
+    let folders;
+    try {
+      folders = await fetch('/api/photos/library').then(r => r.json());
+    } catch (err) {
+      ov.querySelector('.nl-lib-body').innerHTML = `<p class="opportunity-empty">Could not load the Photo Library: ${esc(errorText(err))}</p>`;
+      return;
+    }
+
+    const withPhotos = (folders || []).filter(f => (f.photos || []).length);
+    const body = ov.querySelector('.nl-lib-body');
+    if (!withPhotos.length) {
+      body.innerHTML = `<p class="opportunity-empty">Your Photo Library has no photos yet. Open <strong>Photo Library</strong> in the sidebar to add photos of a model, then they'll show up here.</p>`;
+      return;
+    }
+
+    body.innerHTML = withPhotos.map(f => `
+      <div class="nl-lib-folder">
+        <div class="nl-lib-folder-name">${esc(f.modelKey)} <span class="nl-lib-count">${f.photos.length}</span></div>
+        <div class="nl-lib-thumbs">
+          ${f.photos.map(url => `
+            <button type="button" class="nl-lib-thumb" data-url="${esc(url)}" title="Use this photo">
+              <img src="${esc(url)}" alt="${esc(f.modelKey)} photo" loading="lazy" />
+            </button>`).join('')}
+        </div>
+      </div>`).join('');
+
+    body.querySelectorAll('.nl-lib-thumb').forEach(btn => btn.addEventListener('click', () => {
+      setPhotoSlotUrl(index, btn.dataset.url);
+      addActivity('Photo added from library', `Picture ${index + 1}`);
+      close();
+    }));
   }
 
   function nlClearAllPhotoSlots() {
