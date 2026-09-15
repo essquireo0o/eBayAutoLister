@@ -3603,6 +3603,84 @@ public class EbayService(
         }
     }
 
+    // ── eBay Auto-Buy: purchasing and offering as a buyer ───────────────────────────────────
+    //
+    // The same PlaceOffer call that PlaceMaxBidAsync uses to bid also buys a fixed-price listing
+    // outright (Action=Purchase) and sends a Best Offer (Action=Offer). One buyer-side surface,
+    // the Trading API, the same auth the bid already uses. These are the hands the AutoBuyService
+    // reaches eBay through, and nothing here decides whether to spend — that judgement, and every
+    // cap, lives in the service. This method is only the act.
+
+    /// <summary>
+    /// Buys a fixed-price listing now, at its listed price. Throws with eBay's own sentence when it
+    /// is refused (sold out, ended, price changed), so the caller records the reason and moves on.
+    /// </summary>
+    public async Task PlaceBuyItNowAsync(string itemId, int quantity = 1)
+    {
+        var offer = $"""
+              <Offer>
+                <Action>Purchase</Action>
+                <Quantity>{Math.Max(1, quantity)}</Quantity>
+              </Offer>
+            """;
+        await PlaceBuyerOfferAsync(itemId, offer, "Buy It Now");
+    }
+
+    /// <summary>
+    /// Sends a Best Offer at <paramref name="offerPrice"/> on a listing that takes offers. Refused
+    /// with eBay's message when the listing has no Best Offer, or the amount is below the seller's
+    /// auto-decline floor.
+    /// </summary>
+    public async Task PlaceBestOfferAsync(string itemId, decimal offerPrice, int quantity = 1)
+    {
+        var offer = $"""
+              <Offer>
+                <Action>Offer</Action>
+                <MaxBid currencyID="USD">{offerPrice:F2}</MaxBid>
+                <Quantity>{Math.Max(1, quantity)}</Quantity>
+              </Offer>
+            """;
+        await PlaceBuyerOfferAsync(itemId, offer, "Best Offer");
+    }
+
+    private async Task PlaceBuyerOfferAsync(string itemId, string offerXml, string what)
+    {
+        var token  = await GetOrRefreshTokenAsync();
+        var c      = creds.Get();
+        var client = httpClientFactory.CreateClient();
+
+        var body = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <PlaceOfferRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+              <RequesterCredentials><eBayAuthToken>{token}</eBayAuthToken></RequesterCredentials>
+              <ItemID>{itemId}</ItemID>
+            {offerXml}
+            </PlaceOfferRequest>
+            """;
+
+        var req = new HttpRequestMessage(HttpMethod.Post, TradingEndpoint)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "text/xml")
+        };
+        req.Headers.Add("X-EBAY-API-SITEID", "0");
+        req.Headers.Add("X-EBAY-API-COMPATIBILITY-LEVEL", "967");
+        req.Headers.Add("X-EBAY-API-CALL-NAME", "PlaceOffer");
+        req.Headers.Add("X-EBAY-API-APP-NAME", c.EbayClientId ?? "");
+        req.Headers.Add("X-EBAY-API-DEV-NAME", c.EbayDevId ?? "");
+        req.Headers.Add("X-EBAY-API-CERT-NAME", c.EbayClientSecret ?? "");
+        req.Headers.Add("X-EBAY-API-IAF-TOKEN", token);
+
+        var resp = await client.SendAsync(req);
+        var xml  = await resp.Content.ReadAsStringAsync();
+        var root = XElement.Parse(xml);
+        var ack  = root.Element(EbayNs + "Ack")?.Value ?? "";
+        if (ack != "Success" && ack != "Warning")
+        {
+            var msg = root.Descendants(EbayNs + "LongMessage").FirstOrDefault()?.Value ?? $"{what} failed";
+            throw new Exception(msg);
+        }
+    }
+
     // ── Recovering lost sales: unsold listings, relisting, Second Chance Offers ──────────────
     //
     // All four of these live on the Trading API and nowhere else. eBay's modern Sell APIs have no

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>eBay Auto-Buy</title>
+<script src="csrf.js?v=1"></script>
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --ink:#0f172a; --ink2:#475569; --line:#e2e8f0;
+    --gold:#c79a36; --gold-d:#a5801f; --teal:#0f766e; --teal-l:#5eead4;
+    --ok:#15803d; --ok-bg:#dcfce7; --warn:#b45309; --warn-bg:#fef3c7;
+    --live:#b91c1c; --live-bg:#fee2e2; --sim:#6d28d9; --sim-bg:#ede9fe;
+    --shadow:0 1px 3px rgba(15,23,42,.08),0 8px 24px rgba(15,23,42,.06);
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --ink2:#9aa4b2; --line:#232b36;
+      --gold:#d9b45a; --ok:#4ade80; --ok-bg:#0f2a1a; --warn:#fbbf24; --warn-bg:#2a2109;
+      --live:#f87171; --live-bg:#2a1113; --sim:#c4b5fd; --sim-bg:#1c1533;
+      --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --ink2:#9aa4b2; --line:#232b36;
+    --gold:#d9b45a; --ok:#4ade80; --ok-bg:#0f2a1a; --warn:#fbbf24; --warn-bg:#2a2109;
+    --live:#f87171; --live-bg:#2a1113; --sim:#c4b5fd; --sim-bg:#1c1533;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 20px 80px}
+  h1{font-size:24px;margin:0;letter-spacing:-.02em}
+  .sub{color:var(--ink2);font-size:13px;margin-top:2px}
+  .top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:12px}
+  .mark{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--gold),var(--gold-d));display:flex;align-items:center;justify-content:center;color:#1a1206;font-weight:800;font-size:15px;flex-shrink:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:20px;margin-bottom:18px}
+  .status-pill{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:13px;padding:8px 14px;border-radius:999px}
+  .st-off{background:var(--line);color:var(--ink2)}
+  .st-sim{background:var(--sim-bg);color:var(--sim)}
+  .st-live{background:var(--live-bg);color:var(--live)}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor}
+  .st-live .dot{animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .safety-line{font-size:15px;font-weight:600;margin:4px 0 18px}
+  .switches{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.switches{grid-template-columns:1fr}}
+  .switch{border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .switch .lbl{font-weight:700}
+  .switch .desc{color:var(--ink2);font-size:12px;margin-top:2px;max-width:34ch}
+  .toggle{appearance:none;width:52px;height:30px;border-radius:999px;background:var(--line);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s;border:none}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .toggle.on{background:var(--teal)}
+  .toggle.on.danger{background:var(--live)}
+  .toggle.on::after{left:25px}
+  .caps{display:flex;gap:20px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  .cap{display:flex;flex-direction:column;gap:4px}
+  .cap label{font-size:12px;color:var(--ink2);font-weight:600}
+  .cap input{width:130px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px}
+  .cap .used{font-size:12px;color:var(--ink2)}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;margin:26px 0 12px}
+  .sec-head h2{font-size:17px;margin:0}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:9px 14px;border-radius:9px;font-weight:600;font-size:14px;cursor:pointer}
+  .btn:hover{border-color:var(--gold)}
+  .btn-primary{background:var(--gold);border-color:var(--gold);color:#1a1206}
+  .btn-primary:hover{background:var(--gold-d)}
+  .btn-ghost{background:transparent}
+  .btn-danger{color:var(--live);border-color:transparent}
+  .btn.sm{padding:6px 10px;font-size:13px}
+  .rule{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+  .rule.paused{opacity:.62}
+  .rule-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .rule-name{font-weight:700;font-size:16px}
+  .rule-q{color:var(--ink2);font-size:13px;margin-top:2px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .chip{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--bg);border:1px solid var(--line);color:var(--ink2)}
+  .chip b{color:var(--ink)}
+  .progress{height:7px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:6px}
+  .progress > i{display:block;height:100%;background:var(--teal)}
+  .rule-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .exhausted{color:var(--warn);font-weight:600;font-size:12px}
+  .led{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .led:last-child{border-bottom:none}
+  .badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;flex-shrink:0;text-transform:uppercase;letter-spacing:.03em}
+  .b-sim{background:var(--sim-bg);color:var(--sim)}
+  .b-placed{background:var(--ok-bg);color:var(--ok)}
+  .b-failed{background:var(--live-bg);color:var(--live)}
+  .b-skipped{background:var(--warn-bg);color:var(--warn)}
+  .led .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .led .t a{color:inherit;text-decoration:none}
+  .led .t a:hover{text-decoration:underline}
+  .led .p{font-weight:700;flex-shrink:0}
+  .led .when{color:var(--ink2);font-size:12px;flex-shrink:0}
+  .muted{color:var(--ink2)}
+  .empty{color:var(--ink2);text-align:center;padding:26px 0;font-size:14px}
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px}
+  @media(max-width:640px){.form{grid-template-columns:1fr}}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field.full{grid-column:1/-1}
+  .field label{font-size:12px;font-weight:700;color:var(--ink2)}
+  .field .hint{font-size:11px;color:var(--ink2);font-weight:400}
+  .field input,.field select,.field textarea{padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;font-family:inherit}
+  .field textarea{resize:vertical;min-height:44px}
+  .form-actions{grid-column:1/-1;display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
+  .note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:500;margin-bottom:16px}
+  .err{color:var(--live);font-size:13px;font-weight:600;margin-top:8px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      <div class="mark">ING</div>
+      <div>
+        <h1>eBay Auto-Buy</h1>
+        <div class="sub">Rules that watch eBay and buy for you, inside the limits you set.</div>
+      </div>
+    </div>
+    <span id="statusPill" class="status-pill st-off"><span class="dot"></span><span id="statusText">Loading…</span></span>
+  </div>
+
+  <div class="note">
+    Auto-Buy spends real money on your behalf. It ships <b>disarmed</b> and <b>simulate-only</b>:
+    it will not buy anything until you arm it <i>and</i> turn on live buying, and every purchase
+    stays inside the per-rule and daily caps below. Buying runs through your connected eBay account.
+  </div>
+
+  <!-- ── Safety panel ── -->
+  <div class="panel">
+    <div id="safetyLine" class="safety-line">Loading…</div>
+    <div class="switches">
+      <div class="switch">
+        <div>
+          <div class="lbl">Master arm</div>
+          <div class="desc">Off, nothing is scanned and nothing is bought. This is the main brake.</div>
+        </div>
+        <button id="tgArm" class="toggle" aria-label="Arm Auto-Buy"></button>
+      </div>
+      <div class="switch">
+        <div>
+          <div class="lbl">Live buying</div>
+          <div class="desc">Off means simulate — matches are recorded but no money is spent. On means real purchases.</div>
+        </div>
+        <button id="tgLive" class="toggle danger" aria-label="Turn on live buying"></button>
+      </div>
+    </div>
+    <div class="caps">
+      <div class="cap">
+        <label for="capBudget">Global budget ($)</label>
+        <input id="capBudget" type="number" min="0" step="1" inputmode="decimal" />
+        <span id="capBudgetUsed" class="used"></span>
+      </div>
+      <div class="cap">
+        <label for="capPerDay">Max buys per day</label>
+        <input id="capPerDay" type="number" min="0" step="1" inputmode="numeric" />
+        <span id="capPerDayUsed" class="used"></span>
+      </div>
+      <div class="cap" style="justify-content:flex-end">
+        <label>&nbsp;</label>
+        <button id="saveCaps" class="btn sm">Save limits</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Rules ── -->
+  <div class="sec-head">
+    <h2>Buying rules</h2>
+    <button id="addRuleBtn" class="btn btn-primary">+ Add rule</button>
+  </div>
+
+  <div id="ruleForm" class="panel" hidden>
+    <div class="form">
+      <input type="hidden" id="fId" />
+      <div class="field full">
+        <label for="fQuery">Search eBay for <span class="hint">what to look for</span></label>
+        <input id="fQuery" placeholder="e.g. Antminer S19 lot" />
+      </div>
+      <div class="field">
+        <label for="fName">Rule name <span class="hint">optional</span></label>
+        <input id="fName" placeholder="Defaults to the search" />
+      </div>
+      <div class="field">
+        <label for="fMode">How to buy</label>
+        <select id="fMode">
+          <option value="BuyItNow">Buy It Now — buy outright at or under the ceiling</option>
+          <option value="BestOffer">Best Offer — send an offer</option>
+          <option value="AuctionBid">Auction — place a max bid</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fMax">Most to pay per item ($)</label>
+        <input id="fMax" type="number" min="0" step="1" inputmode="decimal" placeholder="ceiling per item" />
+      </div>
+      <div class="field" id="offerField" hidden>
+        <label for="fOffer"><span id="offerLabel">Offer amount</span> ($)</label>
+        <input id="fOffer" type="number" min="0" step="1" inputmode="decimal" />
+      </div>
+      <div class="field">
+        <label for="fCondition">Condition</label>
+        <select id="fCondition">
+          <option value="">Any</option>
+          <option value="NEW">New</option>
+          <option value="USED">Used</option>
+          <option value="REFURBISHED">Refurbished</option>
+          <option value="FOR_PARTS">For parts</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fBudget">Total budget for this rule ($)</label>
+        <input id="fBudget" type="number" min="0" step="1" inputmode="decimal" placeholder="stops when reached" />
+      </div>
+      <div class="field">
+        <label for="fMaxBuys">Max items to buy <span class="hint">0 = no count limit</span></label>
+        <input id="fMaxBuys" type="number" min="0" step="1" inputmode="numeric" value="1" />
+      </div>
+      <div class="field">
+        <label for="fFeedback">Min seller feedback <span class="hint">0 = any</span></label>
+        <input id="fFeedback" type="number" min="0" step="1" inputmode="numeric" value="0" />
+      </div>
+      <div class="field">
+        <label for="fInterval">Check every (minutes)</label>
+        <input id="fInterval" type="number" min="5" step="5" inputmode="numeric" value="15" />
+      </div>
+      <div class="field full">
+        <label for="fExclude">Skip titles containing <span class="hint">comma separated</span></label>
+        <textarea id="fExclude" placeholder="broken, for parts, read, as-is"></textarea>
+      </div>
+      <div id="formErr" class="err" hidden></div>
+      <div class="form-actions">
+        <button id="cancelForm" class="btn btn-ghost">Cancel</button>
+        <button id="saveRule" class="btn btn-primary">Save rule</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rules"></div>
+
+  <!-- ── Activity ── -->
+  <div class="sec-head"><h2>Recent activity</h2></div>
+  <div class="panel"><div id="ledger"><div class="empty">Nothing yet.</div></div></div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const money = n => '$' + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:2});
+  const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const MODE_LABEL = {0:'Buy It Now', 1:'Best Offer', 2:'Auction bid'};
+  const OUTCOME = {0:['SIM','b-sim'], 1:['BOUGHT','b-placed'], 2:['FAILED','b-failed'], 3:['SKIPPED','b-skipped']};
+
+  let state = null;
+
+  async function api(path, opts) {
+    const r = await fetch(path, opts);
+    let body = null; try { body = await r.json(); } catch {}
+    return { ok: r.ok, body };
+  }
+
+  async function refresh() {
+    const { ok, body } = await api('/api/autobuy/status');
+    if (!ok || !body) return;
+    state = body;
+    render();
+  }
+
+  function render() {
+    const s = state.settings;
+    // Status pill + safety line
+    const pill = $('statusPill'), txt = $('statusText');
+    pill.className = 'status-pill ' + (!s.armed ? 'st-off' : (s.liveBuying ? 'st-live' : 'st-sim'));
+    txt.textContent = !s.armed ? 'Disarmed' : (s.liveBuying ? 'LIVE — buying real items' : 'Armed — simulating');
+    $('safetyLine').textContent = state.safetyLine;
+
+    $('tgArm').classList.toggle('on', s.armed);
+    $('tgLive').classList.toggle('on', s.liveBuying);
+
+    if (document.activeElement !== $('capBudget')) $('capBudget').value = s.globalBudgetCap;
+    if (document.activeElement !== $('capPerDay')) $('capPerDay').value = s.maxBuysPerDay;
+    $('capBudgetUsed').textContent = money(s.globalSpent) + ' spent · ' + money(s.globalRemainingBudget) + ' left';
+    $('capPerDayUsed').textContent = s.buysToday + ' bought today';
+
+    renderRules();
+    renderLedger();
+  }
+
+  function renderRules() {
+    const wrap = $('rules');
+    if (!state.rules.length) { wrap.innerHTML = '<div class="panel empty">No rules yet. Add one to tell Auto-Buy what to look for.</div>'; return; }
+    wrap.innerHTML = state.rules.map(r => {
+      const pct = r.budgetCap > 0 ? Math.min(100, Math.round(r.spent / r.budgetCap * 100)) : 0;
+      const scanning = state.scanning && state.scanningRuleId === r.id;
+      const exhausted = r.isExhausted;
+      const priceChip = r.mode === 0
+        ? `up to <b>${money(r.maxItemPrice)}</b>`
+        : `${r.mode === 1 ? 'offer' : 'bid'} <b>${money(r.offerOrBidPrice)}</b> (max ${money(r.maxItemPrice)})`;
+      return `<div class="rule ${r.enabled ? '' : 'paused'}" data-id="${r.id}">
+        <div class="rule-top">
+          <div>
+            <div class="rule-name">${esc(r.name)}</div>
+            <div class="rule-q">${esc(r.query)}${r.condition ? ' · ' + esc(r.condition) : ''}</div>
+          </div>
+          <button class="toggle ${r.enabled ? 'on' : ''}" data-act="toggle" title="${r.enabled ? 'Pause' : 'Enable'}"></button>
+        </div>
+        <div class="chips">
+          <span class="chip">${MODE_LABEL[r.mode]}</span>
+          <span class="chip">${priceChip}</span>
+          <span class="chip">budget <b>${money(r.budgetCap)}</b></span>
+          ${r.maxBuys > 0 ? `<span class="chip">max <b>${r.maxBuys}</b> buys</span>` : ''}
+          ${r.minSellerFeedback > 0 ? `<span class="chip">seller ≥ ${r.minSellerFeedback}</span>` : ''}
+          <span class="chip">every ${r.intervalMinutes}m</span>
+        </div>
+        <div class="chip" style="display:block;background:transparent;border:none;padding:0;color:var(--ink2)">
+          ${money(r.spent)} spent · ${r.buys} bought ${exhausted ? '· <span class="exhausted">exhausted</span>' : ''}
+          ${scanning ? '· <span style="color:var(--teal);font-weight:700">scanning…</span>' : ''}
+          <div class="progress"><i style="width:${pct}%"></i></div>
+        </div>
+        <div class="rule-actions">
+          <button class="btn sm" data-act="run">Run now</button>
+          <button class="btn sm btn-ghost" data-act="edit">Edit</button>
+          <button class="btn sm btn-danger" data-act="delete">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    wrap.querySelectorAll('.rule').forEach(el => {
+      const id = Number(el.dataset.id);
+      el.querySelector('[data-act="toggle"]').onclick = () => saveRule({ id, enabled: !state.rules.find(r=>r.id===id).enabled });
+      el.querySelector('[data-act="run"]').onclick = async e => { e.target.disabled = true; e.target.textContent='Running…'; await api(`/api/autobuy/rules/${id}/run`, {method:'POST'}); await refresh(); };
+      el.querySelector('[data-act="edit"]').onclick = () => openForm(state.rules.find(r=>r.id===id));
+      el.querySelector('[data-act="delete"]').onclick = async () => { if (confirm('Delete this rule?')) { await api(`/api/autobuy/rules/${id}`, {method:'DELETE'}); await refresh(); } };
+    });
+  }
+
+  function renderLedger() {
+    const wrap = $('ledger');
+    if (!state.recent.length) { wrap.innerHTML = '<div class="empty">Nothing yet. When a rule matches a listing it appears here.</div>'; return; }
+    wrap.innerHTML = state.recent.map(e => {
+      const [label, cls] = OUTCOME[e.outcome] || ['?', 'b-skipped'];
+      const when = new Date(e.createdUtc).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+      const title = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title || e.itemId)}</a>` : esc(e.title || e.itemId);
+      return `<div class="led">
+        <span class="badge ${cls}">${label}</span>
+        <span class="t">${title}<div class="muted" style="font-size:12px">${esc(e.ruleName)} · ${esc(e.detail)}</div></span>
+        <span class="p">${money(e.price)}</span>
+        <span class="when">${when}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Switches ──
+  $('tgArm').onclick = () => saveSettings({ armed: !state.settings.armed });
+  $('tgLive').onclick = () => {
+    const turningOn = !state.settings.liveBuying;
+    if (turningOn && !confirm('Turn on LIVE buying?\n\nAuto-Buy will spend real money from your eBay account when your rules match, up to the caps you set. Simulation stops.')) return;
+    saveSettings({ liveBuying: turningOn });
+  };
+  $('saveCaps').onclick = () => saveSettings({ globalBudgetCap: Number($('capBudget').value) || 0, maxBuysPerDay: Number($('capPerDay').value) || 0 });
+
+  async function saveSettings(patch) {
+    const { ok } = await api('/api/autobuy/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
+    if (ok) refresh();
+  }
+
+  // ── Rule form ──
+  function openForm(rule) {
+    $('formErr').hidden = true;
+    $('fId').value = rule?.id || '';
+    $('fQuery').value = rule?.query || '';
+    $('fName').value = rule?.name || '';
+    $('fMode').value = ['BuyItNow','BestOffer','AuctionBid'][rule?.mode || 0];
+    $('fMax').value = rule?.maxItemPrice || '';
+    $('fOffer').value = rule?.offerOrBidPrice || '';
+    $('fCondition').value = rule?.condition || '';
+    $('fBudget').value = rule?.budgetCap || '';
+    $('fMaxBuys').value = rule?.maxBuys ?? 1;
+    $('fFeedback').value = rule?.minSellerFeedback ?? 0;
+    $('fInterval').value = rule?.intervalMinutes ?? 15;
+    $('fExclude').value = rule?.excludeKeywords || '';
+    syncOfferField();
+    $('ruleForm').hidden = false;
+    $('ruleForm').scrollIntoView({ behavior:'smooth', block:'nearest' });
+    $('fQuery').focus();
+  }
+  function syncOfferField() {
+    const mode = $('fMode').value;
+    const show = mode !== 'BuyItNow';
+    $('offerField').hidden = !show;
+    $('offerLabel').textContent = mode === 'AuctionBid' ? 'Maximum bid' : 'Offer amount';
+  }
+  $('fMode').onchange = syncOfferField;
+  $('addRuleBtn').onclick = () => openForm(null);
+  $('cancelForm').onclick = () => { $('ruleForm').hidden = true; };
+
+  $('saveRule').onclick = async () => {
+    const id = $('fId').value ? Number($('fId').value) : undefined;
+    const patch = {
+      id,
+      query: $('fQuery').value,
+      name: $('fName').value,
+      mode: $('fMode').value,
+      condition: $('fCondition').value,
+      maxItemPrice: Number($('fMax').value) || 0,
+      offerOrBidPrice: Number($('fOffer').value) || 0,
+      budgetCap: Number($('fBudget').value) || 0,
+      maxBuys: Number($('fMaxBuys').value) || 0,
+      minSellerFeedback: Number($('fFeedback').value) || 0,
+      intervalMinutes: Number($('fInterval').value) || 15,
+      excludeKeywords: $('fExclude').value,
+    };
+    const { ok, body } = await saveRule(patch);
+    if (ok) { $('ruleForm').hidden = true; }
+    else { $('formErr').textContent = body?.error || 'Could not save the rule.'; $('formErr').hidden = false; }
+  };
+
+  async function saveRule(patch) {
+    const r = await api('/api/autobuy/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
+    if (r.ok) await refresh();
+    return r;
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

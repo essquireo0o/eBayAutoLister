@@ -1451,6 +1451,7 @@
     // screen's answer moves on a scale of months, not minutes. "Recount my listings" is the button
     // that goes back to eBay, and it is in the header where the seller can see it.
     storeplan:   { section: 'storeplan-section',     open: showStorePlanSection },
+    autobuy:     { section: 'autobuy-section',        open: showAutoBuySection },
     // Listings and Activity are regions of the Dashboard, not screens: they focus the Dashboard
     // tab and scroll, instead of opening a second tab showing the same page.
     listings:    { scrollTo: 'listings-section', scrollBlock: 'start' },
@@ -10794,6 +10795,24 @@
     setActiveNavItem('storeplan');
     markWorkspaceTabOpen('storeplan');
     if (!storePlan) loadStorePlan(); else renderStorePlan();
+  }
+
+  function showAutoBuySection() {
+    hideOverlaySections();
+    $('autobuy-section')?.classList.remove('hidden');
+    setActiveNavItem('autobuy');
+    markWorkspaceTabOpen('autobuy');
+    // The console is a standalone page loaded once into an iframe, cache-busted like the photo
+    // editor so a self-update can't leave a stale copy. Lazy so its polling stays off until the
+    // seller opens the tab, and kept after that so the tab holds its state like every other.
+    const host = $('autobuy-frame-host');
+    if (host && !host.dataset.loaded) {
+      host.dataset.loaded = '1';
+      const iframe = document.createElement('iframe');
+      iframe.src = '/autobuy.html?v=' + (seenBuild || Date.now());
+      iframe.style.cssText = 'width:100%;height:100%;border:none;display:block';
+      host.appendChild(iframe);
+    }
   }
 
   function closeStorePlanSection() { closeWorkspacePage('storeplan'); }

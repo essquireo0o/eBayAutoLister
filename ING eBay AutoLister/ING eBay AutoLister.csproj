@@ -105,6 +105,7 @@
     <Content Remove="wwwroot\photobox-ux.js" />
     <Content Remove="wwwroot\favicon.svg" />
     <Content Remove="wwwroot\editor.html" />
+    <Content Remove="wwwroot\autobuy.html" />
     <!-- The hosted build's sign-in and sign-up pages. Embedded in both builds rather than only
          under HOSTED: one list of UI files is one thing to get wrong, and the tests read these
          two out of this assembly to prove the allow-list actually serves them. -->
@@ -126,6 +127,7 @@
     <EmbeddedResource Include="wwwroot\photobox-ux.js" />
     <EmbeddedResource Include="wwwroot\favicon.svg" />
     <EmbeddedResource Include="wwwroot\editor.html" />
+    <EmbeddedResource Include="wwwroot\autobuy.html" />
     <EmbeddedResource Include="wwwroot\signin.html" />
     <EmbeddedResource Include="wwwroot\signup.html" />
   </ItemGroup>
