@@ -1827,7 +1827,7 @@
   // AWAY from it left it on screen, sitting over whatever you had just opened. Opening a rewritten
   // draft was where it showed — the AI Listing tab opened and went active, the route changed to
   // #ai, and the Copilot was still the thing you were looking at.
-  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
+  const OVERLAY_SECTIONS = ['settings-section', 'logs-section', 'license-section', 'opportunity-section', 'photo-library-section', 'inventory-section', 'offers-section', 'rescue-section', 'budget-section', 'relist-section', 'lots-section', 'promoted-section', 'shipping-section', 'whatsnot-section', 'trends-section', 'wts-section', 'snipe-section', 'earnings-section', 'tax-section', 'storeplan-section', 'autobuy-section', 'position-section', 'copilot-section', 'photobox-section', 'new-listing-overlay'];
 
   function hideOverlaySections() {
     OVERLAY_SECTIONS.forEach(id => $(id)?.classList.add('hidden'));
