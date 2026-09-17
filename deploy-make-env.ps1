@@ -112,7 +112,7 @@ $lines = @(
     "",
     "# The owner's AI key. It pays for every user's generations, which is what the cap below is for.",
     "ANTHROPIC_API_KEY=$anthropic",
-    "Ai__DailyGenerationLimit=5",
+    "Ai__DailyGenerationLimit=200",
     "",
     "# The database path. Everything persisted lands under `$XDG_DATA_HOME/ING AutoLister/, so the",
     "# SQLite database is /data/ING AutoLister/App_Data/ing_listing_engine.db on the mounted volume.",
