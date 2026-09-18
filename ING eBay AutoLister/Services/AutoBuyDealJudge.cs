@@ -20,7 +20,7 @@ namespace ING_eBay_AutoLister.Services;
 /// <para>The core decision is a pure function of (item, comps, thresholds), so it is fully testable
 /// with no network. The instance method just fetches the comps first.</para>
 /// </remarks>
-public sealed class AutoBuyDealJudge(EbayService ebay)
+public sealed class AutoBuyDealJudge(EbayService ebay, IMarketplaceRepository marketplace)
 {
     /// <summary>eBay final value + payment processing, blended. A safe default across most categories.</summary>
     public const decimal FeeRate = 0.1325m;
@@ -57,10 +57,43 @@ public sealed class AutoBuyDealJudge(EbayService ebay)
         CancellationToken ct = default)
     {
         var query = !string.IsNullOrWhiteSpace(ruleQuery) ? ruleQuery! : item.Title;
-        SoldCompsResult? comps = null;
-        try { comps = await ebay.SearchSoldCompsAsync(query); }
-        catch { /* comps unavailable — Judge treats it as no market and refuses to Buy */ }
+        var prices = new List<decimal>();
+
+        // Live sold search first — freshest when it is up.
+        try
+        {
+            var live = await ebay.SearchSoldCompsAsync(query);
+            if (live?.Items is { Count: > 0 } items)
+                prices.AddRange(items.Select(c => c.Price).Where(p => p > 0));
+        }
+        catch { /* live source down — the stored history below carries it */ }
+
+        // The seller's own stored sold-comps database — the same source /api/sold-comps blends in.
+        // It keeps the judge seeing a market when the live eBay endpoint is refusing requests; without
+        // it, a down live source makes every candidate look unpriceable.
+        try
+        {
+            var stored = await marketplace.SearchByKeywordAsync(query, limit: 24, ct: ct);
+            prices.AddRange(stored.Select(c => c.SoldPrice).Where(p => p > 0));
+        }
+        catch { /* stored repo unavailable — fall through with whatever the live source gave */ }
+
+        var comps = prices.Count > 0
+            ? new SoldCompsResult { Median = Median(prices), Average = prices.Average(), Count = prices.Count }
+            : null;
         return Judge(item, comps, minNetProfit, minRoiPercent);
+    }
+
+    /// <summary>
+    /// The median of a set of sold prices. The judge values against the median, not the average, so
+    /// one $5,000 outlier in a pile of $300 sales cannot make a $300 item look like a windfall.
+    /// </summary>
+    public static decimal Median(IReadOnlyList<decimal> prices)
+    {
+        if (prices.Count == 0) return 0m;
+        var sorted = prices.OrderBy(p => p).ToList();
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 1 ? sorted[mid] : Math.Round((sorted[mid - 1] + sorted[mid]) / 2m, 2);
     }
 
     /// <summary>

@@ -77,6 +77,15 @@ public class AutoBuyDealJudgeTests
     }
 
     [Fact]
+    public void Median_takes_the_middle_and_shrugs_off_an_outlier()
+    {
+        Assert.Equal(300m, AutoBuyDealJudge.Median(new[] { 300m }));
+        Assert.Equal(300m, AutoBuyDealJudge.Median(new[] { 280m, 300m, 320m }));         // odd
+        Assert.Equal(310m, AutoBuyDealJudge.Median(new[] { 280m, 300m, 320m, 5000m }));  // even, outlier ignored
+        Assert.Equal(0m, AutoBuyDealJudge.Median(Array.Empty<decimal>()));
+    }
+
+    [Fact]
     public void Red_flag_detection_finds_the_words()
     {
         var flags = AutoBuyDealJudge.RedFlagsIn("Untested unit, sold AS-IS, cracked case");
