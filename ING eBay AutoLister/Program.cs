@@ -688,6 +688,10 @@ builder.Services.AddSingleton<AutoBuyPlacer>(sp => async (rule, item, price, ct)
     }
 });
 builder.Services.AddSingleton<AutoBuyService>();
+// The deal judge: prices a candidate against real sold comps and reads its title for the words
+// that mean trouble, so Auto-Buy can be told to take only genuine, profitable flips rather
+// than anything under a price. See AutoBuyDealJudge / AutoBuyJudgeEndpoints.
+builder.Services.AddSingleton<AutoBuyDealJudge>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoBuyService>());
 
 // CORS: lets the standalone admin panel (a local file, e.g. on G:\) fetch the
@@ -9634,6 +9638,7 @@ AmazonListingFillEndpoints.Map(app);
 // submission that came back 200 ACCEPTED is queued, not published. See AmazonSubmissionWords.
 AmazonSubmitEndpoints.Map(app);
 AutoBuyEndpoints.Map(app);
+AutoBuyJudgeEndpoints.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>
 {

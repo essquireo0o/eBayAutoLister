@@ -84,11 +84,17 @@ public sealed class AutoBuyStore
             if (request.MaxItemPrice is { } max) rule.MaxItemPrice = Math.Clamp(max, 0m, MaxItemPriceCeiling);
             if (request.OfferOrBidPrice is { } offer) rule.OfferOrBidPrice = Math.Max(0m, offer);
             if (request.ExcludeKeywords is not null) rule.ExcludeKeywords = request.ExcludeKeywords.Trim();
+            if (request.RequiredKeywords is not null) rule.RequiredKeywords = request.RequiredKeywords.Trim();
+            if (request.MinItemPrice is { } floor) rule.MinItemPrice = Math.Max(0m, floor);
             if (request.MinSellerFeedback is { } fb) rule.MinSellerFeedback = Math.Max(0, fb);
             if (request.BudgetCap is { } budget) rule.BudgetCap = Math.Max(0m, budget);
             if (request.MaxBuys is { } buys) rule.MaxBuys = Math.Max(0, buys);
             if (request.IntervalMinutes is { } interval) rule.IntervalMinutes = Math.Clamp(interval, 5, 24 * 60);
             if (request.Enabled is { } enabled) rule.Enabled = enabled;
+            // A NEW rule that says nothing about enabled is on. The console's form never sends the
+            // flag, so every rule used to save paused and the scheduler ignored it - "I saved it and
+            // nothing happens" (2026-09-18 diagnostic run). An edit still leaves the flag alone.
+            else if (existing is null) rule.Enabled = true;
 
             if (rule.Name.Length == 0) rule.Name = rule.Query.Length > 0 ? rule.Query : "Untitled rule";
 
@@ -114,6 +120,8 @@ public sealed class AutoBuyStore
             throw new InvalidOperationException("Set a total budget for this rule. A rule with no budget cannot be saved.");
         if (rule.BudgetCap < rule.MaxItemPrice)
             throw new InvalidOperationException("The rule's budget is smaller than one item's ceiling, so it could never buy anything. Raise the budget or lower the ceiling.");
+        if (rule.MinItemPrice > 0m && rule.MinItemPrice >= rule.MaxItemPrice)
+            throw new InvalidOperationException("The price floor is at or above the ceiling, so nothing could ever match. Lower the floor or raise the ceiling.");
         if (rule.Mode is AutoBuyMode.BestOffer or AutoBuyMode.AuctionBid)
         {
             if (rule.OfferOrBidPrice <= 0m)
@@ -137,9 +145,10 @@ public sealed class AutoBuyStore
                     UPDATE autobuy_rules SET
                         name=@name, query=@query, mode=@mode, condition=@condition,
                         max_item_price=@max, offer_bid_price=@offer, exclude_keywords=@exclude,
+                        required_keywords=@required, min_item_price=@floor,
                         min_seller_feedback=@fb, budget_cap=@budget, max_buys=@maxbuys,
                         spent=@spent, buys=@buys, enabled=@enabled, interval_minutes=@interval,
-                        last_run_at=@lastrun, next_run_at=@nextrun, last_status=@laststatus
+                        last_run_at=@lastrun, next_run_at=@nextrun, last_status=@laststatus, last_note=@lastnote
                     WHERE id=@id;
                     """;
                 command.Parameters.AddWithValue("@id", rule.Id);
@@ -149,17 +158,22 @@ public sealed class AutoBuyStore
                 command.CommandText = """
                     INSERT INTO autobuy_rules
                         (name, query, mode, condition, max_item_price, offer_bid_price, exclude_keywords,
+                         required_keywords, min_item_price,
                          min_seller_feedback, budget_cap, max_buys, spent, buys, enabled, interval_minutes,
-                         created_at, last_run_at, next_run_at, last_status)
+                         created_at, last_run_at, next_run_at, last_status, last_note)
                     VALUES
                         (@name, @query, @mode, @condition, @max, @offer, @exclude,
+                         @required, @floor,
                          @fb, @budget, @maxbuys, @spent, @buys, @enabled, @interval,
-                         @created, @lastrun, @nextrun, @laststatus);
+                         @created, @lastrun, @nextrun, @laststatus, @lastnote);
                     SELECT last_insert_rowid();
                     """;
                 command.Parameters.AddWithValue("@created", Iso(rule.CreatedUtc));
             }
 
+            command.Parameters.AddWithValue("@required", rule.RequiredKeywords);
+            command.Parameters.AddWithValue("@floor", rule.MinItemPrice);
+            command.Parameters.AddWithValue("@lastnote", rule.LastNote);
             command.Parameters.AddWithValue("@name", rule.Name);
             command.Parameters.AddWithValue("@query", rule.Query);
             command.Parameters.AddWithValue("@mode", (int)rule.Mode);
@@ -201,7 +215,7 @@ public sealed class AutoBuyStore
     }
 
     /// <summary>Moves a rule's schedule forward and records what the run did. Never touches money.</summary>
-    public void RecordRun(long ruleId, string status, DateTimeOffset ranAt, int intervalMinutes)
+    public void RecordRun(long ruleId, string status, DateTimeOffset ranAt, int intervalMinutes, string note = "")
     {
         lock (_writeLock)
         {
@@ -209,13 +223,32 @@ public sealed class AutoBuyStore
             using var command = connection.CreateCommand();
             command.CommandText = """
                 UPDATE autobuy_rules
-                SET last_run_at=@ran, next_run_at=@next, last_status=@status
+                SET last_run_at=@ran, next_run_at=@next, last_status=@status, last_note=@note
                 WHERE id=@id;
                 """;
             command.Parameters.AddWithValue("@id", ruleId);
             command.Parameters.AddWithValue("@ran", Iso(ranAt));
             command.Parameters.AddWithValue("@next", Iso(ranAt.AddMinutes(Math.Clamp(intervalMinutes, 5, 24 * 60))));
             command.Parameters.AddWithValue("@status", status ?? "");
+            command.Parameters.AddWithValue("@note", note ?? "");
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Takes a rule off the schedule with a reason on it. Used when eBay says the application is not
+    /// allowed to place offers at all: every further run would fail the same way and burn the rule's
+    /// matches as FAILED rows, so the rule rests until the seller reads the note.
+    /// </summary>
+    public void PauseRule(long ruleId, string note)
+    {
+        lock (_writeLock)
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE autobuy_rules SET enabled=0, last_note=@note WHERE id=@id;";
+            command.Parameters.AddWithValue("@id", ruleId);
+            command.Parameters.AddWithValue("@note", note ?? "");
             command.ExecuteNonQuery();
         }
     }
@@ -346,16 +379,25 @@ public sealed class AutoBuyStore
 
     /// <summary>
     /// Applies the master switches and global caps. Partial: a body that names only
-    /// <c>armed</c> flips the arm and leaves live-buying and the budget as they were. Turning the
-    /// master arm off is always allowed; it is the brake and must never be blocked.
+    /// <c>armed</c> flips the arm and leaves the budget as it was. Turning the master arm off is
+    /// always allowed; it is the brake and must never be blocked.
     /// </summary>
+    /// <remarks>
+    /// The two switches are ordered, and this is where the order is enforced rather than in the
+    /// page. Live buying is only ever on while the master arm is on: disarming clears it, and a
+    /// request to turn live on while disarmed (or in the same body as arming) leaves it off. Before
+    /// this, the owner's database sat at <c>armed=0, live_buying=1</c>, which made the next click on
+    /// "Master arm" a jump straight to real money with no confirmation (2026-09-18).
+    /// </remarks>
     public AutoBuySettings SaveSettings(bool? armed, bool? liveBuying, decimal? globalBudgetCap, int? maxBuysPerDay)
     {
         lock (_writeLock)
         {
             var current = GetSettings();
+            var wasArmed = current.Armed;
             if (armed is { } a) current.Armed = a;
-            if (liveBuying is { } l) current.LiveBuying = l;
+            if (liveBuying is { } l) current.LiveBuying = l && current.Armed && wasArmed;
+            if (!current.Armed) current.LiveBuying = false;
             if (globalBudgetCap is { } g) current.GlobalBudgetCap = Math.Max(0m, g);
             if (maxBuysPerDay is { } m) current.MaxBuysPerDay = Math.Max(0, m);
 
@@ -431,7 +473,7 @@ public sealed class AutoBuyStore
     private const string RuleColumns =
         "id, name, query, mode, condition, max_item_price, offer_bid_price, exclude_keywords, " +
         "min_seller_feedback, budget_cap, max_buys, spent, buys, enabled, interval_minutes, " +
-        "created_at, last_run_at, next_run_at, last_status";
+        "created_at, last_run_at, next_run_at, last_status, required_keywords, min_item_price, last_note";
 
     private static AutoBuyRule ReadRule(SqliteDataReader r) => new()
     {
@@ -454,6 +496,9 @@ public sealed class AutoBuyStore
         LastRunUtc = ParseNullableIso(r.GetString(16)),
         NextRunUtc = ParseNullableIso(r.GetString(17)),
         LastStatus = r.GetString(18),
+        RequiredKeywords = r.GetString(19),
+        MinItemPrice = r.GetDecimal(20),
+        LastNote = r.GetString(21),
     };
 
     public static AutoBuyMode ParseMode(string? value) => value?.Trim().ToLowerInvariant() switch
@@ -538,6 +583,34 @@ public sealed class AutoBuyStore
             INSERT OR IGNORE INTO autobuy_settings (id, armed, live_buying) VALUES (1, 0, 0);
             """;
         command.ExecuteNonQuery();
+
+        // Columns added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS; read the
+        // table's columns once and add what is missing, so a database from 2.6.9 opens cleanly.
+        var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var cols = connection.CreateCommand())
+        {
+            cols.CommandText = "PRAGMA table_info(autobuy_rules);";
+            using var reader = cols.ExecuteReader();
+            while (reader.Read()) have.Add(reader.GetString(1));
+        }
+        foreach (var (name, ddl) in new[]
+        {
+            ("required_keywords", "TEXT NOT NULL DEFAULT ''"),
+            ("min_item_price",    "NUMERIC NOT NULL DEFAULT 0"),
+            ("last_note",         "TEXT NOT NULL DEFAULT ''"),
+        })
+        {
+            if (have.Contains(name)) continue;
+            using var alter = connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE autobuy_rules ADD COLUMN {name} {ddl};";
+            alter.ExecuteNonQuery();
+        }
+
+        // The brake the settings row must satisfy from now on (see SaveSettings): live buying
+        // cannot be on while disarmed. A database left in that state is corrected on open.
+        using var brake = connection.CreateCommand();
+        brake.CommandText = "UPDATE autobuy_settings SET live_buying=0 WHERE id=1 AND armed=0 AND live_buying=1;";
+        brake.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()

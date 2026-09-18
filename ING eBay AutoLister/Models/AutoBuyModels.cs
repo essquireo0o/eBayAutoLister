@@ -74,6 +74,23 @@ public sealed class AutoBuyRule
     /// <summary>Skip any listing whose title contains one of these words. Comma or newline separated.</summary>
     public string ExcludeKeywords { get; set; } = "";
 
+    /// <summary>
+    /// Every one of these words must appear in the title, or the listing is skipped. Comma or newline
+    /// separated. This is the guard against eBay's keyword search handing "Antminer S19" a fan, a
+    /// cord, or an empty box: the seller names what a real match must say.
+    /// </summary>
+    public string RequiredKeywords { get; set; } = "";
+
+    /// <summary>
+    /// Refuse anything priced under this. Zero means no floor. A $300 ceiling on a machine search
+    /// matches every $12 accessory that shares a word; a $150 floor is the cheap, strong fix.
+    /// </summary>
+    public decimal MinItemPrice { get; set; }
+
+    /// <summary>What the last run did, in one sentence the console can show — including WHY nothing
+    /// matched ("40 scanned: 22 over the ceiling, 9 shipping not stated...").</summary>
+    public string LastNote { get; set; } = "";
+
     /// <summary>Only act on sellers at or above this feedback score. Zero means no floor.</summary>
     public int MinSellerFeedback { get; set; }
 
@@ -122,6 +139,8 @@ public sealed class AutoBuyRuleRequest
     public decimal? MaxItemPrice { get; set; }
     public decimal? OfferOrBidPrice { get; set; }
     public string? ExcludeKeywords { get; set; }
+    public string? RequiredKeywords { get; set; }
+    public decimal? MinItemPrice { get; set; }
     public int? MinSellerFeedback { get; set; }
     public decimal? BudgetCap { get; set; }
     public int? MaxBuys { get; set; }
@@ -154,6 +173,8 @@ public sealed class AutoBuySettings
     /// <summary>
     /// Off means simulate: matches are recorded as "would have bought" and no purchase is placed.
     /// On means real money. Ships off, and turning it on is a separate, deliberate act from arming.
+    /// It can only be on while <see cref="Armed"/> is on: disarming clears it, so the next arm is
+    /// never a silent jump straight to live (2026-09-18: the owner's live DB had exactly that state).
     /// </summary>
     public bool LiveBuying { get; set; }
 
