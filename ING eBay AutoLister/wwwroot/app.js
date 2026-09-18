@@ -9603,13 +9603,14 @@
     if (input.dataset.saving === raw) return;   // focusout after Enter would save the same value twice
     input.dataset.saving = raw;
 
-    let value = raw;
+    let value = raw, keepPct;
     if (raw.endsWith('%')) {
       const cost = costFromKeepPct(Number(input.dataset.unitgross), raw.slice(0, -1));
       if (cost === null) { setEarningsStatus('That percentage needs a sale price to work from.'); return; }
       value = String(cost);
+      keepPct = Number(raw.slice(0, -1));
     }
-    saveFlipCost(id, value);
+    saveFlipCost(id, value, keepPct);
   }
 
   function toggleDisclosure(panelId, buttonId, closedLabel, openLabel) {
@@ -10301,12 +10302,26 @@
     });
   }
 
-  async function saveFlipCost(id, raw) {
+  // keepPct: set when the figure came from a dropship split typed as "40%" in a cost cell.
+  async function saveFlipCost(id, raw, keepPct) {
     const value = parseFloat(raw);
     if (!id || !isFinite(value) || value < 0) { setEarningsStatus('Enter what you paid for it — zero or more.'); return; }
 
+    // When a dropship split is what produced this figure, send the PERCENTAGE. The dollars are
+    // one sale's price times the split; saved as dollars they became the cost of every other sale
+    // of the listing, whatever those sold for. A cost the seller then typed over wins, as dollars.
+    let pct = Number(keepPct);
+    if (keepPct === undefined) {
+      const pctBox = $('earnings-section')?.querySelector(`.er-cost-pct[data-id="${id}"]`);
+      pct = pctBox && pctBox.value.trim() !== ''
+        && costFromKeepPct(Number(pctBox.dataset.unitgross), pctBox.value)?.toFixed(2) === value.toFixed(2)
+        ? Number(pctBox.value) : NaN;
+    }
+    const payload = { id: Number(id), unitCost: value };
+    if (isFinite(pct)) payload.keepPercent = Math.min(100, Math.max(0, pct));
+
     try {
-      const { res, body } = await safePost('/api/earnings/cost', { id: Number(id), unitCost: value });
+      const { res, body } = await safePost('/api/earnings/cost', payload);
       if (!res.ok) throw new Error(typeof body === 'string' ? body : (body.error || 'That cost could not be saved.'));
       const before = earnings?.summary?.netProfitAllTime || 0;
       earnings = body.earnings;

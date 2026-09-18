@@ -5348,12 +5348,25 @@ app.MapPost("/api/earnings/cost", (
     EarningsCalculator calculator, FeeProfile feeProfile, ActionLog log) =>
 {
     if (req.Id is not > 0) return Results.BadRequest("Which sale is this cost for?");
-    if (req.UnitCost is null or < 0) return Results.BadRequest("Enter what you paid for it — zero or more.");
+    if (req.KeepPercent is < 0 or > 100) return Results.BadRequest("The share of the sale you keep must be between 0 and 100 percent.");
+    if (req.KeepPercent is null && req.UnitCost is null or < 0) return Results.BadRequest("Enter what you paid for it — zero or more.");
 
     var flip = store.Get(req.Id.Value);
     if (flip is null) return Results.NotFound("That sale is no longer on record.");
 
-    var shared = !string.IsNullOrWhiteSpace(flip.ListingId) || !string.IsNullOrWhiteSpace(flip.Sku);
+    // A SKU only identifies a product when the seller uses it that way. A label like "TOP SELLER"
+    // sits on unrelated listings, and keying a cost on it priced a $40 conversion kit at the $495
+    // a miner cost. When this sale's SKU also appears on a different listing with a different
+    // title, the cost is keyed on the listing alone.
+    var sku = flip.Sku;
+    if (!string.IsNullOrWhiteSpace(sku) && !string.IsNullOrWhiteSpace(flip.ListingId)
+        && store.GetAll().Any(f => string.Equals(f.Sku, sku, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(f.ListingId)
+            && !string.Equals(f.ListingId, flip.ListingId, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(f.Title?.Trim(), flip.Title?.Trim(), StringComparison.OrdinalIgnoreCase)))
+        sku = "";
+
+    var shared = !string.IsNullOrWhiteSpace(flip.ListingId) || !string.IsNullOrWhiteSpace(sku);
 
     // How many OTHER sales this one cost is about to price. A listing that sold fourteen times is
     // fourteen sales sharing one cost basis, and applying it to all of them is the correct answer —
@@ -5362,15 +5375,18 @@ app.MapPost("/api/earnings/cost", (
     var alsoAffected = shared
         ? store.GetAll().Count(f => f.Id != flip.Id && f.UnitCost is null
             && ((!string.IsNullOrWhiteSpace(flip.ListingId) && string.Equals(f.ListingId, flip.ListingId, StringComparison.OrdinalIgnoreCase))
-             || (!string.IsNullOrWhiteSpace(flip.Sku) && string.Equals(f.Sku, flip.Sku, StringComparison.OrdinalIgnoreCase))))
+             || (!string.IsNullOrWhiteSpace(sku) && string.Equals(f.Sku, sku, StringComparison.OrdinalIgnoreCase))))
         : 0;
 
     if (shared)
     {
         costBasis.Save(new CostBasisEntry
         {
-            ListingId = flip.ListingId, Sku = flip.Sku,
-            UnitCost = req.UnitCost.Value, InboundShipping = 0m,
+            ListingId = flip.ListingId, Sku = sku,
+            // A dropship split is stored AS the percentage and priced per sale. Converting it to
+            // dollars here froze one sale's price onto every other sale of the listing.
+            UnitCost = req.KeepPercent is null ? req.UnitCost!.Value : 0m, InboundShipping = 0m,
+            KeepPercent = req.KeepPercent,
             Note = $"From a sale logged in Money Made — {flip.Title}",
             AcquiredUtc = null,
         });
@@ -5380,7 +5396,12 @@ app.MapPost("/api/earnings/cost", (
     }
     else
     {
-        flip.UnitCost = req.UnitCost.Value;
+        // One sale with nothing to share it with, so its own price is the only price the split
+        // will ever be applied to and dollars are exact.
+        flip.UnitCost = req.KeepPercent is { } keep
+            ? new CostBasisEntry { KeepPercent = keep }.UnitCostAt(
+                Math.Max(0m, flip.SalePrice + flip.ShippingCharged - flip.RefundedAmount) / Math.Max(1, flip.Quantity))
+            : req.UnitCost!.Value;
     }
 
     // The seller has now answered, even if the answer was zero. A genuinely free item — a bundled
@@ -5402,7 +5423,7 @@ app.MapPost("/api/earnings/cost", (
     var siblings = shared
         ? store.GetAll().Where(f => f.Id != flip.Id && f.CostConfirmedUtc is null
             && ((!string.IsNullOrWhiteSpace(flip.ListingId) && string.Equals(f.ListingId, flip.ListingId, StringComparison.OrdinalIgnoreCase))
-             || (!string.IsNullOrWhiteSpace(flip.Sku) && string.Equals(f.Sku, flip.Sku, StringComparison.OrdinalIgnoreCase)))).ToList()
+             || (!string.IsNullOrWhiteSpace(sku) && string.Equals(f.Sku, sku, StringComparison.OrdinalIgnoreCase)))).ToList()
         : [];
 
     foreach (var sibling in siblings)
@@ -5413,7 +5434,7 @@ app.MapPost("/api/earnings/cost", (
     }
 
     log.Add("Info", "Cost recorded for a completed sale",
-        $"\"{flip.Title}\" — {req.UnitCost.Value:C2}{(shared ? $" (shared cost basis; also prices {alsoAffected} other sale(s) of this item)" : "")}");
+        $"\"{flip.Title}\" — {(req.KeepPercent is { } kept ? $"dropship split, keeps {kept:0.##}%" : $"{req.UnitCost!.Value:C2}")}{(shared ? $" (shared cost basis; also prices {alsoAffected} other sale(s) of this item)" : "")}");
 
     return Results.Ok(new
     {

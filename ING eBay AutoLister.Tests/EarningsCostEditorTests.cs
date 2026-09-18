@@ -66,9 +66,18 @@ public class EarningsCostEditorTests
     public void The_percentage_form_still_reaches_the_same_save()
     {
         // Guarding the plumbing the placeholder now advertises: "40%" is converted against the
-        // unit sale price and saved as a dollar amount, in the same call a typed figure takes.
+        // unit sale price for the figure on screen, in the same call a typed figure takes.
         Assert.Contains("raw.endsWith('%')", Js, StringComparison.Ordinal);
         Assert.Contains("costFromKeepPct(Number(input.dataset.unitgross)", Js, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_split_is_sent_as_the_percentage_not_as_the_dollars_it_made_on_one_sale()
+    {
+        // Saved as dollars, "keep 40%" of one $825 sale became a $495 cost on every other sale of
+        // the listing. The server can only re-price per sale if the percentage is what it is given.
+        Assert.Contains("saveFlipCost(id, value, keepPct)", Js, StringComparison.Ordinal);
+        Assert.Contains("payload.keepPercent =", Js, StringComparison.Ordinal);
     }
 
     // ── Saying what happened ──────────────────────────────────────────────────────

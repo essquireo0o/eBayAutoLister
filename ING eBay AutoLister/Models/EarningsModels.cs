@@ -293,6 +293,10 @@ public sealed class FlipUpsertRequest
     public decimal? ShippingCost { get; set; }
     public decimal? OtherCosts { get; set; }
     public decimal? UnitCost { get; set; }
+
+    // Sent instead of a dollar cost by a dropshipper: the percent of the sale they keep. Stored
+    // as a percentage on the shared cost basis so it re-prices with every sale of the listing.
+    public decimal? KeepPercent { get; set; }
     public decimal? RefundedAmount { get; set; }
     public string? Status { get; set; }
     public string? Note { get; set; }

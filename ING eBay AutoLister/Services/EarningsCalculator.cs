@@ -107,7 +107,16 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
         // ── Cost of goods — the number that decides whether this counts at all ────────────────
         decimal? unitCost = flip.UnitCost;
         if (unitCost.HasValue) result.CostSource = "flip";
-        else if (costBasis is not null) { unitCost = costBasis.TotalUnitCost; result.CostSource = "basis"; }
+        else if (costBasis is not null)
+        {
+            // A dropship split is a share of THIS sale, so it is priced from this sale's own
+            // per-unit takings — after refunds, so a sale that was handed back in full owes the
+            // supplier nothing. A fixed cost ignores the price, as it always did.
+            unitCost = costBasis.UnitCostAt(gross / quantity);
+            result.CostSource = "basis";
+            if (costBasis.KeepPercent is { } keep)
+                result.Caveats.Add($"Dropship split — you keep {keep:0.##}% of the sale, so the goods cost {Money(unitCost.Value)} each on this one.");
+        }
         else result.CostSource = "none";
 
         if (unitCost is null)

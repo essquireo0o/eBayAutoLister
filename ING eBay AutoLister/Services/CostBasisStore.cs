@@ -22,8 +22,22 @@ public sealed class CostBasisEntry
     public DateTimeOffset? AcquiredUtc { get; set; }
     public DateTimeOffset UpdatedUtc { get; set; }
 
+    // A dropshipper's split: the percent of each sale the seller keeps, the supplier taking the
+    // rest. When set, the cost is NOT UnitCost — it is worked out per sale from that sale's own
+    // price. It has to stay a percentage: frozen into dollars from one $825 sale it priced every
+    // later $245 sale of the same listing at a $495 cost, and a month of profit read as a loss.
+    public decimal? KeepPercent { get; set; }
+
     // The all-in landed cost of one unit — what the item has to clear before a sale makes money.
     public decimal TotalUnitCost => Math.Round(UnitCost + InboundShipping, 2);
+
+    /// <summary>
+    /// What one unit cost on a sale that brought in <paramref name="unitSalePrice"/> per unit: the
+    /// supplier's share of it on a percentage split, otherwise the fixed landed cost.
+    /// </summary>
+    public decimal UnitCostAt(decimal unitSalePrice) => KeepPercent is { } keep
+        ? Math.Round(Math.Max(0m, unitSalePrice) * (1m - Math.Clamp(keep, 0m, 100m) / 100m), 2)
+        : TotalUnitCost;
 }
 
 /// <summary>
@@ -65,7 +79,7 @@ public sealed class CostBasisStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at
+            SELECT listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at, keep_percent
             FROM listing_cost_basis
             WHERE user_id = @user_id;
             """;
@@ -112,6 +126,8 @@ public sealed class CostBasisStore
             throw new InvalidOperationException("A listing ID or SKU is required to record a cost basis.");
         if (entry.UnitCost < 0 || entry.InboundShipping < 0)
             throw new InvalidOperationException("Cost basis cannot be negative.");
+        if (entry.KeepPercent is < 0 or > 100)
+            throw new InvalidOperationException("The share of the sale you keep must be between 0 and 100 percent.");
         // Nobody signed in on a hosted deployment: nothing is written. See UserScope.
         if (_scope.OwnerId is not { } owner) return entry;
 
@@ -143,10 +159,11 @@ public sealed class CostBasisStore
             insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO listing_cost_basis
-                    (user_id, listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at)
+                    (user_id, listing_id, sku, unit_cost, inbound_shipping, note, acquired_at, updated_at, keep_percent)
                 VALUES
-                    (@user_id, @listing_id, @sku, @unit_cost, @inbound_shipping, @note, @acquired_at, @updated_at);
+                    (@user_id, @listing_id, @sku, @unit_cost, @inbound_shipping, @note, @acquired_at, @updated_at, @keep_percent);
                 """;
+            insert.Parameters.AddWithValue("@keep_percent", (object?)entry.KeepPercent ?? DBNull.Value);
             insert.Parameters.AddWithValue("@user_id", owner);
             insert.Parameters.AddWithValue("@listing_id", entry.ListingId ?? "");
             insert.Parameters.AddWithValue("@sku", entry.Sku ?? "");
@@ -202,6 +219,7 @@ public sealed class CostBasisStore
             Note = reader.GetString(4),
             AcquiredUtc = DateTimeOffset.TryParse(acquired, out var a) ? a : null,
             UpdatedUtc = DateTimeOffset.TryParse(reader.GetString(6), out var u) ? u : DateTimeOffset.MinValue,
+            KeepPercent = reader.IsDBNull(7) ? null : reader.GetDecimal(7),
         };
     }
 
@@ -227,6 +245,18 @@ public sealed class CostBasisStore
 
         // The owner column, before the indexes that use it — on an old database it does not exist yet.
         UserOwnedTable.Migrate(connection, "listing_cost_basis");
+
+        // Added after the table shipped. NULL means "a fixed dollar cost", which is every existing row.
+        using (var columns = connection.CreateCommand())
+        {
+            columns.CommandText = "SELECT COUNT(*) FROM pragma_table_info('listing_cost_basis') WHERE name = 'keep_percent';";
+            if (Convert.ToInt64(columns.ExecuteScalar()) == 0)
+            {
+                using var add = connection.CreateCommand();
+                add.CommandText = "ALTER TABLE listing_cost_basis ADD COLUMN keep_percent NUMERIC NULL;";
+                add.ExecuteNonQuery();
+            }
+        }
 
         using var indexes = connection.CreateCommand();
         indexes.CommandText = """
