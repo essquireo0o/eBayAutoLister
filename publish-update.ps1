@@ -262,10 +262,24 @@ try {
 
     # That site returns 503 to non-browser agents, hence the User-Agent header everywhere here.
     # Not $home - PowerShell reserves that one and assigning it is a terminating error.
-    $homeHtml = Invoke-WebRequest -Uri $minePage -TimeoutSec 120 -UseBasicParsing -Headers $ua
-    if (-not $homeHtml.Content.Contains("href=""$mineUrl""")) {
-        Die "The download button is no longer in the HTML at $minePage. Someone edited the homepage and dropped it."
+    #
+    # 2026-09-18: the homepage redesign (mid-September) moved the direct installer button off the
+    # front page and onto the software page, /ing-listing-engine/, where it appears three times;
+    # the front page links to that page instead. The button has to exist SOMEWHERE a visitor can
+    # reach from the front page, so both are read and either satisfies the check. A ship that
+    # uploaded and verified the bytes (steps 5-6) used to die here for a page-layout reason.
+    $buttonPages = @("https://ingmining.com/ing-listing-engine/", $minePage)
+    $buttonOn = $null
+    foreach ($page in $buttonPages) {
+        try {
+            $html = Invoke-WebRequest -Uri $page -TimeoutSec 120 -UseBasicParsing -Headers $ua
+            if ($html.Content.Contains("href=""$mineUrl""")) { $buttonOn = $page; break }
+        } catch { }
     }
+    if (-not $buttonOn) {
+        Die "The download button is no longer in the HTML at $($buttonPages -join ' or '). Someone edited the site and dropped it."
+    }
+    Ok "download button present on $buttonOn"
     Ok "homepage still links to it"
 } catch {
     Die "Could not verify ingmining.com's download route: $($_.Exception.Message)"
