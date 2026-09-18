@@ -657,16 +657,24 @@ builder.Services.AddSingleton<AutoBuyStore>();
 builder.Services.AddSingleton<AutoBuyListingSource>(sp => async (rule, ct) =>
 {
     var ebay = sp.GetRequiredService<EbayService>();
-    var listingType = rule.Mode == AutoBuyMode.AuctionBid ? "AUCTION" : "FIXED_PRICE";
+    // Best Offer rules search only listings that take offers; every rule searches US-located
+    // items; the rule's floor goes to eBay too, so the accessories never come back at all.
+    var listingType = rule.Mode switch
+    {
+        AutoBuyMode.AuctionBid => "AUCTION",
+        AutoBuyMode.BestOffer  => "BEST_OFFER",
+        _                      => "FIXED_PRICE",
+    };
     IReadOnlyList<EbayOpportunityItem> results = await ebay.SearchEndingSoonAsync(
         rule.Query,
         minFeedback: rule.MinSellerFeedback,
         limit: 50,
         category: null,
         condition: string.IsNullOrWhiteSpace(rule.Condition) ? null : rule.Condition,
-        minPrice: null,
+        minPrice: rule.MinItemPrice > 0m ? rule.MinItemPrice : null,
         maxPrice: rule.MaxItemPrice,
-        listingType: listingType);
+        listingType: listingType,
+        itemLocationCountry: "US");
     return results;
 });
 builder.Services.AddSingleton<AutoBuyPlacer>(sp => async (rule, item, price, ct) =>
@@ -674,13 +682,16 @@ builder.Services.AddSingleton<AutoBuyPlacer>(sp => async (rule, item, price, ct)
     var ebay = sp.GetRequiredService<EbayService>();
     try
     {
-        switch (rule.Mode)
+        // PlaceOffer's answer is read, not assumed: a Buy It Now is a commitment to pay, a bid
+        // is only a win while it is the high bid, and "this app may not place offers" is a
+        // different failure from "this listing refused". See EbayService.EbayOfferResult.
+        var r = rule.Mode switch
         {
-            case AutoBuyMode.BuyItNow:   await ebay.PlaceBuyItNowAsync(item.ItemId); break;
-            case AutoBuyMode.BestOffer:  await ebay.PlaceBestOfferAsync(item.ItemId, price); break;
-            case AutoBuyMode.AuctionBid: await ebay.PlaceMaxBidAsync(item.ItemId, price); break;
-        }
-        return new AutoBuyPlacement(true, $"eBay accepted the {AutoBuyService.ModeVerb(rule.Mode)}.");
+            AutoBuyMode.BestOffer  => await ebay.PlaceBestOfferAsync(item.ItemId, price),
+            AutoBuyMode.AuctionBid => await ebay.PlaceMaxBidAsync(item.ItemId, price),
+            _                      => await ebay.PlaceBuyItNowAsync(item.ItemId, price),
+        };
+        return new AutoBuyPlacement(r.Ok, r.Detail, r.Committed, r.HighBidder, r.Link, r.NotEnabled);
     }
     catch (Exception ex)
     {
@@ -9637,7 +9648,9 @@ AmazonListingFillEndpoints.Map(app);
 // because on Amazon it is a separate question asked minutes later — what became of either. A
 // submission that came back 200 ACCEPTED is queued, not published. See AmazonSubmissionWords.
 AmazonSubmitEndpoints.Map(app);
-AutoBuyEndpoints.Map(app);
+#if !HOSTED
+AutoBuyEndpoints.Map(app);   // desktop only — see the Auto-Buy DI block for why
+#endif
 AutoBuyJudgeEndpoints.Map(app);
 
 app.MapPost("/api/ebay/disconnect", (CredentialsStore store, OnboardingStore onboarding) =>

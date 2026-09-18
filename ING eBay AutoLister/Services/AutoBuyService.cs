@@ -2,8 +2,19 @@ using ING_eBay_AutoLister.Models;
 
 namespace ING_eBay_AutoLister.Services;
 
-/// <summary>What one placement attempt came back with. Ok true means eBay accepted it.</summary>
-public sealed record AutoBuyPlacement(bool Ok, string Detail);
+/// <summary>
+/// What one placement attempt came back with. <see cref="Ok"/> true means eBay accepted the call;
+/// the rest says what that acceptance actually amounts to, because on eBay "accepted" is three
+/// different things: a Buy It Now is a <b>commitment to pay</b> (not a payment), a bid is a standing
+/// high bid <b>only while nobody outbids it</b>, and a Best Offer is a proposal the seller may decline.
+/// </summary>
+/// <param name="Committed">A Buy It Now the buyer is now obliged to pay for on eBay.</param>
+/// <param name="HighBidder">For a bid: the max bid is currently the high bid.</param>
+/// <param name="Link">Where on eBay the seller finishes the job (pay, or watch the bid).</param>
+/// <param name="NotEnabled">eBay refused because this application may not place offers at all — a
+/// keyset problem, not a listing problem, and every further attempt would fail the same way.</param>
+public sealed record AutoBuyPlacement(
+    bool Ok, string Detail, bool Committed = false, bool HighBidder = false, string Link = "", bool NotEnabled = false);
 
 /// <summary>
 /// Finds the listings a rule buys out of. A delegate rather than a hard call to
@@ -16,7 +27,8 @@ public delegate Task<IReadOnlyList<EbayOpportunityItem>> AutoBuyListingSource(
 /// <summary>
 /// Actually places the buy, offer, or bid on eBay. The one seam that spends money; wired to
 /// <c>EbayService</c>'s PlaceOffer calls in <c>Program.cs</c>, and stubbed in tests so a test can
-/// never reach eBay.
+/// never reach eBay. <paramref name="price"/> is the amount to put on eBay (the listing price for a
+/// Buy It Now, the offer, or the max bid) — shipping is not part of it, eBay adds that itself.
 /// </summary>
 public delegate Task<AutoBuyPlacement> AutoBuyPlacer(
     AutoBuyRule rule, EbayOpportunityItem item, decimal price, CancellationToken ct);
@@ -29,14 +41,20 @@ public delegate Task<AutoBuyPlacement> AutoBuyPlacer(
 /// <remarks>
 /// <para><b>The order of the brakes.</b> Nothing is scanned while the master arm is off. A rule
 /// that is off is skipped. A listing already acted on is skipped (the store remembers every one).
-/// A listing that fails the rule — price over the ceiling, an excluded word, a thin-feedback
-/// seller — is skipped. Only then does a buy get as far as the caps: the rule's remaining budget,
-/// the rule's count, the day's count, the global budget. Past all of that, live buying decides
-/// whether eBay is actually called or the row is written as a simulation.</para>
+/// A listing that fails the rule — all-in price over the ceiling, under the floor, shipping not
+/// stated, a missing required word, an excluded word, a thin-feedback seller, an auction that is
+/// not ending yet — is skipped, and the reason is counted so the run can say why nothing matched.
+/// Only then does a buy get as far as the caps: the rule's remaining budget, the rule's count, the
+/// day's count, the global budget. Past all of that, live buying decides whether eBay is actually
+/// called or the row is written as a simulation.</para>
+/// <para><b>Money is all-in.</b> Every ceiling, budget and ledger figure is item price plus the
+/// shipping eBay stated. $5 with $200 freight is a $205 item. A listing with no stated shipping is
+/// refused rather than booked as free.</para>
 /// <para><b>One at a time.</b> A single process-wide gate; the manual "Run now" takes the same
 /// gate, so a button press during a sweep is answered rather than run alongside it.</para>
 /// <para><b>No retries.</b> A buy that eBay refuses is recorded and the item is remembered, so the
-/// rule does not throw itself at the same failing listing every quarter-hour.</para>
+/// rule does not throw itself at the same failing listing every quarter-hour. When eBay says the
+/// application itself may not place offers, the rule is paused with the reason on it.</para>
 /// </remarks>
 public sealed class AutoBuyService(
     AutoBuyStore store,
@@ -50,6 +68,17 @@ public sealed class AutoBuyService(
 
     /// <summary>Listings looked at per rule per run. A rule buys the first that clears every bar.</summary>
     public const int MaxItemsPerScan = 40;
+
+    /// <summary>
+    /// An auction is only bid on when it ends before the rule's next look, plus this margin. Bidding
+    /// the moment a listing appears is how a rule advertises its maximum to every other bidder for
+    /// six days; bidding inside the last window is how an auction is actually won.
+    /// </summary>
+    public static readonly TimeSpan AuctionWindowMargin = TimeSpan.FromMinutes(3);
+
+    /// <summary>Applied only when the rule sets a feedback-score floor: a seller under this positive
+    /// percentage is refused too. Score without percentage lets a 4,000-feedback, 80%-positive seller through.</summary>
+    public const decimal MinPositiveFeedbackPercent = 95m;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -110,18 +139,28 @@ public sealed class AutoBuyService(
 
             Scanning = true;
             ScanningRuleId = ruleId;
+            // The report is per run and per rule. It used to be a field on the service, so a run
+            // that threw (timeout, cancel) recorded the PREVIOUS rule's status against this one.
+            RuleRunReport? report = null;
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(RunTimeout);
-                return await ScanAndActAsync(rule, settings, manual, timeout.Token);
+                report = await ScanAndActAsync(rule, settings, timeout.Token);
+                return report;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                report = new RuleRunReport("timed_out", $"The scan took longer than {RunTimeout.TotalMinutes:0} minutes and was stopped.", 0, 0);
+                return report;
             }
             finally
             {
                 Scanning = false;
                 ScanningRuleId = null;
                 LastScanUtc = DateTimeOffset.UtcNow;
-                store.RecordRun(ruleId, _lastStatus, DateTimeOffset.UtcNow, rule.IntervalMinutes);
+                store.RecordRun(ruleId, report?.Status ?? "error", DateTimeOffset.UtcNow, rule.IntervalMinutes,
+                    report?.Note ?? "The run ended before it could report.");
             }
         }
         finally
@@ -130,49 +169,48 @@ public sealed class AutoBuyService(
         }
     }
 
-    private string _lastStatus = "never_run";
-
-    private async Task<RuleRunReport> ScanAndActAsync(
-        AutoBuyRule rule, AutoBuySettings settings, bool manual, CancellationToken ct)
+    private async Task<RuleRunReport> ScanAndActAsync(AutoBuyRule rule, AutoBuySettings settings, CancellationToken ct)
     {
         IReadOnlyList<EbayOpportunityItem> items;
         try
         {
             items = await listingSource(rule, ct);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _lastStatus = "search_failed";
             log.Add("Auto-Buy", $"Search failed for \"{rule.Name}\"", ex.Message);
-            return new RuleRunReport("search_failed", ex.Message, 0, 0);
+            return new RuleRunReport("search_failed", $"eBay search failed: {ex.Message}", 0, 0);
         }
 
+        var now = DateTimeOffset.UtcNow;
         var scanned = 0;
         var acted = 0;
+        var rejected = new Dictionary<string, int>();
 
         foreach (var item in items.Take(MaxItemsPerScan))
         {
             ct.ThrowIfCancellationRequested();
             scanned++;
 
-            if (string.IsNullOrWhiteSpace(item.ItemId)) continue;
-            if (store.HasSeen(rule.Id, item.ItemId)) continue;
+            if (string.IsNullOrWhiteSpace(item.ItemId)) { Count(rejected, "no item id"); continue; }
+            if (store.HasSeen(rule.Id, item.ItemId)) { Count(rejected, "already acted on"); continue; }
 
-            var (ok, _) = Evaluate(rule, item);
-            if (!ok) continue;
+            var (ok, reason) = Evaluate(rule, item, now);
+            if (!ok) { Count(rejected, reason); continue; }
 
-            var price = PriceFor(rule, item);
+            var allIn = AllInPrice(rule, item);   // what the seller's money is on the line for
+            var onEbay = PriceFor(rule, item);    // what goes on the PlaceOffer call
 
             // The caps, in the order that spends the least to check. A cap stop is remembered like a
             // buy so the rule does not re-evaluate the same blocked item next tick.
-            var capReason = CapReason(rule, settings, price);
+            var capReason = CapReason(rule, settings, allIn);
             if (capReason is not null)
             {
                 store.MarkSeen(rule.Id, item.ItemId);
-                Record(rule, item, price, AutoBuyOutcome.Skipped, capReason);
-                _lastStatus = "capped";
+                Record(rule, item, allIn, AutoBuyOutcome.Skipped, capReason);
                 // A budget or day cap is not going to clear later in this same run; stop here.
-                return new RuleRunReport("capped", capReason, scanned, acted);
+                return new RuleRunReport("capped", Summary(scanned, rejected, $"Stopped by a cap: {capReason}"), scanned, acted);
             }
 
             // Past every bar. Remember it BEFORE acting, so a crash mid-purchase cannot let the next
@@ -182,41 +220,84 @@ public sealed class AutoBuyService(
             if (settings is { Armed: true, LiveBuying: true })
             {
                 AutoBuyPlacement result;
-                try { result = await placer(rule, item, price, ct); }
+                try { result = await placer(rule, item, onEbay, ct); }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { result = new AutoBuyPlacement(false, ex.Message); }
+
+                if (result.NotEnabled)
+                {
+                    // Not this listing's fault and not the next one's either. Pause the rule with the
+                    // reason on it rather than burn every match as a FAILED row, one per tick.
+                    var why = $"eBay refused: {result.Detail} This rule is paused until that is fixed.";
+                    Record(rule, item, allIn, AutoBuyOutcome.Failed, why);
+                    store.PauseRule(rule.Id, why);
+                    log.Add("Auto-Buy", $"\"{rule.Name}\" paused — eBay will not let this app place offers", result.Detail);
+                    return new RuleRunReport("not_enabled", why, scanned, acted);
+                }
 
                 if (result.Ok)
                 {
-                    store.RecordBuy(rule.Id, price);
-                    Record(rule, item, price, AutoBuyOutcome.Placed, result.Detail);
-                    log.Add("Auto-Buy", $"Bought for {price:C2}",
-                        $"\"{rule.Name}\" {ModeVerb(rule.Mode)} {Trim(item.Title)} at {price:C2}.");
-                    acted++;
-                    _lastStatus = "bought";
-                    // One buy per run per rule. The next due tick can buy the next one; a rule does
-                    // not empty its whole budget into one sweep.
-                    return new RuleRunReport("bought", $"Bought {Trim(item.Title)} for {price:C2}.", scanned, acted);
+                    var outcome = Settle(rule, item, allIn, onEbay, result);
+                    if (outcome.Banked)
+                    {
+                        store.RecordBuy(rule.Id, allIn);
+                        Record(rule, item, allIn, AutoBuyOutcome.Placed, outcome.Detail);
+                        log.Add("Auto-Buy", outcome.Headline, $"\"{rule.Name}\": {Trim(item.Title)} — {outcome.Detail}");
+                        acted++;
+                        // One buy per run per rule. The next due tick can buy the next one; a rule does
+                        // not empty its whole budget into one sweep.
+                        return new RuleRunReport("placed", Summary(scanned, rejected, outcome.Detail), scanned, acted);
+                    }
+
+                    // eBay took the call but the money is not committed (outbid on the spot). Not
+                    // banked, not retried on this item; move on within the run.
+                    Record(rule, item, allIn, AutoBuyOutcome.Failed, outcome.Detail);
+                    log.Add("Auto-Buy", outcome.Headline, $"\"{rule.Name}\": {Trim(item.Title)} — {outcome.Detail}");
+                    Count(rejected, "outbid");
+                    continue;
                 }
 
-                Record(rule, item, price, AutoBuyOutcome.Failed, result.Detail);
+                Record(rule, item, allIn, AutoBuyOutcome.Failed, result.Detail);
                 log.Add("Auto-Buy", $"Purchase refused for \"{rule.Name}\"", result.Detail);
-                _lastStatus = "buy_failed";
+                Count(rejected, "refused by eBay");
                 // A refusal is not retried on the same item; move on within this run.
                 continue;
             }
 
             // Simulate: the match is real, the money is not spent. This is what the feature does
             // every second until the seller turns live buying on, on purpose.
-            Record(rule, item, price, AutoBuyOutcome.Simulated,
-                $"Would {ModeVerb(rule.Mode)} at {price:C2}. Live buying is off.");
+            var would = $"Would {ModeVerb(rule.Mode)} at {onEbay:C2} ({allIn:C2} with shipping). Live buying is off.";
+            Record(rule, item, allIn, AutoBuyOutcome.Simulated, would);
             acted++;
-            _lastStatus = "simulated";
             return new RuleRunReport("simulated",
-                $"Would buy {Trim(item.Title)} for {price:C2} — live buying is off.", scanned, acted);
+                Summary(scanned, rejected, $"Would buy {Trim(item.Title)} for {allIn:C2} all-in — live buying is off."), scanned, acted);
         }
 
-        _lastStatus = acted > 0 ? "acted" : "no_match";
-        return new RuleRunReport(_lastStatus, acted > 0 ? "Acted on a listing." : "Nothing matched this run.", scanned, acted);
+        return new RuleRunReport("no_match", Summary(scanned, rejected, "Nothing matched this run."), scanned, acted);
+    }
+
+    /// <summary>What eBay's acceptance means for THIS mode, and whether budget is committed by it.</summary>
+    private static (bool Banked, string Headline, string Detail) Settle(
+        AutoBuyRule rule, EbayOpportunityItem item, decimal allIn, decimal onEbay, AutoBuyPlacement result)
+    {
+        var link = string.IsNullOrWhiteSpace(result.Link) ? "" : $" {result.Link}";
+        switch (rule.Mode)
+        {
+            case AutoBuyMode.BuyItNow:
+                // PlaceOffer commits the buyer; it does not pay. Saying "Bought" here is how a seller
+                // ends up with an unpaid-item strike they never knew was coming.
+                return (true, $"Committed to buy for {allIn:C2}",
+                    $"Committed on eBay at {onEbay:C2} ({allIn:C2} with shipping). Pay on eBay to complete it.{link}");
+            case AutoBuyMode.AuctionBid:
+                return result.HighBidder
+                    ? (true, $"High bidder at up to {onEbay:C2}",
+                        $"Max bid {onEbay:C2} placed and currently winning ({allIn:C2} with shipping). If you are outbid later the budget is NOT released — check the auction.{link}")
+                    : (false, "Outbid on placement",
+                        $"Max bid {onEbay:C2} was placed but someone already stood higher. {result.Detail}".Trim());
+            default:
+                return (true, $"Offer sent for {onEbay:C2}",
+                    $"Best Offer of {onEbay:C2} sent ({allIn:C2} with shipping). If the seller accepts, pay on eBay; the budget is held meanwhile.{link}");
+        }
     }
 
     private void Record(AutoBuyRule rule, EbayOpportunityItem item, decimal price, AutoBuyOutcome outcome, string detail) =>
@@ -233,37 +314,99 @@ public sealed class AutoBuyService(
             Detail = detail,
         });
 
+    private static void Count(Dictionary<string, int> tally, string reason)
+    {
+        // Reasons carry the listing's own numbers ("$61.00 over..."); fold them to one bucket each.
+        var key = reason.Split(':')[0].Trim();
+        tally[key] = tally.GetValueOrDefault(key) + 1;
+    }
+
+    /// <summary>"40 scanned: 22 over the ceiling, 9 shipping not stated, 6 excluded word. Nothing matched."</summary>
+    public static string Summary(int scanned, Dictionary<string, int> rejected, string tail)
+    {
+        if (scanned == 0) return $"0 listings returned. {tail}";
+        var parts = rejected.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}");
+        var why = rejected.Count > 0 ? ": " + string.Join(", ", parts) : "";
+        return $"{scanned} scanned{why}. {tail}";
+    }
+
     // ── The pure decisions, kept static so a test needs no service ────────────
 
     /// <summary>
-    /// Does this listing pass the rule? Returns the reason it did not, for the ledger. Price, the
-    /// excluded words, the seller floor, and the mode's own shape are all checked here.
+    /// Does this listing pass the rule? Returns the reason it did not, for the run summary. The
+    /// reason's text before the first colon is its bucket, so "over the ceiling: $61.00 vs $60.00"
+    /// tallies with every other over-the-ceiling row.
     /// </summary>
-    public static (bool Ok, string Reason) Evaluate(AutoBuyRule rule, EbayOpportunityItem item)
+    public static (bool Ok, string Reason) Evaluate(AutoBuyRule rule, EbayOpportunityItem item, DateTimeOffset? now = null)
     {
+        if (item.ItemId.Contains('|'))
+            return (false, "unusable item id: eBay gave only the REST form, which PlaceOffer cannot buy");
         if (item.Price <= 0m) return (false, "no price");
-        if (item.Price > rule.MaxItemPrice) return (false, $"priced {item.Price:C2}, over the {rule.MaxItemPrice:C2} ceiling");
+        if (rule.MinItemPrice > 0m && item.Price < rule.MinItemPrice)
+            return (false, $"below the floor: {item.Price:C2} is under the {rule.MinItemPrice:C2} floor");
 
-        if (rule.MinSellerFeedback > 0 && item.SellerFeedbackScore < rule.MinSellerFeedback)
-            return (false, $"seller feedback {item.SellerFeedbackScore} is under {rule.MinSellerFeedback}");
+        // Shipping is money. A listing that will not say what it costs to ship is not booked as free;
+        // it is refused, and the summary says so, so the seller can decide whether to widen the rule.
+        if (!item.ShippingStated)
+            return (false, "shipping not stated");
 
-        foreach (var word in ExcludeWords(rule.ExcludeKeywords))
+        var ceiling = rule.MaxItemPrice;
+        if (rule.Mode == AutoBuyMode.BuyItNow)
+        {
+            var allIn = item.Price + item.ShippingCost;
+            if (allIn > ceiling)
+                return (false, $"over the ceiling: {allIn:C2} with shipping, ceiling {ceiling:C2}");
+        }
+        else
+        {
+            // For an offer or a bid, the amount to commit plus shipping must sit at or under the
+            // ceiling; the store's validation guarantees the bare amount at save time, and this
+            // holds it — shipping included — at act time too.
+            if (rule.OfferOrBidPrice <= 0m)
+                return (false, "no offer or bid amount");
+            if (rule.OfferOrBidPrice + item.ShippingCost > ceiling)
+                return (false, $"over the ceiling: {rule.OfferOrBidPrice:C2} plus {item.ShippingCost:C2} shipping, ceiling {ceiling:C2}");
+            if (rule.Mode == AutoBuyMode.AuctionBid && item.Price >= rule.OfferOrBidPrice)
+                return (false, $"current bid too high: already {item.Price:C2}, your max is {rule.OfferOrBidPrice:C2}");
+        }
+
+        if (rule.Mode == AutoBuyMode.AuctionBid && item.EndDate is { } ends)
+        {
+            var clock = now ?? DateTimeOffset.UtcNow;
+            var window = TimeSpan.FromMinutes(Math.Clamp(rule.IntervalMinutes, 5, 24 * 60)) + AuctionWindowMargin;
+            var left = ends - clock.UtcDateTime;
+            if (left > window)
+                return (false, $"not ending yet: {Describe(left)} left, bids go in inside the last {window.TotalMinutes:0} minutes");
+        }
+
+        if (rule.MinSellerFeedback > 0)
+        {
+            if (item.SellerFeedbackScore < rule.MinSellerFeedback)
+                return (false, $"seller feedback too low: {item.SellerFeedbackScore} is under {rule.MinSellerFeedback}");
+            if (item.SellerFeedbackPercent is { } pct && pct < MinPositiveFeedbackPercent)
+                return (false, $"seller positive rating too low: {pct:0.#}% is under {MinPositiveFeedbackPercent:0}%");
+        }
+
+        foreach (var word in Words(rule.RequiredKeywords))
+            if (!item.Title.Contains(word, StringComparison.OrdinalIgnoreCase))
+                return (false, $"missing required word: \"{word}\"");
+
+        foreach (var word in Words(rule.ExcludeKeywords))
             if (item.Title.Contains(word, StringComparison.OrdinalIgnoreCase))
-                return (false, $"title contains excluded word \"{word}\"");
-
-        // For an offer or a bid, the amount to commit must sit at or under the ceiling; the store's
-        // validation guarantees it at save time, and this holds it at act time too.
-        if (rule.Mode is AutoBuyMode.BestOffer or AutoBuyMode.AuctionBid && rule.OfferOrBidPrice > rule.MaxItemPrice)
-            return (false, "offer or bid is above the ceiling");
+                return (false, $"excluded word: \"{word}\"");
 
         return (true, "");
     }
 
-    /// <summary>What this rule would commit on this item: the listing price to buy it now, else the offer or bid.</summary>
+    /// <summary>What goes on the PlaceOffer call: the listing price to buy it now, else the offer or max bid.</summary>
     public static decimal PriceFor(AutoBuyRule rule, EbayOpportunityItem item) =>
         rule.Mode == AutoBuyMode.BuyItNow ? item.Price : rule.OfferOrBidPrice;
 
-    /// <summary>The first cap this buy would breach, or null if it clears them all.</summary>
+    /// <summary>What the seller's money is on the line for: <see cref="PriceFor"/> plus the stated shipping.</summary>
+    public static decimal AllInPrice(AutoBuyRule rule, EbayOpportunityItem item) =>
+        PriceFor(rule, item) + Math.Max(0m, item.ShippingCost);
+
+    /// <summary>The first cap this buy would breach, or null if it clears them all. <paramref name="price"/> is all-in.</summary>
     public static string? CapReason(AutoBuyRule rule, AutoBuySettings settings, decimal price)
     {
         if (rule.MaxBuys > 0 && rule.Buys >= rule.MaxBuys) return "this rule has hit its buy count.";
@@ -273,8 +416,11 @@ public sealed class AutoBuyService(
         return null;
     }
 
-    public static IEnumerable<string> ExcludeWords(string raw) =>
+    public static IEnumerable<string> Words(string raw) =>
         (raw ?? "").Split([',', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>Kept for callers that predate <see cref="Words"/>.</summary>
+    public static IEnumerable<string> ExcludeWords(string raw) => Words(raw);
 
     public static string ModeVerb(AutoBuyMode mode) => mode switch
     {
@@ -284,6 +430,11 @@ public sealed class AutoBuyService(
     };
 
     private static string Trim(string title) => title.Length <= 60 ? title : title[..57] + "…";
+
+    private static string Describe(TimeSpan left) =>
+        left.TotalHours >= 48 ? $"{left.TotalDays:0.#} days"
+        : left.TotalMinutes >= 90 ? $"{left.TotalHours:0.#} hours"
+        : $"{left.TotalMinutes:0} minutes";
 
     /// <summary>Builds the one-line safety summary the console shows above everything.</summary>
     public static string SafetyLine(AutoBuySettings s)

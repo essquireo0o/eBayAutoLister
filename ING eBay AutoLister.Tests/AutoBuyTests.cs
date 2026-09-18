@@ -21,8 +21,11 @@ public class AutoBuyTests
         BudgetCap = 1000m, Enabled = true,
     };
 
+    // A legacy numeric item id (the only kind PlaceOffer can buy) with shipping stated as free.
+    // Both are now conditions of a match, so the fixture has to say them out loud.
     private static EbayOpportunityItem Item(decimal price = 50m, string title = "A good thing", int fb = 100) =>
-        new() { ItemId = "v1|123|0", Title = title, Price = price, SellerFeedbackScore = fb, Url = "https://ebay/itm/123" };
+        new() { ItemId = "123456789012", Title = title, Price = price, SellerFeedbackScore = fb,
+                ShippingCost = 0m, ShippingStated = true, Url = "https://ebay/itm/123" };
 
     [Fact]
     public void A_listing_over_the_ceiling_is_refused()
@@ -201,7 +204,8 @@ public class AutoBuyTests
     {
         var h = new Harness();
         var id = h.AddRule();
-        h.Store.SaveSettings(armed: true, liveBuying: true, null, null);
+        h.Store.SaveSettings(armed: true, null, null, null);        // arm first...
+        h.Store.SaveSettings(null, liveBuying: true, null, null);   // ...then live, as two deliberate acts
 
         await h.Build().RunRuleAsync(id, manual: true, CancellationToken.None);
 
@@ -228,7 +232,8 @@ public class AutoBuyTests
     {
         var h = new Harness();
         var id = h.AddRule();
-        h.Store.SaveSettings(armed: true, liveBuying: true, null, null);
+        h.Store.SaveSettings(armed: true, null, null, null);        // arm first...
+        h.Store.SaveSettings(null, liveBuying: true, null, null);   // ...then live, as two deliberate acts
         var service = h.Build();
 
         await service.RunRuleAsync(id, manual: true, CancellationToken.None);
@@ -242,7 +247,8 @@ public class AutoBuyTests
     {
         var h = new Harness();
         var id = h.AddRule();
-        h.Store.SaveSettings(armed: true, liveBuying: true, globalBudgetCap: 30m, null); // less than the $50 item
+        h.Store.SaveSettings(armed: true, null, globalBudgetCap: 30m, null); // less than the $50 item
+        h.Store.SaveSettings(null, liveBuying: true, null, null);
 
         await h.Build().RunRuleAsync(id, manual: true, CancellationToken.None);
 

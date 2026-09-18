@@ -750,7 +750,7 @@ public class EbayService(
     public async Task<List<EbayOpportunityItem>> SearchEndingSoonAsync(
         string query, int minFeedback = 0, int limit = 50, string? category = null,
         string? condition = null, decimal? minPrice = null, decimal? maxPrice = null, string listingType = "AUCTION",
-        string? sortOverride = null)
+        string? sortOverride = null, string? itemLocationCountry = null)
     {
         var token = await GetBrowseApplicationTokenAsync();
         var client = httpClientFactory.CreateClient();
@@ -762,6 +762,9 @@ public class EbayService(
         var buyingOptions = listingType switch
         {
             "FIXED_PRICE" => "FIXED_PRICE",
+            // Only listings that take offers. An Auto-Buy Best Offer rule that searched FIXED_PRICE
+            // spent its matches on listings with no offer button, each one refused and remembered.
+            "BEST_OFFER"  => "BEST_OFFER",
             "BOTH"        => "AUCTION|FIXED_PRICE",
             _             => "AUCTION"
         };
@@ -781,6 +784,11 @@ public class EbayService(
         };
         if (conditionIds is not null)
             filters.Add($"conditionIds:{{{conditionIds}}}");
+
+        // Where the item ships from. Auto-Buy asks for US only: an overseas seller's "free shipping"
+        // is weeks and customs, and a rule that spends money on its own should not find that out.
+        if (!string.IsNullOrWhiteSpace(itemLocationCountry))
+            filters.Add($"itemLocationCountry:{itemLocationCountry.Trim().ToUpperInvariant()}");
 
         if (minPrice.HasValue || maxPrice.HasValue)
         {
@@ -3561,100 +3569,67 @@ public class EbayService(
     private static string Xstr(XElement parent, string localName) =>
         parent.Element(EbayNs + localName)?.Value ?? "";
 
-    // ── eBay Sniper — place a max bid via Trading API PlaceOffer ─────────────
-    public async Task PlaceMaxBidAsync(string itemId, decimal maxBid)
-    {
-        var token  = await GetOrRefreshTokenAsync();
-        var c      = creds.Get();
-        var client = httpClientFactory.CreateClient();
-
-        var body = $"""
-            <?xml version="1.0" encoding="utf-8"?>
-            <PlaceOfferRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-              <RequesterCredentials><eBayAuthToken>{token}</eBayAuthToken></RequesterCredentials>
-              <ItemID>{itemId}</ItemID>
-              <Offer>
-                <Action>Bid</Action>
-                <MaxBid currencyID="USD">{maxBid:F2}</MaxBid>
-                <Quantity>1</Quantity>
-              </Offer>
-            </PlaceOfferRequest>
-            """;
-
-        var req = new HttpRequestMessage(HttpMethod.Post, "https://api.ebay.com/ws/api.dll")
-        {
-            Content = new StringContent(body, System.Text.Encoding.UTF8, "text/xml")
-        };
-        req.Headers.Add("X-EBAY-API-SITEID", "0");
-        req.Headers.Add("X-EBAY-API-COMPATIBILITY-LEVEL", "967");
-        req.Headers.Add("X-EBAY-API-CALL-NAME", "PlaceOffer");
-        req.Headers.Add("X-EBAY-API-APP-NAME", c.EbayClientId ?? "");
-        req.Headers.Add("X-EBAY-API-DEV-NAME", c.EbayDevId ?? "");
-        req.Headers.Add("X-EBAY-API-CERT-NAME", c.EbayClientSecret ?? "");
-
-        var resp = await client.SendAsync(req);
-        var xml  = await resp.Content.ReadAsStringAsync();
-        var root = XElement.Parse(xml);
-        var ack  = root.Element(EbayNs + "Ack")?.Value ?? "";
-        if (ack != "Success" && ack != "Warning")
-        {
-            var msg = root.Descendants(EbayNs + "LongMessage").FirstOrDefault()?.Value ?? "Bid failed";
-            throw new Exception(msg);
-        }
-    }
-
-    // ── eBay Auto-Buy: purchasing and offering as a buyer ───────────────────────────────────
+    // ── Buying as a buyer: bids, Buy It Now, Best Offer — all one Trading API call, PlaceOffer ──
     //
-    // The same PlaceOffer call that PlaceMaxBidAsync uses to bid also buys a fixed-price listing
-    // outright (Action=Purchase) and sends a Best Offer (Action=Offer). One buyer-side surface,
-    // the Trading API, the same auth the bid already uses. These are the hands the AutoBuyService
-    // reaches eBay through, and nothing here decides whether to spend — that judgement, and every
-    // cap, lives in the service. This method is only the act.
+    // The sniper's bid, and Auto-Buy's purchase and offer, are the same call with a different
+    // <Action>. What differs is what eBay's acceptance MEANS, and the result says so instead of
+    // leaving the caller to guess: a Purchase is a commitment to pay (not a payment - the Trading
+    // API cannot pay), a Bid stands only until someone outbids it, an Offer is a proposal.
+    // Nothing here decides whether to spend; that judgement and every cap live in AutoBuyService.
+
+    /// <summary>What PlaceOffer came back with, read for the caller.</summary>
+    /// <param name="Committed">Action=Purchase accepted: the buyer now owes payment on eBay.</param>
+    /// <param name="HighBidder">Action=Bid accepted and the max bid is currently the high bid.</param>
+    /// <param name="Link">Where to finish the job on eBay (pay, or watch the bid).</param>
+    /// <param name="NotEnabled">eBay refused the CALL, not the listing: this application is not
+    /// allowed to place offers. Every further attempt would fail identically.</param>
+    public sealed record EbayOfferResult(
+        bool Ok, string Detail, bool Committed = false, bool HighBidder = false,
+        string TransactionId = "", string Link = "", bool NotEnabled = false);
+
+    private const string EbayPurchasesUrl = "https://www.ebay.com/mye/myebay/purchase";
+    private const string EbayBidsUrl = "https://www.ebay.com/mye/myebay/bids-offers";
+
+    /// <summary>Places a maximum bid on an auction (the sniper, and Auto-Buy's auction mode).</summary>
+    public Task<EbayOfferResult> PlaceMaxBidAsync(string itemId, decimal maxBid) =>
+        PlaceBuyerOfferAsync(itemId, "Bid", maxBid, 1, "Bid");
 
     /// <summary>
-    /// Buys a fixed-price listing now, at its listed price. Throws with eBay's own sentence when it
-    /// is refused (sold out, ended, price changed), so the caller records the reason and moves on.
+    /// Buys a fixed-price listing now. <paramref name="itemPrice"/> is the price the buyer saw and
+    /// agreed to; sending it as the amount means a seller who raised the price between the search
+    /// and the buy gets a refusal, not a sale at the new number.
     /// </summary>
-    public async Task PlaceBuyItNowAsync(string itemId, int quantity = 1)
-    {
-        var offer = $"""
-              <Offer>
-                <Action>Purchase</Action>
-                <Quantity>{Math.Max(1, quantity)}</Quantity>
-              </Offer>
-            """;
-        await PlaceBuyerOfferAsync(itemId, offer, "Buy It Now");
-    }
+    public Task<EbayOfferResult> PlaceBuyItNowAsync(string itemId, decimal itemPrice, int quantity = 1) =>
+        PlaceBuyerOfferAsync(itemId, "Purchase", itemPrice, quantity, "Buy It Now");
 
     /// <summary>
     /// Sends a Best Offer at <paramref name="offerPrice"/> on a listing that takes offers. Refused
     /// with eBay's message when the listing has no Best Offer, or the amount is below the seller's
     /// auto-decline floor.
     /// </summary>
-    public async Task PlaceBestOfferAsync(string itemId, decimal offerPrice, int quantity = 1)
-    {
-        var offer = $"""
-              <Offer>
-                <Action>Offer</Action>
-                <MaxBid currencyID="USD">{offerPrice:F2}</MaxBid>
-                <Quantity>{Math.Max(1, quantity)}</Quantity>
-              </Offer>
-            """;
-        await PlaceBuyerOfferAsync(itemId, offer, "Best Offer");
-    }
+    public Task<EbayOfferResult> PlaceBestOfferAsync(string itemId, decimal offerPrice, int quantity = 1) =>
+        PlaceBuyerOfferAsync(itemId, "Offer", offerPrice, quantity, "Best Offer");
 
-    private async Task PlaceBuyerOfferAsync(string itemId, string offerXml, string what)
+    private async Task<EbayOfferResult> PlaceBuyerOfferAsync(string itemId, string action, decimal amount, int quantity, string what)
     {
         var token  = await GetOrRefreshTokenAsync();
         var c      = creds.Get();
         var client = httpClientFactory.CreateClient();
+        var ip     = await EndUserIpAsync();
 
+        // The OAuth token goes in the IAF header, the same as every other Trading call in this
+        // file; the <eBayAuthToken> element is for the old Auth'n'Auth tokens and is left out.
+        // <EndUserIP> is required by PlaceOffer; without it the call is refused before anything else.
         var body = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <PlaceOfferRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-              <RequesterCredentials><eBayAuthToken>{token}</eBayAuthToken></RequesterCredentials>
+              <EndUserIP>{ip}</EndUserIP>
               <ItemID>{itemId}</ItemID>
-            {offerXml}
+              <Offer>
+                <Action>{action}</Action>
+                <MaxBid currencyID="USD">{amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}</MaxBid>
+                <Quantity>{Math.Max(1, quantity)}</Quantity>
+              </Offer>
             </PlaceOfferRequest>
             """;
 
@@ -3672,13 +3647,82 @@ public class EbayService(
 
         var resp = await client.SendAsync(req);
         var xml  = await resp.Content.ReadAsStringAsync();
-        var root = XElement.Parse(xml);
-        var ack  = root.Element(EbayNs + "Ack")?.Value ?? "";
+        XElement root;
+        try { root = XElement.Parse(xml); }
+        catch (Exception)
+        {
+            return new EbayOfferResult(false, $"{what} failed: eBay returned HTTP {(int)resp.StatusCode} with no readable response.");
+        }
+
+        var ack = root.Element(EbayNs + "Ack")?.Value ?? "";
         if (ack != "Success" && ack != "Warning")
         {
-            var msg = root.Descendants(EbayNs + "LongMessage").FirstOrDefault()?.Value ?? $"{what} failed";
-            throw new Exception(msg);
+            var msg = root.Descendants(EbayNs + "LongMessage").FirstOrDefault()?.Value
+                   ?? root.Descendants(EbayNs + "ShortMessage").FirstOrDefault()?.Value
+                   ?? $"{what} failed";
+            return new EbayOfferResult(false, msg, NotEnabled: IsCallNotEnabled(msg));
         }
+
+        var status   = root.Element(EbayNs + "SellingStatus");
+        var current  = decimal.TryParse(status?.Element(EbayNs + "CurrentPrice")?.Value,
+                           System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cp) ? cp : (decimal?)null;
+        var transaction = root.Element(EbayNs + "TransactionID")?.Value
+                       ?? root.Element(EbayNs + "OrderLineItemID")?.Value ?? "";
+
+        return action switch
+        {
+            "Purchase" => new EbayOfferResult(true,
+                $"Committed on eBay{(transaction.Length > 0 ? $" (transaction {transaction})" : "")}. Payment is still owed.",
+                Committed: true, TransactionId: transaction, Link: EbayPurchasesUrl),
+            // A bid is the high bid while the price eBay reports back is at or under the max. The
+            // moment it is above, somebody else's max was higher and this bid changed nothing.
+            "Bid" => current is { } price && price > amount
+                ? new EbayOfferResult(true, $"Outbid: the auction already stands at {price:C2}.", HighBidder: false, Link: EbayBidsUrl)
+                : new EbayOfferResult(true, current is { } p2 ? $"High bidder; current price {p2:C2}." : "Bid accepted.", HighBidder: true, Link: EbayBidsUrl),
+            _ => new EbayOfferResult(true, "Offer sent to the seller.", Link: EbayBidsUrl),
+        };
+    }
+
+    /// <summary>
+    /// eBay's wording when the keyset is not approved for PlaceOffer. It is an application-level
+    /// refusal: the same for every listing, so the caller pauses the rule instead of retrying.
+    /// </summary>
+    private static bool IsCallNotEnabled(string message)
+    {
+        var m = message.ToLowerInvariant();
+        return m.Contains("not enabled") || m.Contains("not authorized") || m.Contains("not allowed")
+            || m.Contains("not permitted") || m.Contains("approval") || m.Contains("approved")
+            || (m.Contains("application") && m.Contains("access"));
+    }
+
+    private string? _endUserIp;
+
+    /// <summary>
+    /// The address PlaceOffer wants in <c>EndUserIP</c>: the buyer's public address when it can be
+    /// learned in a couple of seconds, else the machine's own. Cached for the process; it is not
+    /// worth a network round trip per bid.
+    /// </summary>
+    private async Task<string> EndUserIpAsync()
+    {
+        if (_endUserIp is { Length: > 0 }) return _endUserIp;
+        try
+        {
+            var client = httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(3);
+            var text = (await client.GetStringAsync("https://api.ipify.org")).Trim();
+            if (System.Net.IPAddress.TryParse(text, out var parsed) && parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                return _endUserIp = text;
+        }
+        catch (Exception) { /* offline, blocked, or slow: fall through to the local address */ }
+
+        try
+        {
+            var local = System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName())
+                .FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(a));
+            if (local is not null) return _endUserIp = local.ToString();
+        }
+        catch (Exception) { /* no resolvable host name */ }
+        return _endUserIp = "127.0.0.1";
     }
 
     // ── Recovering lost sales: unsold listings, relisting, Second Chance Offers ──────────────
