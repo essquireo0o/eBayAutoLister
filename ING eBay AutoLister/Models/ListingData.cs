@@ -343,6 +343,13 @@ public class PostListingRequest : ListingData
 {
     public string? EbayToken { get; set; }
 
+    // Seller economics travel with a local draft even though eBay itself does not receive them.
+    // Without these fields DraftStore deserializes them away, so switching to the next generated
+    // tab makes the supplier cost disappear from the take-home panel.
+    public decimal? UnitCost { get; set; }
+    public decimal? ShipCost { get; set; }
+    public decimal? BuyerShipping { get; set; }
+
     /// <summary>
     /// The autosave key of the draft this publish came from, when there is one.
     /// </summary>

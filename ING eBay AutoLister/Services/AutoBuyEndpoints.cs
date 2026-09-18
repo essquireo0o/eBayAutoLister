@@ -19,6 +19,30 @@ public static class AutoBuyEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapPost("/api/autobuy/search", async (AutoBuyRuleRequest req, AutoBuyListingSource source, CancellationToken ct) =>
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(60));
+                var items = await AutoBuyPreview.SearchAsync(req, source, timeout.Token);
+                return Results.Ok(new { ok = true, items, searchedAt = DateTimeOffset.UtcNow,
+                    note = "Up to 50 recent listings (auctions ending soonest). Search does not save a rule or place orders, bids, or offers." });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { ok = false, error = ex.Message });
+            }
+            catch (OperationCanceledException)
+            {
+                return Results.Json(new { ok = false, error = "eBay search timed out. Please try again." }, statusCode: 504);
+            }
+            catch (Exception)
+            {
+                return Results.Json(new { ok = false, error = "eBay search failed. Check your eBay API connection in Settings, then try again." }, statusCode: 502);
+            }
+        });
+
         // The whole feature in one shape, polled by the open console.
         app.MapGet("/api/autobuy/status", (AutoBuyService service) =>
             Results.Ok(service.BuildStatus()));

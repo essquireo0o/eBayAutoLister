@@ -117,4 +117,75 @@ public class FeeProfileStoreTests : IDisposable
         Assert.Equal(9m, back.DefaultShippingCost);
         Assert.Equal(15m, back.MinimumMarginPercent);
     }
+
+    [Fact]
+    public void LoadStorePlan_WithNothingSaved_IsNoStoreBilledAnnually()
+    {
+        var settings = NewStore().LoadStorePlan();
+        Assert.Equal("none", settings.PlanKey);
+        Assert.True(settings.AnnualBilling);
+        Assert.Null(settings.ListingsOverride);
+    }
+
+    [Fact]
+    public void SaveStorePlan_ThenLoadFromANewStore_ReturnsAllThree()
+    {
+        NewStore().SaveStorePlan(new StorePlanSettings
+        {
+            PlanKey = "premium", AnnualBilling = false, ListingsOverride = 4_200,
+        });
+
+        var reloaded = NewStore().LoadStorePlan();
+        Assert.Equal("premium", reloaded.PlanKey);
+        Assert.False(reloaded.AnnualBilling);
+        Assert.Equal(4_200, reloaded.ListingsOverride);
+    }
+
+    [Fact]
+    public void SaveStorePlan_RejectsATierThatIsNotOneOfEbaysRatherThanStoringIt()
+    {
+        var saved = NewStore().SaveStorePlan(new StorePlanSettings { PlanKey = "platinum-deluxe" });
+        Assert.Equal("none", saved.PlanKey);
+        Assert.Equal("none", NewStore().LoadStorePlan().PlanKey);
+    }
+
+    [Fact]
+    public void ClearingTheListingBoxGoesBackToTheCountEbayReports()
+    {
+        var store = NewStore();
+        store.SaveStorePlan(new StorePlanSettings { PlanKey = "basic", ListingsOverride = 900 });
+        store.SaveStorePlan(new StorePlanSettings { PlanKey = "basic", ListingsOverride = 0 });
+        Assert.Null(NewStore().LoadStorePlan().ListingsOverride);
+    }
+
+    [Fact]
+    public void AnOverridePastTheTopOfTheRateCardIsClampedOnTheWayIn()
+    {
+        var saved = NewStore().SaveStorePlan(new StorePlanSettings { ListingsOverride = 5_000_000 });
+        Assert.Equal(StorePlanCatalog.LadderCeiling, saved.ListingsOverride);
+    }
+
+    [Fact]
+    public void SavingFeesAndCostsDoesNotResetTheStorePlan()
+    {
+        var store = NewStore();
+        store.SaveStorePlan(new StorePlanSettings { PlanKey = "anchor", AnnualBilling = false });
+        store.Save(new FeeProfile { DefaultShippingCost = 9.45m });
+
+        var settings = NewStore().LoadStorePlan();
+        Assert.Equal("anchor", settings.PlanKey);
+        Assert.False(settings.AnnualBilling);
+    }
+
+    [Fact]
+    public void SavingTheStorePlanDoesNotResetTheTaxBracketOrTheFeeProfile()
+    {
+        var store = NewStore();
+        store.Save(new FeeProfile { DefaultShippingCost = 9.45m });
+        store.SaveTaxRate(22m);
+        store.SaveStorePlan(new StorePlanSettings { PlanKey = "basic" });
+
+        Assert.Equal(22m, NewStore().LoadTaxRate());
+        Assert.Equal(9.45m, NewStore().Load().DefaultShippingCost);
+    }
 }

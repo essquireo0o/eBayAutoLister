@@ -97,12 +97,19 @@
   .empty{color:var(--ink2);text-align:center;padding:26px 0;font-size:14px}
   .form{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px}
   @media(max-width:640px){.form{grid-template-columns:1fr}}
-  .field{display:flex;flex-direction:column;gap:5px}
+  .field{min-width:0;display:flex;flex-direction:column;gap:5px}
   .field.full{grid-column:1/-1}
   .field label{font-size:12px;font-weight:700;color:var(--ink2)}
   .field .hint{font-size:11px;color:var(--ink2);font-weight:400}
-  .field input,.field select,.field textarea{padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;font-family:inherit}
+  .field input,.field select,.field textarea{min-width:0;width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;font-family:inherit}
   .field textarea{resize:vertical;min-height:44px}
+  .result{display:grid;grid-template-columns:72px 1fr auto;gap:14px;padding:16px 0;border-top:1px solid var(--line)}
+  .result img{width:72px;height:72px;object-fit:contain;border-radius:8px;background:var(--bg)}
+  .result a{color:var(--ink);font-weight:650;text-decoration:none}
+  .result a:hover{text-decoration:underline}
+  .result .price{text-align:right;font-weight:700}
+  .btn:disabled{opacity:.6;cursor:wait}
+  @media(max-width:480px){.result{grid-template-columns:52px 1fr}.result img{width:52px;height:52px}.result .price{grid-column:2;text-align:left}.form-actions{flex-wrap:wrap}}
   .form-actions{grid-column:1/-1;display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
   .note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:500;margin-bottom:16px}
   .err{color:var(--live);font-size:13px;font-weight:600;margin-top:8px}
@@ -128,50 +135,15 @@
     stays inside the per-rule and daily caps below. Buying runs through your connected eBay account.
   </div>
 
-  <!-- ── Safety panel ── -->
-  <div class="panel">
-    <div id="safetyLine" class="safety-line">Loading…</div>
-    <div class="switches">
-      <div class="switch">
-        <div>
-          <div class="lbl">Master arm</div>
-          <div class="desc">Off, nothing is scanned and nothing is bought. This is the main brake.</div>
-        </div>
-        <button id="tgArm" class="toggle" aria-label="Arm Auto-Buy"></button>
-      </div>
-      <div class="switch">
-        <div>
-          <div class="lbl">Live buying</div>
-          <div class="desc">Off means simulate — matches are recorded but no money is spent. On means real purchases.</div>
-        </div>
-        <button id="tgLive" class="toggle danger" aria-label="Turn on live buying"></button>
-      </div>
-    </div>
-    <div class="caps">
-      <div class="cap">
-        <label for="capBudget">Global budget ($)</label>
-        <input id="capBudget" type="number" min="0" step="1" inputmode="decimal" />
-        <span id="capBudgetUsed" class="used"></span>
-      </div>
-      <div class="cap">
-        <label for="capPerDay">Max buys per day</label>
-        <input id="capPerDay" type="number" min="0" step="1" inputmode="numeric" />
-        <span id="capPerDayUsed" class="used"></span>
-      </div>
-      <div class="cap" style="justify-content:flex-end">
-        <label>&nbsp;</label>
-        <button id="saveCaps" class="btn sm">Save limits</button>
-      </div>
-    </div>
-  </div>
-
   <!-- ── Rules ── -->
   <div class="sec-head">
     <h2>Buying rules</h2>
     <button id="addRuleBtn" class="btn btn-primary">+ Add rule</button>
   </div>
 
-  <div id="ruleForm" class="panel" hidden>
+  <div id="ruleForm" class="panel">
+    <h2 style="margin:0">What do you want to buy?</h2>
+    <p class="sub">Search your connected eBay API, review listings, then save your buying criteria.</p>
     <div class="form">
       <input type="hidden" id="fId" />
       <div class="field full">
@@ -191,7 +163,7 @@
         </select>
       </div>
       <div class="field">
-        <label for="fMax">Most to pay per item ($)</label>
+        <label for="fMax">Maximum listing price ($) <span class="hint">shipping and tax extra; blank searches up to $10,000</span></label>
         <input id="fMax" type="number" min="0" step="1" inputmode="decimal" placeholder="ceiling per item" />
       </div>
       <div class="field" id="offerField" hidden>
@@ -230,8 +202,48 @@
       </div>
       <div id="formErr" class="err" hidden></div>
       <div class="form-actions">
-        <button id="cancelForm" class="btn btn-ghost">Cancel</button>
-        <button id="saveRule" class="btn btn-primary">Save rule</button>
+        <button id="cancelForm" class="btn btn-ghost">Clear</button>
+        <button id="searchEbay" class="btn btn-primary">Search eBay</button>
+        <button id="saveRule" class="btn">Save paused rule</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="searchResults" class="panel" hidden aria-live="polite"></div>
+
+  <!-- ── Safety panel ── -->
+  <div class="panel">
+    <div id="safetyLine" class="safety-line">Loading…</div>
+    <div class="switches">
+      <div class="switch">
+        <div>
+          <div class="lbl">Master arm</div>
+          <div class="desc">Off, nothing is scanned and nothing is bought. This is the main brake.</div>
+        </div>
+        <button id="tgArm" class="toggle" aria-label="Arm Auto-Buy"></button>
+      </div>
+      <div class="switch">
+        <div>
+          <div class="lbl">Live buying</div>
+          <div class="desc">Off means simulate — matches are recorded but no money is spent. On means real purchases.</div>
+        </div>
+        <button id="tgLive" class="toggle danger" aria-label="Turn on live buying"></button>
+      </div>
+    </div>
+    <div class="caps">
+      <div class="cap">
+        <label for="capBudget">Global budget ($)</label>
+        <input id="capBudget" type="number" min="0" step="1" inputmode="decimal" />
+        <span id="capBudgetUsed" class="used"></span>
+      </div>
+      <div class="cap">
+        <label for="capPerDay">Max buys per day</label>
+        <input id="capPerDay" type="number" min="0" step="1" inputmode="numeric" />
+        <span id="capPerDayUsed" class="used"></span>
+      </div>
+      <div class="cap" style="justify-content:flex-end">
+        <label>&nbsp;</label>
+        <button id="saveCaps" class="btn sm">Save limits</button>
       </div>
     </div>
   </div>
@@ -253,14 +265,15 @@
   let state = null;
 
   async function api(path, opts) {
-    const r = await fetch(path, opts);
+    let r;
+    try { r = await fetch(path, opts); } catch { return {ok:false,body:{error:'Cannot reach AutoLister. Check that the app is running, then retry.'}}; }
     let body = null; try { body = await r.json(); } catch {}
     return { ok: r.ok, body };
   }
 
   async function refresh() {
     const { ok, body } = await api('/api/autobuy/status');
-    if (!ok || !body) return;
+    if (!ok || !body) { $('statusText').textContent = 'Connection unavailable'; return; }
     state = body;
     render();
   }
@@ -366,6 +379,8 @@
   // ── Rule form ──
   function openForm(rule) {
     $('formErr').hidden = true;
+    $('searchResults').hidden = true;
+    $('saveRule').textContent = rule ? 'Save changes' : 'Save paused rule';
     $('fId').value = rule?.id || '';
     $('fQuery').value = rule?.query || '';
     $('fName').value = rule?.name || '';
@@ -391,12 +406,13 @@
   }
   $('fMode').onchange = syncOfferField;
   $('addRuleBtn').onclick = () => openForm(null);
-  $('cancelForm').onclick = () => { $('ruleForm').hidden = true; };
+  $('cancelForm').onclick = () => openForm(null);
 
-  $('saveRule').onclick = async () => {
+  function formCriteria() {
     const id = $('fId').value ? Number($('fId').value) : undefined;
-    const patch = {
+    return {
       id,
+      ...(id ? {} : {enabled:false}),
       query: $('fQuery').value,
       name: $('fName').value,
       mode: $('fMode').value,
@@ -409,10 +425,40 @@
       intervalMinutes: Number($('fInterval').value) || 15,
       excludeKeywords: $('fExclude').value,
     };
-    const { ok, body } = await saveRule(patch);
-    if (ok) { $('ruleForm').hidden = true; }
+  }
+
+  $('saveRule').onclick = async () => {
+    $('saveRule').disabled = true;
+    const { ok, body } = await saveRule(formCriteria());
+    $('saveRule').disabled = false;
+    if (ok) { openForm(body.rule); $('formErr').textContent = 'Saved. Enable the rule below when you are ready.'; $('formErr').hidden = false; }
     else { $('formErr').textContent = body?.error || 'Could not save the rule.'; $('formErr').hidden = false; }
   };
+
+  function safeUrl(raw) {
+    try { const u = new URL(raw); return u.protocol === 'https:' ? esc(u.href) : ''; } catch { return ''; }
+  }
+  let searchVersion = 0;
+  $('ruleForm').addEventListener('input', () => { searchVersion++; $('searchResults').hidden = true; });
+  $('searchEbay').onclick = async () => {
+    const version = ++searchVersion;
+    const button = $('searchEbay');
+    button.disabled = true; button.textContent = 'Searching eBay…';
+    $('formErr').hidden = true;
+    const {ok,body} = await api('/api/autobuy/search', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(formCriteria())});
+    button.disabled = false; button.textContent = 'Search eBay';
+    if(version !== searchVersion) return;
+    if(!ok) { $('formErr').textContent = body?.error || 'Search failed. Please retry.'; $('formErr').hidden = false; return; }
+    const items = body.items || [];
+    const offerNote = $('fMode').value === 'BestOffer' ? '<p class="sub">Fixed-price candidates. Check the listing for whether the seller accepts offers; search does not confirm offer eligibility.</p>' : '';
+    $('searchResults').innerHTML = `<h2 style="margin:0">${items.length} listings found</h2><p class="sub">${esc(body.note)}</p>${offerNote}` + (items.length ? items.map(item => {
+      const url = safeUrl(item.url), img = safeUrl(item.imageUrl);
+      return `<article class="result">${img ? `<img src="${img}" alt="" loading="lazy">` : '<span></span>'}<div>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${esc(item.title)} ↗</a>` : esc(item.title)}<div class="sub">${esc(item.condition)} · ${esc(item.sellerUsername)} · ${item.sellerFeedbackScore} feedback</div><div class="sub">${esc(item.buyingOption)}${item.buyingOption === 'AUCTION' ? ' · '+item.bidCount+' bids' : ''}</div></div><div class="price">${money(item.price)}<div class="sub">${item.shippingStated ? money(item.shippingCost)+' shipping' : 'Shipping not quoted'}</div></div></article>`;
+    }).join('') : '<p>No listings matched this search. Try fewer keywords, a higher price ceiling, or fewer exclusions.</p>');
+    $('searchResults').hidden = false;
+    $('searchResults').scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  $('fQuery').addEventListener('keydown', e => { if(e.key === 'Enter') { e.preventDefault(); if(!$('searchEbay').disabled) $('searchEbay').click(); } });
 
   async function saveRule(patch) {
     const r = await api('/api/autobuy/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });

@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=140" />
+  <link rel="stylesheet" href="style.css?v=141" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -303,7 +303,6 @@
              The badge is drawn from data-count in CSS, so the tab bar takes its title from this
              button's text without picking the number up with it. -->
         <button class="nav-item" type="button" data-page="opportunity"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>Opportunity Finder</button>
-        <button class="nav-item" type="button" data-page="autobuy"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>eBay Auto-Buy</button>
         <button class="nav-item" type="button" data-page="autobuy"><svg class="nav-icon" aria-hidden="true"><use href="#i-opportunity"/></svg>eBay Auto-Buy</button>
         <!-- The only sourcing screen that buys on the same marketplace it sells on. Sits directly
              under the Opportunity Finder because it answers the same question with a clock on it:
@@ -4802,9 +4801,10 @@
         <div class="opportunity-overlay-header">
           <div class="opportunity-overlay-header-left">
             <button id="sp-home" class="nl-close-btn nl-home-btn" type="button" title="Back to Home — this screen stays open as a tab" aria-label="Back to Home. This screen stays open as a tab"><svg aria-hidden="true"><use href="#i-home"/></svg></button>
-            <div>
+            <div class="sp-title-lockup">
               <div class="eyebrow">Protect the profit your business already earns</div>
               <h2>📈 Business Profitability</h2>
+              <p class="sp-page-deck">See whether your eBay Store plan is helping your margin—or quietly costing you every month.</p>
             </div>
           </div>
           <div class="opportunity-overlay-header-actions">
@@ -4813,7 +4813,7 @@
           </div>
         </div>
 
-        <div class="opportunity-overlay-body">
+        <div class="opportunity-overlay-body sp-page-body">
 
           <!-- The saving over a year, because that is the size of the decision. The sub-line carries
                the instruction; the side stats carry the three facts it was worked out from. -->
@@ -4843,6 +4843,11 @@
                things on the screen the seller has to supply — and they are supplied inline, next to
                what they change, rather than on a settings page nobody would find. -->
           <div class="sp-controls">
+            <div class="sp-controls-intro">
+              <span class="sp-step">Your setup</span>
+              <strong>Compare the plan you have with every eBay tier</strong>
+              <span>Change any field below to model a different month.</span>
+            </div>
             <div class="sp-field">
               <label for="sp-plan">The plan you are on today</label>
               <select id="sp-plan" class="sp-select"></select>
@@ -4858,9 +4863,9 @@
               <label for="sp-listings">Plan against a different count</label>
               <input id="sp-listings" type="number" min="0" step="10" placeholder="live count" />
             </div>
-            <button id="sp-save" class="btn btn-primary small" type="button">Apply</button>
+            <button id="sp-save" class="btn btn-primary sp-apply" type="button">Compare plans</button>
           </div>
-          <p id="sp-controls-note" class="sp-note">Nothing here changes anything on eBay. Switching plans is done on eBay's own Store page — this only tells you which one to be on.</p>
+          <p id="sp-controls-note" class="sp-note"><span aria-hidden="true">✓</span> Nothing here changes anything on eBay. Switching plans is done on eBay's own Store page — this only tells you which one to be on.</p>
 
           <!-- The arithmetic of both sides in one paragraph, before any table. A seller who reads
                only this line has enough to act on. -->

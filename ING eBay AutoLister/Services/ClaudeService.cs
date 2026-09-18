@@ -468,12 +468,12 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
     public async Task<List<SupplierProduct>> AnalyzeSupplierFileAsync(string base64Image, string mimeType)
     {
         var prompt = """
-            You are an expert sourcing agent reading a supplier document. The attached image is either:
+            You are an expert sourcing agent reading a supplier document. The attached file is either:
             (a) a wholesale/OEM price list or quote sheet, possibly with multiple products, models, and
                 quantity-tier pricing (e.g. "1-100 units" vs "above 100"), or
             (b) a single product photo with no pricing info.
 
-            Extract EVERY distinct product or model visible in the image. For each one:
+            Extract EVERY distinct product or model visible in the file. For each one:
             - ProductName: the full product/model name as shown
             - Brand: manufacturer/brand name if shown, else empty string
             - Model: model number/variant if shown, else empty string
@@ -503,9 +503,23 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
               }
             ]
 
-            Extract up to 15 distinct products. If the image contains only one product with no pricing
+            Extract up to 15 distinct products. If the file contains only one product with no pricing
             table, return a single-item array with WholesaleCostUsd of 0.
             """;
+
+        // Anthropic treats PDFs as document blocks and raster files as image blocks. Sending a PDF
+        // through ImageContent is rejected before the model can read it, which is why the browser's
+        // old image-only path could never be widened by changing its accept= attribute alone.
+        ContentBase attachment = string.Equals(mimeType, "application/pdf", StringComparison.OrdinalIgnoreCase)
+            ? new DocumentContent
+            {
+                Source = new DocumentSource { MediaType = "application/pdf", Data = base64Image },
+                Title = "Supplier catalog"
+            }
+            : new ImageContent
+            {
+                Source = new ImageSource { MediaType = mimeType, Data = base64Image }
+            };
 
         var messages = new List<Message>
         {
@@ -514,10 +528,7 @@ public class ClaudeService(CredentialsStore creds, ActionLog log, AiQuotaGate qu
                 Role = RoleType.User,
                 Content =
                 [
-                    new ImageContent
-                    {
-                        Source = new ImageSource { MediaType = mimeType, Data = base64Image }
-                    },
+                    attachment,
                     new TextContent { Text = prompt }
                 ]
             }
