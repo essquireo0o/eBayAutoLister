@@ -111,28 +111,27 @@ public class PhoneAiListingTests : IDisposable
     }
 
     [Fact]
-    public void The_page_offers_it_only_once_there_is_a_photograph_to_write_from()
+    // 4c4f549 (2026-09-12) took the manual "write the listing" button OFF the phone page: the
+    // photograph is what the phone is for, and the listing is written on the computer. These two
+    // tests pinned the button for six days after it was gone and held every release behind them.
+    // What survives, and is worth pinning, is the endpoint itself - the phone can still ask for a
+    // listing - and that the no-certificate page no longer offers the button.
+    public void The_page_no_longer_offers_a_manual_listing_button()
     {
         var page = Between(Source, "private string CameraFreePageHtml()", "private string TrustPageHtml");
 
-        Assert.Contains("id=\"write\"", page, StringComparison.Ordinal);
-        Assert.Contains("hidden", page, StringComparison.Ordinal);
-        // Revealed by a successful send, not on load.
-        Assert.Contains("write.hidden = false;", page, StringComparison.Ordinal);
-        // And it says the wait is a wait, because a button that looks stuck gets pressed twice.
-        Assert.Contains("about a minute", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("id=\"write\"", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("write.hidden = false;", page, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void What_comes_back_is_what_a_person_can_check_standing_up()
+    public void The_listing_endpoint_still_answers_the_phone()
     {
-        var page = Between(Source, "private string CameraFreePageHtml()", "private string TrustPageHtml");
-
-        foreach (var field in new[] { "Condition", "Price", "Category", "Brand" })
-            Assert.Contains($"row('{field}'", page, StringComparison.Ordinal);
-
-        // And where the rest of it is. The phone shows the summary; the draft lives on the computer.
-        Assert.Contains("Saved as a draft on your computer", page, StringComparison.Ordinal);
+        // The route stays: it reads the photo back from the library rather than re-uploading it,
+        // and refuses politely when there is nothing to write from.
+        Assert.Contains("web.MapPost(\"/c/{token}/listing\"", Source, StringComparison.Ordinal);
+        Assert.Contains("Take a photo first", Source, StringComparison.Ordinal);
+        Assert.Contains("public sealed class PhoneListingAsk", Source, StringComparison.Ordinal);
     }
 
     private static string Between(string source, string start, string end)
