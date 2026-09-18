@@ -163,8 +163,16 @@
         </select>
       </div>
       <div class="field">
-        <label for="fMax">Maximum listing price ($) <span class="hint">shipping and tax extra; blank searches up to $10,000</span></label>
+        <label for="fMax">Maximum item + shipping ($) <span class="hint">tax extra; blank searches up to $10,000</span></label>
         <input id="fMax" type="number" min="0" step="1" inputmode="decimal" placeholder="ceiling per item" />
+      </div>
+      <div class="field">
+        <label for="fMin">Minimum item price ($) <span class="hint">filter out cheap accessories</span></label>
+        <input id="fMin" type="number" min="0" step="0.01" value="0" />
+      </div>
+      <div class="field full">
+        <label for="fRequired">Title must contain every word <span class="hint">comma separated</span></label>
+        <input id="fRequired" placeholder="e.g. Latitude, 5400" />
       </div>
       <div class="field" id="offerField" hidden>
         <label for="fOffer"><span id="offerLabel">Offer amount</span> ($)</label>
@@ -260,7 +268,7 @@
   const money = n => '$' + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:2});
   const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const MODE_LABEL = {0:'Buy It Now', 1:'Best Offer', 2:'Auction bid'};
-  const OUTCOME = {0:['SIM','b-sim'], 1:['BOUGHT','b-placed'], 2:['FAILED','b-failed'], 3:['SKIPPED','b-skipped']};
+  const OUTCOME = {0:['SIM','b-sim'], 1:['ACCEPTED','b-placed'], 2:['FAILED','b-failed'], 3:['SKIPPED','b-skipped']};
 
   let state = null;
 
@@ -329,6 +337,7 @@
           ${scanning ? '· <span style="color:var(--teal);font-weight:700">scanning…</span>' : ''}
           <div class="progress"><i style="width:${pct}%"></i></div>
         </div>
+        <div class="sub">${esc(r.lastNote || "")}</div>
         <div class="rule-actions">
           <button class="btn sm" data-act="run">Run now</button>
           <button class="btn sm btn-ghost" data-act="edit">Edit</button>
@@ -378,6 +387,7 @@
 
   // ── Rule form ──
   function openForm(rule) {
+    searchVersion++;
     $('formErr').hidden = true;
     $('searchResults').hidden = true;
     $('saveRule').textContent = rule ? 'Save changes' : 'Save paused rule';
@@ -386,6 +396,8 @@
     $('fName').value = rule?.name || '';
     $('fMode').value = ['BuyItNow','BestOffer','AuctionBid'][rule?.mode || 0];
     $('fMax').value = rule?.maxItemPrice || '';
+    $('fMin').value = rule?.minItemPrice || 0;
+    $('fRequired').value = rule?.requiredKeywords || '';
     $('fOffer').value = rule?.offerOrBidPrice || '';
     $('fCondition').value = rule?.condition || '';
     $('fBudget').value = rule?.budgetCap || '';
@@ -418,6 +430,8 @@
       mode: $('fMode').value,
       condition: $('fCondition').value,
       maxItemPrice: Number($('fMax').value) || 0,
+      minItemPrice: Number($('fMin').value) || 0,
+      requiredKeywords: $('fRequired').value,
       offerOrBidPrice: Number($('fOffer').value) || 0,
       budgetCap: Number($('fBudget').value) || 0,
       maxBuys: Number($('fMaxBuys').value) || 0,
@@ -450,7 +464,7 @@
     if(version !== searchVersion) return;
     if(!ok) { $('formErr').textContent = body?.error || 'Search failed. Please retry.'; $('formErr').hidden = false; return; }
     const items = body.items || [];
-    const offerNote = $('fMode').value === 'BestOffer' ? '<p class="sub">Fixed-price candidates. Check the listing for whether the seller accepts offers; search does not confirm offer eligibility.</p>' : '';
+    const offerNote = $('fMode').value === 'BestOffer' ? '<p class="sub">Offer candidates. Review each listing before enabling a rule. Search does not send offers.</p>' : '';
     $('searchResults').innerHTML = `<h2 style="margin:0">${items.length} listings found</h2><p class="sub">${esc(body.note)}</p>${offerNote}` + (items.length ? items.map(item => {
       const url = safeUrl(item.url), img = safeUrl(item.imageUrl);
       return `<article class="result">${img ? `<img src="${img}" alt="" loading="lazy">` : '<span></span>'}<div>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${esc(item.title)} ↗</a>` : esc(item.title)}<div class="sub">${esc(item.condition)} · ${esc(item.sellerUsername)} · ${item.sellerFeedbackScore} feedback</div><div class="sub">${esc(item.buyingOption)}${item.buyingOption === 'AUCTION' ? ' · '+item.bidCount+' bids' : ''}</div></div><div class="price">${money(item.price)}<div class="sub">${item.shippingStated ? money(item.shippingCost)+' shipping' : 'Shipping not quoted'}</div></div></article>`;

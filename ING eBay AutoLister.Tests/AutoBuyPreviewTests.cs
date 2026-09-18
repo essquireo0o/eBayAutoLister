@@ -46,4 +46,18 @@ public class AutoBuyPreviewTests
             (_, _) => { called = true; return Task.FromResult<IReadOnlyList<EbayOpportunityItem>>([]); }, default));
         Assert.False(called);
     }
+
+    [Fact]
+    public async Task Search_applies_required_words_minimum_price_and_known_shipping()
+    {
+        var rows = await AutoBuyPreview.SearchAsync(new() { Query = "Dell", MinItemPrice = 50, MaxItemPrice = 100, RequiredKeywords = "latitude, 5400" },
+            (_, _) => Task.FromResult<IReadOnlyList<EbayOpportunityItem>>([
+                new() { ItemId = "1", Title = "Dell Latitude 5400", Price = 80, ShippingStated = true, ShippingCost = 10 },
+                new() { ItemId = "2", Title = "Dell Latitude 5400", Price = 80, ShippingStated = true, ShippingCost = 30 },
+                new() { ItemId = "3", Title = "Dell Latitude 5400 cable", Price = 10 },
+                new() { ItemId = "4", Title = "Dell Latitude 5410", Price = 80 }
+            ]), default);
+        Assert.Single(rows);
+        Assert.Equal("1", rows[0].ItemId);
+    }
 }

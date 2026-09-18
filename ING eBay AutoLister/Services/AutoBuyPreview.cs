@@ -15,6 +15,8 @@ public static class AutoBuyPreview
         var max = request.MaxItemPrice.GetValueOrDefault();
         if (max < 0 || max > AutoBuyStore.MaxItemPriceCeiling)
             throw new InvalidOperationException("Enter an item price between $0 and $10,000.");
+        if (request.MinItemPrice < 0 || request.MinItemPrice > (max == 0 ? AutoBuyStore.MaxItemPriceCeiling : max))
+            throw new InvalidOperationException("Minimum price must be between zero and the maximum price.");
         var condition = request.Condition?.Trim().ToUpperInvariant() ?? "";
         if (condition is not ("" or "NEW" or "USED" or "REFURBISHED" or "FOR_PARTS"))
             throw new InvalidOperationException("Choose a condition from the list.");
@@ -22,6 +24,8 @@ public static class AutoBuyPreview
         {
             Query = query, Mode = mode, Condition = condition,
             MaxItemPrice = max == 0 ? AutoBuyStore.MaxItemPriceCeiling : max,
+            MinItemPrice = request.MinItemPrice ?? 0,
+            RequiredKeywords = request.RequiredKeywords?.Trim() ?? "",
             MinSellerFeedback = Math.Max(0, request.MinSellerFeedback ?? 0),
             ExcludeKeywords = request.ExcludeKeywords?.Trim() ?? "",
             OfferOrBidPrice = Math.Max(0, request.OfferOrBidPrice ?? 0),
@@ -36,6 +40,9 @@ public static class AutoBuyPreview
         var items = await source(rule, ct).WaitAsync(ct);
         // Do not apply budget/offer checks to browsing. Those belong to saving and executing rules.
         return items.Where(item => item.Price > 0 && item.Price <= rule.MaxItemPrice
+            && item.Price >= rule.MinItemPrice
+            && (!item.ShippingStated || item.Price + item.ShippingCost <= rule.MaxItemPrice)
+            && AutoBuyService.ExcludeWords(rule.RequiredKeywords).All(word => item.Title.Contains(word, StringComparison.OrdinalIgnoreCase))
             && item.SellerFeedbackScore >= rule.MinSellerFeedback
             && !AutoBuyService.ExcludeWords(rule.ExcludeKeywords).Any(word =>
                 item.Title.Contains(word, StringComparison.OrdinalIgnoreCase)))
