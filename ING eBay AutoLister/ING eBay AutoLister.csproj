@@ -39,6 +39,16 @@
   <PropertyGroup>
     <RootNamespace>ING_eBay_AutoLister</RootNamespace>
     <AssemblyName>AutoListerB1</AssemblyName>
+
+    <!-- Ownership, embedded into the compiled assembly so the copyright travels with the binary
+         (Windows file properties -> Details -> Copyright) as well as living in license.rtf and
+         COPYRIGHT.md. ING Mining LLC is the owner; Nick Squires is the author. -->
+    <Company>ING Mining LLC</Company>
+    <Authors>Nick Squires</Authors>
+    <Product>ING Listing Engine</Product>
+    <Copyright>Copyright © 2026 ING Mining LLC — Nick Squires. All rights reserved.</Copyright>
+    <Trademark>ING Listing Engine™ is a trademark of ING Mining LLC.</Trademark>
+
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
