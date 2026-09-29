@@ -80,7 +80,7 @@ def run_once(db,recipient,monitor_only=False,channel='email'):
             if monitor_only:
                 save_status(pending_deal={'subject':subject,'body':body});continue
             if channel=='telegram':
-                mid=telegram_delivery.send(subject,body);save_status(last_telegram_at=time.time(),last_telegram_id=mid)
+                mid=telegram_delivery.send(subject,body,listing_url=item['url']);save_status(last_telegram_at=time.time(),last_telegram_id=mid)
             else:
                 mid=send_mail(recipient,subject,body);save_status(last_email_at=time.time(),last_email_id=mid)
             sent+=1

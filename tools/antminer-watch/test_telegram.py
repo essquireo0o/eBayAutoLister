@@ -31,6 +31,15 @@ class TelegramTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as caught:tg.call(token,'sendMessage')
         self.assertNotIn(token,str(caught.exception))
 
+    def test_listing_button_points_to_exact_listing(self):
+        config={'token':'123:secret','chat_id':42}
+        url='https://www.ebay.com/itm/123456789012'
+        with patch.object(tg,'call',return_value={'chat':{'id':42},'message_id':9}) as call:
+            tg.send('Deal','Details',config,listing_url=url)
+            payload=call.call_args.args[2]
+            self.assertEqual(payload['reply_markup']['inline_keyboard'],[[{'text':'Open eBay listing','url':url}]])
+            self.assertFalse(payload['disable_notification'])
+
     def test_encrypted_config_round_trip(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(tg,'HOME',Path(folder)),patch.object(tg,'CONFIG',Path(folder)/'telegram.dpapi'):

@@ -51,13 +51,17 @@ def paired_chat(updates, nonce):
             return chat['id']
     return None
 
-def send(subject, body, config=None):
+def send(subject, body, config=None, listing_url=None):
     config = config or load()
     text = subject + '\n\n' + body
     if len(text) > 4000:
         raise RuntimeError('Telegram alert is too long; not sent.')
-    result = call(config['token'], 'sendMessage', {'chat_id': config['chat_id'],
-        'text': text, 'disable_notification': False, 'link_preview_options': {'is_disabled': True}})
+    payload = {'chat_id': config['chat_id'], 'text': text,
+        'disable_notification': False, 'link_preview_options': {'is_disabled': True}}
+    if listing_url:
+        payload['reply_markup'] = {'inline_keyboard': [[
+            {'text': 'Open eBay listing', 'url': listing_url}]]}
+    result = call(config['token'], 'sendMessage', payload)
     if result.get('chat', {}).get('id') != config['chat_id'] or not result.get('message_id'):
         raise RuntimeError('Telegram delivery response was not confirmed.')
     return result['message_id']
