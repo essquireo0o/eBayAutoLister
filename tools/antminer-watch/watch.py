@@ -46,7 +46,11 @@ def db_open():
     db=sqlite3.connect(HOME/'watch.sqlite');db.execute('create table if not exists seen(id text primary key, status text, updated real)');db.execute('create table if not exists meta(key text primary key,value text)');return db
 def save_status(**fields):
     f=HOME/'status.json';old=json.loads(f.read_text()) if f.exists() else {};old.update(fields);tmp=f.with_suffix('.tmp');tmp.write_text(json.dumps(old,indent=2));tmp.replace(f)
-def run_once(db,recipient,monitor_only=False):
+def run_once(db,recipient,monitor_only=False,channel='email'):
+    if channel=='telegram':
+        import telegram_delivery
+        monitor_only=monitor_only or not telegram_delivery.CONFIG.exists()
+        recipient='Telegram' if not monitor_only else 'Telegram pairing pending'
     response=api('/api/autobuy/search',{'query':'antminer','mode':'BuyItNow','minSellerFeedback':20})
     if not response.get('ok'):raise RuntimeError('eBay search did not succeed')
     items=response['items'];now=time.time()
@@ -75,17 +79,23 @@ def run_once(db,recipient,monitor_only=False):
             body=f"{item['title']}\n\nPrice: ${item['price']:,.2f}\nShipping: ${item['shippingCost']:,.2f}\nTotal before tax: ${ev['cost']:,.2f}\nMatched sold median: ${ev['median']:,.2f} ({ev['count']} sales, last 60 days)\nSavings vs sold item prices: ${ev['savings']:,.2f}\nSeller: {item['sellerUsername']} ({item['sellerFeedbackPercent']}% positive)\n\n{item['url']}\n\nListing description checked for working condition and included PSU. Seller claims are not an independent hardware test. Verify details before buying. No purchase was made.\n"
             if monitor_only:
                 save_status(pending_deal={'subject':subject,'body':body});continue
-            mid=send_mail(recipient,subject,body);sent+=1;save_status(last_email_at=time.time(),last_email_id=mid)
-        db.execute('insert into seen values(?,?,?)',(iid,'emailed' if ev else 'no_verified_deal',now));db.commit()
+            if channel=='telegram':
+                mid=telegram_delivery.send(subject,body);save_status(last_telegram_at=time.time(),last_telegram_id=mid)
+            else:
+                mid=send_mail(recipient,subject,body);save_status(last_email_at=time.time(),last_email_id=mid)
+            sent+=1
+        db.execute('insert into seen values(?,?,?)',(iid,'notified' if ev else 'no_verified_deal',now));db.commit()
     save_status(state='monitoring_only' if monitor_only else 'active',last_success=time.time(),last_scan_count=len(items),last_evaluated=checked,last_alerts=sent,recipient=recipient,error=None)
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--recipient',required=True);p.add_argument('--once',action='store_true');p.add_argument('--test-email',action='store_true');p.add_argument('--monitor-only',action='store_true');a=p.parse_args();db=db_open()
+    p=argparse.ArgumentParser();p.add_argument('--recipient',default='');p.add_argument('--channel',choices=['email','telegram'],default='email');p.add_argument('--once',action='store_true');p.add_argument('--test-email',action='store_true');p.add_argument('--monitor-only',action='store_true');a=p.parse_args()
+    if (a.channel=='email' or a.test_email) and not a.recipient:p.error('--recipient is required for email')
+    db=db_open()
     logging.basicConfig(filename=HOME/'watch.log',level=logging.INFO,format='%(asctime)s %(message)s')
     if a.test_email:
         mid=send_mail(a.recipient,'Antminer deal alerts — delivery test','This is the requested email delivery test for your Antminer deal watcher.\n\nAlert threshold: at least 30% below matched sold prices and $100 savings, including stated shipping, before tax. Working units with PSU evidence only.\n\nNew listings are checked every minute while this Windows account and ING Listing Engine are running. This message is a test, not a deal alert.');save_status(test_email_id=mid,test_email_accepted_at=time.time(),recipient=a.recipient);print('SMTP accepted test email:',mid);return
     while True:
         started=time.monotonic()
-        try:run_once(db,a.recipient,a.monitor_only)
+        try:run_once(db,a.recipient,a.monitor_only,a.channel)
         except Exception as e:
             logging.exception('Scan failed');save_status(state='error',error=type(e).__name__+': '+str(e),last_error_at=time.time())
             if a.once:raise

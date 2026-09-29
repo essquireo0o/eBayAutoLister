@@ -1,4 +1,4 @@
-# Antminer deal email watcher
+# Antminer deal watcher
 
 Uses the installed ING Listing Engine's read-only eBay search, individual sold-comps records, and listing-detail endpoints. It never arms Auto-Buy or places an order.
 
@@ -11,4 +11,10 @@ Uses the installed ING Listing Engine's read-only eBay search, individual sold-c
 - `--test-email` sends one clearly labeled test. `--monitor-only` collects qualifying evidence without sending mail. `--once` runs one scan.
 - Stop/pause with Task Scheduler task `ING Antminer Deal Email Watch`.
 
-Verification: `python -m unittest discover -s tools/antminer-watch -p test_watch.py`.
+## Telegram setup
+
+Run `python tools/antminer-watch/setup_telegram.py`. Create a dedicated bot in Telegram's BotFather with `/newbot`, paste its token into the masked local field, then open the pairing link and press Start. Pairing accepts only a private chat with the exact one-time code. A successful test message is required before saving the encrypted configuration.
+
+The scheduled task uses `watch.py --channel telegram`. It continues monitoring without sending until `telegram.dpapi` exists, then activates on the next scan. It does not also send email. The task keeps its original name, `ING Antminer Deal Email Watch`, for continuity. Telegram API acceptance confirms that a message was created in the chat, not that the phone displayed or read it; phone notification settings still apply.
+
+Verification: `python -m unittest discover -s tools/antminer-watch -p "test_*.py"`.
