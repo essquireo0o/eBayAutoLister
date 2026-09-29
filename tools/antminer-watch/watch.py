@@ -93,12 +93,20 @@ def main():
     logging.basicConfig(filename=HOME/'watch.log',level=logging.INFO,format='%(asctime)s %(message)s')
     if a.test_email:
         mid=send_mail(a.recipient,'Antminer deal alerts — delivery test','This is the requested email delivery test for your Antminer deal watcher.\n\nAlert threshold: at least 30% below matched sold prices and $100 savings, including stated shipping, before tax. Working units with PSU evidence only.\n\nNew listings are checked every minute while this Windows account and ING Listing Engine are running. This message is a test, not a deal alert.');save_status(test_email_id=mid,test_email_accepted_at=time.time(),recipient=a.recipient);print('SMTP accepted test email:',mid);return
+    failures=0
     while True:
         started=time.monotonic()
-        try:run_once(db,a.recipient,a.monitor_only,a.channel)
+        try:
+            run_once(db,a.recipient,a.monitor_only,a.channel)
+            failures=0
+            delay=30
         except Exception as e:
+            failures+=1
+            delay=min(300,15*2**min(failures-1,5))
+            if isinstance(e,urllib.error.HTTPError) and e.code==429:delay=300
             logging.exception('Scan failed');save_status(state='error',error=type(e).__name__+': '+str(e),last_error_at=time.time())
             if a.once:raise
+        save_status(scan_seconds=round(time.monotonic()-started,3),poll_interval_seconds=30,consecutive_failures=failures,next_scan_at=time.time()+max(1,delay-(time.monotonic()-started)))
         if a.once:return
-        time.sleep(max(1,60-(time.monotonic()-started)))
+        time.sleep(max(1,delay-(time.monotonic()-started)))
 if __name__=='__main__':main()

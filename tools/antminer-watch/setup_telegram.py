@@ -54,7 +54,7 @@ def main():
                         'This is a delivery test, not a deal.\n\n'
                         'Alerts require at least 30% and $100 savings against matched recent sales, '
                         'including stated shipping. Working units with PSU evidence only. Taxes excluded.\n\n'
-                        'Checks run every minute while your PC is awake, signed in, '
+                        'Checks run every 30 seconds while your PC is awake, signed in, '
                         'and ING Listing Engine is running.', config)
                     config.update(test_message_id=mid, connected_at=time.time())
                     tg.save(config)

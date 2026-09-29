@@ -57,7 +57,7 @@ def send(subject, body, config=None):
     if len(text) > 4000:
         raise RuntimeError('Telegram alert is too long; not sent.')
     result = call(config['token'], 'sendMessage', {'chat_id': config['chat_id'],
-        'text': text, 'link_preview_options': {'is_disabled': True}})
+        'text': text, 'disable_notification': False, 'link_preview_options': {'is_disabled': True}})
     if result.get('chat', {}).get('id') != config['chat_id'] or not result.get('message_id'):
         raise RuntimeError('Telegram delivery response was not confirmed.')
     return result['message_id']

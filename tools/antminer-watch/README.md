@@ -2,7 +2,7 @@
 
 Uses the installed ING Listing Engine's read-only eBay search, individual sold-comps records, and listing-detail endpoints. It never arms Auto-Buy or places an order.
 
-- One scan per minute while this Windows account is signed in, awake, and ING Listing Engine is running on port 9332.
+- One scan every 30 seconds while this Windows account is signed in, awake, and ING Listing Engine is running on port 9332. A transient failure retries after 15 seconds; repeated failures back off up to five minutes. Rate limiting backs off five minutes. Long scans delay the next scan; scans never overlap. Status includes scan duration and the next scheduled scan.
 - First scan records the current newest 50 listings without sending backlog alerts. Subsequent newly observed listings are evaluated once. eBay search indexing can delay availability; this is polling, not instant push.
 - US fixed-price listings; seller feedback >=20 and >=98%; stated shipping required.
 - Exact parsed Antminer variant and hashrate; at least three unique, dated sales in the last 60 days. Price plus shipping must be >=30% and >=$100 below the sold-item median. Tax is excluded. Sold shipping is omitted, making the threshold conservative.
