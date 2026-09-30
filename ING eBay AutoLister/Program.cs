@@ -203,6 +203,33 @@ Directory.CreateDirectory(dataDir);
 // themselves.
 var migrated = AppPaths.Migrate(dataDir, [exeDir, AppPaths.Resolve(isWindowsService: true)]);
 
+// The one-file exe has nothing beside it to migrate from, so the pre-configured credentials the
+// MSI would have dropped next to the exe (eBay app id + RuName, blank API keys — the redacted
+// template build-installer.ps1 writes) ride inside the assembly instead, and land in the data
+// home on the first run that has no credentials.json yet. Never overwrites: a seller who already
+// signed in keeps their token whichever build they launch. Absent from dev builds and the MSI
+// build, where the resource is simply not embedded — see DistCredentials in the csproj.
+{
+    var credsPath = Path.Combine(dataDir, "credentials.json");
+    if (!File.Exists(credsPath))
+    {
+        using var seed = typeof(Program).Assembly.GetManifestResourceStream("AutoListerB1.dist-credentials.json");
+        if (seed is not null)
+        {
+            try
+            {
+                using var f = File.Create(credsPath);
+                seed.CopyTo(f);
+            }
+            catch
+            {
+                // A data home we cannot write to fails louder a few lines down, where the store
+                // opens the same file; seeding is only the convenience, not the guarantee.
+            }
+        }
+    }
+}
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
@@ -9331,7 +9358,8 @@ app.MapPost("/api/update/install", (AutoUpdater auto) =>
 // Cheap enough to ask on every focus: one file timestamp, no I/O beyond the directory entry.
 app.MapGet("/api/app/build", () =>
 {
-    var path = System.Environment.ProcessPath ?? typeof(Program).Assembly.Location;
+    // ProcessPath, not Assembly.Location: inside the one-file exe the latter is always "".
+    var path = System.Environment.ProcessPath ?? "";
     var stamp = path.Length > 0 && File.Exists(path)
         ? File.GetLastWriteTimeUtc(path).Ticks
         : 0L;

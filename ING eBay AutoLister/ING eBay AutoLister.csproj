@@ -56,7 +56,7 @@
          tell the seller an update exists. Without it the assembly reports 1.0.0, every release looks
          newer, and the banner cries wolf on a fresh install forever.
          BUMP THIS IN THE SAME COMMIT AS THE RELEASE TAG. -->
-    <Version>2.6.11</Version>
+    <Version>2.6.12</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -140,6 +140,61 @@
     <EmbeddedResource Include="wwwroot\autobuy.html" />
     <EmbeddedResource Include="wwwroot\signin.html" />
     <EmbeddedResource Include="wwwroot\signup.html" />
+
+    <!-- Three more things the Web SDK's Content glob was quietly shipping to every downloader,
+         measured in the 2.6.11 publish output on 2026-09-30:
+           dist\**            the previous publish, nested one level deeper on every ship
+                              (dist\dist\dist\... - the installed app carries a 174 KB matryoshka
+                              of old deps.json/runtimeconfig/web.config files);
+           App_Data\**        this machine's analytics.json - the owner's own usage counters;
+           wwwroot\*.bak-*    two full copies of the August UI beside the embedded one.
+         None of it is read by the app. Excluded, not deleted. -->
+    <Content Remove="dist\**" />
+    <None Remove="dist\**" />
+    <Content Remove="App_Data\**" />
+    <None Remove="App_Data\**" />
+    <Content Remove="wwwroot\*.bak-*" />
+    <None Remove="wwwroot\*.bak-*" />
   </ItemGroup>
+
+  <!-- ── The one-file build ────────────────────────────────────────────────────
+       dotnet publish -c Release -r win-x64 -p:OneFile=true -p:DistCredentials=<redacted json>
+       produces a single AutoListerB1.exe that carries the runtime, every dependency and the
+       embedded UI: the "just download and run it" shape the owner asked for on 2026-09-30. The
+       MSI keeps its folder-of-files layout (installer.wxs harvests a directory), so the two
+       artefacts come from two publishes of the same commit.
+       Compressed, because the difference is 66 MB against ~160 MB. build-installer.ps1 records
+       that endpoint AV (Sophos/Bitdefender) once quarantined a single-file bundle on this machine
+       as a packer; re-checked 2026-09-30 with both engines on-access plus a Defender scan of the
+       compressed 2.6.11 bundle - nothing fired. If that changes, EnableCompressionInSingleFile is
+       the first switch to flip. Native libraries (e_sqlite3) are extracted to %TEMP%\.net on the
+       first run, which is the documented behaviour.
+       The installed app and this exe share one data home (AppPaths.DataHome), so a seller can
+       switch between them without losing a key or a marketplace connection. -->
+  <PropertyGroup Condition="'$(OneFile)' == 'true'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- The pre-configured credentials the MSI drops beside the exe (eBay app id, RuName, a blank
+       Anthropic key - the REDACTED file build-installer.ps1 writes, never the live one) travel
+       inside the one-file exe instead, and Program.cs writes them to the data home on a first
+       run that has nothing there yet. Same file, same content, one fewer thing beside the exe.
+       Only embedded when the publish names the file - a plain build has no template and must
+       not accidentally pick up the live credentials.json. -->
+  <ItemGroup Condition="'$(DistCredentials)' != '' And Exists('$(DistCredentials)')">
+    <EmbeddedResource Include="$(DistCredentials)" Link="dist-credentials.json" LogicalName="AutoListerB1.dist-credentials.json" />
+  </ItemGroup>
+  <!-- A one-file exe without the template is an app whose eBay sign-in can never start, and
+       nothing downstream would notice until a downloader did. Fail the publish instead. -->
+  <Target Name="RequireDistCredentialsForOneFile" BeforeTargets="CoreCompile" Condition="'$(OneFile)' == 'true'">
+    <Error Condition="'$(DistCredentials)' == '' Or !Exists('$(DistCredentials)')"
+           Text="OneFile publish needs -p:DistCredentials=&lt;path to the REDACTED credentials.json build-installer.ps1 writes&gt;; got '$(DistCredentials)'." />
+  </Target>
 
 </Project>

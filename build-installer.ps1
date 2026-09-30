@@ -13,9 +13,12 @@
 #        dotnet publish "ING eBay AutoLister\ING eBay AutoLister.csproj" `
 #          -c Release -r win-x64 --self-contained true `
 #          -o "ING eBay AutoLister\dist"
-#      NOTE: do NOT add -p:PublishSingleFile=true — the bundled single-file exe gets
-#      quarantined by endpoint AV (Bitdefender/Sophos) as a false-positive packer/dropper
-#      on this build machine. The folder-of-files output below is what installer.wxs expects.
+#      NOTE: no -p:PublishSingleFile=true HERE - installer.wxs harvests a folder of files.
+#      The single-file build is a separate publish further down (-p:OneFile=true), added
+#      2026-09-30 on the owner's request. History: a single-file bundle was once quarantined by
+#      endpoint AV (Bitdefender/Sophos) on this build machine as a false-positive packer; the
+#      2.6.11 bundle was re-checked against both engines plus Defender the day it was added and
+#      was clean. If it fires again, the csproj says which switch to flip first.
 #   2. Install WiX 4 (for .msi):
 #        dotnet tool install --global wix
 #   3. Configure a trusted signing identity as documented in CODE_SIGNING.md.
@@ -191,6 +194,32 @@ Write-Host "  dist folder prepared: $distDir ($((Get-ChildItem $distDir -Recurse
 # files retain their vendors' signatures; modifying those would invalidate their provenance.
 Sign-ReleaseFile "$distDir\AutoListerB1.exe"
 Sign-ReleaseFile "$distDir\AutoListerB1.dll"
+
+# ── The one-file exe ──────────────────────────────────────────────────────────
+# Owner, 2026-09-30: "make it an EXE and put everything in one EXE". A second publish of the
+# same commit with -p:OneFile=true (csproj) bundles the runtime, every dependency and the
+# embedded UI into a single AutoListerB1.exe, and -p:DistCredentials embeds the SAME redacted
+# credentials.json that was just written into dist, so a first run of the bare exe has the eBay
+# app id and RuName without a file beside it (Program.cs seeds the data home from the resource).
+# Output goes under installer-out, never under the project folder: anything left inside the
+# project is picked up by the next publish as content (that is how dist\dist\dist happened).
+# The earlier AV note above was re-tested today with Sophos + Bitdefender on-access and a
+# Defender scan - clean - and the csproj records what to flip if that ever changes.
+Write-Host ""
+Write-Host "Publishing the one-file exe..." -ForegroundColor Cyan
+$oneFileDir = "$outDir\onefile"
+if (Test-Path $oneFileDir) { Remove-Item $oneFileDir -Recurse -Force }
+& dotnet publish "$projectDir\ING eBay AutoLister.csproj" -c Release -r win-x64 `
+    -p:OneFile=true -p:DistCredentials="$distDir\credentials.json" -o $oneFileDir --nologo -v q
+if ($LASTEXITCODE -ne 0) { throw "One-file publish failed (exit $LASTEXITCODE)." }
+$oneFileExe = "$outDir\ING-AutoLister.exe"
+if (Test-Path -LiteralPath $oneFileExe) { Remove-Item -LiteralPath $oneFileExe -Force }
+Move-Item "$oneFileDir\AutoListerB1.exe" $oneFileExe
+# (The csproj refuses a OneFile build whose DistCredentials file is missing, so an exe that
+# reached this line has the template inside it - an exe without it is an app whose eBay
+# sign-in cannot start, and nothing else here would notice.)
+Sign-ReleaseFile $oneFileExe
+Write-Host ("  one-file exe: {0} ({1:N1} MB)" -f $oneFileExe, ((Get-Item $oneFileExe).Length / 1MB)) -ForegroundColor Green
 
 # ── PRIMARY: WiX 4 MSI ────────────────────────────────────────────────────────
 $wix = Get-Command wix -ErrorAction SilentlyContinue

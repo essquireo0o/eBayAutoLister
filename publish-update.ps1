@@ -82,8 +82,8 @@ if ($SkipTests) {
 # ---------------------------------------------------------------- 2. publish
 Step 2 "Publishing self-contained win-x64"
 $dist = "$root\ING eBay AutoLister\dist"
-# NOT PublishSingleFile: the bundled exe gets quarantined by endpoint AV as a false-positive
-# packer. installer.wxs expects the folder-of-files layout. See build-installer.ps1.
+# Folder-of-files, because installer.wxs harvests a directory. The one-file exe is a second
+# publish that build-installer.ps1 runs from the same commit (see there).
 & dotnet publish "$root\ING eBay AutoLister\ING eBay AutoLister.csproj" `
     -c Release -r win-x64 --self-contained true -o $dist --nologo -v q
 if ($LASTEXITCODE -ne 0) { Die "dotnet publish failed." }
@@ -126,6 +126,25 @@ is its own kind of harm - see -AllowUnsigned in this script's param block, and C
 if ($AllowUnsigned) { Ok "$($msi.Name)  $msiMb MB  UNSIGNED" }
 else                { Ok "$($msi.Name)  $msiMb MB  signed by $($signature.SignerCertificate.Subject)" }
 
+# The one-file exe build-installer.ps1 produced beside the MSI. Same commit, same redacted
+# credentials, second artefact; it ships to the same three places under the same rules.
+$exe = Get-Item "$root\installer-out\ING-AutoLister.exe" -ErrorAction SilentlyContinue
+if (-not $exe) { Die "No ING-AutoLister.exe in installer-out. build-installer.ps1 should have published the one-file exe." }
+if ($exe.LastWriteTime -lt $msi.LastWriteTime.AddMinutes(-30)) { Die "installer-out\ING-AutoLister.exe is older than the MSI - it is not this build." }
+$exeMb = [math]::Round($exe.Length / 1MB, 2)
+if (-not $AllowUnsigned) {
+    $exeSig = Get-AuthenticodeSignature -LiteralPath $exe.FullName
+    if ($exeSig.Status -ne 'Valid') { Die "One-file exe signature is $($exeSig.Status), not Valid." }
+}
+# What the exe reports about itself: the version the site labels the button with comes from
+# here (a sidecar file next to the exe on the server - PE version parsing in PHP is not worth
+# the code when the build already knows the answer).
+$exeVersion = (Get-Item $exe.FullName).VersionInfo.ProductVersion
+if (-not $exeVersion -or $exeVersion -notmatch '^\d+(\.\d+){1,3}') { Die "Could not read a ProductVersion out of $($exe.Name) (got '$exeVersion')." }
+$exeVersion = $Matches[0]
+if ($AllowUnsigned) { Ok "$($exe.Name)  $exeMb MB  v$exeVersion  UNSIGNED" }
+else                { Ok "$($exe.Name)  $exeMb MB  v$exeVersion  signed" }
+
 # What the public URL serves right now, so we can prove it changed afterwards.
 $publicUrl = "https://inglisting.com/ING-AutoLister-Setup.msi"
 $ua = @{ "User-Agent" = "Mozilla/5.0" }
@@ -143,6 +162,7 @@ try {
 if ($WhatIf) {
     Write-Host "`n-WhatIf: built and packaged, uploaded nothing." -ForegroundColor Yellow
     Write-Host "  would upload: $($msi.FullName)"
+    Write-Host "  would upload: $($exe.FullName)  (+ ING-AutoLister.exe.version = $exeVersion)"
     exit 0
 }
 
@@ -152,47 +172,52 @@ Step 4 "Backing up the live installer, then uploading"
 $py = @'
 import json, os, sys, datetime, paramiko
 
-cred_path, local_msi = sys.argv[1], sys.argv[2]
+cred_path, local_msi, local_exe, exe_version = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 c = json.load(open(cred_path))["ionos_sftp"]
 docroot = c["docroots"]["inglisting.com"].rstrip("/")
-remote = docroot + "/ING-AutoLister-Setup.msi"
 
 t = paramiko.Transport((c["host"], int(c.get("port", 22))))
 t.connect(username=c["user"], password=c["password"])
 sftp = paramiko.SFTPClient.from_transport(t)
 
-# Back up whatever is live before replacing it. An installer is the one artefact where
-# "put the old one back" has to stay possible without a rebuild.
-try:
-    sftp.stat(remote)
-    bak = remote + ".bak-" + datetime.date.today().isoformat()
-    try: sftp.remove(bak)
-    except IOError: pass
-    sftp.rename(remote, bak)
-    print("    OK  backed up live installer -> " + os.path.basename(bak))
-except IOError:
-    print("    !   nothing live to back up")
-
-size = os.path.getsize(local_msi)
 def progress(done, total):
     pct = int(done * 100 / total) if total else 0
     if pct % 20 == 0:
         sys.stdout.write("\r    uploading %d%%" % pct); sys.stdout.flush()
 
-sftp.put(local_msi, remote, callback=progress)
-print("\r    OK  uploaded %.2f MB" % (size / 1048576.0))
+def ship(local, remote, what):
+    # Back up whatever is live before replacing it. An installer is the one artefact where
+    # "put the old one back" has to stay possible without a rebuild.
+    try:
+        sftp.stat(remote)
+        bak = remote + ".bak-" + datetime.date.today().isoformat()
+        try: sftp.remove(bak)
+        except IOError: pass
+        sftp.rename(remote, bak)
+        print("    OK  backed up live %s -> %s" % (what, os.path.basename(bak)))
+    except IOError:
+        print("    !   no live %s to back up" % what)
+    size = os.path.getsize(local)
+    sftp.put(local, remote, callback=progress)
+    print("\r    OK  uploaded %s %.2f MB" % (what, size / 1048576.0))
+    st = sftp.stat(remote)
+    if st.st_size != size:
+        print("    FAIL size mismatch on server for %s" % what); sys.exit(1)
+    print("    OK  server reports %.2f MB" % (st.st_size / 1048576.0))
 
-st = sftp.stat(remote)
-print("    OK  server reports %.2f MB" % (st.st_size / 1048576.0))
-if st.st_size != size:
-    print("    FAIL size mismatch on server"); sys.exit(1)
+ship(local_msi, docroot + "/ING-AutoLister-Setup.msi", "installer")
+ship(local_exe, docroot + "/ING-AutoLister.exe", "one-file exe")
+# The version sidecar dl.php names the saved exe with ("ING AutoLister v2.6.12.exe").
+with sftp.file(docroot + "/ING-AutoLister.exe.version", "w") as f:
+    f.write(exe_version + "\n")
+print("    OK  ING-AutoLister.exe.version = " + exe_version)
 
 sftp.close(); t.close()
 '@
 
 $pyFile = Join-Path $env:TEMP "ing-upload-msi.py"
 Set-Content -Path $pyFile -Value $py -Encoding UTF8
-& python $pyFile $credPath $msi.FullName
+& python $pyFile $credPath $msi.FullName $exe.FullName $exeVersion
 $uploadCode = $LASTEXITCODE
 Remove-Item $pyFile -ErrorAction SilentlyContinue
 if ($uploadCode -ne 0) { Die "Upload failed." }
@@ -226,6 +251,27 @@ try {
     Ok "The download button now serves this build (sha256 $($localHash.Substring(0,16))...)."
 } catch {
     Die "Could not verify the public URL: $($_.Exception.Message)"
+} finally {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+
+# Same proof for the one-file exe: full download, byte count and SHA256 against the build,
+# and the saved-as name dl.php hands out must carry this build's version.
+$exeUrl = "https://inglisting.com/ING-AutoLister.exe"
+$exeHash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+$tmp = Join-Path $env:TEMP ("verify-exe-" + [guid]::NewGuid().ToString("N") + ".bin")
+try {
+    $h3 = Invoke-WebRequest -Uri $exeUrl -TimeoutSec 900 -UseBasicParsing -Headers $ua -OutFile $tmp -PassThru
+    $gotLen = (Get-Item $tmp).Length
+    $gotHash = (Get-FileHash $tmp -Algorithm SHA256).Hash
+    $disp = (@($h3.Headers['Content-Disposition'])[0])
+    Ok "HTTP $($h3.StatusCode)  $([math]::Round($gotLen/1MB,2)) MB  $disp"
+    if ($gotLen -ne $exe.Length) { Die "$exeUrl serves $gotLen bytes but the exe is $($exe.Length)." }
+    if ($gotHash -ne $exeHash)   { Die "$exeUrl serves bytes that are not this build. Served $gotHash, built $exeHash." }
+    if ($disp -notmatch [regex]::Escape("v$exeVersion")) { Die "dl.php names the exe '$disp' - the version sidecar did not land or dl.php does not read it." }
+    Ok "The one-file exe download serves this build (sha256 $($exeHash.Substring(0,16))...)."
+} catch {
+    Die "Could not verify the exe URL: $($_.Exception.Message)"
 } finally {
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
 }
@@ -302,14 +348,17 @@ try {
     if (-not $rel) { throw "gh returned nothing" }
     $asset = $rel.assets | Where-Object { $_.name -eq "ING-AutoLister-Setup.msi" } | Select-Object -First 1
     $relSha = if ($asset.digest) { ($asset.digest -replace '^sha256:', '').ToUpperInvariant() } else { "" }
+    $exeAsset = $rel.assets | Where-Object { $_.name -eq "ING-AutoLister.exe" } | Select-Object -First 1
+    $relExeSha = if ($exeAsset.digest) { ($exeAsset.digest -replace '^sha256:', '').ToUpperInvariant() } else { "" }
 
-    if ($relSha -eq $localHash) {
-        Ok "releases/latest is $($rel.tagName) and its asset is these exact bytes"
+    if ($relSha -eq $localHash -and $relExeSha -eq $exeHash) {
+        Ok "releases/latest is $($rel.tagName) and both assets are these exact bytes"
     } else {
-        Warn "releases/latest is $($rel.tagName), and its asset is NOT this build."
+        if ($relSha -ne $localHash)   { Warn "releases/latest is $($rel.tagName), and its MSI asset is NOT this build." }
+        if ($relExeSha -ne $exeHash)  { Warn "releases/latest is $($rel.tagName), and its ING-AutoLister.exe asset is NOT this build." }
         Warn "Installed apps compare against that release, so they will not see this update."
-        Warn "  gh release create v<x.y.z> `"$($msi.FullName)`" --latest --target $(git rev-parse HEAD)"
-        Warn "  (the asset must be named exactly ING-AutoLister-Setup.msi - the URL matches the filename)"
+        Warn "  gh release create v<x.y.z> `"$($msi.FullName)`" `"$($exe.FullName)`" --latest --target $(git rev-parse HEAD)"
+        Warn "  (assets must be named exactly ING-AutoLister-Setup.msi and ING-AutoLister.exe - the URLs match the filenames)"
     }
 } catch {
     Warn "Could not read the GitHub release ($($_.Exception.Message)). Check it by hand."
@@ -319,6 +368,7 @@ Write-Host "`nShipped." -ForegroundColor Green
 Write-Host "  $publicUrl"
 Write-Host "  $mineUrl  (302)"
 Write-Host "  $($msi.Name)  $msiMb MB"
+Write-Host "  $exeUrl  (one-file exe, $exeMb MB, v$exeVersion)"
 if ($AllowUnsigned) { Write-Host "  UNSIGNED - SmartScreen will warn. See CODE_SIGNING.md." -ForegroundColor Yellow }
 Write-Host "`nNot done for you, on purpose:" -ForegroundColor DarkGray
 Write-Host "  git push        - review the diff first" -ForegroundColor DarkGray

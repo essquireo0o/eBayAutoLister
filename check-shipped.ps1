@@ -90,14 +90,37 @@ try {
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
 }
 
+# The one-file exe (since 2.6.12) ships beside the MSI and can fall behind on its own: it is a
+# second upload, a second release asset, and it carries its own version resource.
+Write-Host "`nWhat the one-file exe download serves" -ForegroundColor Cyan
+$exeUrl = "https://inglisting.com/ING-AutoLister.exe"
+$tmpExe = Join-Path ([IO.Path]::GetTempPath()) ("shipped-" + [guid]::NewGuid().ToString("N") + ".exe")
+$siteExeVer = $null; $siteExeSha = $null
+try {
+    Info "downloading $exeUrl"
+    Invoke-WebRequest -Uri $exeUrl -OutFile $tmpExe -UseBasicParsing -Headers $ua -TimeoutSec 900
+    $pv = (Get-Item $tmpExe).VersionInfo.ProductVersion
+    $siteExeVer = Normalize (([regex]::Match([string]$pv, '^\d+(\.\d+){1,3}')).Value)
+    $siteExeSha = (Get-FileHash $tmpExe -Algorithm SHA256).Hash
+    if ($siteExeVer -eq $headVer) { Ok "$exeUrl serves $siteExeVer  (sha $($siteExeSha.Substring(0,12))...)" }
+    else { Bad "the one-file exe on the site is $siteExeVer, git is at $headVer - the exe download is behind." }
+} catch {
+    Bad "could not read the one-file exe download: $($_.Exception.Message)"
+} finally {
+    Remove-Item $tmpExe -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "`nWhat the in-app updater sees" -ForegroundColor Cyan
-$relSha = $null
+$relSha = $null; $relExeSha = $null
 try {
     $rel = & gh release view --json tagName,assets 2>$null | ConvertFrom-Json
     if (-not $rel) { throw "gh returned nothing (not installed, not authenticated, or no releases)" }
     $relVer = Normalize ($rel.tagName -replace '^v', '')
     $asset  = $rel.assets | Where-Object { $_.name -eq "ING-AutoLister-Setup.msi" } | Select-Object -First 1
     if ($asset.digest) { $relSha = ($asset.digest -replace '^sha256:', '').ToUpperInvariant() }
+    $exeAsset = $rel.assets | Where-Object { $_.name -eq "ING-AutoLister.exe" } | Select-Object -First 1
+    if ($exeAsset.digest) { $relExeSha = ($exeAsset.digest -replace '^sha256:', '').ToUpperInvariant() }
+    if (-not $exeAsset) { Bad "releases/latest ($($rel.tagName)) has no asset named ING-AutoLister.exe." }
 
     if (-not $asset) {
         Bad "releases/latest ($($rel.tagName)) has no asset named ING-AutoLister-Setup.msi - the download URL matches the FILENAME, so it is broken."
@@ -123,6 +146,12 @@ if ($siteSha -and $relSha) {
     }
 } else {
     Info "skipped - need both a site download and a release asset digest"
+}
+if ($siteExeSha -and $relExeSha) {
+    if ($siteExeSha -eq $relExeSha) { Ok "one-file exe: identical bytes (sha $($siteExeSha.Substring(0,12))...)" }
+    else { Bad "one-file exe on the site and in the release are DIFFERENT BUILDS. Upload the same file to both." }
+} else {
+    Info "exe comparison skipped - need both a site download and a release asset digest"
 }
 
 Write-Host ""
