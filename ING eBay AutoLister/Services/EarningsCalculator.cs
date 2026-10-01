@@ -126,7 +126,9 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
             return result;
         }
 
-        result.CostOfGoods = Math.Round(unitCost.Value * quantity, 2);
+        // A cancelled order never shipped, so the goods are still on the shelf. Charging their cost
+        // here showed every cancellation as a loss the size of the item it didn't sell.
+        result.CostOfGoods = cancelled ? 0m : Math.Round(unitCost.Value * quantity, 2);
         result.NetProfit = Math.Round(result.NetProceeds - result.CostOfGoods.Value, 2);
 
         // ROI is measured against the cost of the goods alone, matching ProfitCalculator, so the

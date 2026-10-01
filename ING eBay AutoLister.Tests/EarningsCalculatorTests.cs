@@ -185,6 +185,9 @@ public class EarningsCalculatorTests
         Assert.Equal(0m, profit.GrossRevenue);
         Assert.Equal(0m, profit.Fees);
         Assert.False(profit.CountsTowardProfit);
+        // The goods never left, so the row reads $0 — not a loss of the $400 the item cost.
+        Assert.Equal(0m, profit.CostOfGoods);
+        Assert.Equal(0m, profit.NetProfit);
     }
 
     [Fact]
