@@ -169,3 +169,97 @@ Dated entries from unattended queue tasks: what changed, how it was verified, wh
     job with no signed-in seller. Not exhaustively traced through every `Task.Run`.
   - The count is per generation, and the bar says "Each AI listing, rewrite or AI check uses one".
     If the owner wants different words for what counts, it is one line in `aiQuotaWords`.
+
+## 2026-10-01 — Hosted security audit of every endpoint: CSRF, per-account data, secrets in responses
+
+- **Task:** go through every `app.Map*` endpoint on the hosted build (app.inglisting.com) and check
+  three things: can another website make a signed-in seller's browser change something (CSRF), can
+  one account read or change another account's data, and does any response hand out a secret. Fix
+  what can be fixed safely with tests; list everything found.
+- **What was looked at:** 242 routes on the app (209 in `Program.cs`, 33 in `Services/*`): 114 GET,
+  121 POST, 6 DELETE, 1 GET+HEAD. No PUT or PATCH exists. Plus the 18 routes on the phone-camera
+  listener, which only starts from an endpoint the hosted build refuses. Auto-Buy's 7 routes are
+  not mapped on hosted at all.
+
+### Findings that were FIXED in this change
+
+| # | Severity | What was wrong | Fix |
+|---|----------|----------------|-----|
+| 1 | **High** | **An eBay sign-in could connect the wrong account.** The link eBay sends a seller back on (`/api/ebay/finish?session=…`) was accepted from ANY signed-in account, as long as this server had started that sign-in for somebody. A person could sign in to their own eBay, keep the link, and get another seller to open it: that seller's account would then be connected to the stranger's eBay, and their next listing would publish there. | The sign-in is now tied to the account that started it (`EbayOAuthSessionLedger` remembers the owner). Anybody else opening the link is told this account did not start that sign-in; nothing is stored and the one-time pickup is not spent. |
+| 2 | **High** | Same hole, second door: `GET /api/ebay/callback?code=…` stored an eBay grant with **no check at all** on who started it. | On hosted the code is only exchanged when `state` is a sign-in this account started (`EbayService.IsSignInStartedHere`). Desktop unchanged. |
+| 3 | **High** | **`/api/logs/recent` showed every account everybody's log** — item titles, eBay errors, saved-photo names, watch names — because the action log was one list for the whole server. | `ActionLog` now remembers who was signed in for each line. An account reads only its own. The server's own lines (data folder, database found) are shown to no account. The owner dashboard (admin key) still reads all of it. Each account keeps its own 100 lines. |
+| 4 | Medium | **Any account could switch Facebook Marketplace off for everyone.** `POST /api/facebook/disconnect` deletes the saved Facebook login, and on hosted that login is the ONE the owner set up for all accounts. Same for `POST /api/terapeak/disconnect`, `/api/terapeak/connect`, and `GET /api/terapeak/debug-scrape` (a developer probe that drives the saved login on a plain GET). | All four answer 403 "connected once for everyone on the web version" on hosted (`HostedShared.Refusal`). Desktop unchanged. |
+| 5 | Medium | `/api/ebay/status` told every account about the LAST sign-in anybody started (one status for the process), so a waiting tab could report another seller's result. | Sign-in progress is kept per account. |
+| 6 | Low | A pasted-redirect eBay sign-in wrote the whole redirect URL (it contains eBay's authorization code) and the state into the log. | The log line now says only that tokens were stored and which redirect URI was used. |
+| 7 | Low | `/api/setup/fields` showed every account the first 8 characters of the OWNER's licence key and the owner's eBay developer id. (The DevId item was already on the open list.) | Both are blank on hosted. Client ID and RuName stay: they are in every eBay consent link anyway. |
+| 8 | Low | The identity endpoint and `/api/local-db/status` told every account the server's data folder, process id and database path. | Blank / 0 on hosted. Desktop unchanged. |
+
+### CSRF — result: no gap found in the mechanism
+
+- Every POST and DELETE (127 of them) passes through one check in front of the whole app
+  (`Csrf.UseCsrf`): right `Origin`, plus a token the page must echo back. It has **no path
+  exemptions**; a new test fails if one is ever added.
+- Exactly **8 endpoints are open without signing in**: `/health`, sign-up, sign-in, the CSRF token,
+  `/owner` and `/api/owner/stats` (admin key), calibration read and write (admin key). A new test
+  fails if a ninth appears.
+- The risk that was real was GETs that change something, because a plain link carries the session
+  cookie: the two eBay sign-in endings (fixed above) and the Terapeak debug scrape (refused on
+  hosted above). The other GETs with a side effect are harmless: `/api/local-drafts/ensure-folder`
+  creates the caller's own empty folder; `/api/update/check?force=true` only re-asks GitHub.
+
+### Findings still OPEN (not fixed here — each needs its own piece of work)
+
+1. **Stores that are still ONE set for all hosted accounts** (they have no owner column yet; only
+   earnings, deals, cost basis, saved listings, drafts and crash-recovery are per account):
+   - **Deal Radar** (`DealRadarStore`): watches (search words and ZIP code), alerts and settings.
+     Any account sees, edits and deletes everyone's. *Medium.*
+   - **WhatsNot buy sheet and room book** (`LiveBuySheet`, `LiveRoomBook`): what was won and paid.
+     One file each for the whole server. *Medium.*
+   - **Photo Library** (`PhotoLibrary`, and the `/photos/...` files): every account sees and can
+     delete every photo. *Medium.*
+   - **Fees & Costs, tax bracket, Store Plan settings** (`FeeProfileStore` + the single in-memory
+     `FeeProfile`): one account saving the form re-prices every screen for everyone. *Medium —
+     wrong numbers rather than a leak.*
+   - **Getting-started progress** (`OnboardingStore`), **category memory** (`CategoryMemoryStore`),
+     **the "improve SEO" job** (`CopilotSeoJob`: one job, any account can see its results or cancel
+     it). *Low.* The held live-bid comps (`LiveBidBoard`) were not examined in depth.
+   - The fix for each is the pattern `DealStore`/`DraftStore` already use (`UserScope` +
+     `UserOwnedTable.Migrate`, or a folder per account).
+2. **`/generated-photos/*`** is readable by any signed-in account that knows the file name. The
+   names are random (GUID), so they cannot be guessed. *Low.*
+3. **Server-side fetch of a URL the caller supplies** (outside this task's three questions, noted
+   because it was seen): `POST /api/photos/fetch-url` fetches any address with no private-address
+   check; `/api/image-gen/test-endpoint`, `/api/image-gen/comfyui-models`, `/api/analyze-url` and
+   `/api/bulk-import/extract-links` also take a URL (not traced to the fetch). On a server that is
+   a way to reach things only the server can reach. `FrameEmbedPolicy` already has a guard that
+   could be reused. *Medium.*
+4. **The admin key travels in the address** (`/owner?k=…`, `/api/owner/stats?k=…`, calibration), so
+   it lands in proxy logs and browser history. It is compared safely and rate-limited. *Low.*
+5. **Calibration POST from the arb-bot**: the CSRF check has no exemption for it, so the bot must
+   fetch a token first or it gets 403. Not checked whether it does — if calibration has silently
+   stopped updating on hosted, this is why. (It fails closed, so it is not a security gap.)
+6. `/api/diagnostics/connections`, `/api/facebook/status`, `/api/terapeak/status` tell every
+   account the state of the shared logins (connected / why not). *Low.*
+
+- **Files:** `Services/EbayAuthFlow.cs`, `Services/EbayService.cs`, `Services/ActionLog.cs`,
+  new `Services/HostedShared.cs`, `Program.cs` (10 small edits), new test file
+  `HostedEndpointAuditTests.cs` (24 tests).
+- **How verified:**
+  - New tests: 24 pass. They drive ONE service with the signed-in account switched underneath it
+    (the same shape the app has), and read `Program.cs` to prove each endpoint asks its guard
+    BEFORE it acts.
+  - Full suite: 6,106 passed, 0 failed, 0 skipped (desktop configuration, built into
+    `audit-scratch/`; the running app on 9332 was not touched).
+  - The hosted configuration compiles (`-p:Hosted=true -r linux-x64`, 0 warnings, 0 errors).
+- **Left:**
+  - **Not deployed to app.inglisting.com.** Production gets it with the next hosted deploy
+    (`deploy-build-image.sh` + `deploy-ship-image.sh`). Until then findings 1–8 are still live.
+  - **Not tested against real eBay.** The sign-in tests use a stubbed relay. After the deploy, do
+    one real "Log into eBay" on the hosted site: it must still connect (the same account starts
+    and finishes it, so it should).
+  - The endpoint-level guards in `Program.cs` are proved by reading the source, not by HTTP calls
+    against a hosted build — the test project compiles the desktop configuration.
+  - On hosted Settings the licence box now reads "(saved: — leave blank to keep)" with no
+    preview. Cosmetic.
+  - The open list above, most worthwhile first: Deal Radar, WhatsNot sheets, Photo Library,
+    the URL-fetch guard.

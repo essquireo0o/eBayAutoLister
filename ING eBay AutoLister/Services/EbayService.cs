@@ -15,8 +15,17 @@ public class EbayService(
     ServerBinding? serverBinding = null,
     EbayRedirect? ebayRedirect = null,
     EbayScopeOptions? scopeOptions = null,
-    EbayRelayReturn? relayReturn = null)
+    EbayRelayReturn? relayReturn = null,
+    UserScope? userScope = null)
 {
+    /// <summary>
+    /// Whose eBay sign-in this request is about: the signed-in account on a hosted deployment, the
+    /// one seller on the desktop. A sign-in is started, awaited and finished by the same person, so
+    /// both the session ledger and the status below are kept per owner — on a server, one process-wide
+    /// answer is one seller being told about another seller's sign-in.
+    /// </summary>
+    private long? SignInOwner => (userScope ?? UserScope.Desktop).OwnerId;
+
     /// <summary>Which optional permissions this deployment's keyset may ask for.</summary>
     private EbayScopeOptions Scopes => scopeOptions ?? EbayScopeOptions.Default;
 
@@ -63,7 +72,9 @@ public class EbayService(
     private readonly EbayOAuthSessionLedger _sessions = new();
 
     private readonly object _signInSync = new();
-    private EbaySignInStatus _signIn = EbaySignInStatus.Idle;
+
+    /// <summary>One status per owner. Keyed on -1 for work with nobody signed in on it.</summary>
+    private readonly Dictionary<long, EbaySignInStatus> _signIn = [];
 
     /// <summary>
     /// Where the current (or last) eBay sign-in got to. Ages a pending sign-in out on read, so a
@@ -73,19 +84,35 @@ public class EbayService(
     {
         get
         {
+            var owner = SignInOwner ?? -1;
             lock (_signInSync)
             {
-                _signIn = _signIn.AgedAt(DateTimeOffset.UtcNow);
-                return _signIn;
+                var current = _signIn.TryGetValue(owner, out var known) ? known : EbaySignInStatus.Idle;
+                return _signIn[owner] = current.AgedAt(DateTimeOffset.UtcNow);
             }
         }
     }
 
     private EbaySignInStatus SetSignIn(EbaySignInStatus status)
     {
-        lock (_signInSync) _signIn = status;
+        var owner = SignInOwner ?? -1;
+        lock (_signInSync) _signIn[owner] = status;
         return status;
     }
+
+    /// <summary>
+    /// True when <paramref name="state"/> names a sign-in that the account making this request
+    /// started here, and that has not been finished or timed out.
+    /// </summary>
+    /// <remarks>
+    /// What the direct callback asks before it spends eBay's code. Without it, a link of the form
+    /// <c>/api/ebay/callback?code=…</c> connects whoever opens it to whichever eBay account the
+    /// code was issued for — so somebody could sign in to their OWN eBay account, keep the link,
+    /// and get a seller to open it: that seller's listings would then publish on the stranger's
+    /// account. The relay path has always made this check (<see cref="CompleteRelaySignInAsync"/>).
+    /// </remarks>
+    public bool IsSignInStartedHere(string? state) =>
+        _sessions.Check(EbayRelayReturn.SessionFrom(state), DateTimeOffset.UtcNow, SignInOwner) == EbaySessionCheck.Valid;
 
     /// <summary>
     /// Builds the eBay consent URL, or explains why it cannot be built.
@@ -124,7 +151,7 @@ public class EbayService(
         // finishing and one ending on a dead localhost tab.
         var session = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLower();
         var now = DateTimeOffset.UtcNow;
-        _sessions.Issue(session, now);
+        _sessions.Issue(session, now, SignInOwner);
 
         SetSignIn(new EbaySignInStatus(
             EbaySignInStage.AwaitingConsent, "awaiting_consent",
@@ -226,7 +253,7 @@ public class EbayService(
                 EbaySignInStage.Failed, code, message, next, started, DateTimeOffset.UtcNow, detail));
         }
 
-        switch (_sessions.Check(session, now))
+        switch (_sessions.Check(session, now, SignInOwner))
         {
             case EbaySessionCheck.Valid:
                 break;

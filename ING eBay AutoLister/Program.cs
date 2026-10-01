@@ -1059,18 +1059,23 @@ app.MapPost("/api/stripe/checkout/annual", async (StripeService stripe, HttpCont
 // auth and no setup required, on a fresh install and a configured one alike. See AppInstance.
 // Also the honest answer to "which folder is this build reading?", which is the first question when
 // a saved key looks missing.
+//
+// The process id and the data folder are for the seller's own machine. On a server they are the
+// host's process table and filesystem layout, told to every account that signs up — so the hosted
+// build answers with neither. See HostedShared.
 app.MapGet(AppInstance.IdentityPath, (IWebHostEnvironment env) => Results.Ok(new
 {
     app      = AppInstance.IdentityMarker,
     port     = AppPaths.Port,
     url      = AppPaths.BaseUrl,
-    pid      = Environment.ProcessId,
-    dataHome = env.ContentRootPath,
+    pid      = HostedShared.IsHosted() ? 0 : Environment.ProcessId,
+    dataHome = HostedShared.ServerPath(env.ContentRootPath),
     version  = typeof(Program).Assembly.GetName().Version?.ToString() ?? "",
 }));
 
 app.MapGet("/api/setup/status", (CredentialsStore store) => Results.Ok(store.GetStatus()));
-app.MapGet("/api/setup/fields", (CredentialsStore store) => Results.Ok(store.GetPublicFields()));
+app.MapGet("/api/setup/fields", (CredentialsStore store) =>
+    Results.Ok(HostedShared.WithoutDeploymentValues(store.GetPublicFields())));
 
 // A partial save: the body carries only the fields the screen that posted it owns, and anything
 // absent is left as it was (see CredentialsPatch).
@@ -2578,6 +2583,7 @@ app.MapGet("/api/insights/seasonal-demand", () =>
 
 app.MapPost("/api/terapeak/connect", (TerapeakService terapeak) =>
 {
+    if (HostedShared.Refusal("Terapeak") is { } refusal) return refusal;
     var (started, message) = terapeak.StartLogin();
     return Results.Ok(new { started, message });
 });
@@ -2618,6 +2624,7 @@ app.MapGet("/api/terapeak/status", (TerapeakService terapeak) =>
 
 app.MapPost("/api/terapeak/disconnect", (TerapeakService terapeak) =>
 {
+    if (HostedShared.Refusal("Terapeak") is { } refusal) return refusal;
     terapeak.Disconnect();
     return Results.Ok(new { connected = terapeak.IsConnected });
 });
@@ -2626,6 +2633,9 @@ app.MapPost("/api/terapeak/disconnect", (TerapeakService terapeak) =>
 // is connected, so ParseTerapeakBodyText can be tuned against the actual DOM/text.
 app.MapGet("/api/terapeak/debug-scrape", async (string q, TerapeakService terapeak) =>
 {
+    // A developer's probe that drives the saved browser session on a GET and hands back the raw
+    // page. On a server that session is not the caller's, so there is nothing here for them.
+    if (HostedShared.Refusal("Terapeak") is { } refusal) return refusal;
     var scrape = await terapeak.ScrapeAsync(q);
     return Results.Ok(scrape);
 });
@@ -2826,6 +2836,10 @@ app.MapGet("/api/facebook/status", (FacebookMarketplaceService facebook) =>
 
 app.MapPost("/api/facebook/disconnect", (FacebookMarketplaceService facebook) =>
 {
+    // On the hosted app the Facebook session is ONE login shared by every account, kept by the
+    // owner. Disconnect deletes that file — so without this, any signed-up account could switch
+    // Facebook Marketplace off for everybody with one request.
+    if (HostedShared.Refusal("Facebook Marketplace") is { } refusal) return refusal;
     facebook.Disconnect();
     return Results.Ok(new { connected = facebook.IsConnected });
 });
@@ -9226,6 +9240,20 @@ app.MapGet("/api/ebay/callback", async (string? code, string? state, EbayService
         return;
     }
 
+    // On a server the code is only spent for the account that started the sign-in it belongs to.
+    // This is a GET that stores an eBay grant, reached by a plain link, so without the check a
+    // link carrying somebody else's code connects whoever opens it to that somebody's eBay account
+    // (see EbayService.IsSignInStartedHere). The desktop build keeps its old behaviour: one seller,
+    // on a loopback port no other site's link can usefully reach.
+    if (HostedAuth.IsHostedBuild && !ebay.IsSignInStartedHere(state))
+    {
+        ebay.MarkDirectSignInFailed("state_mismatch",
+            "eBay came back with a sign-in this account did not start here, so nothing was connected.",
+            "Click Log into eBay on this page and finish eBay's screens in the tab it opens.");
+        ctx.Response.Redirect("/?ebay_error=state_mismatch");
+        return;
+    }
+
     try
     {
         var token = await ebay.ExchangeCodeForTokenResultAsync(code);
@@ -9313,7 +9341,10 @@ app.MapPost("/api/ebay/exchange-redirect-url", async (EbayOAuthRedirectRequest r
         var result = await ebay.ExchangeProductionRedirectUrlAsync(req.RedirectUrl);
         store.SaveOAuthTokensFull(result.Token, result.RefreshToken, result.ExpiresIn, result.RefreshTokenExpiresIn, result.TokenType);
         onboarding.RecordEbayCheck(EbayLinkCheck.Untested);
-        log.Add("Info", "Production eBay OAuth connected", $"Accepted URL: {result.AcceptedUrl}; Redirect URI: {result.RedirectUri}; State: {result.State}");
+        // Not the accepted URL and not the state: the first carries eBay's authorization code in
+        // its query string and the second is the sign-in's own secret, and this log is read on the
+        // Logs screen, copied for support, and shown on the owner dashboard.
+        log.Add("Info", "Production eBay OAuth connected", $"Tokens stored. Redirect URI: {result.RedirectUri}");
 
         return Results.Ok(new
         {
@@ -9708,7 +9739,12 @@ app.MapGet("/api/ebay/listings", async (EbayService ebay, ActionLog log) =>
     }
 });
 
-app.MapGet("/api/local-db/status", (ListingDatabase db) => Results.Ok(db.GetStatus()));
+app.MapGet("/api/local-db/status", (ListingDatabase db) =>
+{
+    var status = db.GetStatus();
+    // The count is the seller's own; the path is the server's. See HostedShared.
+    return Results.Ok(status with { DatabasePath = HostedShared.ServerPath(status.DatabasePath) });
+});
 
 app.MapGet("/api/local-listings/placeholder", () => Results.Ok(PlaceholderListings.Get()));
 
@@ -11203,7 +11239,7 @@ app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStor
     return Results.Ok(new
     {
         analytics       = snap,
-        recentLogs      = log.Recent(),
+        recentLogs      = log.RecentForOwnerDashboard(),
         stripeConfigured = stripe.IsConfigured,
         aiUsage         = new
         {

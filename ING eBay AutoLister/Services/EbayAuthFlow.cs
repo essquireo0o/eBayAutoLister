@@ -103,29 +103,49 @@ public sealed class EbayOAuthSessionLedger
     /// <summary>Recent sessions kept. Small on purpose — this is a short queue, not a store.</summary>
     private const int Capacity = 8;
 
-    private sealed record Entry(string Id, DateTimeOffset IssuedAt, DateTimeOffset? ConsumedAt);
+    private sealed record Entry(string Id, DateTimeOffset IssuedAt, DateTimeOffset? ConsumedAt, long? Owner);
 
     private readonly object _sync = new();
     private readonly List<Entry> _entries = [];
 
-    public void Issue(string id, DateTimeOffset now)
+    /// <param name="owner">
+    /// Who started this sign-in — the signed-in account on a hosted deployment, and the one seller
+    /// (or nothing at all) on the desktop. Remembered so <see cref="Check"/> can refuse to finish
+    /// it for anybody else.
+    /// </param>
+    public void Issue(string id, DateTimeOffset now, long? owner = null)
     {
         if (string.IsNullOrWhiteSpace(id)) return;
         lock (_sync)
         {
             _entries.RemoveAll(e => e.Id == id);
-            _entries.Add(new Entry(id, now, null));
-            if (_entries.Count > Capacity) _entries.RemoveRange(0, _entries.Count - Capacity);
+            _entries.Add(new Entry(id, now, null, owner));
+            // The cap is per owner. One shared queue of eight on a server would let nine people
+            // pressing Connect in the same quarter of an hour push the first one's sign-in out
+            // from under them while they are still on eBay's consent screen.
+            var mine = _entries.Where(e => e.Owner == owner).ToList();
+            if (mine.Count > Capacity)
+                foreach (var stale in mine.Take(mine.Count - Capacity)) _entries.Remove(stale);
+            // And nothing is kept once it can no longer come back, so the list cannot grow with
+            // the number of accounts.
+            _entries.RemoveAll(e => e.Owner != owner && now - (e.ConsumedAt ?? e.IssuedAt) > Lifetime);
         }
     }
 
-    public EbaySessionCheck Check(string? id, DateTimeOffset now)
+    /// <param name="owner">
+    /// Who is trying to finish the sign-in. A session started by somebody else answers
+    /// <see cref="EbaySessionCheck.Unknown"/>, exactly as if it had never been issued: the link at
+    /// the end of an eBay sign-in carries the grant to whoever opens it, so a link one account
+    /// started must not connect a different account that was talked into clicking it.
+    /// </param>
+    public EbaySessionCheck Check(string? id, DateTimeOffset now, long? owner = null)
     {
         if (string.IsNullOrWhiteSpace(id)) return EbaySessionCheck.Unknown;
         lock (_sync)
         {
             var entry = _entries.FirstOrDefault(e => e.Id == id);
             if (entry is null) return EbaySessionCheck.Unknown;
+            if (entry.Owner != owner) return EbaySessionCheck.Unknown;
             if (entry.ConsumedAt is not null) return EbaySessionCheck.AlreadyUsed;
             return now - entry.IssuedAt > Lifetime ? EbaySessionCheck.Expired : EbaySessionCheck.Valid;
         }
