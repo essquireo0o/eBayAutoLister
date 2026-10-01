@@ -335,6 +335,9 @@ builder.Services.AddSingleton<ListingCategoryCache>();
 // Singleton so the six-hour cache is shared: one install asks GitHub four times a day, not once
 // per page load. See UpdateChecker for why that limit matters.
 builder.Services.AddSingleton<UpdateChecker>();
+// Singleton for the same reason: its thirty-minute cache is what keeps the owner dashboard inside
+// GitHub's unauthenticated limit. See GithubPrograms.
+builder.Services.AddSingleton<GithubPrograms>();
 #if !HOSTED
 // Desktop only: downloads the newer release, checks it against the digest the release publishes,
 // and installs it once the seller has left the app alone. The hosted app has no installer to run.
@@ -11258,6 +11261,17 @@ app.MapGet("/api/owner/stats", (string? k, CredentialsStore store, AnalyticsStor
 // /api/owner/stats answered 401 to the correct key, and /owner served the marketing page.
 }).AllowAnonymous().RateLimitLikeAuth();
 
+// The owner's other programs as GitHub publishes them — stars, releases, release downloads. Its own
+// route rather than a field on the stats above, so a slow or rate-limited GitHub delays one table
+// and not the whole dashboard. Same key, same opt-out, same per-IP budget, for the same reasons.
+app.MapGet("/api/owner/programs", async (string? k, CredentialsStore store, GithubPrograms programs, CancellationToken ct) =>
+{
+    store.EnsureAdminKey();
+    if (!store.AdminKeyMatches(k))
+        return Results.Unauthorized();
+    return Results.Ok(await programs.GetAsync(ct));
+}).AllowAnonymous().RateLimitLikeAuth();
+
 // ── Learned pricing calibration ───────────────────────────────────────
 // POST /api/calibration/update (arb-bot) writes it, GET /api/calibration reads it back. Both
 // admin-key gated exactly like /api/owner/stats above. See CalibrationEndpoints / CalibrationStore.
@@ -11296,6 +11310,13 @@ app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =
   #status{color:#94a3b8;font-size:.85rem;margin-bottom:1rem}
   .refresh-btn{background:#2563eb;color:#fff;border:none;border-radius:6px;padding:.5rem 1rem;cursor:pointer;font-size:.85rem}
   .refresh-btn:hover{background:#1d4ed8}
+  .prog-name{color:#93c5fd;font-weight:700;font-size:1rem;text-decoration:none}
+  .prog-name:hover{text-decoration:underline}
+  .prog-desc{color:#94a3b8;font-size:.8rem;margin-top:.25rem;max-width:46rem;line-height:1.4}
+  .prog-num{font-variant-numeric:tabular-nums;font-weight:600}
+  .prog-note{color:#64748b;font-size:.8rem;margin:-1rem 0 2rem}
+  .prog-warn{color:#fcd34d;font-size:.85rem;margin-bottom:1rem}
+  .table-scroll{overflow-x:auto}
 </style>
 </head>
 <body>
@@ -11323,10 +11344,60 @@ app.MapGet("/owner", (string? k, CredentialsStore store, StripeService stripe) =
   </div>
 </div>
 
+<div id="programs"></div>
 <div id="root"></div>
 <script>
 const KEY = new URLSearchParams(location.search).get('k');
+async function loadPrograms() {
+  const el = document.getElementById('programs');
+  const head = '<h2>My programs on GitHub</h2>';
+  if (!el.innerHTML) el.innerHTML = head + '<p class="prog-note" style="margin-top:0">Loading…</p>';
+  let p;
+  try {
+    const res = await fetch('/api/owner/programs?k=' + encodeURIComponent(KEY));
+    if (!res.ok) throw new Error('error ' + res.status);
+    p = await res.json();
+  } catch (e) {
+    el.innerHTML = head + `<p class="prog-warn">Could not load the program list (${esc(e.message)}).</p>`;
+    return;
+  }
+  const list = p.programs || [];
+  const day = v => v ? new Date(v).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  const sum = f => list.reduce((n, x) => n + (x[f] || 0), 0);
+  let html = head;
+  if (p.error) html += `<p class="prog-warn">${esc(p.error)}${list.length ? ' Showing the last numbers GitHub gave.' : ''}</p>`;
+  if (list.length) {
+    const totals = [
+      { val: list.length, lbl: 'Programs' },
+      { val: sum('downloads'), lbl: 'Release Downloads' },
+      { val: sum('stars'), lbl: 'Stars' },
+      { val: sum('forks'), lbl: 'Forks' },
+      { val: sum('openIssues'), lbl: 'Open Issues' },
+    ];
+    html += '<div class="grid">' + totals.map(s =>
+      `<div class="card"><div class="card-val">${s.val}</div><div class="card-lbl">${s.lbl}</div></div>`
+    ).join('') + '</div>';
+    html += '<div class="table-scroll"><table><thead><tr><th>Program</th><th>Downloads</th><th>Latest release</th><th>Releases</th><th>Stars</th><th>Forks</th><th>Open issues</th><th>Last updated</th></tr></thead><tbody>';
+    list.forEach(x => {
+      const badge = x.private ? ' <span class="badge badge-warn">Private</span>' : '';
+      const lang = x.language ? ` <span class="badge badge-info">${esc(x.language)}</span>` : '';
+      const latest = x.latestTag ? `${esc(x.latestTag)}<div class="prog-desc">${day(x.latestAt)}</div>` : '<span style="color:#64748b">Never released</span>';
+      html += `<tr><td><a class="prog-name" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>${badge}${lang}`
+            + `<div class="prog-desc">${esc(x.description || 'No description on GitHub.')}</div></td>`
+            + `<td class="prog-num">${x.downloads}</td><td>${latest}</td><td class="prog-num">${x.releases}</td>`
+            + `<td class="prog-num">${x.stars}</td><td class="prog-num">${x.forks}</td><td class="prog-num">${x.openIssues}</td><td>${day(x.pushedAt)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '<p class="prog-note">Public information from GitHub for <strong>' + esc(p.owner) + '</strong>'
+        + (p.fetchedAt ? ', read ' + new Date(p.fetchedAt).toLocaleString() : '')
+        + '. Refreshed every 30 minutes. Downloads are release-file downloads across every version — GitHub has no other usage number. '
+        + (p.includesPrivate ? 'Private repositories are included.' : 'Private repositories are not listed: GitHub only publishes public ones.')
+        + '</p>';
+  el.innerHTML = html;
+}
 async function load() {
+  loadPrograms();
   document.getElementById('status').textContent = 'Loading…';
   const res = await fetch('/api/owner/stats?k=' + encodeURIComponent(KEY));
   if (!res.ok) { document.getElementById('status').textContent = 'Error ' + res.status; return; }

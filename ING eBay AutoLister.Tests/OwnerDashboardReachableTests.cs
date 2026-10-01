@@ -21,6 +21,7 @@ public class OwnerDashboardReachableTests
 
     [Theory]
     [InlineData("/api/owner/stats", "the dashboard's data")]
+    [InlineData("/api/owner/programs", "the GitHub programs table")]
     [InlineData("/owner", "the dashboard page itself")]
     public void The_owner_endpoints_open_on_the_key_alone_rather_than_on_a_session(string route, string what)
     {

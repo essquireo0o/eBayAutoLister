@@ -401,7 +401,7 @@ public class HostedEndpointAuditTests : IDisposable
     /// decision, and this is where it has to be written down.
     /// </summary>
     [Fact]
-    public void Exactly_eight_endpoints_are_open_to_somebody_who_is_not_signed_in()
+    public void Exactly_nine_endpoints_are_open_to_somebody_who_is_not_signed_in()
     {
         var open = Sources()
             .SelectMany(source => source.Split('\n'))
@@ -409,8 +409,9 @@ public class HostedEndpointAuditTests : IDisposable
             .Count(line => line.Contains(".AllowAnonymous()", StringComparison.Ordinal));
 
         // /health, sign-up, sign-in, the CSRF token; /owner and /api/owner/stats (admin key);
-        // the calibration read and write (admin key).
-        Assert.Equal(8, open);
+        // the calibration read and write (admin key); /api/owner/programs (admin key) — the
+        // dashboard's GitHub programs table, added 2026-10-01.
+        Assert.Equal(9, open);
     }
 
     /// <summary>
