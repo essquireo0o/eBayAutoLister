@@ -10704,30 +10704,9 @@ app.MapPost("/api/ebay/upload-picture", async (RemoveBgRequest req, EbayService 
 app.MapGet("/api/logs/recent", (ActionLog log) => Results.Ok(log.Recent()));
 
 // ── Local Drafts ──────────────────────────────────────────────────
-app.MapGet("/api/local-drafts/ensure-folder", (DraftStore drafts) =>
-    Results.Ok(new { path = drafts.EnsureFolder() }));
-
-app.MapGet("/api/local-drafts/list", (DraftStore drafts) => Results.Ok(drafts.ListDrafts()));
-
-app.MapPost("/api/local-drafts/save", (DraftFile draft, DraftStore drafts, ActionLog log) =>
-{
-    var filename = drafts.SaveDraft(draft);
-    log.Add("Info", "Draft saved locally", $"{filename}");
-    return Results.Ok(new { filename });
-});
-
-app.MapGet("/api/local-drafts/load/{filename}", (string filename, DraftStore drafts) =>
-{
-    var draft = drafts.LoadDraft(filename);
-    return draft != null ? Results.Ok(draft) : Results.NotFound();
-});
-
-app.MapDelete("/api/local-drafts/delete/{filename}", (string filename, DraftStore drafts, ActionLog log) =>
-{
-    drafts.DeleteDraft(filename);
-    log.Add("Info", "Draft deleted", filename);
-    return Results.Ok();
-});
+// Desktop\eBayListing on the desktop build, a folder per signed-in seller on the hosted one.
+// See DraftStore / DraftEndpoints.
+DraftEndpoints.Map(app);
 
 // ── Cross-listing exporter ────────────────────────────────────────
 // Reformats an existing draft for Facebook Marketplace / Mercari / Amazon. Purely local text and

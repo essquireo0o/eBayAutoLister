@@ -71,3 +71,54 @@ Dated entries from unattended queue tasks: what changed, how it was verified, wh
     but the screen is not pleasant on a phone. That is a shell layout job, not a Logs one.
   - The log is in memory only: 100 entries, emptied on every app restart. A failure from before a
     restart cannot be copied for support. Persisting it would be a server change.
+
+## 2026-10-01 — Hosted: saved drafts answered 500 on app.inglisting.com; now work, one set per seller
+
+- **Task:** `/api/local-drafts/*` answers 500 on the hosted app. Reproduce on the hosted code
+  path, fix the root cause, add a regression test.
+- **Reproduced first, on the real image.** `deploy-local-drafts-check.sh` (new) starts a throwaway
+  container of `ing-listing-engine:latest` (a23442b) with empty data and no secrets, signs up two
+  sellers and uses the drafts: **9 of 14 checks failed**, list and save both 500. The container's
+  own log gives the cause: `UnauthorizedAccessException: Access to the path '/app/eBayListing' is denied`.
+- **Root cause (two faults in `DraftStore`, one visible, one waiting behind it):**
+  1. It kept drafts in `Desktop\eBayListing`. The container has no Desktop, .NET answers an empty
+     string for a folder that does not exist, so the path became the relative `eBayListing` =
+     `/app/eBayListing`, and the image runs as an unprivileged account that cannot write to `/app`.
+  2. It knew nothing about users. Had that folder been writable, every seller's unpublished drafts
+     (photos included) would have been listed to, and deletable by, every other seller.
+- **What changed:**
+  - `Services/DraftStore.cs`: takes the same `UserScope` the other stores use. Hosted: each seller
+    gets `<data home>/App_Data/drafts/<user id>` on the `/data` volume, resolved per call. With
+    nobody signed in (background work) it reads nothing and refuses to save rather than hand back a
+    filename for a file it never wrote. Desktop build: unchanged, still `Desktop\eBayListing`.
+  - The five routes moved out of `Program.cs` into `DraftEndpoints.Map(app)` (same file as the
+    store) so the tests run the handlers the app really maps. On hosted, `ensure-folder` no longer
+    tells the browser a path on the server's disk.
+  - Second bug found by the new tests and fixed: the drafts list read `title`/`savedAt` from files
+    the store itself writes as `Title`/`SavedAt`, so every draft was listed as "Untitled" with no
+    date and "newest first" sorted nothing (desktop too, since v1; the screen only used the
+    filename, which is why nobody saw it).
+- **How verified:**
+  - New `LocalDraftsHostedTests.cs`, 14 tests: the store with the signed-in user switched under it
+    (own folder, invisible to the other seller through list/load/delete/save, `../1/x.json` style
+    names cannot climb out, nobody signed in), and the real endpoints behind the real hosted
+    sign-in over HTTP (200 not 500, two sellers two lists, survives signing back in, 401 without a
+    session), plus a pin that `Program.cs` maps `DraftEndpoints` and holds no second inline copy.
+  - `dotnet test … --artifacts-path obj/drafts-scratch`: **6,069 passed, 0 failed** (6,055 + 14).
+    Built into a scratch folder; the app on 9332 was never stopped, started or rebuilt.
+  - Hosted image rebuilt in WSL from this tree under a temporary tag (not `:latest`, not
+    `:staging`; tag removed afterwards) and the same container check re-run: **14 of 14 ok**.
+- **Left:**
+  - **Not deployed.** app.inglisting.com still runs the old image and still answers 500 until the
+    next hosted deploy (`deploy-build-image.sh` + `deploy-ship-image.sh`). After it, run
+    `bash deploy-local-drafts-check.sh` in WSL: it must print 14 `ok` lines.
+  - **Hosted drafts are not in the nightly backup.** `ing-backup.sh` archives the database and the
+    session keys only; `App_Data/drafts/` sits on the same volume but outside the archive. Adding
+    the folder to the tarball is a few lines plus a reinstall of the script on the box.
+  - No size cap: a draft can carry a photo, and nothing limits how many a hosted seller keeps.
+  - Wording: on hosted the screen still says drafts are in "Desktop\eBayListing" (two messages in
+    `app.js`). Harmless but wrong there; not touched because `app.js` belongs to other lanes.
+  - Not checked: the "Copilot SEO rewrite" job saves its fallback drafts from a background run.
+    If that save happens after the request that started it has ended there is no signed-in
+    seller, and it is now refused with a plain reason (before: the same 500 as everything
+    else). If that job is used on hosted it needs to carry the seller who started it.
