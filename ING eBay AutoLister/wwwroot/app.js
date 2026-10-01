@@ -9647,6 +9647,7 @@
     // the inputs themselves would be thrown away with them.
     $('earnings-section')?.addEventListener('input', e => {
       if (e.target?.classList?.contains('er-cost-pct')) applyDropshipPct(e.target);
+      if (e.target?.classList?.contains('er-cost-cell')) e.target.dataset.dirty = '1';
     });
     $('earnings-section')?.addEventListener('keydown', e => {
       if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-input')) {
@@ -9668,7 +9669,7 @@
       // wrong once was equally unreachable.
       if (e.key === 'Enter' && e.target?.classList?.contains('er-cost-cell')) {
         e.preventDefault();
-        saveCostCell(e.target);
+        saveCostCell(e.target, true);
       }
       // Esc puts the row back exactly as it was. Without it the only way out of an inline editor
       // opened by mistake is to save something.
@@ -9691,11 +9692,19 @@
   // dropshipper never paid a unit cost — they keep a share and the supplier takes the rest. One
   // box rather than two columns: the % form is rare enough per row that a second input on all 60
   // rows would cost more space than it earns.
-  function saveCostCell(input) {
+  function saveCostCell(input, pressedEnter) {
     const id = input.dataset.id;
     const raw = (input.value || '').trim();
     if (!id || raw === '') return;
     if (input.dataset.cancelled === '1') return;
+    // Clicking into a box and clicking away again is not an answer. It used to be saved as one:
+    // the owner opened "paid $0.00" on a listing they had just set to a 40% split, clicked
+    // elsewhere, and the untouched 0.00 was written over the split for all 250 sales of it.
+    // Enter is an answer even when the text is unchanged; leaving the box is one only after typing.
+    if (!pressedEnter && input.dataset.dirty !== '1') {
+      if (input.dataset.original !== undefined) renderEarnings();
+      return;
+    }
     // An inline editor opened and closed without a change is not a save. Re-saving the same
     // number works, but it reports "$0.00 of real profit added", which reads like a failure.
     //
@@ -9970,23 +9979,27 @@
   }
 
   function renderEarningsHero(s, hasSales) {
+    // The big figure is everything made. It used to be this month's, which on the 1st reads
+    // "$200.57" over six figures of sales and looks like the page is broken.
     const figure = $('er-hero-month');
     if (figure) {
-      figure.textContent = moneyExact(s.netProfitThisMonth || 0);
-      figure.classList.toggle('er-negative', (s.netProfitThisMonth || 0) < 0);
+      figure.textContent = moneyExact(s.netProfitAllTime || 0);
+      figure.classList.toggle('er-negative', (s.netProfitAllTime || 0) < 0);
     }
-    setText('er-hero-alltime', moneyExact(s.netProfitAllTime || 0));
+    setText('er-hero-alltime', moneyExact(s.netProfitThisMonth || 0));
+    setText('er-hero-lastmonth', moneyExact(s.netProfitLastMonth || 0));
     setText('er-hero-30', moneyExact(s.netProfitLast30Days || 0));
     setText('er-hero-best', s.bestMonthLabel ? `${money(s.bestMonthProfit)} · ${s.bestMonthLabel}` : '—');
 
     const sub = $('er-hero-sub');
     if (!sub) return;
     if (!hasSales) {
-      sub.textContent = 'this month — your eBay sales appear here on their own';
+      sub.textContent = 'all time — your eBay sales appear here on their own';
       return;
     }
 
-    const parts = [`this month, across ${s.salesThisMonth || 0} sale${s.salesThisMonth === 1 ? '' : 's'}`];
+    const parts = [`profit on ${s.salesAllTime || 0} sale${s.salesAllTime === 1 ? '' : 's'}, all time`,
+      `this month: ${s.salesThisMonth || 0} sale${s.salesThisMonth === 1 ? '' : 's'}`];
     if (s.monthOverMonthPercent != null) {
       const up = s.monthOverMonthPercent >= 0;
       parts.push(`${up ? '▲' : '▼'} ${Math.abs(s.monthOverMonthPercent).toFixed(1)}% vs ${moneyExact(s.netProfitLastMonth)} last month`);
@@ -10219,13 +10232,23 @@
   // where the meta line used to be would shout over the titles.
   function costButton(f) {
     const has = f.costOfGoods != null;
-    const val = has ? Number(f.costOfGoods).toFixed(2) : '';
+    const val = costBoxValue(f);
     return `<button type="button" class="er-cost-edit${has ? '' : ' is-missing'}"
       data-id="${f.id}" data-unitgross="${unitGross(f)}" data-cost="${val}"
       data-costsource="${f.costSource || 'none'}"
       title="${has ? 'Change what you paid for this' : 'Record what you paid for this'}"
       aria-label="${has ? 'Change' : 'Record'} what you paid for ${esc(f.title)}"
-      >${has ? `paid ${moneyExact(f.costOfGoods)}` : 'add what you paid'}<span class="er-cost-pen" aria-hidden="true">✎</span></button>`;
+      >${has ? `paid ${moneyExact(f.costOfGoods)}${f.keepPercent != null ? ` · you keep ${Number(f.keepPercent)}%` : ''}` : 'add what you paid'}<span class="er-cost-pen" aria-hidden="true">✎</span></button>`;
+  }
+
+  // What the cost box holds for a sale. A dropship split is shown as the percentage it is, so
+  // saving the box again saves the split — the dollars it works out to belong to this one sale.
+  // A dollar cost is shown PER UNIT, which is what the box asks for: it used to hold the whole
+  // row's cost, so re-saving a three-unit sale tripled the cost of every sale of the listing.
+  function costBoxValue(f) {
+    if (f.keepPercent != null) return `${Number(f.keepPercent)}%`;
+    if (f.costOfGoods == null) return '';
+    return (Number(f.costOfGoods) / Math.max(1, Number(f.quantity) || 1)).toFixed(2);
   }
 
   // Swap the button for the same cost cell the every-sale table uses, so Enter, focus-out and the
@@ -10277,7 +10300,7 @@
             <td class="num">${moneyExact(f.grossRevenue || 0)}</td>
             <td class="num" title="${f.feesAreActual ? "eBay's own figure for this sale" : 'Estimated from your fee settings — eBay did not report a fee'}">${moneyExact(f.fees || 0)}${f.feesAreActual ? '' : ' <span class="er-muted">est</span>'}</td>
             <td class="num"><input class="er-cost-cell" data-id="${f.id}" data-unitgross="${unitGross(f)}"
-                   type="text" inputmode="decimal" value="${f.costOfGoods != null ? Number(f.costOfGoods).toFixed(2) : ''}"
+                   type="text" inputmode="decimal" value="${costBoxValue(f)}"
                    placeholder="—" aria-label="What you paid for ${esc(f.title)}"
                    title="What you paid, per unit. Type a dollar amount, or a percentage like 40% for the share of the sale you keep. Enter to save." /></td>
             <td class="num${(f.netProfit || 0) < 0 ? ' er-negative' : ''}">${netCell}</td>

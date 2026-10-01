@@ -114,6 +114,7 @@ public sealed class EarningsCalculator(ProfitCalculator profitCalculator)
             // supplier nothing. A fixed cost ignores the price, as it always did.
             unitCost = costBasis.UnitCostAt(gross / quantity);
             result.CostSource = "basis";
+            result.KeepPercent = costBasis.KeepPercent;
             if (costBasis.KeepPercent is { } keep)
                 result.Caveats.Add($"Dropship split — you keep {keep:0.##}% of the sale, so the goods cost {Money(unitCost.Value)} each on this one.");
         }

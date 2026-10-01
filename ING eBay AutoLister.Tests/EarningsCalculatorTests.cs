@@ -107,6 +107,23 @@ public class EarningsCalculatorTests
     }
 
     [Fact]
+    public void A_dropship_split_is_priced_from_each_sales_own_price_and_reported_as_the_percentage()
+    {
+        // The same listing sold at $825 and at $245. One 40% split must cost them $495 and $147 —
+        // not $495 both times, which is what a split frozen into dollars did to a month of sales.
+        var basis = new CostBasisEntry { KeepPercent = 40m };
+        var dear = NewCalculator().Compute(Sale(price: 825m, cost: null, fee: 0m), basis, Fees());
+        var cheap = NewCalculator().Compute(Sale(price: 245m, cost: null, fee: 0m), basis, Fees());
+
+        Assert.Equal(495m, dear.CostOfGoods);
+        Assert.Equal(147m, cheap.CostOfGoods);
+        Assert.Equal(98m, cheap.NetProfit);
+        // The page re-saves what it shows, so it has to be told this is a percentage.
+        Assert.Equal(40m, cheap.KeepPercent);
+        Assert.Null(NewCalculator().Compute(Sale(cost: null), new CostBasisEntry { UnitCost = 300m }, Fees()).KeepPercent);
+    }
+
+    [Fact]
     public void A_cost_typed_against_this_sale_beats_the_standing_cost_basis()
     {
         var basis = new CostBasisEntry { ListingId = "1100", UnitCost = 900m };

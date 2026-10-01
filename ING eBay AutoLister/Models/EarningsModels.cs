@@ -106,6 +106,12 @@ public sealed class FlipProfit
     public decimal? CostOfGoods { get; set; }
     /// <summary>"flip" (typed on this sale), "basis" (from the shared cost-basis table), or "none".</summary>
     public string CostSource { get; set; } = "none";
+    /// <summary>
+    /// The share of the sale the seller keeps, when this sale's cost comes from a dropship split
+    /// rather than a dollar figure. The page shows and re-saves the split as this percentage: the
+    /// dollars it works out to belong to one sale and must never be written back as the cost.
+    /// </summary>
+    public decimal? KeepPercent { get; set; }
 
     /// <summary>Revenue minus every known cost EXCEPT the goods. Always computable.</summary>
     public decimal NetProceeds { get; set; }

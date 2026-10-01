@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=143" />
+  <link rel="stylesheet" href="style.css?v=144" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -4493,12 +4493,16 @@
             <div class="er-hero-main">
               <p class="er-hero-label">You've made with ING</p>
               <p id="er-hero-month" class="er-hero-figure">$0</p>
-              <p id="er-hero-sub" class="er-hero-sub">this month — connect eBay and your sales start counting themselves</p>
+              <p id="er-hero-sub" class="er-hero-sub">all time — connect eBay and your sales start counting themselves</p>
             </div>
             <div class="er-hero-side">
               <div class="er-hero-stat">
-                <span class="er-hero-stat-label">All time</span>
+                <span class="er-hero-stat-label">This month</span>
                 <span id="er-hero-alltime" class="er-hero-stat-value">$0</span>
+              </div>
+              <div class="er-hero-stat">
+                <span class="er-hero-stat-label">Last month</span>
+                <span id="er-hero-lastmonth" class="er-hero-stat-value">$0</span>
               </div>
               <div class="er-hero-stat">
                 <span class="er-hero-stat-label">Last 30 days</span>
@@ -6225,7 +6229,7 @@
 
   <!-- Trial paywall removed -->
 
-  <script src="app.js?v=175"></script>
+  <script src="app.js?v=176"></script>
   <script src="photobox-ux.js?v=2"></script>
 </body>
 </html>

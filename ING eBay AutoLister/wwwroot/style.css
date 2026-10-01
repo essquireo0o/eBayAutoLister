@@ -20591,3 +20591,15 @@ details.pb-tips { padding: 0 !important; overflow: hidden; }
   line-height: 1.45;
   color: var(--text-dim, #8b93a7);
 }
+
+/* ── Awaiting-cost rows: the item has to stay readable ──────────────────────
+   The name column was flex:1 with no floor beside two inputs and two nowrap labels, so on a
+   wide window the inputs took the row and the name collapsed to one word per line. Give the
+   name a real width and let the entry controls wrap beneath it instead. */
+.er-awaiting-row { align-items: flex-start; }
+.er-awaiting-row .er-row-main { flex: 1 1 340px; min-width: 260px; }
+.er-awaiting-row .er-row-title { white-space: normal; overflow: visible; text-overflow: clip; }
+.er-awaiting-row .er-cost-entry { flex: 0 1 auto; flex-wrap: wrap; row-gap: 6px; max-width: 100%; }
+.er-awaiting-row .er-cost-pct { width: 96px; max-width: 96px; }
+.er-awaiting-row .er-pct-hint { flex-basis: 100%; color: var(--ink-2); }
+.er-awaiting-list { max-height: 520px; }
