@@ -1323,6 +1323,12 @@
     on('btn-refresh-listings', 'click', () => loadListings('Listings refreshed'));
     on('btn-refresh-dashboard', 'click', () => loadListings('Dashboard refresh requested'));
     on('btn-refresh-logs', 'click', loadLogs);
+    on('btn-copy-logs', 'click', copyLogsForSupport);
+    // Delegated: the "Show only errors" button in the summary is re-drawn on every load.
+    on('logs-section', 'click', e => {
+      const pick = e.target.closest?.('[data-log-filter]');
+      if (pick) setLogFilter(pick.dataset.logFilter);
+    });
     on('btn-new-ai-listing', 'click', showAiSection);
     on('btn-back-dashboard', 'click', showDashboard);
     on('global-search', 'input', renderListings);
@@ -21508,20 +21514,24 @@
     // says Loading. Skeletons can't be mistaken for content.
     el.innerHTML = skeletonRowsHtml(5);
 
+    $('logs-copy-fallback-wrap')?.classList.add('hidden');
+
+    // The version goes on the first line of a support copy. Asked here, not on the click: a
+    // request between the click and the copy can cost the browser's permission to copy at all.
+    if (!logAppVersion) {
+      fetch('/api/update/check')
+        .then(r => (r.ok ? r.json() : null))
+        .then(u => { logAppVersion = u?.current || ''; })
+        .catch(() => { /* the copy simply leaves the version out */ });
+    }
+
     try {
       const entries = await fetch('/api/logs/recent').then(r => r.json());
-      if (!Array.isArray(entries) || entries.length === 0) {
-        renderState(el, {
-          compact: true,
-          icon: 'i-logs',
-          title: 'No activity logged yet',
-          body: 'Every import, AI analysis, price change and publish is recorded here with its full request detail — useful when something goes wrong.'
-        });
-        return;
-      }
-
-      el.innerHTML = entries.map(logRow).join('');
+      logEntries = Array.isArray(entries) ? entries : [];
+      renderLogs();
     } catch (err) {
+      logEntries = [];
+      renderLogChrome();
       renderState(el, {
         variant: 'error',
         compact: true,
@@ -21533,15 +21543,269 @@
     }
   }
 
+  // What the server last sent, kept so a filter click re-draws without another request and so
+  // "Copy for support" copies exactly the rows on screen.
+  let logEntries = [];
+  let logFilter = 'all';
+  let logAppVersion = '';
+
+  const LOG_FILTER_NAMES = { all: 'Everything', error: 'Errors', warning: 'Warnings', info: 'Normal activity' };
+
+  // The server writes six level words (Info, Warning, Error, Research, Sourcing, Negotiation).
+  // Only two of them mean something went wrong; the rest are the app doing its job.
+  function logKind(entry) {
+    const level = String(entry?.level || '').toLowerCase();
+    if (level === 'error') return 'error';
+    if (level === 'warning' || level === 'warn') return 'warning';
+    return 'info';
+  }
+
+  function shownLogEntries() {
+    return logFilter === 'all' ? logEntries : logEntries.filter(e => logKind(e) === logFilter);
+  }
+
+  function logCounts() {
+    const counts = { all: logEntries.length, error: 0, warning: 0, info: 0 };
+    logEntries.forEach(e => { counts[logKind(e)]++; });
+    return counts;
+  }
+
+  function setLogFilter(filter) {
+    logFilter = LOG_FILTER_NAMES[filter] ? filter : 'all';
+    $('logs-copy-fallback-wrap')?.classList.add('hidden');
+    renderLogs();
+  }
+
+  const logPlural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  /** The filter buttons' counts and the one-line verdict above them. */
+  function renderLogChrome() {
+    const counts = logCounts();
+
+    document.querySelectorAll('#logs-filter [data-log-filter]').forEach(btn => {
+      const key = btn.dataset.logFilter;
+      const active = key === logFilter;
+      btn.classList.toggle('is-active', active);
+      btn.classList.toggle('has-entries', (counts[key] || 0) > 0);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      const n = btn.querySelector('.logs-filter-count');
+      if (n) n.textContent = counts[key] || 0;
+    });
+
+    const el = $('logs-summary');
+    if (!el) return counts;
+    if (counts.all === 0) {
+      el.className = 'logs-summary hidden';
+      el.innerHTML = '';
+      return counts;
+    }
+    if (counts.error === 0 && counts.warning === 0) {
+      el.className = 'logs-summary logs-summary--ok';
+      el.innerHTML =
+        `<span class="logs-summary-mark" aria-hidden="true">&#10003;</span>
+         <div class="logs-summary-text"><strong>Nothing has gone wrong.</strong>
+         ${logPlural(counts.all, 'action')} recorded, no warnings and no errors.</div>`;
+      return counts;
+    }
+
+    // Errors outrank warnings: one failed publish matters more than ten skipped photos.
+    const worst = counts.error > 0 ? 'error' : 'warning';
+    const found = [
+      counts.error ? logPlural(counts.error, 'error') : '',
+      counts.warning ? logPlural(counts.warning, 'warning') : ''
+    ].filter(Boolean).join(' and ');
+    const meaning = counts.error
+      ? 'An error means something did not finish.'
+      : 'A warning means something was skipped or needs a look.';
+    el.className = `logs-summary logs-summary--${worst}`;
+    el.innerHTML =
+      `<span class="logs-summary-mark" aria-hidden="true">!</span>
+       <div class="logs-summary-text"><strong>${found}</strong> in the last ${logPlural(counts.all, 'action')}. ${meaning}</div>
+       ${logFilter === worst ? '' : `<button class="btn btn-secondary" type="button" data-log-filter="${worst}">Show only ${worst === 'error' ? 'errors' : 'warnings'}</button>`}`;
+    return counts;
+  }
+
+  function renderLogs() {
+    const el = $('logs-list');
+    if (!el) return;
+    renderLogChrome();
+
+    if (logEntries.length === 0) {
+      renderState(el, {
+        compact: true,
+        icon: 'i-logs',
+        title: 'No activity logged yet',
+        body: 'Every import, AI analysis, price change and publish is recorded here with its full request detail — useful when something goes wrong.'
+      });
+      return;
+    }
+
+    const shown = shownLogEntries();
+    if (shown.length === 0) {
+      // An empty Errors list is good news and has to read as good news, not as a broken filter.
+      const none = { error: 'No errors', warning: 'No warnings', info: 'No normal activity yet' }[logFilter];
+      renderState(el, {
+        compact: true,
+        icon: 'i-logs',
+        title: none,
+        body: logFilter === 'info'
+          ? 'Everything recorded so far is a warning or an error.'
+          : `Nothing in the last ${logPlural(logEntries.length, 'action')} was ${logFilter === 'error' ? 'an error' : 'a warning'}.`,
+        actions: [{ label: 'Show everything', id: 'all' }]
+      }, { all: () => setLogFilter('all') });
+      return;
+    }
+
+    el.innerHTML = shown.map(logRow).join('');
+  }
+
   function logRow(entry) {
+    const kind = logKind(entry);
     const level = entry.level || 'Info';
-    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const when = entry.timestamp ? new Date(entry.timestamp) : null;
+    const valid = when && !Number.isNaN(when.getTime());
+    const time = valid ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    // The log outlives midnight. Yesterday's failure must not read as this morning's.
+    const day = valid && when.toDateString() !== new Date().toDateString()
+      ? `${when.toLocaleDateString([], { month: 'short', day: 'numeric' })}, `
+      : '';
     return `
-      <div class="log-row">
+      <div class="log-row log-row--${kind}" data-log-kind="${kind}">
         <span class="log-level ${esc(level.toLowerCase())}">${esc(level)}</span>
-        <strong class="log-title">${esc(entry.title || 'Action')}<br><small>${esc(time)}</small></strong>
+        <strong class="log-title">${esc(entry.title || 'Action')}<br><small>${esc(day + time)}</small></strong>
         <span class="log-detail">${esc(entry.detail || '')}</span>
       </div>`;
+  }
+
+  // ── Copy for support ────────────────────────────────────────────────────
+  // A log detail is whatever eBay, the AI provider or an exception said, word for word — and
+  // sometimes that includes the request that failed, with the credential still in it. Everything
+  // that leaves this machine in a support message goes through these rules first. Each one is a
+  // shape a credential actually takes here. Hiding too much costs support one extra question;
+  // hiding too little costs the seller their eBay account, so every doubt is settled by hiding.
+  const LOG_SECRET_RULES = [
+    // Authorization headers: "Bearer v^1.1#…", "Basic QWxhZGRpbjpv…"
+    [/\b(Bearer|Basic)\s+[A-Za-z0-9^#._~+\/=:|-]{8,}/gi, '$1 [hidden]'],
+    // eBay user and refresh tokens always start v^1.1#
+    [/v\^1\.1#[^\s"'&<>]+/g, '[hidden eBay token]'],
+    // AI provider keys: sk-ant-…, sk-proj-…, sk-…
+    [/\bsk-[A-Za-z0-9_-]{16,}/g, '[hidden API key]'],
+    // Sign-in tokens (JWT): three base64 blocks, the first always starting eyJ
+    [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+)?/g, '[hidden token]'],
+    // eBay keyset: Name-App-PRD-1a2b3c4d5-6e7f8a9b (App ID) and PRD-…-… (Cert ID)
+    [/\b[A-Za-z0-9]+-[A-Za-z0-9]+-(?:PRD|SBX)-[A-Za-z0-9]{6,}-[A-Za-z0-9]{6,}\b/g, '[hidden eBay App ID]'],
+    [/\b(?:PRD|SBX)-[A-Za-z0-9]{8,}(?:-[A-Za-z0-9]{4,})+\b/g, '[hidden eBay key]'],
+    // Telegram bot tokens: 123456789:AAF…
+    // (no \b in front: in a web address the id follows "bot" with nothing between them)
+    [/\d{6,12}:[A-Za-z0-9_-]{30,}/g, '[hidden bot token]'],
+    // name=value, name: value and "name":"value" where the name itself says it is a secret
+    [/((?:(?:access|refresh|id|auth|user|bot)[\s_-]?)?token|api[\s_-]?key|client[\s_-]?secret|secret|password|passwd|pwd|authorization|cookie|session[\s_-]?id|signature|(?:cert|dev|app|client)[\s_-]?id)("?\s*[=:]\s*"?)(?!\[hidden)([^\s"'&,;<>]{4,})/gi, '$1$2[hidden]'],
+    // One-time codes and keys carried in a web address
+    [/([?&](?:code|state|sig|key)=)(?!\[hidden)[^&\s"'<>]+/gi, '$1[hidden]'],
+    // Anything else long and unbroken that mixes letters and digits. A web address or a listing
+    // slug is long too, but it is short words between separators; a key is one solid run.
+    [/[A-Za-z0-9+\/_=-]{32,}/g, run =>
+      run.split(/[-_\/+=]/).some(piece => piece.length >= 20 && /[0-9]/.test(piece) && /[A-Za-z]/.test(piece))
+        ? '[hidden]'
+        : run],
+  ];
+
+  /** @returns {{text: string, hidden: number}} the text with every credential-shaped value replaced. */
+  function redactSecrets(value) {
+    let hidden = 0;
+    let text = String(value ?? '');
+    for (const [pattern, replacement] of LOG_SECRET_RULES) {
+      text = text.replace(pattern, (match, ...groups) => {
+        const safe = typeof replacement === 'function'
+          ? replacement(match)
+          : replacement.replace(/\$(\d)/g, (_, i) => groups[i - 1] ?? '');
+        if (safe !== match) hidden++;
+        return safe;
+      });
+    }
+    return { text, hidden };
+  }
+
+  /** Plain text for an e-mail: a header saying what this is, then one entry per block. */
+  function supportLogText(entries) {
+    let hidden = 0;
+    const clean = value => {
+      const safe = redactSecrets(value);
+      hidden += safe.hidden;
+      return safe.text;
+    };
+    const stamp = date => `${date.toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+    const counts = logCounts();
+
+    const blocks = entries.map(entry => {
+      const when = entry.timestamp ? new Date(entry.timestamp) : null;
+      const at = when && !Number.isNaN(when.getTime()) ? stamp(when) : 'time unknown';
+      const detail = clean(entry.detail || '').trim();
+      return `[${String(entry.level || 'Info').toUpperCase()}] ${at}  ${clean(entry.title || 'Action')}` +
+        (detail ? `\n    ${detail.replace(/\r?\n/g, '\n    ')}` : '');
+    });
+
+    const header = [
+      'ING Listing Engine - log for support',
+      `Copied ${stamp(new Date())}${logAppVersion ? ` | app version ${logAppVersion}` : ''} | ${location.host}`,
+      `Showing: ${LOG_FILTER_NAMES[logFilter]} (${entries.length} of ${counts.all} in the log)` +
+        ` | whole log: ${logPlural(counts.error, 'error')}, ${logPlural(counts.warning, 'warning')}`,
+      `Browser: ${navigator.userAgent}`,
+      'Passwords, tokens and keys were replaced with [hidden] before this was copied.',
+      '------------------------------------------------------------',
+    ];
+    return { text: `${header.join('\n')}\n${blocks.join('\n\n')}\n`, hidden };
+  }
+
+  async function copyLogsForSupport() {
+    const shown = shownLogEntries();
+    if (shown.length === 0) {
+      toast(logEntries.length === 0
+        ? 'There is nothing in the log to copy yet.'
+        : `There are no ${LOG_FILTER_NAMES[logFilter].toLowerCase()} to copy. Choose Everything to copy the whole log.`,
+        { kind: 'info', title: 'Nothing to copy' });
+      return;
+    }
+
+    const { text, hidden } = supportLogText(shown);
+    const wrap = $('logs-copy-fallback-wrap');
+    const box = $('logs-copy-fallback');
+
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      // No clipboard permission, or the page is not on https/localhost. Put the same text in a
+      // box and select it, so the worst case is one Ctrl+C rather than nothing to send.
+      if (box && wrap) {
+        box.value = text;
+        wrap.classList.remove('hidden');
+        box.focus();
+        box.select();
+        try { copied = document.execCommand('copy'); } catch { copied = false; }
+        if (copied) wrap.classList.add('hidden');
+      }
+    }
+
+    if (!copied) {
+      toast('Your browser would not copy it. The text is selected on the page — press Ctrl+C.',
+        { kind: 'warning', title: 'One more step' });
+      return;
+    }
+
+    wrap?.classList.add('hidden');
+    const btn = $('btn-copy-logs');
+    if (btn) {
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = 'Copy for support'; }, 2500);
+    }
+    toastOk(
+      `${shown.length} log ${shown.length === 1 ? 'entry' : 'entries'} copied. Paste into your message to support. ` +
+      (hidden > 0
+        ? `${hidden} password, token or key value${hidden === 1 ? ' was' : 's were'} hidden first.`
+        : 'No passwords, tokens or keys were found in them.'),
+      { title: 'Copied for support' });
   }
 
   async function loadListings(activityTitle = 'Listings imported') {

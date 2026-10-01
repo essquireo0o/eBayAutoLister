@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=141" />
+  <link rel="stylesheet" href="style.css?v=142" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -5400,7 +5400,30 @@
             <p class="eyebrow dark">Logs</p>
             <h2>Recent API Actions</h2>
           </div>
-          <button id="btn-refresh-logs" class="btn btn-secondary" type="button">Refresh</button>
+          <div class="logs-actions">
+            <button id="btn-copy-logs" class="btn btn-primary" type="button">Copy for support</button>
+            <button id="btn-refresh-logs" class="btn btn-secondary" type="button">Refresh</button>
+          </div>
+        </div>
+        <!-- Says in one line whether anything went wrong, before a single row is read. -->
+        <div id="logs-summary" class="logs-summary hidden" role="status" aria-live="polite"></div>
+        <div class="logs-toolbar">
+          <span class="logs-toolbar-label" id="logs-filter-label">Show</span>
+          <div id="logs-filter" class="logs-filter" role="group" aria-labelledby="logs-filter-label">
+            <button type="button" class="logs-filter-btn is-active" data-log-filter="all" aria-pressed="true">Everything <span class="logs-filter-count">0</span></button>
+            <button type="button" class="logs-filter-btn logs-filter-btn--error" data-log-filter="error" aria-pressed="false">Errors <span class="logs-filter-count">0</span></button>
+            <button type="button" class="logs-filter-btn logs-filter-btn--warning" data-log-filter="warning" aria-pressed="false">Warnings <span class="logs-filter-count">0</span></button>
+            <button type="button" class="logs-filter-btn" data-log-filter="info" aria-pressed="false">Normal activity <span class="logs-filter-count">0</span></button>
+          </div>
+        </div>
+        <p class="logs-copy-note">
+          <strong>Copy for support</strong> copies the entries shown below so you can paste them into a message.
+          Passwords, tokens and keys are hidden first.
+        </p>
+        <!-- Only shown when the browser refuses to copy: the same safe text, selected, ready for Ctrl+C. -->
+        <div id="logs-copy-fallback-wrap" class="logs-copy-fallback hidden">
+          <label for="logs-copy-fallback">Your browser would not copy this for you. It is selected — press Ctrl+C, then paste it into your message.</label>
+          <textarea id="logs-copy-fallback" rows="8" readonly spellcheck="false"></textarea>
         </div>
         <div id="logs-list" class="logs-list"></div>
       </section>
@@ -6194,7 +6217,7 @@
 
   <!-- Trial paywall removed -->
 
-  <script src="app.js?v=173"></script>
+  <script src="app.js?v=174"></script>
   <script src="photobox-ux.js?v=2"></script>
 </body>
 </html>
