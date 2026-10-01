@@ -33,7 +33,7 @@
 
   <script src="csrf.js?v=1"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="style.css?v=142" />
+  <link rel="stylesheet" href="style.css?v=143" />
   <!--
     Theme, resolved before the first paint. This has to be inline and it has to be
     in the head: if the choice were applied from app.js after DOMContentLoaded, a
@@ -614,6 +614,10 @@
             <span class="dash-act-icon" aria-hidden="true"><svg><use href="#i-ai"/></svg></span>
             <span class="dash-act-title">New AI Listing</span>
             <span class="dash-act-sub">Name a product or paste a link. AI finds the photos, specs and sold prices and writes the whole listing.</span>
+            <!-- "3 of 5 AI listings left today" — web app only, where the owner's key pays and
+                 each account gets a daily allowance. Filled in by renderAiQuota in app.js from
+                 /api/ai-quota; stays hidden on the desktop app, which has no limit. -->
+            <span id="dash-ai-quota" class="ai-quota hidden" data-ai-quota></span>
             <span class="dash-act-go">Start a draft<span class="dash-act-arrow" aria-hidden="true">→</span></span>
           </button>
         </div>
@@ -853,6 +857,10 @@
                All four stay on screen at once, at the owner's request. A fold was tried here and
                taken back out: the seller wants every way into a listing visible without a click. -->
           <div class="nl-url-section">
+
+            <!-- Today's AI allowance, above the buttons that spend it. Web app only: hidden until
+                 /api/ai-quota says this account is rationed, which the desktop app never does. -->
+            <p id="nl-ai-quota" class="ai-quota ai-quota--bar hidden" data-ai-quota role="status" aria-live="polite"></p>
 
             <div class="nl-action-card nl-action-card--hero">
               <span class="nl-action-badge">Try this first</span>
@@ -6217,7 +6225,7 @@
 
   <!-- Trial paywall removed -->
 
-  <script src="app.js?v=174"></script>
+  <script src="app.js?v=175"></script>
   <script src="photobox-ux.js?v=2"></script>
 </body>
 </html>

@@ -12978,6 +12978,38 @@ body.ws-tabs-open .new-listing-overlay { top: var(--ws-tabbar-h); }
 .dash-act--gold .dash-act-go { border-top-color: rgba(199, 154, 54, .22); color: var(--gold-ink); }
 .dash-act--ai .dash-act-icon { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .dash-act--ai .dash-act-go { color: var(--accent); }
+/* ── Today's AI allowance ──────────────────────────────────────────────
+   "3 of 5 AI listings left today", on the New AI Listing card and across
+   the top of the AI Listing screen. Web app only: both elements carry
+   .hidden until /api/ai-quota says the account is rationed (renderAiQuota
+   in app.js), and the desktop app never says so. Sized as a statement,
+   not a footnote — it is the one number that decides whether the button
+   beside it will work. Amber on the last one, red when there are none. */
+.ai-quota {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  justify-self: start;
+  align-self: flex-start;
+  margin: 0;
+  padding: var(--s2) var(--s4);
+  border: 1.5px solid var(--accent-line);
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
+  color: var(--ink);
+  text-align: left;
+}
+.ai-quota-count { font-size: var(--fs-md); font-weight: var(--fw-heavy); }
+.ai-quota-note { font-size: var(--fs-sm); color: var(--ink-2); }
+.ai-quota--bar .ai-quota-count { font-size: var(--fs-lg); }
+/* On the card the number alone, until there are none — then the "when" matters more. */
+.dash-act .ai-quota-note { display: none; }
+.dash-act .ai-quota--out .ai-quota-note { display: inline; }
+.ai-quota--low { border-color: var(--warning-line); background: var(--warning-soft); }
+.ai-quota--low .ai-quota-count { color: var(--warning); }
+.ai-quota--out { border-color: var(--danger-line); background: var(--danger-soft); }
+.ai-quota--out .ai-quota-count { color: var(--danger); }
 /* ── The money row ─────────────────────────────────────────────────────
    Three bands stacked full-width was three headline figures each claiming
    the page. Side by side they read as one answer with three parts, and the

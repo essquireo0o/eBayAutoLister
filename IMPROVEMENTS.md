@@ -122,3 +122,50 @@ Dated entries from unattended queue tasks: what changed, how it was verified, wh
     If that save happens after the request that started it has ended there is no signed-in
     seller, and it is now refused with a plain reason (before: the same 500 as everything
     else). If that job is used on hosted it needs to carry the seller who started it.
+
+## 2026-10-01 — Hosted: "3 of 5 AI listings left today" is now on the page
+
+- **What was wrong:** the web app gives each account a few AI generations a day, and the server
+  has always answered "how many are left" at `/api/ai-quota` — but nothing on the page asked. A
+  seller found out the limit by hitting it, halfway through a listing.
+- **What changed:**
+  - `wwwroot/app.js`: reads `/api/ai-quota` on load and writes the sentence in two places — on
+    the **New AI Listing** card on the dashboard, and in a bar across the top of the AI Listing
+    screen, above Auto-Fill / Analyze / Import All / Apply. "3 of 5 AI listings left today";
+    amber on the last one; red "No AI listings left today" with when more arrive (in the seller's
+    own clock) and that the work already written is saved.
+  - Kept current without a list of AI buttons: the one fetch wrapper every request already goes
+    through re-reads the number after any request that could have spent one (a write, a slow
+    answer, or a 429 refusal), once per burst. Also re-read when the AI Listing screen opens, when
+    the tab comes back to the front, and at the reset time, so a page left open overnight is right
+    in the morning. A read that fails leaves the number as it was, never "none left".
+  - `wwwroot/index.html`: the two elements, hidden in the markup; `app.js?v=175`, `style.css?v=143`.
+  - `wwwroot/style.css`: `.ai-quota` (+ `--bar`, `--low`, `--out`).
+  - **Desktop app: nothing shows.** It answers `enforced: false`, the elements stay hidden, and it
+    never asks again. Same for a hosted account the limit does not apply to (the owner's).
+  - No server code changed. The endpoint was already right; it now has tests on its shape.
+- **How verified:**
+  - New `AiQuotaMeterTests.cs`, 13 tests. The endpoint over real HTTP behind the real hosted
+    sign-in: exactly the six field names the page reads (`enforced, limit, used, remaining,
+    exhausted, resetsAt`), the reset is a parseable next-UTC-midnight instant, the number drops by
+    one per generation and reading it costs nothing, the desktop build answers the same fields
+    with `enforced: false` / `remaining: null`, and it is 401 without a session. Plus pins on the
+    page (where it sits, starts hidden, re-read hook) and the real sentence function run under Node.
+  - `dotnet test … --artifacts-path obj/quota-scratch`: **6,082 passed, 0 failed** (6,069 + 13).
+    Scratch build; the app on 9332 was never stopped, started or rebuilt.
+  - The real page in a real browser (Playwright, every `/api` call stubbed, nothing live touched),
+    18 of 18 checks: shows "3 of 5", goes to "2 of 5" by itself after a generation, three requests
+    at once cost one re-read, a quick status poll costs none, last one amber, zero red with the
+    reset time, sits above Auto-Fill, a failed read keeps the old number, and on the desktop answer
+    both places stay empty and the page never asks again. Looked at screenshots at desktop and
+    phone width.
+- **Left:**
+  - **Not deployed to app.inglisting.com** (by instruction). The staging bot picks the commit up;
+    production gets it with the next hosted deploy. Not yet seen against the live server with a
+    real account — the browser check used stubbed answers.
+  - A generation spent by a background job that outlives the request which started it would only
+    show at the next re-read (next AI request, opening the AI Listing screen, or returning to the
+    tab). I found no such path: no AI endpoint streams its answer, and the quota gate refuses a
+    job with no signed-in seller. Not exhaustively traced through every `Task.Run`.
+  - The count is per generation, and the bar says "Each AI listing, rewrite or AI check uses one".
+    If the owner wants different words for what counts, it is one line in `aiQuotaWords`.

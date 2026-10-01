@@ -12,13 +12,111 @@
   // exactly as it did before this existed.
   const passThroughFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
+    const asked = Date.now();
     const response = await passThroughFetch(...args);
     if (response.status === 401 && response.headers.get('X-Auth-Required') === 'sign-in') {
       const next = encodeURIComponent(location.pathname + location.search + location.hash);
       location.replace('/signin.html?next=' + next);
     }
+    aiQuotaAfterRequest(args[0], args[1], response.status, Date.now() - asked);
     return response;
   };
+
+  // ── What is left of today's AI allowance, said on the screen ────────────────
+  // On the hosted build the owner's Anthropic key pays for every account, so each one gets a
+  // handful of AI generations a day (AiQuota.cs — five, on the live box). The server has answered
+  // "how many are left" at /api/ai-quota since the day the limit went in, and nothing on the page
+  // asked: a seller found out what the number was by running out of it, halfway through a listing.
+  // So the number is on the two places a listing starts from — the New AI Listing card on the
+  // dashboard and the top of the AI Listing screen — before anything is spent.
+  //
+  // Drawn only when the server says `enforced: true`. The desktop build answers false (the seller
+  // is on their own key and there is nothing to ration) and so does the hosted one for an account
+  // the limit does not apply to; both get no meter at all, not a meter that never moves. The
+  // elements are `hidden` in the markup, so a page that never hears back shows nothing either.
+  //
+  // Kept current from the fetch wrapper above, not from each button that spends: there are a dozen
+  // ways to use a generation in this file and the thirteenth gets written next month. A generation
+  // can only have been spent by a request that changed something, one that took as long as a model
+  // call takes, or one that was refused for being over — so those three are what re-read the
+  // meter, a moment later, once per burst. A status poll that answers in milliseconds never does.
+  const AI_QUOTA_SETTLE_MS = 700;    // one read after a burst of requests, not one per request
+  const AI_QUOTA_SLOW_MS   = 1500;   // no model call answers faster; every status poll does
+  let aiQuotaLive = false;           // true once the server has said this account is rationed
+  let aiQuotaTimer = null;
+  let aiQuotaResetTimer = null;
+
+  /// The sentence, and the smaller one under it. Null when there is nothing to ration.
+  function aiQuotaWords(q) {
+    if (!q || !q.enforced || !(q.limit > 0)) return null;
+    const limit = q.limit;
+    const left  = Math.max(0, Math.min(limit, q.remaining ?? (limit - (q.used || 0))));
+
+    // The reset is midnight UTC, which is a fact about the server. Said in the seller's own clock.
+    const at   = q.resetsAt ? new Date(q.resetsAt) : null;
+    const when = at && !isNaN(at)
+      ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : '';
+
+    return left > 0
+      ? { left, limit,
+          text: `${left} of ${limit} AI listings left today`,
+          note: 'Each AI listing, rewrite or AI check uses one.' + (when ? ` You get ${limit} more at ${when}.` : '') }
+      : { left, limit,
+          text: 'No AI listings left today',
+          note: (when ? `You get ${limit} more at ${when}. ` : `You get ${limit} more tomorrow. `) +
+                'Everything you have written is saved, and you can still edit and publish it.' };
+  }
+
+  function renderAiQuota(q) {
+    const words = aiQuotaWords(q);
+    aiQuotaLive = words !== null;
+
+    document.querySelectorAll('[data-ai-quota]').forEach(el => {
+      el.classList.toggle('hidden', !words);
+      if (!words) { el.replaceChildren(); return; }
+
+      const count = document.createElement('strong');
+      count.className = 'ai-quota-count';
+      count.textContent = words.text;
+      const note = document.createElement('span');
+      note.className = 'ai-quota-note';
+      note.textContent = words.note;
+      el.replaceChildren(count, note);
+
+      el.classList.toggle('ai-quota--low', words.left === 1);
+      el.classList.toggle('ai-quota--out', words.left === 0);
+    });
+
+    // The count goes back to full at a moment the server has just named. Ask again then, so a
+    // page left open overnight is not still saying "none left" in the morning.
+    clearTimeout(aiQuotaResetTimer);
+    const wait = words && q.resetsAt ? new Date(q.resetsAt).getTime() - Date.now() : NaN;
+    if (wait > 0 && wait < 36 * 60 * 60 * 1000) aiQuotaResetTimer = setTimeout(refreshAiQuota, wait + 2000);
+  }
+
+  async function refreshAiQuota() {
+    try {
+      const res = await passThroughFetch('/api/ai-quota', { cache: 'no-store' });
+      if (!res.ok) return;       // a meter that cannot be read stays as it was — never redrawn as zero
+      renderAiQuota(await res.json());
+    } catch { /* offline; the next request that gets through asks again */ }
+  }
+
+  function aiQuotaAfterRequest(input, init, status, tookMs) {
+    if (!aiQuotaLive) return;    // desktop, or an account with no limit: nothing to keep current
+    try {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      const path = url.replace(/^https?:\/\/[^/]+/i, '');
+      if (!path.startsWith('/api/') || path.startsWith('/api/ai-quota')) return;
+
+      const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+      if (method === 'GET' && status !== 429 && tookMs < AI_QUOTA_SLOW_MS) return;
+
+      clearTimeout(aiQuotaTimer);
+      aiQuotaTimer = setTimeout(refreshAiQuota, AI_QUOTA_SETTLE_MS);
+    } catch { /* the meter is a courtesy; it must never be why a request fails */ }
+  }
 
   // The antiforgery token, on the same wrapper and for the same reason: 155 fetch calls, and the
   // server now refuses every POST and DELETE that cannot echo the token back. Attaching it here
@@ -108,6 +206,14 @@
       actions.prepend(button);
       actions.prepend(whoami);
     } catch { /* no session endpoint, no sign-out button */ }
+  });
+
+  // The first reading of today's AI allowance (see refreshAiQuota above). Asked on both builds:
+  // the desktop one answers `enforced: false` and the meter stays hidden.
+  document.addEventListener('DOMContentLoaded', refreshAiQuota);
+  // Another tab, or the phone, may have spent some while this one sat in the background.
+  document.addEventListener('visibilitychange', () => {
+    if (aiQuotaLive && document.visibilityState === 'visible') refreshAiQuota();
   });
 
   let nlImageBase64 = '';
@@ -24331,6 +24437,7 @@
     $('new-listing-overlay')?.focus();
     nlRefreshSoldCompsConnect();   // show/hide the Connect-to-Terapeak prompt in the bar
     nlRunReadiness(true);          // score the blank form so the bar is there from the start
+    if (aiQuotaLive) refreshAiQuota();   // the number at the top of this screen, as of now
     setActiveNavItem('ai');
     markWorkspaceTabOpen('ai');
     if (cachedPolicies) {
