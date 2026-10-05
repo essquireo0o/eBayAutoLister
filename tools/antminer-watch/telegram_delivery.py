@@ -1,5 +1,6 @@
 """Telegram delivery with credentials encrypted for the current Windows user."""
 import json
+import html
 import os
 import re
 import urllib.request
@@ -56,7 +57,12 @@ def send(subject, body, config=None, listing_url=None):
     text = subject + '\n\n' + body
     if len(text) > 4000:
         raise RuntimeError('Telegram alert is too long; not sent.')
-    payload = {'chat_id': config['chat_id'], 'text': text,
+    # Keep the entire destination (including query parameters) behind a short label.
+    parts = re.split(r'(https?://(?:[A-Za-z0-9-]+\.)?ebay\.com/[^\s<>]+)', text)
+    text = ''.join('<a href="' + html.escape(part, quote=True) + '">Open eBay listing</a>'
+        if re.match(r'https?://(?:[A-Za-z0-9-]+\.)?ebay\.com/', part) else html.escape(part)
+        for part in parts)
+    payload = {'chat_id': config['chat_id'], 'text': text, 'parse_mode': 'HTML',
         'disable_notification': False, 'link_preview_options': {'is_disabled': True}}
     if listing_url:
         payload['reply_markup'] = {'inline_keyboard': [[

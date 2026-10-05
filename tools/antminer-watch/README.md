@@ -3,7 +3,7 @@
 Uses the installed ING Listing Engine's read-only eBay search, individual sold-comps records, and listing-detail endpoints. It never arms Auto-Buy or places an order.
 
 - One scan every 30 seconds while this Windows account is signed in, awake, and ING Listing Engine is running on port 9332. A transient failure retries after 15 seconds; repeated failures back off up to five minutes. Rate limiting backs off five minutes. Long scans delay the next scan; scans never overlap. Status includes scan duration and the next scheduled scan.
-- First scan records the current newest 50 listings without sending backlog alerts. Subsequent newly observed listings are evaluated once. eBay search indexing can delay availability; this is polling, not instant push.
+- First scan records the current newest 50 listings without sending backlog alerts. Subsequent newly observed listings are evaluated; filtered or unverified listings can be reconsidered hourly as prices and source data change. Delivered alerts are never repeated. eBay search indexing can delay availability; this is polling, not instant push.
 - US fixed-price listings; seller feedback >=20 and >=98%; stated shipping required.
 - Exact parsed Antminer variant and hashrate; at least three unique, dated sales in the last 60 days. Price plus shipping must be >=30% and >=$100 below the sold-item median. Tax is excluded. Sold shipping is omitted, making the threshold conservative.
 - Reject parts, repair, untested, accessories, lots, and unclear model/hashrate. Before email, retrieve full description and require working-condition and PSU evidence. Broad negative-word screening can suppress valid deals; seller claims are not hardware verification.
@@ -16,5 +16,7 @@ Uses the installed ING Listing Engine's read-only eBay search, individual sold-c
 Run `python tools/antminer-watch/setup_telegram.py`. Create a dedicated bot in Telegram's BotFather with `/newbot`, paste its token into the masked local field, then open the pairing link and press Start. Pairing accepts only a private chat with the exact one-time code. A successful test message is required before saving the encrypted configuration.
 
 The scheduled task uses `watch.py --channel telegram`. It continues monitoring without sending until `telegram.dpapi` exists, then activates on the next scan. It does not also send email. The task keeps its original name, `ING Antminer Deal Email Watch`, for continuity. Telegram API acceptance confirms that a message was created in the chat, not that the phone displayed or read it; phone notification settings still apply.
+
+Alerts display eBay URLs as short HTML hyperlinks while retaining the full destination and query parameters. The listing button uses that same full URL. Status includes scan outcome counts, including candidates with missing sold records; an active watcher does not imply a qualifying deal was found. Check the task's enabled/running state and `last_success` timestamp if alerts stop.
 
 Verification: `python -m unittest discover -s tools/antminer-watch -p "test_*.py"`.

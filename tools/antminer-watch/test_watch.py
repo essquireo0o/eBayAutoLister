@@ -18,7 +18,7 @@ class Tests(unittest.TestCase):
  def test_exclusions(self):
   i={'title':'Antminer S19 Pro 100TH','price':100,'shippingStated':True,'buyingOption':'FIXED_PRICE','sellerFeedbackScore':100,'sellerFeedbackPercent':100}
   self.assertTrue(watch.eligible(i))
-  for change in [{'title':i['title']+' for parts'},{'shippingStated':False},{'buyingOption':'AUCTION'},{'sellerFeedbackPercent':80}]:self.assertFalse(watch.eligible({**i,**change}))
+  for change in [{'title':i['title']+' for parts'},{'title':'APW12 Power Supply PSU For Bitmain Antminer L7 9500M Miner'},{'shippingStated':False},{'buyingOption':'AUCTION'},{'sellerFeedbackPercent':80}]:self.assertFalse(watch.eligible({**i,**change}))
  def test_scan_dedup_and_delivery_retry(self):
   db=sqlite3.connect(':memory:');db.execute('create table seen(id text primary key,status text,updated real)');db.execute('create table meta(key text primary key,value text)')
   item={'itemId':'42','title':'Antminer S19 Pro 100TH','price':200,'shippingCost':50,'shippingStated':True,'buyingOption':'FIXED_PRICE','sellerFeedbackScore':100,'sellerFeedbackPercent':100,'sellerUsername':'fixture','url':'https://www.ebay.com/itm/42'}
@@ -36,4 +36,7 @@ class Tests(unittest.TestCase):
    self.assertEqual(db.execute('select count(*) from seen').fetchone()[0],0)
    send.side_effect=None;watch.run_once(db,'fixture@example.test');self.assertEqual(send.call_count,2)
    watch.run_once(db,'fixture@example.test');self.assertEqual(send.call_count,2)
+   db.execute("update seen set status='no_verified_deal',updated=0");db.commit()
+   watch.run_once(db,'fixture@example.test');self.assertEqual(send.call_count,3)
+   watch.run_once(db,'fixture@example.test');self.assertEqual(send.call_count,3)
 if __name__=='__main__':unittest.main()

@@ -15,7 +15,7 @@ def api(path,data=None):
     req=urllib.request.Request(BASE+path,data=json.dumps(data).encode() if data is not None else None,headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(req,timeout=65) as r:return json.load(r)
 def eligible(item):
-    return (identity(item.get('title','')) is not None and not BAD.search(item.get('title','')+' '+item.get('condition','')) and item.get('shippingStated') is True and item.get('buyingOption')=='FIXED_PRICE' and item.get('sellerFeedbackPercent',0)>=98 and item.get('sellerFeedbackScore',0)>=20 and item.get('price',0)>0)
+    return (identity(item.get('title','')) is not None and not re.search(r'(?:power supply|psu).*\bfor\b|\bfor\b.*(?:antminer|bitmain)',item.get('title',''),re.I) and not BAD.search(item.get('title','')+' '+item.get('condition','')) and item.get('shippingStated') is True and item.get('buyingOption')=='FIXED_PRICE' and item.get('sellerFeedbackPercent',0)>=98 and item.get('sellerFeedbackScore',0)>=20 and item.get('price',0)>0)
 def evidence(item,comps,now=None):
     now=now or dt.datetime.now(dt.timezone.utc); prices={}
     for c in comps:
@@ -57,15 +57,20 @@ def run_once(db,recipient,monitor_only=False,channel='email'):
     if not db.execute("select 1 from meta where key='initialized'").fetchone():
         db.executemany('insert or ignore into seen values(?,?,?)',[(i['itemId'],'baseline',now) for i in items]);db.execute("insert into meta values('initialized',?)",(str(now),));db.commit();save_status(state='monitoring_only' if monitor_only else 'active',last_success=now,baseline_count=len(items),recipient=recipient);return
     checked=sent=0
+    outcomes={'already_seen':0,'filtered':0,'no_verified_deal':0,'missing_sold_records':0,'notified':0}
     for item in items:
-        iid=item['itemId'];old=db.execute('select status from seen where id=?',(iid,)).fetchone()
-        if old:continue
+        iid=item['itemId'];old=db.execute('select status,updated from seen where id=?',(iid,)).fetchone()
+        # Missing/stale comps or incomplete search data can improve later. Never retry delivered alerts.
+        if old and (old[0] in ('baseline','notified') or now-old[1]<3600):
+            outcomes['already_seen']+=1;continue
         if not eligible(item):
-            db.execute('insert into seen values(?,?,?)',(iid,'filtered',now));db.commit();continue
+            outcomes['filtered']+=1
+            db.execute('insert or replace into seen values(?,?,?)',(iid,'filtered',now));db.commit();continue
         checked+=1
         # Match exact variant/hashrate on the returned individual sold records, never a broad aggregate.
         ident=identity(item['title']);query=f'Antminer {ident[0]} {ident[1]:g}{ident[2]}H'
         comps=api('/api/sold-comps?'+urllib.parse.urlencode({'q':query}))
+        if not comps.get('items'):outcomes['missing_sold_records']+=1
         ev=evidence(item,comps.get('items',[]))
         if ev:
             detail=api('/api/ebay/listing-detail?'+urllib.parse.urlencode({'itemId':iid}))
@@ -84,8 +89,9 @@ def run_once(db,recipient,monitor_only=False,channel='email'):
             else:
                 mid=send_mail(recipient,subject,body);save_status(last_email_at=time.time(),last_email_id=mid)
             sent+=1
-        db.execute('insert into seen values(?,?,?)',(iid,'notified' if ev else 'no_verified_deal',now));db.commit()
-    save_status(state='monitoring_only' if monitor_only else 'active',last_success=time.time(),last_scan_count=len(items),last_evaluated=checked,last_alerts=sent,recipient=recipient,error=None)
+        outcome='notified' if ev else 'no_verified_deal';outcomes[outcome]+=1
+        db.execute('insert or replace into seen values(?,?,?)',(iid,outcome,now));db.commit()
+    save_status(state='monitoring_only' if monitor_only else 'active',last_success=time.time(),last_scan_count=len(items),last_evaluated=checked,last_alerts=sent,last_outcomes=outcomes,recipient=recipient,error=None)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--recipient',default='');p.add_argument('--channel',choices=['email','telegram'],default='email');p.add_argument('--once',action='store_true');p.add_argument('--test-email',action='store_true');p.add_argument('--monitor-only',action='store_true');a=p.parse_args()
     if (a.channel=='email' or a.test_email) and not a.recipient:p.error('--recipient is required for email')

@@ -40,6 +40,17 @@ class TelegramTests(unittest.TestCase):
             self.assertEqual(payload['reply_markup']['inline_keyboard'],[[{'text':'Open eBay listing','url':url}]])
             self.assertFalse(payload['disable_notification'])
 
+    def test_hyperlink_preserves_full_destination_and_escapes_text(self):
+        url='https://www.ebay.com/itm/123456789012?var=987&hash=item123'
+        with patch.object(tg,'call',return_value={'chat':{'id':42},'message_id':9}) as call:
+            tg.send('Deal <sale>', 'Miner & PSU\n'+url, {'token':'123:secret','chat_id':42}, listing_url=url)
+            payload=call.call_args.args[2]
+            self.assertEqual(payload['parse_mode'],'HTML')
+            self.assertIn('Deal &lt;sale&gt;',payload['text'])
+            self.assertIn('Miner &amp; PSU',payload['text'])
+            self.assertIn('<a href="https://www.ebay.com/itm/123456789012?var=987&amp;hash=item123">Open eBay listing</a>',payload['text'])
+            self.assertEqual(payload['reply_markup']['inline_keyboard'][0][0]['url'],url)
+
     def test_encrypted_config_round_trip(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(tg,'HOME',Path(folder)),patch.object(tg,'CONFIG',Path(folder)/'telegram.dpapi'):
