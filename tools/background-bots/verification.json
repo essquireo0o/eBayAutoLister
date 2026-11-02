@@ -1,0 +1,97 @@
+{
+  "tasks": [
+    {
+      "windowless": true,
+      "name": "ING AI Archive Watchdog",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING Antminer Deal Email Watch",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING BlackOps Web Push",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING Demand Sweep 2",
+      "state": "Disabled"
+    },
+    {
+      "windowless": false,
+      "name": "ING Driver Update",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING Morning Brief",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING Sold Data Collector",
+      "state": "Disabled"
+    },
+    {
+      "windowless": true,
+      "name": "ING Weekly Backup",
+      "state": "Disabled"
+    },
+    {
+      "windowless": true,
+      "name": "ING-AutoLister-Supervisor",
+      "state": "Disabled"
+    },
+    {
+      "windowless": true,
+      "name": "ING-Beale-Loop",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING-CryptoNews-Queue",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING-News-Forecast",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING-Profitability-Page",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING-Radar-Watch",
+      "state": "Ready"
+    },
+    {
+      "windowless": true,
+      "name": "ING-SEO-Supervisor",
+      "state": "Disabled"
+    },
+    {
+      "windowless": true,
+      "name": "ING-UsedPriceIndex-Daily",
+      "state": "Running"
+    },
+    {
+      "windowless": true,
+      "name": "ING-Weekly-Margin-Report",
+      "state": "Ready"
+    }
+  ],
+  "checked": "2026-11-02T09:05:40",
+  "newsSupervisor": [
+    {
+      "ProcessId": 44264,
+      "ParentProcessId": 31708
+    }
+  ],
+  "priceCollectorStillRunning": true
+}
