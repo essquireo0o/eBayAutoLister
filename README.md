@@ -217,3 +217,12 @@ In **Settings → Listing Defaults**, pre-fill your postal code, default handlin
 ---
 
 *ING Listing Engine™ is a product of ING Mining LLC. All rights reserved.*
+
+
+---
+
+## Copyright
+
+Copyright © 2026 ING Mining LLC. All rights reserved.
+
+Contact: ns@ingmining.com
