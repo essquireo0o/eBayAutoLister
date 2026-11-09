@@ -11,7 +11,7 @@ inspected, changed, built and tested.
 
 | Item | Value |
 |---|---|
-| Repository path | `C:\Users\nsquires\source\repos\ING eBay AutoLister` |
+| Repository path | `<repos>/ING eBay AutoLister` |
 | Starting branch | `main` |
 | Working branch | `feature/edit-drawer-market-images-ui` |
 | Git remote | `github.com/essquireo0o/eBayAutoLister` |
@@ -278,7 +278,7 @@ not committed, not reverted.
 ### How to resume
 
 ```
-cd "C:\Users\nsquires\source\repos\ING eBay AutoLister"
+cd "<repos>/ING eBay AutoLister"
 git checkout feature/edit-drawer-market-images-ui
 dotnet build "ING eBay AutoLister.slnx" -c Debug
 ./ING\ eBay\ AutoLister/bin/Debug/net10.0-windows/AutoListerB1.exe

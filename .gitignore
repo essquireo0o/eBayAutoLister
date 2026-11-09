@@ -53,7 +53,7 @@ ingmining_homepage_reference.html
 publish/
 
 # ── ingmining.com website data — kept in a separate folder, never in this repo ──
-# (see C:\Users\nsquires\source\repos\ingmining-com-website\ — moved out of this repo
+# (see <repos>/ingmining-com-website\ — moved out of this repo
 # entirely, this app has nothing to do with the ingmining.com website itself)
 ingmining-server/
 ingmining_homepage_*.html
