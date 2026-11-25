@@ -901,6 +901,9 @@
                     <div class="field">
                       <label>Buy It Now Price (USD)</label>
                       <input id="nl-price" type="number" step="0.01" min="0" placeholder="0.00" />
+                <div class="ing-markup" data-markup-for="nl-price" title="Raise the Buy It Now price by a percentage of the price you started from. Click Reset to go back.">
+                  <span class="ing-markup-label">Add</span><button type="button" class="ing-markup-btn" data-pct="20">+20%</button><button type="button" class="ing-markup-btn" data-pct="30">+30%</button><button type="button" class="ing-markup-btn" data-pct="40">+40%</button><button type="button" class="ing-markup-btn" data-pct="50">+50%</button><button type="button" class="ing-markup-btn" data-pct="60">+60%</button><button type="button" class="ing-markup-btn" data-pct="70">+70%</button><button type="button" class="ing-markup-btn" data-pct="80">+80%</button><button type="button" class="ing-markup-btn" data-pct="90">+90%</button><button type="button" class="ing-markup-btn" data-pct="100">+100%</button><button type="button" class="ing-markup-btn" data-pct="120">+120%</button><button type="button" class="ing-markup-btn" data-pct="150">+150%</button><button type="button" class="ing-markup-btn" data-pct="200">+200%</button><button type="button" class="ing-markup-btn ing-markup-reset" data-pct="0">Reset</button>
+                </div>
                     </div>
                     <div class="field">
                       <label>Quantity Available</label>
@@ -5173,6 +5176,9 @@
               <div class="field">
                 <label>Buy It Now Price (USD)</label>
                 <input id="f-price" type="number" step="0.01" min="0" placeholder="0.00" />
+                <div class="ing-markup" data-markup-for="f-price" title="Raise the Buy It Now price by a percentage of the price you started from. Click Reset to go back.">
+                  <span class="ing-markup-label">Add</span><button type="button" class="ing-markup-btn" data-pct="20">+20%</button><button type="button" class="ing-markup-btn" data-pct="30">+30%</button><button type="button" class="ing-markup-btn" data-pct="40">+40%</button><button type="button" class="ing-markup-btn" data-pct="50">+50%</button><button type="button" class="ing-markup-btn" data-pct="60">+60%</button><button type="button" class="ing-markup-btn" data-pct="70">+70%</button><button type="button" class="ing-markup-btn" data-pct="80">+80%</button><button type="button" class="ing-markup-btn" data-pct="90">+90%</button><button type="button" class="ing-markup-btn" data-pct="100">+100%</button><button type="button" class="ing-markup-btn" data-pct="120">+120%</button><button type="button" class="ing-markup-btn" data-pct="150">+150%</button><button type="button" class="ing-markup-btn" data-pct="200">+200%</button><button type="button" class="ing-markup-btn ing-markup-reset" data-pct="0">Reset</button>
+                </div>
               </div>
               <div class="field">
                 <label>Quantity Available</label>
@@ -5659,5 +5665,40 @@
   <!-- Trial paywall removed — app is freeware -->
 
   <script src="app.js?v=114"></script>
+<style>
+.ing-markup{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.ing-markup-label{font-size:12px;font-weight:600;color:#5b6b73;margin-right:2px}
+.ing-markup-btn{border:1px solid #b9c7cc;background:#f2f7f8;color:#0b4a52;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.ing-markup-btn:hover{background:#0b4a52;color:#fff}
+.ing-markup-btn.on{background:#0b4a52;color:#fff;border-color:#0b4a52}
+.ing-markup-reset{background:transparent}
+</style>
+<script>
+(function(){
+  // Markup chips: +N% of the price you started from (not compounding). Reset returns to that base.
+  function init(){
+    document.querySelectorAll('.ing-markup').forEach(function(box){
+      var inp=document.getElementById(box.getAttribute('data-markup-for'));
+      if(!inp||box._ing)return; box._ing=1;
+      var base=null,last=null;
+      box.addEventListener('click',function(e){
+        var b=e.target.closest('.ing-markup-btn'); if(!b)return;
+        var cur=parseFloat(inp.value);
+        // a price typed/changed by hand (or by AI) becomes the new base
+        if(base===null||last===null||Math.abs(cur-last)>0.004){ if(!(cur>0))return; base=cur; }
+        var pct=parseFloat(b.getAttribute('data-pct'));
+        var v=Math.round(base*(1+pct/100)*100)/100;
+        inp.value=v.toFixed(2); last=parseFloat(inp.value);
+        if(pct===0)base=null;
+        box.querySelectorAll('.ing-markup-btn').forEach(function(x){x.classList.toggle('on',x===b&&pct>0);});
+        inp.dispatchEvent(new Event('input',{bubbles:true}));
+        inp.dispatchEvent(new Event('change',{bubbles:true}));
+      });
+    });
+  }
+  if(document.readyState!=='loading')init(); else document.addEventListener('DOMContentLoaded',init);
+  setTimeout(init,1500);
+})();
+</script>
 </body>
 </html>
